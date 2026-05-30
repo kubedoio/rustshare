@@ -624,6 +624,7 @@ async fn contract_save_note_renames_bundle_folder_on_h1_change() {
         .save_note(
             note.id,
             user.id,
+            tenant_id,
             "# New Title\n\nbody".to_string(),
             None,
             None,
@@ -886,6 +887,7 @@ async fn contract_standalone_md_still_works() {
         .save_note(
             standalone.id,
             user.id,
+            tenant_id,
             "updated standalone".to_string(),
             None,
             None,
@@ -1290,4 +1292,378 @@ async fn contract_cross_tenant_rename_note_denied() {
 
     cleanup_user(&pool, user_a.id).await;
     cleanup_user(&pool, user_b.id).await;
+}
+
+// ============================================================================
+// Step 11: Attachment Security and Portability Tests
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_attachment_upload_allows_dotdot_filename() {
+    // CURRENT BEHAVIOR (bug): FileService::validate_file_name does not reject '..' substring.
+    // Step 12 should enforce rejection of '..' in attachment filenames.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_dotdot", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    let result = file_service
+        .upload_file(
+            user.id,
+            "..secret.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("test"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: dotdot filename should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_attachment_upload_allows_backslash_filename() {
+    // CURRENT BEHAVIOR (bug): FileService::validate_file_name does not reject '\'.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_backslash", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    let result = file_service
+        .upload_file(
+            user.id,
+            "secret\\file.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("test"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: backslash filename should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_attachment_upload_allows_rustshare_hidden_filename() {
+    // CURRENT BEHAVIOR (bug): FileService does not reject .rustshare* filenames.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_rustshare", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    let result = file_service
+        .upload_file(
+            user.id,
+            ".rustshare.json".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("test"),
+            "application/json".to_string(),
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: .rustshare.json should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_attachment_upload_allows_editor_json_filename() {
+    // CURRENT BEHAVIOR (bug): FileService does not reject index.editor.json.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_editor", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    let result = file_service
+        .upload_file(
+            user.id,
+            "index.editor.json".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("test"),
+            "application/json".to_string(),
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: index.editor.json should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_bundle_count_includes_hidden_files() {
+    // CURRENT BEHAVIOR (bug): count_bundle_contents does not filter hidden metadata files.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_hidden", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Hidden Count Test".to_string()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    // Upload a regular file and a hidden metadata file
+    file_service
+        .upload_file(
+            user.id,
+            "real.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("real"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    file_service
+        .upload_file(
+            user.id,
+            ".rustshare.json".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("hidden"),
+            "application/json".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let notes = service.list_notes(user.id, tenant_id, Some(10)).await.unwrap();
+    let found = notes.iter().find(|n| n.id == note.id).unwrap();
+
+    // BUG: hidden file is counted as an attachment
+    assert_eq!(
+        found.attachment_count, 2,
+        "BUG: hidden metadata file should not be counted but currently is"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_public_note_excludes_attachment_metadata() {
+    // PublicNote must not leak attachment metadata or internal paths.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_public_attach", tenant_id).await;
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Public Attach".to_string()),
+            None,
+            Some("content".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
+    let share_id = public.metadata.public_share_id.unwrap();
+
+    let anon = service.get_public_note(&share_id).await.unwrap();
+    // PublicNote has no attachments field, so no attachment metadata is exposed
+    let json = serde_json::to_value(&anon).unwrap();
+    assert!(
+        json.get("attachments").is_none(),
+        "PublicNote should not expose attachments"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_note_attachment_duplicate_overwrites() {
+    // CURRENT BEHAVIOR: FileService uploads to the same path overwrite existing content
+    // (creating a new version) instead of rejecting or renaming. This test pins that behavior.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_attach_dup", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Dup Test".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = subfolders
+        .iter()
+        .find(|f| f.name == "attachments")
+        .unwrap();
+
+    let first = file_service
+        .upload_file(
+            user.id,
+            "dup.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("first"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let second = file_service
+        .upload_file(
+            user.id,
+            "dup.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("second"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // Same file ID, overwritten content, version incremented
+    assert_eq!(
+        first.id, second.id,
+        "Duplicate filename should overwrite existing file"
+    );
+    assert_eq!(second.current_version, first.current_version + 1);
+    assert_eq!(second.size, 6); // "second" length
+
+    cleanup_user(&pool, user.id).await;
 }

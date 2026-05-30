@@ -163,6 +163,7 @@ async fn test_note_save_maps_to_note_service_save() {
         .save_note(
             note.id,
             user.id,
+            tenant_id,
             "# Updated heading\n\nNew paragraph.".to_string(),
             None,
             None,

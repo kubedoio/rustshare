@@ -28,6 +28,7 @@ use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserR
 use rustshare_server::services::kanban_service::{
     CreateBoardInput, CreateCardInput, KanbanError, KanbanService, MoveCardInput,
 };
+use bytes::Bytes;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -318,7 +319,7 @@ async fn contract_move_card_updates_column_and_metadata() {
     assert!(updated_ready.cards.iter().any(|c| c.id == card.id));
 
     let updated_card = service
-        .get_card(card.id.parse().unwrap(), user.id)
+        .get_card(card.id.parse().unwrap(), user.id, tenant_id)
         .await
         .unwrap();
     assert_eq!(updated_card.column_id, ready.id);
@@ -473,7 +474,7 @@ async fn contract_delete_card_removes_folder() {
         .await
         .expect("delete_card should succeed");
 
-    let result = service.get_card(card.id.parse().unwrap(), user.id).await;
+    let result = service.get_card(card.id.parse().unwrap(), user.id, tenant_id).await;
     assert!(result.is_err());
 
     cleanup_user(&pool, user.id).await;
@@ -662,6 +663,7 @@ async fn contract_invalid_label_color_rejected() {
                 color: "#ff0000".to_string(),
             },
             user.id,
+            tenant_id,
         )
         .await;
     assert!(result.is_err(), "Should reject arbitrary hex colors");
@@ -674,6 +676,7 @@ async fn contract_invalid_label_color_rejected() {
                 color: "javascript:alert(1)".to_string(),
             },
             user.id,
+            tenant_id,
         )
         .await;
     assert!(
@@ -727,7 +730,7 @@ async fn contract_card_description_persisted_in_index_md() {
         .unwrap();
 
     let detail = service
-        .get_card_detail(card.id.parse().unwrap(), user.id)
+        .get_card_detail(card.id.parse().unwrap(), user.id, tenant_id)
         .await
         .unwrap();
     assert!(detail.summary.content.contains("This is the description."));
@@ -837,7 +840,7 @@ async fn contract_move_card_preserves_metadata_and_events() {
         .unwrap();
 
     let detail = service
-        .get_card_detail(card.id.parse().unwrap(), user.id)
+        .get_card_detail(card.id.parse().unwrap(), user.id, tenant_id)
         .await
         .unwrap();
     assert_eq!(detail.summary.column_id, ready.id);
@@ -1106,7 +1109,7 @@ async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id).await;
+    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id).await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card_detail should be denied, got {:?}",
@@ -1295,7 +1298,7 @@ async fn contract_cross_tenant_get_card_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card(card.id.parse().unwrap(), user_b.id).await;
+    let result = service.get_card(card.id.parse().unwrap(), user_b.id, tenant_b).await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_card should be denied, got {:?}",
@@ -1339,7 +1342,7 @@ async fn contract_cross_tenant_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_b.id).await;
+    let result = service.get_card_detail(card.id.parse().unwrap(), user_b.id, tenant_b).await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_card_detail should be denied, got {:?}",
@@ -1566,7 +1569,7 @@ async fn contract_same_tenant_unauthorized_get_card_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card(card.id.parse().unwrap(), user_other.id).await;
+    let result = service.get_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card should be denied, got {:?}",
@@ -1636,4 +1639,539 @@ async fn contract_same_tenant_unauthorized_update_board_denied() {
 
     cleanup_user(&pool, user_owner.id).await;
     cleanup_user(&pool, user_other.id).await;
+}
+
+// ============================================================================
+// Step 11: Attachment Security and Portability Tests
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_rejects_dotdot() {
+    // KanbanService::sanitize_attachment_name already rejects '..' substring.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_dotdot", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "..secret.txt".to_string(),
+            Bytes::from("test"),
+            "text/plain".to_string(),
+            user.id,
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Kanban should reject attachment with '..' in filename"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_rejects_path_separator() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_sep", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    for bad_name in ["../secret.txt", "secret/file.txt", "secret\\file.txt"] {
+        let result = service
+            .add_card_attachment(
+                card.id.parse().unwrap(),
+                bad_name.to_string(),
+                Bytes::from("test"),
+                "text/plain".to_string(),
+                user.id,
+                tenant_id,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "Kanban should reject attachment with path separator: {}",
+            bad_name
+        );
+    }
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_rejects_reserved_names() {
+    // Kanban already rejects specific reserved metadata filenames.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_reserved", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    for bad_name in [
+        ".rustshare-board.json",
+        ".rustshare-column.json",
+        ".rustshare-card.json",
+        "events.jsonl",
+        "index.md",
+    ] {
+        let result = service
+            .add_card_attachment(
+                card.id.parse().unwrap(),
+                bad_name.to_string(),
+                Bytes::from("test"),
+                "application/json".to_string(),
+                user.id,
+                tenant_id,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "Kanban should reject reserved filename: {}",
+            bad_name
+        );
+    }
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_allows_generic_rustshare() {
+    // CURRENT BEHAVIOR (bug): sanitize_attachment_name only rejects specific .rustshare-* files,
+    // not the generic prefix. Step 12 should reject all .rustshare* filenames.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_generic", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            ".rustshare.json".to_string(),
+            Bytes::from("test"),
+            "application/json".to_string(),
+            user.id,
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: generic .rustshare.json should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_allows_editor_json() {
+    // CURRENT BEHAVIOR (bug): sanitize_attachment_name does not reject *.editor.json.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_editor", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "index.editor.json".to_string(),
+            Bytes::from("test"),
+            "application/json".to_string(),
+            user.id,
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "BUG: index.editor.json should be rejected but is currently allowed: {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_cross_tenant_upload_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_attach_a", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_attach_b", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "evil.txt".to_string(),
+            Bytes::from("hacked"),
+            "text/plain".to_string(),
+            user_b.id,
+            tenant_b,
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Cross-tenant attachment upload should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_unauthorized_user_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_attach", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_attach", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "evil.txt".to_string(),
+            Bytes::from("hacked"),
+            "text/plain".to_string(),
+            user_other.id,
+            tenant_id,
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Same-tenant unauthorized attachment upload should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_card_detail_excludes_hidden_attachments() {
+    // Kanban card detail should not list hidden metadata files as attachments.
+    // folder_service.list_contents already filters hidden files, so this should pass.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_hidden", tenant_id).await;
+    let service = create_kanban_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // Upload a regular attachment and a hidden metadata file directly to the card folder
+    let card_folder_id = card.id.parse::<Uuid>().unwrap();
+    let folders = metadata_store
+        .list_folders(Some(card_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let attachments_folder = folders.iter().find(|f| f.name == "attachments").unwrap();
+
+    file_service
+        .upload_file(
+            user.id,
+            "real.txt".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("real"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    file_service
+        .upload_file(
+            user.id,
+            ".rustshare-card.json".to_string(),
+            Some(attachments_folder.id),
+            Bytes::from("hidden"),
+            "application/json".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let detail = service
+        .get_card_detail(card.id.parse().unwrap(), user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let names: Vec<&str> = detail.attachments.iter().map(|a| a.name.as_str()).collect();
+    assert!(names.contains(&"real.txt"), "real.txt should be listed");
+    assert!(
+        !names.contains(&".rustshare-card.json"),
+        "Hidden metadata file should not appear in attachment list"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_kanban_attachment_duplicate_overwrites() {
+    // CURRENT BEHAVIOR: write_binary_file_by_name updates existing files instead
+    // of creating a duplicate or renaming.
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_dup", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let first = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "dup.txt".to_string(),
+            Bytes::from("first"),
+            "text/plain".to_string(),
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let second = service
+        .add_card_attachment(
+            card.id.parse().unwrap(),
+            "dup.txt".to_string(),
+            Bytes::from("second"),
+            "text/plain".to_string(),
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.id, second.id,
+        "Duplicate filename should overwrite existing attachment"
+    );
+    assert_eq!(second.size, 6);
+
+    cleanup_user(&pool, user.id).await;
 }
