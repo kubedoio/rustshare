@@ -1,9 +1,10 @@
 //! Event store implementation.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::events::*;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Event store for append-only event log
@@ -131,6 +132,81 @@ impl EventStore {
                     user_id: row.user_id,
                     timestamp: row.timestamp,
                     version: row.version,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(events)
+    }
+
+    /// Query recent file/module/share mutation events for a tenant.
+    ///
+    /// Returns events ordered by timestamp descending (newest first).
+    /// Supports cursor pagination via `before_timestamp` and `before_id`.
+    pub async fn query_recent_events(
+        &self,
+        tenant_id: Uuid,
+        before_timestamp: Option<DateTime<Utc>>,
+        before_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Event>> {
+        let event_types = vec![
+            "FileUploaded",
+            "FileModified",
+            "FileRenamed",
+            "FileMoved",
+            "FileDeleted",
+            "FileRestored",
+            "FolderCreated",
+            "FolderRenamed",
+            "FolderMoved",
+            "FolderDeleted",
+            "ShareCreated",
+            "ShareRevoked",
+            "ShareUpdated",
+            "ShareReceivedByUser",
+            "SharePermissionChanged",
+            "ShareRevokedFromUser",
+            "BrainstormBoardModified",
+            "MeetingNoteModified",
+            "DecisionModified",
+            "StandupModified",
+            "KanbanModified",
+            "NoteModified",
+        ];
+
+        let rows = sqlx::query(
+            r#"
+            SELECT e.event_id, e.event_type, e.aggregate_id, e.aggregate_type, e.payload, e.user_id, e.timestamp, e.version
+            FROM events e
+            JOIN users u ON u.id = e.user_id
+            WHERE u.tenant_id = $1
+              AND e.event_type = ANY($2)
+              AND ($3::timestamptz IS NULL OR (e.timestamp, e.event_id) < ($3, $4))
+            ORDER BY e.timestamp DESC, e.event_id DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&event_types)
+        .bind(before_timestamp)
+        .bind(before_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let events = rows
+            .into_iter()
+            .map(|row| {
+                Ok(Event {
+                    id: row.try_get("event_id")?,
+                    event_type: serde_json::from_str(row.try_get::<String, _>("event_type")?.as_str())?,
+                    aggregate_id: row.try_get("aggregate_id")?,
+                    aggregate_type: serde_json::from_str(row.try_get::<String, _>("aggregate_type")?.as_str())?,
+                    payload: row.try_get("payload")?,
+                    user_id: row.try_get("user_id")?,
+                    timestamp: row.try_get("timestamp")?,
+                    version: row.try_get("version")?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;

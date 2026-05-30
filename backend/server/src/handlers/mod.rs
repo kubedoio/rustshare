@@ -63,7 +63,8 @@ pub use kanban::{
     update_card_description, update_label,
 };
 pub use notifications::{
-    count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
+    count_unread_notifications, delete_notification, list_activity, list_notifications,
+    mark_notification_read,
 };
 pub use profile::{get_profile, update_profile, update_trash_retention};
 pub use public_shares::{

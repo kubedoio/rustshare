@@ -949,6 +949,7 @@ pub fn notification_routes() -> Router<AppState> {
             "/api/v1/notifications/{id}",
             delete(crate::handlers::delete_notification),
         )
+        .route("/api/v1/activity", get(crate::handlers::list_activity))
 }
 
 pub fn invite_routes() -> Router<AppState> {
