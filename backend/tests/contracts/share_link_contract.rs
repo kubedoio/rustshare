@@ -10,7 +10,7 @@
 //! - Download limits (S-07)
 //! - Audit logging (S-08)
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::ShareError;
 use rustshare_storage::{EventStore, MetadataStore};
@@ -31,9 +31,9 @@ fn create_share_service(
     EventStore,
     MetadataStore,
     MockJwtManager,
-    crate::contracts::common::MockNotificationRepo,
+    crate::common::MockNotificationRepo,
 > {
-    crate::contracts::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
+    crate::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
 }
 
 /// S-01: Internal share grants access to recipient
@@ -498,6 +498,228 @@ async fn test_share_access_increments_count() {
     }
 
     // Cleanup
+    cleanup_user(&ctx.pool, owner.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+/// S-09: Already-issued public share session token is rejected after revoke
+///
+/// This test verifies that:
+/// 1. A session can be created before revocation
+/// 2. After revocation, new session creation fails with Revoked
+/// 3. The share record in the database reflects revoked status
+///
+/// NOTE: Handler-level JWT validation for already-issued tokens should also
+/// re-check share.revoked_at against the database. Current handlers only verify
+/// share_id matches the JWT claims (see ensure_share_session_matches). This is
+/// a known gap documented by this test.
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_public_share_already_issued_session_rejected_after_revoke() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+
+    let owner = create_test_user(&ctx.metadata_store, "session_owner", tenant_id).await;
+
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        owner.id,
+        tenant_id,
+        None,
+        "session_doc.txt",
+        b"Session test content",
+    )
+    .await;
+
+    let share_service = create_share_service(&ctx);
+
+    let share = create_test_share(
+        &share_service,
+        file.id,
+        owner.id,
+        SharePermissions::View,
+        None,
+        None,
+        tenant_id,
+    )
+    .await;
+
+    let token = share.share_token.clone().unwrap();
+
+    // Create an active session BEFORE revocation (simulating a visitor who opened the link)
+    let session = share_service
+        .validate_and_create_session(&token, None)
+        .await
+        .expect("Session should be created before revocation");
+    assert!(!session.upload_only, "Read share session should not be upload-only");
+
+    // Revoke the share
+    share_service
+        .revoke_share(share.id, owner.id)
+        .await
+        .expect("Failed to revoke share");
+
+    // Verify the share is marked revoked in the database
+    let revoked_share = ctx
+        .metadata_store
+        .get_share_by_token(&token)
+        .await
+        .expect("DB lookup failed")
+        .expect("Share should exist");
+    assert!(
+        revoked_share.revoked_at.is_some(),
+        "Share should have revoked_at set after revocation"
+    );
+
+    // New session creation must fail after revocation
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
+    assert!(
+        matches!(result, Err(ShareError::Revoked)),
+        "New session creation should fail after revocation"
+    );
+
+    // The already-issued JWT token (session.token) is not validated by the service layer.
+    // Handlers that accept ShareSessionAuth MUST re-check revoked_at against the DB
+    // to ensure already-issued tokens are rejected. This is a security contract gap.
+
+    cleanup_user(&ctx.pool, owner.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+/// S-10: Share revocation emits a durable ShareRevoked event
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_public_share_revoke_emits_audit_event() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+
+    let owner = create_test_user(&ctx.metadata_store, "audit_owner", tenant_id).await;
+
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        owner.id,
+        tenant_id,
+        None,
+        "audit_doc.txt",
+        b"Audit test content",
+    )
+    .await;
+
+    let share_service = create_share_service(&ctx);
+
+    let share = create_test_share(
+        &share_service,
+        file.id,
+        owner.id,
+        SharePermissions::View,
+        None,
+        None,
+        tenant_id,
+    )
+    .await;
+
+    // Subscribe to events before revocation
+    let mut receiver = ctx.broadcaster.subscribe();
+
+    // Revoke the share
+    share_service
+        .revoke_share(share.id, owner.id)
+        .await
+        .expect("Failed to revoke share");
+
+    // Verify the ShareRevoked event was broadcast
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        receiver.recv(),
+    )
+    .await
+    .expect("Timed out waiting for event")
+    .expect("Event broadcaster closed");
+
+    assert_eq!(
+        event.event_type,
+        rustshare_core::events::EventType::ShareRevoked,
+        "Revocation should emit ShareRevoked event"
+    );
+    assert_eq!(
+        event.aggregate_id, share.id,
+        "Event aggregate_id should match share ID"
+    );
+
+    cleanup_user(&ctx.pool, owner.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+/// S-11: Denied post-revocation access is auditable
+///
+/// When a revoked share token is presented, the system should log the denied
+/// access attempt if an audit trail is required by contract G-03.
+///
+/// NOTE: Current implementation does not log denied share access attempts.
+/// This test documents the gap.
+#[tokio::test]
+#[ignore] // Requires database and S3; also requires denied-access audit logging
+async fn test_revoked_share_access_denial_is_auditable() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+
+    let owner = create_test_user(&ctx.metadata_store, "denial_owner", tenant_id).await;
+
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        owner.id,
+        tenant_id,
+        None,
+        "denial_doc.txt",
+        b"Denial test content",
+    )
+    .await;
+
+    let share_service = create_share_service(&ctx);
+
+    let share = create_test_share(
+        &share_service,
+        file.id,
+        owner.id,
+        SharePermissions::View,
+        None,
+        None,
+        tenant_id,
+    )
+    .await;
+
+    let token = share.share_token.clone().unwrap();
+
+    // Create a session before revocation
+    let _session = share_service
+        .validate_and_create_session(&token, None)
+        .await
+        .expect("Session should work before revocation");
+
+    // Revoke the share
+    share_service
+        .revoke_share(share.id, owner.id)
+        .await
+        .expect("Failed to revoke share");
+
+    // Attempt to create a new session after revocation
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
+    assert!(
+        matches!(result, Err(ShareError::Revoked)),
+        "Revoked share should deny new sessions"
+    );
+
+    // TODO: Once denied-access audit logging is implemented, verify that a
+    // share_access_log row or security event was recorded for this denial.
+    // Currently only successful accesses are logged.
+
     cleanup_user(&ctx.pool, owner.id).await;
     cleanup_tenant(&ctx.pool, tenant_id).await;
 }
