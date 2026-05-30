@@ -118,6 +118,14 @@ name = "contracts"
 path = "../tests/contracts/main.rs"
 
 [[test]]
+name = "search_authorization_contract"
+path = "../tests/search_authorization_contract.rs"
+
+[[test]]
+name = "ai_permission_contract"
+path = "../tests/ai_permission_contract.rs"
+
+[[test]]
 name = "readiness_test"
 path = "../tests/readiness_test.rs"
 

@@ -88,15 +88,38 @@ pub async fn search(
                 .into_response()
         })?;
 
-    // Convert to response format, filtering out hidden metadata files
+    // Determine disabled module root paths to filter out
+    let disabled_module_paths: Vec<String> = state
+        .module_service
+        .list_modules(auth.tenant_id)
+        .await
+        .map(|modules| {
+            modules
+                .into_iter()
+                .filter(|m| !m.enabled)
+                .map(|m| m.root_path)
+                .collect()
+        })
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to list modules for search filtering: {}", e);
+            Vec::new()
+        });
+
+    // Convert to response format, filtering out hidden metadata files and disabled module content
     let response_results: Vec<SearchResultResponse> = results
         .into_iter()
         .filter(|r| {
+            // Hidden metadata filter
             !r.name.starts_with(".rustshare")
                 && r.name != "events.jsonl"
                 && r.name != "index.md"
                 && r.name != "__primary__.md"
                 && !r.name.ends_with(".editor.json")
+                // Disabled module filter
+                && !disabled_module_paths.iter().any(|path| {
+                    let normalized = path.trim_end_matches('/');
+                    r.path == normalized || r.path.starts_with(&format!("{}/", normalized))
+                })
         })
         .map(|r| SearchResultResponse {
             id: r.id,

@@ -177,6 +177,18 @@ where
         // Perform semantic search
         let raw_results = self.indexer.search(tenant_id, query, limit * 3).await;
 
+        // Filter out hidden metadata files
+        let raw_results: Vec<_> = raw_results
+            .into_iter()
+            .filter(|(doc, _)| {
+                !doc.file_name.starts_with(".rustshare")
+                    && doc.file_name != "events.jsonl"
+                    && doc.file_name != "index.md"
+                    && doc.file_name != "__primary__.md"
+                    && !doc.file_name.ends_with(".editor.json")
+            })
+            .collect();
+
         // Filter by permission and build results
         let mut results = Vec::new();
         for (document, score) in raw_results {

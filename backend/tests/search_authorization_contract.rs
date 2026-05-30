@@ -8,8 +8,7 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use rustshare_core::domain::{File, Folder, Share, SharePermissions};
-use rustshare_core::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
-use rustshare_core::services::search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
+use rustshare_core::services::{PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService};
 
 // Mock search repository
 struct MockSearchRepo {
@@ -110,7 +109,7 @@ impl PermissionResolverOps for MockPermissionOps {
         Ok(self.files.lock().unwrap().get(&id).cloned())
     }
 
-    async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, _id: Uuid) -> anyhow::Result<Option<Folder>> {
         Ok(None)
     }
 
