@@ -507,11 +507,26 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
+        // Creator can always revoke; otherwise require Admin permission on the resource.
         if share.created_by != user_id {
-            return Err(ShareError::PermissionDenied {
-                file_id: share.resource_id().unwrap_or(share.id),
-                user_id,
-            });
+            let resource = if let Some(file_id) = share.file_id {
+                Resource::File(file_id)
+            } else if let Some(folder_id) = share.folder_id {
+                Resource::Folder(folder_id)
+            } else {
+                return Err(ShareError::InvalidState(
+                    "Share has no resource".to_string(),
+                ));
+            };
+            let has_admin = self
+                .check_resource_permission(user_id, resource, SharePermissions::Admin)
+                .await?;
+            if !has_admin {
+                return Err(ShareError::PermissionDenied {
+                    file_id: share.resource_id().unwrap_or(share.id),
+                    user_id,
+                });
+            }
         }
 
         // Revoke the share
@@ -558,10 +573,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         new_password: Option<String>,
         new_expires_at: Option<DateTime<Utc>>,
     ) -> Result<(), ShareError> {
-        // Get share by ID
+        // Get share by ID (unchecked so admins who are not the creator can update)
         let mut share = self
             .metadata_store
-            .get_share_by_id(share_id, user_id)
+            .get_share_by_id_unchecked(share_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -794,6 +809,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         current_folder_id: Option<uuid::Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
+        if share.upload_only {
+            return Err(ShareError::PermissionDenied {
+                file_id: share.resource_id().unwrap_or(share.id),
+                user_id: share.created_by,
+            });
+        }
         let root_folder = root_folder.ok_or(ShareError::InvalidState(
             "share is not linked to a folder".to_string(),
         ))?;
@@ -984,10 +1005,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share_id: uuid::Uuid,
         requesting_user: UserId,
     ) -> Result<(), ShareError> {
-        // Get the share
+        // Get the share (unchecked so admins who are not the creator can revoke)
         let share = self
             .metadata_store
-            .get_share_by_id(share_id, requesting_user)
+            .get_share_by_id_unchecked(share_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -1065,10 +1086,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         new_permission: SharePermissions,
         requesting_user: UserId,
     ) -> Result<Share, ShareError> {
-        // Get the share
+        // Get the share (unchecked so admins who are not the creator can update)
         let mut share = self
             .metadata_store
-            .get_share_by_id(share_id, requesting_user)
+            .get_share_by_id_unchecked(share_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;

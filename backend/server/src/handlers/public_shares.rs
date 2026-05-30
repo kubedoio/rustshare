@@ -137,6 +137,16 @@ fn ensure_share_session_matches(
     Ok(())
 }
 
+fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), AppError> {
+    if share.revoked_at.is_some() {
+        return Err(AppError::from(rustshare_core::services::ShareError::Revoked));
+    }
+    if share.is_expired() {
+        return Err(AppError::from(rustshare_core::services::ShareError::Expired));
+    }
+    Ok(())
+}
+
 async fn parse_upload_multipart(
     mut multipart: Multipart,
 ) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), AppError> {
@@ -246,6 +256,9 @@ pub async fn download_shared_file(
     // Verify JWT share_id matches the share we're accessing
     ensure_share_session_matches(&share, &claims)?;
 
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
+
     // Get file metadata
     let file_id = share
         .file_id
@@ -345,6 +358,9 @@ pub async fn get_shared_folder_contents(
 
     ensure_share_session_matches(&share, &claims)?;
 
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
+
     if share.folder_id.is_none() {
         return Err(AppError::bad_request("This share is not for a folder"));
     }
@@ -405,6 +421,9 @@ pub async fn download_shared_folder_file(
         })?;
 
     ensure_share_session_matches(&share, &claims)?;
+
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
 
     let root_folder_id = share
         .folder_id
@@ -518,6 +537,9 @@ pub async fn upload_shared_folder_file(
         })?;
 
     ensure_share_session_matches(&share, &claims)?;
+
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
 
     let root_folder_id = share
         .folder_id

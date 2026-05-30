@@ -137,6 +137,10 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         file_id: FileId,
         required: SharePermissions,
     ) -> Result<bool> {
+        // Clear cache at the start of each top-level check to prevent
+        // stale permissions from leaking across requests.
+        self.cache.write().await.clear();
+
         // Check cache first
         let cache_key = CacheKey::File(user_id, file_id);
         let cached = { self.cache.read().await.get(&cache_key).copied() };
@@ -225,6 +229,10 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         folder_id: FolderId,
         required: SharePermissions,
     ) -> Result<bool> {
+        // Clear cache at the start of each top-level check to prevent
+        // stale permissions from leaking across requests.
+        self.cache.write().await.clear();
+
         // Check cache first
         let cache_key = CacheKey::Folder(user_id, folder_id);
         let cached = { self.cache.read().await.get(&cache_key).copied() };
