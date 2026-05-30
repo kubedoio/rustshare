@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import {
 	activityStore,
+	serverActivityStore,
 	getActivityDisplay,
 	getRelativeTime,
+	getActivityHref,
 	type Activity as ActivityItem,
 	type ActivityType
 } from '$lib/stores/activity';
@@ -17,10 +19,20 @@ import {
 	Lightbulb
 } from 'lucide-svelte';
 
+vi.mock('$lib/api/client', () => ({
+	apiClient: {
+		get: vi.fn()
+	}
+}));
+
+import { apiClient } from '$lib/api/client';
+
 describe('Activity Store', () => {
 	beforeEach(() => {
 		activityStore.clearHistory();
 		localStorage.clear();
+		serverActivityStore.reset();
+		vi.clearAllMocks();
 	});
 
 	describe('Initial State', () => {
@@ -188,6 +200,197 @@ describe('Activity Store', () => {
 		});
 	});
 
+	describe('serverActivityStore', () => {
+		it('should fetch items from API and map to Activity type', async () => {
+			const mockResponse = {
+				items: [
+					{
+						id: 'evt-1',
+						action: 'file_uploaded',
+						resource_type: 'file',
+						resource_id: 'file-1',
+						resource_name: 'document.pdf',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T10:00:00Z'
+					},
+					{
+						id: 'evt-2',
+						action: 'note_modified',
+						resource_type: 'module',
+						resource_id: 'note-1',
+						resource_name: 'My Note',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T09:00:00Z'
+					}
+				],
+				next_cursor: null
+			};
+
+			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);
+
+			await serverActivityStore.fetch(10);
+
+			const state = get(serverActivityStore);
+			expect(state.items).toHaveLength(2);
+			expect(state.items[0].type).toBe('file_uploaded');
+			expect(state.items[0].fileName).toBe('document.pdf');
+			expect(state.items[0].artifactId).toBe('file-1');
+			expect(state.items[0].accessible).toBe(true);
+			expect(state.items[1].type).toBe('note_modified');
+			expect(state.items[1].moduleKey).toBe('notes');
+			expect(state.loading).toBe(false);
+			expect(state.error).toBeNull();
+			expect(state.hasMore).toBe(false);
+		});
+
+		it('should handle fetch errors', async () => {
+			vi.mocked(apiClient.get).mockRejectedValue(new Error('Network error'));
+
+			await serverActivityStore.fetch(10);
+
+			const state = get(serverActivityStore);
+			expect(state.items).toEqual([]);
+			expect(state.loading).toBe(false);
+			expect(state.error).toBe('Network error');
+		});
+
+		it('should support pagination with loadMore', async () => {
+			const firstPage = {
+				items: [
+					{
+						id: 'evt-1',
+						action: 'file_uploaded',
+						resource_type: 'file',
+						resource_id: 'file-1',
+						resource_name: 'first.pdf',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T10:00:00Z'
+					}
+				],
+				next_cursor: {
+					before_timestamp: '2026-05-30T10:00:00Z',
+					before_id: 'evt-1'
+				}
+			};
+
+			const secondPage = {
+				items: [
+					{
+						id: 'evt-2',
+						action: 'folder_created',
+						resource_type: 'folder',
+						resource_id: 'folder-1',
+						resource_name: 'Documents',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T09:00:00Z'
+					}
+				],
+				next_cursor: null
+			};
+
+			vi.mocked(apiClient.get)
+				.mockResolvedValueOnce(firstPage)
+				.mockResolvedValueOnce(secondPage);
+
+			await serverActivityStore.fetch(10);
+			expect(get(serverActivityStore).items).toHaveLength(1);
+			expect(get(serverActivityStore).hasMore).toBe(true);
+
+			await serverActivityStore.loadMore(10);
+			const state = get(serverActivityStore);
+			expect(state.items).toHaveLength(2);
+			expect(state.items[1].type).toBe('folder_created');
+			expect(state.hasMore).toBe(false);
+		});
+
+		it('should map unknown server actions to file_uploaded fallback', async () => {
+			const mockResponse = {
+				items: [
+					{
+						id: 'evt-1',
+						action: 'unknown_event',
+						resource_type: 'file',
+						resource_id: 'file-1',
+						resource_name: 'test.txt',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T10:00:00Z'
+					}
+				],
+				next_cursor: null
+			};
+
+			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);
+
+			await serverActivityStore.fetch(10);
+			expect(get(serverActivityStore).items[0].type).toBe('file_uploaded');
+		});
+
+		it('should infer module keys correctly', async () => {
+			const mockResponse = {
+				items: [
+					{
+						id: 'evt-1',
+						action: 'brainstorm_board_modified',
+						resource_type: 'module',
+						resource_id: 'brd-1',
+						resource_name: 'Ideas',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T10:00:00Z'
+					},
+					{
+						id: 'evt-2',
+						action: 'share_created',
+						resource_type: 'share',
+						resource_id: 'share-1',
+						resource_name: 'shared.pdf',
+						actor_id: 'user-1',
+						timestamp: '2026-05-30T09:00:00Z'
+					}
+				],
+				next_cursor: null
+			};
+
+			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);
+
+			await serverActivityStore.fetch(10);
+			const items = get(serverActivityStore).items;
+			expect(items[0].moduleKey).toBe('brainstorming');
+			expect(items[1].moduleKey).toBe('shares');
+		});
+
+		it('should not call loadMore when already loading', async () => {
+			vi.mocked(apiClient.get).mockImplementation(
+				() => new Promise((resolve) => setTimeout(resolve, 100))
+			);
+
+			serverActivityStore.fetch(10);
+			const stateBefore = get(serverActivityStore);
+			expect(stateBefore.loading).toBe(true);
+
+			await serverActivityStore.loadMore(10);
+			// Should not trigger another fetch while loading
+			expect(vi.mocked(apiClient.get)).toHaveBeenCalledTimes(1);
+		});
+
+		it('should reset state', async () => {
+			const mockResponse = {
+				items: [{ id: 'evt-1', action: 'file_uploaded', resource_type: 'file', resource_id: 'f1', resource_name: 'a.txt', actor_id: 'u1', timestamp: '2026-05-30T10:00:00Z' }],
+				next_cursor: null
+			};
+			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);
+
+			await serverActivityStore.fetch(10);
+			expect(get(serverActivityStore).items).toHaveLength(1);
+
+			serverActivityStore.reset();
+			const state = get(serverActivityStore);
+			expect(state.items).toEqual([]);
+			expect(state.loading).toBe(false);
+			expect(state.error).toBeNull();
+			expect(state.hasMore).toBe(true);
+		});
+	});
+
 	describe('getActivityDisplay', () => {
 		const testCases: Array<{
 			type: ActivityType;
@@ -322,6 +525,82 @@ describe('Activity Store', () => {
 			expect(display.title).toBe('File Uploaded');
 			expect(display.description).toBeTruthy();
 		});
+
+		it('should display new server activity types', () => {
+			const newTypes: Array<{ type: ActivityType; title: string }> = [
+				{ type: 'file_restored', title: 'File Restored' },
+				{ type: 'share_updated', title: 'Share Link Updated' },
+				{ type: 'share_received', title: 'Share Received' },
+				{ type: 'share_permission_changed', title: 'Share Permission Changed' },
+				{ type: 'share_revoked_from_user', title: 'Share Revoked' },
+				{ type: 'note_modified', title: 'Note modified' },
+				{ type: 'meeting_note_modified', title: 'Meeting note modified' },
+				{ type: 'standup_modified', title: 'Standup record modified' },
+				{ type: 'kanban_modified', title: 'Kanban board modified' },
+				{ type: 'decision_modified', title: 'Decision modified' },
+				{ type: 'brainstorm_board_modified', title: 'Idea board modified' }
+			];
+
+			newTypes.forEach(({ type, title }) => {
+				const activity: ActivityItem = {
+					id: '1',
+					type,
+					fileName: 'test.txt',
+					timestamp: new Date().toISOString()
+				};
+				const display = getActivityDisplay(activity);
+				expect(display.title).toBe(title);
+				expect(display.description).toBeTruthy();
+			});
+		});
+	});
+
+	describe('getActivityHref', () => {
+		it('should return null when no artifactId', () => {
+			const activity: ActivityItem = {
+				id: '1',
+				type: 'file_uploaded',
+				fileName: 'test.txt',
+				timestamp: new Date().toISOString()
+			};
+			expect(getActivityHref(activity)).toBeNull();
+		});
+
+		it('should return null when accessible is false', () => {
+			const activity: ActivityItem = {
+				id: '1',
+				type: 'note_created',
+				fileName: 'My Note',
+				timestamp: new Date().toISOString(),
+				artifactId: 'note-123',
+				moduleKey: 'notes',
+				accessible: false
+			};
+			expect(getActivityHref(activity)).toBeNull();
+		});
+
+		it('should return correct href for notes module', () => {
+			const activity: ActivityItem = {
+				id: '1',
+				type: 'note_created',
+				fileName: 'My Note',
+				timestamp: new Date().toISOString(),
+				artifactId: 'note-123',
+				moduleKey: 'notes'
+			};
+			expect(getActivityHref(activity)).toBe('/modules/notes/note-123');
+		});
+
+		it('should return file preview fallback', () => {
+			const activity: ActivityItem = {
+				id: '1',
+				type: 'file_uploaded',
+				fileName: 'test.txt',
+				timestamp: new Date().toISOString(),
+				artifactId: 'file-123'
+			};
+			expect(getActivityHref(activity)).toBe('/files?preview=file-123');
+		});
 	});
 
 	describe('getRelativeTime', () => {
@@ -369,18 +648,29 @@ describe('Activity Store', () => {
 				'file_deleted',
 				'file_renamed',
 				'file_moved',
+				'file_restored',
 				'folder_created',
 				'folder_deleted',
 				'folder_renamed',
 				'share_created',
 				'share_revoked',
+				'share_updated',
+				'share_received',
+				'share_permission_changed',
+				'share_revoked_from_user',
 				'note_created',
 				'note_edited',
+				'note_modified',
 				'meeting_created',
+				'meeting_note_modified',
 				'standup_created',
+				'standup_modified',
 				'kanban_created',
+				'kanban_modified',
 				'decision_created',
-				'brainstorm_created'
+				'decision_modified',
+				'brainstorm_created',
+				'brainstorm_board_modified'
 			];
 
 			types.forEach((type) => {
@@ -388,7 +678,7 @@ describe('Activity Store', () => {
 			});
 
 			const activities = get(activityStore);
-			expect(activities).toHaveLength(17);
+			expect(activities).toHaveLength(types.length);
 		});
 	});
 });

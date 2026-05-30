@@ -259,13 +259,36 @@ vi.mock('$lib/stores/activity', () => ({
 			moduleKey: 'notes'
 		}
 	]),
+	serverActivityStore: {
+		subscribe: readable({
+			items: [
+				{
+					id: 'act-1',
+					type: 'note_created',
+					fileName: 'New Name.md',
+					timestamp: new Date().toISOString(),
+					artifactId: 'note-123',
+					moduleKey: 'notes',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		}).subscribe,
+		fetch: vi.fn(),
+		loadMore: vi.fn(),
+		reset: vi.fn()
+	},
 	getActivityDisplay: vi.fn(() => ({
 		icon: '📝',
 		title: 'Note created',
 		description: '',
 		color: '#ea580c'
 	})),
-	getRelativeTime: vi.fn(() => 'Just now')
+	getRelativeTime: vi.fn(() => 'Just now'),
+	getActivityHref: vi.fn(() => '/modules/notes/note-123')
 }));
 
 vi.mock('$lib/stores/auth', () => ({
@@ -329,12 +352,11 @@ describe('Dashboard Page Workspace Surface', () => {
 		});
 	});
 
-	it('enriches activity names from current data instead of stale store value', async () => {
+	it('renders server-sourced recent activity', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
 			expect(screen.getByText('New Name.md')).toBeTruthy();
-			expect(screen.queryByText('Old Name.md')).toBeNull();
 		});
 	});
 });

@@ -101,10 +101,35 @@ export function getActivityVerb(type: string): string {
 		case 'file_moved':
 		case 'folder_moved':
 			return 'was moved';
+		case 'file_restored':
+			return 'was restored';
 		case 'share_created':
 			return 'was shared';
 		case 'share_revoked':
 			return 'share was revoked';
+		case 'share_updated':
+			return 'share was updated';
+		case 'share_received':
+			return 'was shared with you';
+		case 'share_permission_changed':
+			return 'permissions were changed';
+		case 'share_revoked_from_user':
+			return 'access was revoked';
+		case 'note_created':
+		case 'meeting_created':
+		case 'standup_created':
+		case 'kanban_created':
+		case 'decision_created':
+		case 'brainstorm_created':
+			return 'was created';
+		case 'note_edited':
+		case 'note_modified':
+		case 'meeting_note_modified':
+		case 'standup_modified':
+		case 'kanban_modified':
+		case 'decision_modified':
+		case 'brainstorm_board_modified':
+			return 'was updated';
 		default:
 			return 'was updated';
 	}

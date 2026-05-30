@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 import {
 	StickyNote,
@@ -9,6 +9,7 @@ import {
 	GitBranch,
 	Lightbulb
 } from 'lucide-svelte';
+import { listActivity, type ActivityItem } from '$lib/api/activity';
 
 export type ActivityType =
 	| 'file_uploaded'
@@ -17,19 +18,30 @@ export type ActivityType =
 	| 'file_deleted'
 	| 'file_renamed'
 	| 'file_moved'
+	| 'file_restored'
 	| 'folder_created'
 	| 'folder_deleted'
 	| 'folder_renamed'
 	| 'folder_moved'
 	| 'share_created'
 	| 'share_revoked'
+	| 'share_updated'
+	| 'share_received'
+	| 'share_permission_changed'
+	| 'share_revoked_from_user'
 	| 'note_created'
 	| 'note_edited'
+	| 'note_modified'
 	| 'meeting_created'
+	| 'meeting_note_modified'
 	| 'standup_created'
+	| 'standup_modified'
 	| 'kanban_created'
+	| 'kanban_modified'
 	| 'decision_created'
-	| 'brainstorm_created';
+	| 'decision_modified'
+	| 'brainstorm_created'
+	| 'brainstorm_board_modified';
 
 export interface Activity {
 	id: string;
@@ -39,6 +51,7 @@ export interface Activity {
 	details?: string; // Additional context
 	artifactId?: string;
 	moduleKey?: string;
+	accessible?: boolean;
 }
 
 const MAX_ACTIVITIES = 50;
@@ -131,7 +144,167 @@ function createActivityStore() {
 
 export const activityStore = createActivityStore();
 
+// ============================================================================
+// Server Activity Store
+// ============================================================================
+
+export interface ServerActivityState {
+	items: Activity[];
+	loading: boolean;
+	error: string | null;
+	hasMore: boolean;
+	cursor: { before_timestamp: string; before_id: string } | null;
+}
+
+function mapServerItemToActivity(item: ActivityItem): Activity {
+	const type = serverActionToActivityType(item.action);
+	const moduleKey = inferModuleKey(item.resource_type, item.action);
+
+	return {
+		id: item.id,
+		type,
+		fileName: item.resource_name || 'Unknown',
+		timestamp: item.timestamp,
+		artifactId: item.resource_id,
+		moduleKey,
+		accessible: true // Server already filters by permission
+	};
+}
+
+function serverActionToActivityType(action: string): ActivityType {
+	const directMap: Record<string, ActivityType> = {
+		file_uploaded: 'file_uploaded',
+		file_modified: 'file_modified',
+		file_renamed: 'file_renamed',
+		file_moved: 'file_moved',
+		file_deleted: 'file_deleted',
+		file_restored: 'file_restored',
+		folder_created: 'folder_created',
+		folder_renamed: 'folder_renamed',
+		folder_moved: 'folder_moved',
+		folder_deleted: 'folder_deleted',
+		share_created: 'share_created',
+		share_revoked: 'share_revoked',
+		share_updated: 'share_updated',
+		share_received: 'share_received',
+		share_permission_changed: 'share_permission_changed',
+		share_revoked_from_user: 'share_revoked_from_user',
+		note_modified: 'note_modified',
+		meeting_note_modified: 'meeting_note_modified',
+		decision_modified: 'decision_modified',
+		standup_modified: 'standup_modified',
+		kanban_modified: 'kanban_modified',
+		brainstorm_board_modified: 'brainstorm_board_modified'
+	};
+	return directMap[action] || 'file_uploaded';
+}
+
+function inferModuleKey(resourceType: string, action: string): string | undefined {
+	if (resourceType === 'share') return 'shares';
+	if (resourceType !== 'module') return undefined;
+	if (action.includes('brainstorm')) return 'brainstorming';
+	if (action.includes('meeting')) return 'meetings';
+	if (action.includes('decision')) return 'decisions';
+	if (action.includes('standup')) return 'standups';
+	if (action.includes('kanban')) return 'kanban';
+	if (action.includes('note')) return 'notes';
+	return undefined;
+}
+
+function createServerActivityStore() {
+	const { subscribe, set, update } = writable<ServerActivityState>({
+		items: [],
+		loading: false,
+		error: null,
+		hasMore: true,
+		cursor: null
+	});
+
+	async function fetchItems(limit = 50) {
+		update((s) => ({ ...s, loading: true, error: null }));
+		try {
+			const response = await listActivity({ limit });
+			const mapped = response.items.map(mapServerItemToActivity);
+			set({
+				items: mapped,
+				loading: false,
+				error: null,
+				hasMore: response.next_cursor !== null,
+				cursor: response.next_cursor
+					? {
+							before_timestamp: response.next_cursor.before_timestamp,
+							before_id: response.next_cursor.before_id
+						}
+					: null
+			});
+		} catch (err) {
+			set({
+				items: [],
+				loading: false,
+				error: err instanceof Error ? err.message : 'Failed to load activity',
+				hasMore: true,
+				cursor: null
+			});
+		}
+	}
+
+	async function loadMore(limit = 50) {
+		const state = get({ subscribe });
+		if (state.loading || !state.hasMore || !state.cursor) return;
+
+		update((s) => ({ ...s, loading: true, error: null }));
+		try {
+			const response = await listActivity({
+				limit,
+				before_timestamp: state.cursor.before_timestamp,
+				before_id: state.cursor.before_id
+			});
+			const mapped = response.items.map(mapServerItemToActivity);
+			update((s) => ({
+				...s,
+				items: [...s.items, ...mapped],
+				loading: false,
+				hasMore: response.next_cursor !== null,
+				cursor: response.next_cursor
+					? {
+							before_timestamp: response.next_cursor.before_timestamp,
+							before_id: response.next_cursor.before_id
+						}
+					: null
+			}));
+		} catch (err) {
+			update((s) => ({
+				...s,
+				loading: false,
+				error: err instanceof Error ? err.message : 'Failed to load more activity'
+			}));
+		}
+	}
+
+	function reset() {
+		set({
+			items: [],
+			loading: false,
+			error: null,
+			hasMore: true,
+			cursor: null
+		});
+	}
+
+	return {
+		subscribe,
+		fetch: fetchItems,
+		loadMore,
+		reset
+	};
+}
+
+export const serverActivityStore = createServerActivityStore();
+
+// ============================================================================
 // Helper function to get activity display info
+// ============================================================================
+
 export function getActivityDisplay(activity: Activity): {
 	icon: any;
 	title: string;
@@ -185,6 +358,13 @@ export function getActivityDisplay(activity: Activity): {
 					: `Moved ${activity.fileName}`,
 				color: 'text-info'
 			};
+		case 'file_restored':
+			return {
+				icon: '♻️',
+				title: 'File Restored',
+				description: `Restored ${activity.fileName}`,
+				color: 'text-success'
+			};
 		case 'folder_created':
 			return {
 				icon: '📁',
@@ -231,6 +411,34 @@ export function getActivityDisplay(activity: Activity): {
 				description: `Revoked share link for ${activity.fileName}`,
 				color: 'text-warning'
 			};
+		case 'share_updated':
+			return {
+				icon: '🔗',
+				title: 'Share Link Updated',
+				description: `Updated share link for ${activity.fileName}`,
+				color: 'text-primary'
+			};
+		case 'share_received':
+			return {
+				icon: '📥',
+				title: 'Share Received',
+				description: `Received share for ${activity.fileName}`,
+				color: 'text-success'
+			};
+		case 'share_permission_changed':
+			return {
+				icon: '🔐',
+				title: 'Share Permission Changed',
+				description: `Changed permissions for ${activity.fileName}`,
+				color: 'text-warning'
+			};
+		case 'share_revoked_from_user':
+			return {
+				icon: '🚫',
+				title: 'Share Revoked',
+				description: `Share revoked for ${activity.fileName}`,
+				color: 'text-error'
+			};
 		case 'note_created':
 			return {
 				icon: StickyNote,
@@ -245,11 +453,25 @@ export function getActivityDisplay(activity: Activity): {
 				description: `Edited note ${activity.fileName}`,
 				color: '#ea580c'
 			};
+		case 'note_modified':
+			return {
+				icon: Pencil,
+				title: 'Note modified',
+				description: `Modified note ${activity.fileName}`,
+				color: '#ea580c'
+			};
 		case 'meeting_created':
 			return {
 				icon: CalendarDays,
 				title: 'Meeting note created',
 				description: `Created meeting note ${activity.fileName}`,
+				color: '#7c3aed'
+			};
+		case 'meeting_note_modified':
+			return {
+				icon: CalendarDays,
+				title: 'Meeting note modified',
+				description: `Modified meeting note ${activity.fileName}`,
 				color: '#7c3aed'
 			};
 		case 'standup_created':
@@ -259,11 +481,25 @@ export function getActivityDisplay(activity: Activity): {
 				description: `Created standup record ${activity.fileName}`,
 				color: '#2563eb'
 			};
+		case 'standup_modified':
+			return {
+				icon: ActivityIcon,
+				title: 'Standup record modified',
+				description: `Modified standup record ${activity.fileName}`,
+				color: '#2563eb'
+			};
 		case 'kanban_created':
 			return {
 				icon: Columns,
 				title: 'Kanban board created',
 				description: `Created kanban board ${activity.fileName}`,
+				color: '#ea580c'
+			};
+		case 'kanban_modified':
+			return {
+				icon: Columns,
+				title: 'Kanban board modified',
+				description: `Modified kanban board ${activity.fileName}`,
 				color: '#ea580c'
 			};
 		case 'decision_created':
@@ -273,11 +509,25 @@ export function getActivityDisplay(activity: Activity): {
 				description: `Recorded decision ${activity.fileName}`,
 				color: '#16a34a'
 			};
+		case 'decision_modified':
+			return {
+				icon: GitBranch,
+				title: 'Decision modified',
+				description: `Modified decision ${activity.fileName}`,
+				color: '#16a34a'
+			};
 		case 'brainstorm_created':
 			return {
 				icon: Lightbulb,
 				title: 'Idea board created',
 				description: `Created idea board ${activity.fileName}`,
+				color: '#ca8a04'
+			};
+		case 'brainstorm_board_modified':
+			return {
+				icon: Lightbulb,
+				title: 'Idea board modified',
+				description: `Modified idea board ${activity.fileName}`,
 				color: '#ca8a04'
 			};
 		default:
@@ -287,6 +537,30 @@ export function getActivityDisplay(activity: Activity): {
 				description: activity.fileName,
 				color: 'text-base-content'
 			};
+	}
+}
+
+export function getActivityHref(activity: Activity): string | null {
+	if (!activity.artifactId || activity.accessible === false) return null;
+
+	switch (activity.moduleKey) {
+		case 'notes':
+			return `/modules/notes/${activity.artifactId}`;
+		case 'meetings':
+			return `/modules/meetings/${activity.artifactId}`;
+		case 'standups':
+			return `/modules/standups/${activity.artifactId}`;
+		case 'decisions':
+			return `/modules/decisions/${activity.artifactId}`;
+		case 'brainstorming':
+			return `/modules/brainstorming/${activity.artifactId}`;
+		case 'kanban':
+			return '/modules/kanban';
+		case 'shares':
+			return `/modules/shares/${activity.artifactId}`;
+		default:
+			// Fallback for file-system artifacts
+			return `/files?preview=${activity.artifactId}`;
 	}
 }
 

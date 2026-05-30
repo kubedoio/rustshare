@@ -107,14 +107,6 @@
 		return map;
 	});
 
-	// Enrich activities with current names from the lookup map
-	let enrichedActivities = $derived(
-		($activityStore ?? []).map((a) => ({
-			...a,
-			fileName: a.artifactId ? (nameLookup.get(a.artifactId) ?? a.fileName) : a.fileName
-		}))
-	);
-
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
 
 	// ---------------------------------------------------------------------------
@@ -328,10 +320,7 @@
 			<!-- Left column -->
 			<div class="dashboard-main">
 				<MetricCards cards={summaryCards} />
-				<RecentActivity
-					activities={enrichedActivities.slice(0, 6)}
-					userName={$currentUser?.display_name}
-				/>
+				<RecentActivity userName={$currentUser?.display_name} />
 			</div>
 
 			<!-- Right column -->
