@@ -192,6 +192,11 @@ impl Share {
         }
     }
 
+    /// Checks if the share is active (not revoked and not expired).
+    pub fn is_active(&self) -> bool {
+        self.revoked_at.is_none() && !self.is_expired()
+    }
+
     /// Checks if the share link is password-protected (public shares only).
     pub fn is_password_protected(&self) -> bool {
         self.password_hash.is_some()

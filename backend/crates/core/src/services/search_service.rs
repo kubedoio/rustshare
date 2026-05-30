@@ -137,10 +137,21 @@ where
             };
 
             // Resolve permission for this user on this resource
-            let permission = self
+            let permission = match self
                 .permission_resolver
                 .resolve_permission(user_id, resource)
-                .await?;
+                .await
+            {
+                Ok(perm) => perm,
+                Err(e) => {
+                    tracing::warn!(
+                        "Permission resolution failed for resource {}: {}. Skipping.",
+                        result.id,
+                        e
+                    );
+                    continue;
+                }
+            };
 
             // Only include if user has view permission
             if permission.is_some() {
@@ -207,17 +218,17 @@ where
     }
 }
 
-// Tests disabled - require async_trait crate
-#[cfg(IGNORE)]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use crate::domain::{File, Folder, Share, SharePermissions};
+    use chrono::{Duration, Utc};
     use std::collections::HashMap;
     use std::sync::Mutex;
 
     // Mock SearchIndexRepository
     struct MockSearchRepo {
-        results: Mutex<HashMap<String, Vec<SearchResult>>>,
+        results: Mutex<HashMap<Uuid, Vec<SearchResult>>>,
     }
 
     impl MockSearchRepo {
@@ -227,11 +238,11 @@ mod tests {
             }
         }
 
-        fn add_result(&self, query: &str, result: SearchResult) {
+        fn add_result(&self, tenant_id: Uuid, result: SearchResult) {
             self.results
                 .lock()
                 .unwrap()
-                .entry(query.to_string())
+                .entry(tenant_id)
                 .or_default()
                 .push(result);
         }
@@ -240,52 +251,124 @@ mod tests {
     impl SearchIndexRepository for MockSearchRepo {
         async fn search(
             &self,
-            _tenant_id: Uuid,
-            query: &str,
+            tenant_id: Uuid,
+            _query: &str,
             _limit: usize,
         ) -> Result<Vec<SearchResult>> {
             let results = self.results.lock().unwrap();
-            Ok(results.get(query).cloned().unwrap_or_default())
+            Ok(results.get(&tenant_id).cloned().unwrap_or_default())
         }
     }
 
-    // Mock PermissionResolverOps
-    struct MockPermissionOps;
+    // Configurable Mock PermissionResolverOps
+    struct MockPermissionOps {
+        files: Mutex<HashMap<Uuid, File>>,
+        folders: Mutex<HashMap<Uuid, Folder>>,
+        shares: Mutex<Vec<Share>>,
+    }
 
-    #[async_trait::async_trait]
+    impl MockPermissionOps {
+        fn new() -> Self {
+            Self {
+                files: Mutex::new(HashMap::new()),
+                folders: Mutex::new(HashMap::new()),
+                shares: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn add_file(&self, file: File) {
+            self.files.lock().unwrap().insert(file.id, file);
+        }
+
+        fn add_folder(&self, folder: Folder) {
+            self.folders.lock().unwrap().insert(folder.id, folder);
+        }
+
+        fn add_share(&self, share: Share) {
+            self.shares.lock().unwrap().push(share);
+        }
+    }
+
     impl PermissionResolverOps for MockPermissionOps {
         async fn find_user_share(
             &self,
-            _file_id: Option<Uuid>,
-            _folder_id: Option<Uuid>,
-            _recipient_user_id: UserId,
-        ) -> Result<Option<crate::domain::Share>> {
-            Ok(None)
+            file_id: Option<Uuid>,
+            folder_id: Option<Uuid>,
+            recipient_user_id: UserId,
+        ) -> Result<Option<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .find(|s| {
+                    s.file_id == file_id
+                        && s.folder_id == folder_id
+                        && s.recipient_user_id == Some(recipient_user_id)
+                })
+                .cloned())
         }
 
         async fn find_group_shares(
             &self,
-            _file_id: Option<Uuid>,
-            _folder_id: Option<Uuid>,
-            _group_ids: &[Uuid],
-        ) -> Result<Vec<crate::domain::Share>> {
-            Ok(Vec::new())
+            file_id: Option<Uuid>,
+            folder_id: Option<Uuid>,
+            group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == file_id
+                        && s.folder_id == folder_id
+                        && s.recipient_group_id
+                            .map(|gid| group_ids.contains(&gid))
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect())
         }
 
-        async fn find_file_by_id(&self, id: Uuid) -> Result<Option<crate::domain::File>> {
-            Ok(Some(crate::domain::File::new(
-                "test.txt".to_string(),
-                "/test.txt".to_string(),
-                "hash".to_string(),
-                100,
-                "text/plain".to_string(),
-                None,
-                id, // owner is the same as requested user
-            )))
+        async fn find_user_shares_for_folders(
+            &self,
+            folder_ids: &[Uuid],
+            recipient_user_id: UserId,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.recipient_user_id == Some(recipient_user_id)
+                })
+                .cloned()
+                .collect())
         }
 
-        async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<crate::domain::Folder>> {
-            Ok(Some(crate::domain::Folder::new_root(id)))
+        async fn find_group_shares_for_folders(
+            &self,
+            folder_ids: &[Uuid],
+            group_ids: &[Uuid],
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.recipient_group_id
+                            .map(|gid| group_ids.contains(&gid))
+                            .unwrap_or(false)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
+            Ok(self.files.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
         async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
@@ -293,37 +376,267 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_search_filters_by_permission() {
-        let search_repo = Arc::new(MockSearchRepo::new());
-        let permission_ops = Arc::new(MockPermissionOps);
-        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
+    fn search_result(id: Uuid, name: &str, owner_id: Uuid) -> SearchResult {
+        SearchResult {
+            id,
+            resource_type: "file".to_string(),
+            name: name.to_string(),
+            path: format!("/{}", name),
+            owner_id,
+            updated_at: Utc::now(),
+        }
+    }
 
+    fn make_file(id: Uuid, name: &str, owner_id: UserId, tenant_id: Uuid) -> File {
+        File {
+            id,
+            name: name.to_string(),
+            path: format!("/{}", name),
+            content_hash: "hash".to_string(),
+            size: 100,
+            mime_type: "text/plain".to_string(),
+            parent_folder_id: None,
+            owner_id,
+            current_version: 1,
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
+            tenant_id,
+        }
+    }
+
+    fn make_share(
+        file_id: Uuid,
+        recipient_user_id: Uuid,
+        permissions: SharePermissions,
+        revoked_at: Option<chrono::DateTime<Utc>>,
+        expires_at: Option<chrono::DateTime<Utc>>,
+    ) -> Share {
+        Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: Some(Uuid::new_v4().to_string()),
+            permissions,
+            password_hash: None,
+            expires_at,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(recipient_user_id),
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at,
+            tenant_id: Uuid::new_v4(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_returns_own_files() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
         let service = SearchService::new(search_repo.clone(), permission_resolver);
 
         let user_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
 
-        // Add a search result
-        search_repo.add_result(
-            "document",
-            SearchResult {
-                id: file_id,
-                resource_type: "file".to_string(),
-                name: "document.txt".to_string(),
-                path: "/Documents/document.txt".to_string(),
-                owner_id: user_id,
-                updated_at: Utc::now(),
-            },
-        );
+        let file = make_file(file_id, "document.txt", user_id, tenant_id);
+        permission_ops.add_file(file);
+        search_repo.add_result(tenant_id, search_result(file_id, "document.txt", user_id));
 
-        let results = service
-            .search(user_id, tenant_id, "document", 10)
-            .await
-            .unwrap();
-
+        let results = service.search(user_id, tenant_id, "document", 10).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "document.txt");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_other_tenants() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let user_id = Uuid::new_v4();
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let file_a = Uuid::new_v4();
+        let file_b = Uuid::new_v4();
+
+        permission_ops.add_file(make_file(file_a, "tenant_a_doc.txt", user_id, tenant_a));
+        permission_ops.add_file(make_file(file_b, "tenant_b_doc.txt", user_id, tenant_b));
+
+        search_repo.add_result(tenant_a, search_result(file_a, "tenant_a_doc.txt", user_id));
+        search_repo.add_result(tenant_b, search_result(file_b, "tenant_b_doc.txt", user_id));
+
+        let results = service.search(user_id, tenant_a, "tenant", 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "tenant_a_doc.txt");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_unauthorized_shared_content() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let owner_id = Uuid::new_v4();
+        let other_user = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        permission_ops.add_file(make_file(file_id, "private.txt", owner_id, tenant_id));
+        search_repo.add_result(tenant_id, search_result(file_id, "private.txt", owner_id));
+
+        let results = service.search(other_user, tenant_id, "private", 10).await.unwrap();
+        assert!(results.is_empty(), "Unauthorized files should be excluded");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_deleted_files() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        // File is in the index but NOT in the permission ops (simulating deletion)
+        search_repo.add_result(tenant_id, search_result(file_id, "deleted.txt", user_id));
+
+        let results = service.search(user_id, tenant_id, "deleted", 10).await.unwrap();
+        assert!(results.is_empty(), "Deleted files should be excluded from search");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_revoked_shares() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        permission_ops.add_file(make_file(file_id, "shared.txt", owner_id, tenant_id));
+        permission_ops.add_share(make_share(
+            file_id,
+            recipient_id,
+            SharePermissions::View,
+            Some(Utc::now()), // revoked
+            None,
+        ));
+        search_repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
+
+        let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
+        assert!(results.is_empty(), "Revoked shares should be excluded from search");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_expired_shares() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        permission_ops.add_file(make_file(file_id, "shared.txt", owner_id, tenant_id));
+        permission_ops.add_share(make_share(
+            file_id,
+            recipient_id,
+            SharePermissions::View,
+            None,
+            Some(Utc::now() - Duration::hours(1)), // expired
+        ));
+        search_repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
+
+        let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
+        assert!(results.is_empty(), "Expired shares should be excluded from search");
+    }
+
+    #[tokio::test]
+    async fn test_search_excludes_hidden_metadata_and_sidecars() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let hidden_files = vec![
+            ".rustshare_hidden",
+            "events.jsonl",
+            "index.md",
+            "__primary__.md",
+            "config.editor.json",
+        ];
+
+        for name in &hidden_files {
+            let file_id = Uuid::new_v4();
+            permission_ops.add_file(make_file(file_id, name, user_id, tenant_id));
+            search_repo.add_result(tenant_id, search_result(file_id, name, user_id));
+        }
+
+        let results = service.search(user_id, tenant_id, "rustshare", 10).await.unwrap();
+        assert!(results.is_empty(), "Hidden metadata files should be excluded");
+    }
+
+    #[tokio::test]
+    async fn test_search_gracefully_handles_permission_errors() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        // File in index but not in ops (simulating stale index entry)
+        search_repo.add_result(tenant_id, search_result(file_id, "stale.txt", user_id));
+
+        // Search should succeed, just skip the stale result
+        let results = service.search(user_id, tenant_id, "stale", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_respects_limit() {
+        let search_repo = Arc::new(MockSearchRepo::new());
+        let permission_ops = Arc::new(MockPermissionOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops.clone()));
+        let service = SearchService::new(search_repo.clone(), permission_resolver);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        for i in 0..5 {
+            let file_id = Uuid::new_v4();
+            permission_ops.add_file(make_file(file_id, &format!("doc{}.txt", i), user_id, tenant_id));
+            search_repo.add_result(tenant_id, search_result(file_id, &format!("doc{}.txt", i), user_id));
+        }
+
+        let results = service.search(user_id, tenant_id, "doc", 3).await.unwrap();
+        assert_eq!(results.len(), 3, "Search should respect the limit");
+    }
+}
+
+#[cfg(test)]
+mod compilation_check {
+    #[test]
+    fn test_this_module_is_compiled() {
+        assert!(true);
     }
 }

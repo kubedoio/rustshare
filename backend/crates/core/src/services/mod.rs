@@ -10,6 +10,7 @@ mod notification_service;
 mod permission_resolver;
 mod scim_service;
 mod scim_v2_service;
+mod search_service;
 mod share_errors;
 mod share_service;
 mod thumbnail_service;
@@ -39,6 +40,7 @@ pub use notification_service::{
     CreateNotification, NotificationRepositoryOps, NotificationService,
 };
 pub use permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
+pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use scim_service::{
     GroupRecord, ScimAction, ScimEmail, ScimError, ScimGroup, ScimGroupResult, ScimMember,
     ScimName, ScimRepository, ScimService, ScimUser, ScimUserResult,
