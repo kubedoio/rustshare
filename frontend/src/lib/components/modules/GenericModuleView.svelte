@@ -4,6 +4,8 @@
 	import { createFromTemplate } from '$lib/api/modules';
 	import { activityStore, type ActivityType } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import { getModuleObjectHref, getModuleRootContents } from '$lib/modules/modulePages';
@@ -124,9 +126,13 @@
 			</div>
 		{/if}
 		{#if $folderContentsQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $folderContentsQuery.isError}
+			<ErrorState
+				title="Failed to load folder contents"
+				message={$folderContentsQuery.error?.message || 'Unknown error'}
+				onRetry={() => $folderContentsQuery.refetch()}
+			/>
 		{:else if visibleFolders.length === 0 && visibleFiles.length === 0}
 			<EmptyState
 				icon={Folder}

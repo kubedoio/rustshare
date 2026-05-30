@@ -20,6 +20,8 @@
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
+	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { Share2, Clock, Package } from 'lucide-svelte';
 
 	// ---------------------------------------------------------------------------
@@ -108,6 +110,10 @@
 	});
 
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
+	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError || $moduleSummariesQuery.isError);
+	let errorMessage = $derived(
+		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || $moduleSummariesQuery.error?.message || 'Unknown error'
+	);
 
 	// ---------------------------------------------------------------------------
 	// Quick actions

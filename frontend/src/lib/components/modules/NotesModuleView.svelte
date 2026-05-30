@@ -3,6 +3,8 @@
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import {
 		FileText,
 		Plus,
@@ -263,9 +265,13 @@
 			</div>
 		{/if}
 		{#if $notesQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $notesQuery.isError}
+			<ErrorState
+				title="Failed to load notes"
+				message={$notesQuery.error?.message || 'Unknown error'}
+				onRetry={() => $notesQuery.refetch()}
+			/>
 		{:else if recentNotes.length === 0}
 			<EmptyState
 				icon={'📝'}
