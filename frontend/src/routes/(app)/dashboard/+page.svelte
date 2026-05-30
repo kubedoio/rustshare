@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
+	import { queryClient } from '$lib/query-client';
 	import { listAllFiles } from '$lib/api/files';
-	import { createFromTemplate } from '$lib/api/modules';
+	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
 	import { createNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { createBrainstormBoard } from '$lib/api/brainstorming';
@@ -10,26 +11,16 @@
 	import { activityStore } from '$lib/stores/activity';
 	import { filterUserVisibleEntries, isInternalRustShareFile } from '$lib/utils/artifactVisibility';
 	import { getModuleObjectHref, resolveModuleFolderId } from '$lib/modules/modulePages';
-	import { getEnabledModules, getModuleByKey } from '$lib/modules/registry';
+	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
 	import { todayDateString } from '$lib/utils/dashboard';
-	import type { ModuleSummary } from '$lib/api/types';
-	import type { ModuleDefinition } from '$lib/modules/registry';
+	import type { ModuleSummary, ModuleConfig } from '$lib/api/types';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import {
-		CalendarDays,
-		Columns,
-		Share2,
-		FileText,
-		Clock,
-		Package,
-		Lightbulb,
-		CheckCircle2
-	} from 'lucide-svelte';
+	import { Share2, Clock, Package } from 'lucide-svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -38,7 +29,7 @@
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: unknown;
+		icon: unknown | string;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -53,15 +44,23 @@
 		queryFn: () => listAllFiles()
 	});
 
+	const enabledModulesQuery = createQuery({
+		queryKey: ['enabled-modules'],
+		queryFn: () => listEnabledModules()
+	});
+
 	const moduleSummariesQuery = createQuery({
 		queryKey: ['workspace-module-summaries'],
 		queryFn: async () => {
 			const { getModuleSummary } = await import('$lib/api/modules');
-			const modules = getEnabledModules();
+			const modules = await queryClient.fetchQuery({
+				queryKey: ['enabled-modules'],
+				queryFn: () => listEnabledModules()
+			});
 			const results = await Promise.all(
 				modules.map(async (m) => {
 					try {
-						const summary: ModuleSummary = await getModuleSummary(m.key);
+						const summary: ModuleSummary = await getModuleSummary(m.module_key);
 						return { module: m, summary };
 					} catch {
 						return null;
@@ -69,7 +68,7 @@
 				})
 			);
 			return results.filter(
-				(r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null
+				(r): r is { module: ModuleConfig; summary: ModuleSummary } => r !== null
 			);
 		}
 	});
@@ -116,7 +115,7 @@
 		}))
 	);
 
-	let isLoading = $derived($allFilesQuery.isLoading || $moduleSummariesQuery.isLoading);
+	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
 
 	// ---------------------------------------------------------------------------
 	// Quick actions
@@ -128,15 +127,12 @@
 	let decisionTitle = $state('');
 	let decisionTitleError = $state('');
 
-	async function handleNewNote() {
+	async function handleNewNote(rootPath?: string | null) {
 		if (creating) return;
 		creating = true;
 		createError = '';
 		try {
-			const notesModule = getModuleByKey('notes');
-			const parentFolderId = notesModule?.rootPath
-				? await resolveModuleFolderId(notesModule.rootPath)
-				: null;
+			const parentFolderId = rootPath ? await resolveModuleFolderId(rootPath) : null;
 			const result = await createNote({
 				title: 'Untitled Note',
 				content: '# Untitled Note\n\n',
@@ -234,48 +230,48 @@
 		}
 	}
 
-	const quickActions: QuickAction[] = [
-		{
-			label: 'New note',
-			subtitle: 'Create a new note',
-			icon: FileText,
-			iconColor: '#ea580c',
-			iconBg: 'rgba(234, 88, 12, 0.1)',
-			onClick: handleNewNote
-		},
-		{
-			label: 'New meeting note',
-			subtitle: 'Record a meeting',
-			icon: CalendarDays,
-			iconColor: '#7c3aed',
-			iconBg: 'rgba(124, 58, 237, 0.1)',
-			onClick: handleNewMeeting
-		},
-		{
-			label: 'New decision record',
-			subtitle: 'Capture a decision',
-			icon: CheckCircle2,
-			iconColor: '#16a34a',
-			iconBg: 'rgba(22, 163, 74, 0.1)',
-			onClick: handleNewDecision
-		},
-		{
-			label: 'New Kanban board',
-			subtitle: 'Create a new board',
-			icon: Columns,
-			iconColor: '#ea580c',
-			iconBg: 'rgba(234, 88, 12, 0.1)',
-			onClick: handleNewKanban
-		},
-		{
-			label: 'New idea board',
-			subtitle: 'Brainstorm and capture ideas',
-			icon: Lightbulb,
-			iconColor: '#ca8a04',
-			iconBg: 'rgba(202, 138, 4, 0.1)',
-			onClick: handleNewBrainstorm
-		}
-	];
+	const quickActions = $derived(
+		($enabledModulesQuery.data ?? [])
+			.filter((m) => m.enabled)
+			.filter((m) => {
+				const dashboard = m.ui_config?.dashboard;
+				return dashboard?.enabled !== false && dashboard?.primaryAction;
+			})
+			.map((module): QuickAction => {
+				const primaryAction = module.ui_config?.dashboard?.primaryAction;
+				let handler: () => Promise<void> | void;
+
+				switch (module.module_key) {
+					case 'notes':
+						handler = () => handleNewNote(module.root_path);
+						break;
+					case 'meetings':
+						handler = handleNewMeeting;
+						break;
+					case 'decisions':
+						handler = handleNewDecision;
+						break;
+					case 'kanban':
+						handler = handleNewKanban;
+						break;
+					case 'brainstorming':
+						handler = handleNewBrainstorm;
+						break;
+					default:
+						handler = () => runModulePrimaryAction(module, primaryAction);
+						break;
+				}
+
+				return {
+					label: primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`,
+					subtitle: module.description,
+					icon: module.icon,
+					iconColor: '#ea580c',
+					iconBg: 'rgba(234, 88, 12, 0.1)',
+					onClick: handler
+				};
+			})
+	);
 
 	const summaryCards = $derived([
 		{

@@ -4,6 +4,8 @@ import {
 	getModuleDashboardWidgetConfig,
 	getModulePageConfig,
 	getModuleSidebarConfig,
+	getEnabledSidebarModules,
+	getEnabledDashboardModules,
 	normalizeModuleUiConfig
 } from './workspaceSurface';
 
@@ -232,6 +234,98 @@ describe('workspace surface contract drift guard', () => {
 		expect(normalized.page?.route).toBe('/modules/notes');
 		expect(normalized.page?.renderer).toBe('notes');
 		expect(normalized.page?.layout).toBe('list-grid');
+	});
+
+	it('filters disabled modules from sidebar', () => {
+		const enabled = {
+			...baseModule,
+			ui_config: {
+				sidebar: { enabled: true, order: 1, icon: 'sticky-note', label: 'Notes' }
+			}
+		} satisfies ModuleConfig;
+		const disabled = {
+			...baseModule,
+			module_key: 'disabled',
+			enabled: false,
+			ui_config: {
+				sidebar: { enabled: true, order: 2, icon: 'folder', label: 'Disabled' }
+			}
+		} satisfies ModuleConfig;
+		const sidebarHidden = {
+			...baseModule,
+			module_key: 'hidden',
+			enabled: true,
+			ui_config: {
+				sidebar: { enabled: false, order: 3, icon: 'folder', label: 'Hidden' }
+			}
+		} satisfies ModuleConfig;
+
+		const result = getEnabledSidebarModules([enabled, disabled, sidebarHidden]);
+		expect(result.map((m) => m.module_key)).toEqual(['notes']);
+	});
+
+	it('filters disabled modules from dashboard', () => {
+		const enabled = {
+			...baseModule,
+			ui_config: {
+				dashboard: {
+					enabled: true,
+					order: 1,
+					widget: {
+						enabled: true,
+						type: 'latest-notes',
+						title: 'Notes',
+						description: 'Recent notes.',
+						size: 'small' as const,
+						columns: { desktop: 3, tablet: 6, mobile: 12 },
+						maxItems: 4
+					}
+				}
+			}
+		} satisfies ModuleConfig;
+		const disabled = {
+			...baseModule,
+			module_key: 'disabled',
+			enabled: false,
+			ui_config: {
+				dashboard: {
+					enabled: true,
+					order: 2,
+					widget: {
+						enabled: true,
+						type: 'generic-module-summary',
+						title: 'Disabled',
+						description: 'Disabled module.',
+						size: 'small' as const,
+						columns: { desktop: 3, tablet: 6, mobile: 12 },
+						maxItems: 4
+					}
+				}
+			}
+		} satisfies ModuleConfig;
+		const dashboardHidden = {
+			...baseModule,
+			module_key: 'hidden',
+			enabled: true,
+			ui_config: {
+				dashboard: {
+					enabled: false,
+					order: 3,
+					widget: {
+						enabled: false,
+						type: 'generic-module-summary',
+						title: 'Hidden',
+						description: 'Hidden module.',
+						size: 'small' as const,
+						columns: { desktop: 3, tablet: 6, mobile: 12 },
+						maxItems: 4
+					}
+				}
+			}
+		} satisfies ModuleConfig;
+
+		const result = getEnabledDashboardModules([enabled, disabled, dashboardHidden]);
+		expect(result.map((m) => m.module_key)).toEqual(['notes']);
 	});
 
 	it('does not drift from canonical default widget types for all predefined modules', () => {

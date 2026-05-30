@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { ChevronRight } from 'lucide-svelte';
+	import ModuleIcon from './ModuleIcon.svelte';
 
 	import type { Component } from 'svelte';
 
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: unknown;
+		icon: unknown | string;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -28,7 +29,12 @@
 			{@const ActionIcon = action.icon as Component}
 			<button type="button" class="action-item" onclick={action.onClick} disabled={creating}>
 				<div class="action-icon" style="background: {action.iconBg}; color: {action.iconColor};">
-					<ActionIcon size={18} />
+					{#if typeof action.icon === 'string'}
+						<ModuleIcon name={action.icon} size={18} />
+					{:else}
+						{@const ActionIcon = action.icon as Component}
+						<ActionIcon size={18} />
+					{/if}
 				</div>
 				<div class="action-body">
 					<span class="action-label">{action.label}</span>

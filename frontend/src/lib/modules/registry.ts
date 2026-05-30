@@ -544,7 +544,7 @@ export const DEFAULT_WORKSPACE_SURFACE: WorkspaceSurfaceDefinition = {
 import { writable, get } from 'svelte/store';
 import { listEnabledModules } from '$lib/api/modules';
 
-function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition {
+export function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition {
 	const ui = normalizeModuleUiConfig(config);
 	const dashboard = ui.dashboard!;
 	const widget = dashboard.widget!;

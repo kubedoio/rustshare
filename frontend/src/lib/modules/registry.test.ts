@@ -3,7 +3,8 @@ import {
 	getAllModules,
 	getEnabledModules,
 	getSidebarModulesForUser,
-	isValidIconKey
+	isValidIconKey,
+	moduleConfigToDefinition
 } from './registry';
 
 describe('Module Registry', () => {
@@ -73,6 +74,36 @@ describe('Module Registry', () => {
 				expect(module.rootPath).toBe(expected);
 			}
 		}
+	});
+
+	it('moduleConfigToDefinition reflects backend enabled flag', () => {
+		const backendModule = {
+			id: 'module_notes',
+			module_key: 'notes',
+			display_name: 'Notes',
+			description: 'Notes module',
+			enabled: false,
+			root_path: '/Workspace/Notes',
+			renderer: 'notes',
+			default_template: 'template_default_note',
+			icon: 'sticky-note',
+			schema_version: '1.0',
+			permissions: {
+				admin_can_configure: true,
+				workspace_members_can_use: true,
+				allow_public_share: false,
+				allow_internal_share: true
+			},
+			ai_indexing: { enabled: true },
+			audit: { enabled: true },
+			created_at: '2026-04-30T00:00:00Z',
+			updated_at: '2026-04-30T00:00:00Z'
+		};
+
+		const def = moduleConfigToDefinition(backendModule as any);
+		expect(def.enabled).toBe(false);
+		expect(def.key).toBe('notes');
+		expect(def.displayName).toBe('Notes');
 	});
 
 	it('does not drift from approved icon registry', () => {
