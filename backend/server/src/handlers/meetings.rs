@@ -50,7 +50,7 @@ pub async fn get_meeting(
 ) -> Result<Json<MeetingNote>, AppError> {
     let meeting = state
         .meeting_service
-        .get_meeting(meeting_id, auth.user_id)
+        .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(meeting))
@@ -74,6 +74,7 @@ pub async fn update_meeting(
         .update_meeting(
             meeting_id,
             auth.user_id,
+            auth.tenant_id,
             req.title,
             req.content,
             req.attendees,

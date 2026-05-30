@@ -526,26 +526,14 @@ impl NoteService {
     }
 
     /// Find or create the target folder under workspace.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical /Workspace/<Module> path. Legacy roots are read-only.
     async fn ensure_target_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, NoteError> {
-        // Legacy: try to find existing folder at root
-        let root_folders = self
-            .metadata_store
-            .list_folders(None, owner_id, tenant_id)
-            .await
-            .map_err(|e| NoteError::Database(e.to_string()))?;
-
-        if let Some(target_folder) = root_folders
-            .into_iter()
-            .find(|f| f.name == self.folder_name)
-        {
-            return Ok(target_folder);
-        }
-
-        // New: find or create Workspace, then folder under it
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -832,8 +820,11 @@ impl NoteService {
     }
 
     /// Read a note by file ID.
-    pub async fn get_note(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
+    pub async fn get_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
 
         let meta = self
             .load_metadata(file_id, user_id, file.tenant_id)
@@ -875,11 +866,15 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         content: String,
         color: Option<String>,
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Update file content via edit_file (overwrite mode)
@@ -970,9 +965,13 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         new_title: String,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Load metadata BEFORE renaming so sidecar is found by old name
@@ -1047,8 +1046,11 @@ impl NoteService {
     }
 
     /// Delete a note (and its sidecar).
-    pub async fn delete_note(&self, file_id: Uuid, user_id: UserId) -> Result<(), NoteError> {
+    pub async fn delete_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<(), NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // If public, invalidate share index
@@ -1094,9 +1096,13 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         target_folder_id: Option<Uuid>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         let moved_file = if is_folder_backed {
@@ -1144,8 +1150,8 @@ impl NoteService {
     }
 
     /// Duplicate a note (creates a copy of the bundle with new IDs).
-    pub async fn duplicate_note(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
-        let original = self.get_note(file_id, user_id).await?;
+    pub async fn duplicate_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Note, NoteError> {
+        let original = self.get_note(file_id, user_id, tenant_id).await?;
         let original_file = self.file_service.get_file(file_id, user_id).await?;
         let tenant_id = original_file.tenant_id;
         let is_folder_backed = Self::is_folder_backed_note(&original_file);
@@ -1516,8 +1522,12 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
 
         let mut meta = self
             .load_metadata(file_id, user_id, file.tenant_id)
