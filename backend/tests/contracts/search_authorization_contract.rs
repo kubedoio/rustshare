@@ -5,7 +5,7 @@
 //! - Q-02: Search excludes files user cannot access
 //! - Q-03: Deleted files do not appear in search
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// Q-01-01: Search returns files user has access to (own files)
 #[tokio::test]

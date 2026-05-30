@@ -111,7 +111,7 @@ pub async fn sync_handler(
     let client_identity = resolve_ws_client_identity(&state, &headers, &query).await?;
 
     match &client_identity {
-        ClientIdentity::User(user_id) => {
+        ClientIdentity::User { user_id, .. } => {
             info!("WebSocket connection established for user {}", user_id);
         }
         ClientIdentity::ShareViewer {
@@ -162,7 +162,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
     // Send events to client
     let send_task = tokio::spawn(async move {
         // Wait briefly for catch-up request (only for authenticated users)
-        if let ClientIdentity::User(user_id) = &client_identity_for_task {
+        if let ClientIdentity::User { user_id, .. } = &client_identity_for_task {
             tokio::select! {
                 last_seen_id = &mut recv_task => {
                     if let Ok(Some(last_id_str)) = last_seen_id {
@@ -258,7 +258,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
     }
 
     match &client_identity {
-        ClientIdentity::User(user_id) => {
+        ClientIdentity::User { user_id, .. } => {
             info!("WebSocket connection closed for user {}", user_id);
         }
         ClientIdentity::ShareViewer {

@@ -9,7 +9,7 @@
 //! - A-06: AI handles revoked/deleted content
 //! - A-07: AI request audit logging
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// A-01: AI search only returns authorized content
 #[tokio::test]

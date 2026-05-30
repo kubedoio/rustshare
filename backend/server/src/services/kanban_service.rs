@@ -584,13 +584,19 @@ impl KanbanService {
         card_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
 
         if meta.labels.contains(&label_id) {
             return Ok(());
@@ -624,13 +630,19 @@ impl KanbanService {
         card_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
 
         let initial_len = meta.labels.len();
         meta.labels.retain(|l| l != &label_id);
@@ -665,13 +677,19 @@ impl KanbanService {
         card_id: Uuid,
         assignee_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
 
         if meta.assignees.contains(&assignee_id) {
             return Ok(());
@@ -705,13 +723,19 @@ impl KanbanService {
         card_id: Uuid,
         assignee_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
-        let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_card_metadata(&card_folder, user_id).await?
 
         let initial_len = meta.assignees.len();
         meta.assignees.retain(|a| a != &assignee_id);
@@ -1066,6 +1090,7 @@ impl KanbanService {
         board_id: Uuid,
         input: CreateLabelInput,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanLabel, KanbanError> {
         self.validate_color(&input.color)?;
 
@@ -1075,7 +1100,11 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
 
         let label = KanbanLabel {
             id: format!("label_{}", &Uuid::new_v4().to_string()[..8]),
@@ -1098,6 +1127,7 @@ impl KanbanService {
         label_id: String,
         input: UpdateLabelInput,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanLabel, KanbanError> {
         if let Some(ref color) = input.color {
             self.validate_color(color)?;
@@ -1109,7 +1139,11 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
 
         let mut found = false;
         let mut updated_label = None;
@@ -1146,6 +1180,7 @@ impl KanbanService {
         board_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let board_folder = self
             .folder_service
@@ -1153,7 +1188,11 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let mut meta = self.load_board_metadata(&board_folder, user_id).await?
 
         let initial_len = meta.labels.len();
         meta.labels.retain(|l| l.id != label_id);
@@ -1479,12 +1518,17 @@ impl KanbanService {
         &self,
         card_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanCard, KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         self.load_card(&card_folder, user_id).await
     }
@@ -1493,12 +1537,17 @@ impl KanbanService {
         &self,
         card_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanCardDetail, KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         let summary = self.load_card(&card_folder, user_id).await?;
 
@@ -1525,7 +1574,7 @@ impl KanbanService {
         let attachments = match frontmatter_attachments {
             Some(a) if !a.is_empty() => a,
             _ => {
-                self.load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
+                self.load_card_attachments(&card_folder, user_id, tenant_id)
                     .await?
             }
         };

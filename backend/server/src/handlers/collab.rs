@@ -164,7 +164,7 @@ pub async fn collab_handler(
         query.doc_id, client_identity
     );
 
-    let ClientIdentity::User(user_id) = &client_identity else {
+    let ClientIdentity::User { user_id, tenant_id } = &client_identity else {
         return Err((
             StatusCode::UNAUTHORIZED,
             "note autosave requires an authenticated user".to_string(),
@@ -176,7 +176,7 @@ pub async fn collab_handler(
 
     state
         .note_service
-        .get_note(file_id, *user_id)
+        .get_note(file_id, *user_id, *tenant_id)
         .await
         .map_err(|e| {
             warn!(
@@ -189,7 +189,7 @@ pub async fn collab_handler(
     let room = state.collab_rooms.get_or_create(&query.doc_id, None).await;
 
     // Track user for persistence attribution
-    if let ClientIdentity::User(user_id) = &client_identity {
+    if let ClientIdentity::User { user_id, .. } = &client_identity {
         room.set_last_user(*user_id).await;
     }
 
@@ -205,7 +205,7 @@ async fn handle_collab_socket(
     doc_id: String,
     client_identity: ClientIdentity,
 ) {
-    if let ClientIdentity::User(user_id) = &client_identity {
+    if let ClientIdentity::User { user_id, .. } = &client_identity {
         room.set_last_user(*user_id).await;
     }
 
@@ -291,7 +291,7 @@ async fn handle_collab_text_message(
 
     match request {
         CollabTextRequest::NoteSave { content } => {
-            let ClientIdentity::User(user_id) = client_identity else {
+            let ClientIdentity::User { user_id, tenant_id } = client_identity else {
                 return Err("note autosave requires an authenticated user".to_string());
             };
             let file_id = Uuid::parse_str(doc_id)
@@ -299,7 +299,7 @@ async fn handle_collab_text_message(
 
             state
                 .note_service
-                .save_note(file_id, *user_id, content.clone(), None, None)
+                .save_note(file_id, *user_id, *tenant_id, content.clone(), None, None)
                 .await
                 .map_err(|e| format!("failed to save note: {}", e))?;
 

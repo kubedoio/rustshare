@@ -8,7 +8,7 @@
 //! - ST-05: Storage usage is accurately tracked
 //! - ST-06: Cross-replica consistency
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// ST-01: Metadata/blob consistency can be verified
 #[tokio::test]

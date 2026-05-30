@@ -209,13 +209,17 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<BrainstormBoard, BrainstormError> {
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
             .map_err(BrainstormError::from)?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
 
         // Verify it's under /Brainstorming (legacy) or /Workspace/Brainstorming
         if !(folder.path.starts_with("/Brainstorming")
@@ -231,7 +235,7 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<String, BrainstormError> {
         tracing::info!(board_id = %board_id, user_id = %user_id, "get_board_source: start");
 
@@ -243,6 +247,11 @@ impl BrainstormingService {
                 tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "get_board_source: folder lookup failed");
                 BrainstormError::from(e)
             })?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "get_board_source: folder found");
 
         let file = self
@@ -320,6 +329,11 @@ impl BrainstormingService {
                 tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "save_board_source: folder lookup failed");
                 BrainstormError::from(e)
             })?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "save_board_source: folder found");
 
         // Update board.excalidraw
@@ -388,6 +402,10 @@ impl BrainstormingService {
             .await
             .map_err(BrainstormError::from)?;
 
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         let preview_file = self
             .find_file_in_folder(folder.id, user_id, "preview.png")
             .await?;
@@ -422,13 +440,17 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<(), BrainstormError> {
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
             .map_err(BrainstormError::from)?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
 
         if !(folder.path.starts_with("/Brainstorming")
             || folder.path.starts_with("/Workspace/Brainstorming"))

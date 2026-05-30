@@ -100,7 +100,7 @@ pub async fn get_note(
     auth: AuthenticatedUser,
     Path(note_id): Path<Uuid>,
 ) -> Result<Json<GetNoteResponse>, AppError> {
-    let note = state.note_service.get_note(note_id, auth.user_id).await?;
+    let note = state.note_service.get_note(note_id, auth.user_id, auth.tenant_id).await?;
 
     let public_url = note
         .metadata
@@ -152,6 +152,7 @@ pub async fn save_note(
         .save_note(
             note_id,
             auth.user_id,
+            auth.tenant_id,
             req.content,
             req.color,
             req.attachments,
@@ -183,7 +184,7 @@ pub async fn rename_note(
 ) -> Result<Json<GetNoteResponse>, AppError> {
     let note = state
         .note_service
-        .rename_note(note_id, auth.user_id, req.title)
+        .rename_note(note_id, auth.user_id, auth.tenant_id, req.title)
         .await?;
 
     let public_url = note
@@ -223,7 +224,7 @@ pub async fn move_note(
 ) -> Result<Json<GetNoteResponse>, AppError> {
     let note = state
         .note_service
-        .move_note(note_id, auth.user_id, req.target_folder_id)
+        .move_note(note_id, auth.user_id, auth.tenant_id, req.target_folder_id)
         .await?;
 
     let public_url = note
@@ -257,7 +258,7 @@ pub async fn delete_note(
 ) -> Result<StatusCode, AppError> {
     state
         .note_service
-        .delete_note(note_id, auth.user_id)
+        .delete_note(note_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -339,7 +340,7 @@ pub async fn toggle_visibility(
 ) -> Result<Json<VisibilityResponse>, AppError> {
     let note = state
         .note_service
-        .toggle_visibility(note_id, auth.user_id)
+        .toggle_visibility(note_id, auth.user_id, auth.tenant_id)
         .await?;
 
     let public_url = note
@@ -378,7 +379,7 @@ pub async fn duplicate_note(
     auth: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<DuplicateNoteResponse>), AppError> {
-    let note = state.note_service.duplicate_note(id, auth.user_id).await?;
+    let note = state.note_service.duplicate_note(id, auth.user_id, auth.tenant_id).await?;
 
     Ok((
         StatusCode::CREATED,

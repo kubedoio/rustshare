@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::services::brainstorming_service::BrainstormBoard;
+use crate::services::module_service::ModuleError;
 use crate::AppState;
 use rustshare_core::events::{AggregateType, BrainstormBoardModifiedPayload, Event, EventType};
 
@@ -24,10 +25,28 @@ pub struct ListBoardsResponse {
     pub boards: Vec<BrainstormBoard>,
 }
 
+async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
+    let module = state.module_service.get_module("brainstorming", tenant_id).await;
+    let module = match module {
+        Ok(m) => m,
+        Err(ModuleError::NotFound(_)) => {
+            return Err(AppError::forbidden("Brainstorming module is disabled"));
+        }
+        Err(e) => {
+            return Err(AppError::internal(e.to_string()));
+        }
+    };
+    if !module.enabled {
+        return Err(AppError::forbidden("Brainstorming module is disabled"));
+    }
+    Ok(())
+}
+
 pub async fn list_brainstorm_boards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<ListBoardsResponse>, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     let boards = state
         .brainstorming_service
         .list_boards(auth.user_id, auth.tenant_id)
@@ -62,6 +81,7 @@ pub async fn create_brainstorm_board(
     auth: AuthenticatedUser,
     Json(req): Json<CreateBoardRequest>,
 ) -> Result<(StatusCode, Json<CreateBoardResponse>), AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     // Validate title
     if req.title.trim().is_empty() {
         return Err(AppError::bad_request("Title cannot be empty"));
@@ -146,6 +166,7 @@ pub async fn get_brainstorm_board(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
 ) -> Result<Json<GetBoardResponse>, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     let board = state
         .brainstorming_service
         .get_board(board_id, auth.user_id, auth.tenant_id)
@@ -178,6 +199,7 @@ pub async fn get_brainstorm_board_source(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
 ) -> Result<Json<GetBoardSourceResponse>, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     tracing::info!(
         board_id = %board_id,
         user_id = %auth.user_id,
@@ -207,6 +229,7 @@ pub async fn save_brainstorm_board_source(
     Path(board_id): Path<Uuid>,
     Json(req): Json<SaveBoardSourceRequest>,
 ) -> Result<Json<GetBoardResponse>, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     tracing::info!(
         board_id = %board_id,
         user_id = %auth.user_id,
@@ -255,6 +278,7 @@ pub async fn update_brainstorm_board_preview(
     Path(board_id): Path<Uuid>,
     body: Bytes,
 ) -> Result<Json<GetBoardResponse>, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     let board = state
         .brainstorming_service
         .update_board_preview(board_id, auth.user_id, auth.tenant_id, body)
@@ -282,6 +306,7 @@ pub async fn delete_brainstorm_board(
     auth: AuthenticatedUser,
     Path(board_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    require_brainstorming_enabled(&state, auth.tenant_id).await?;
     state
         .brainstorming_service
         .delete_board(board_id, auth.user_id, auth.tenant_id)

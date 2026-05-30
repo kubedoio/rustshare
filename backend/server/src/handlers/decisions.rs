@@ -53,7 +53,7 @@ pub async fn get_decision(
 ) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
-        .get_decision(decision_id, auth.user_id)
+        .get_decision(decision_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(decision))
@@ -77,6 +77,7 @@ pub async fn update_decision(
         .update_decision(
             decision_id,
             auth.user_id,
+            auth.tenant_id,
             req.title,
             req.content,
             req.status,
@@ -113,7 +114,7 @@ pub async fn rename_decision(
 ) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
-        .rename_decision(decision_id, auth.user_id, req.title)
+        .rename_decision(decision_id, auth.user_id, auth.tenant_id, req.title)
         .await?;
 
     let payload = DecisionModifiedPayload {

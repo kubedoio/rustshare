@@ -6,7 +6,7 @@
 //! - F-03: File restore returns correct version
 //! - F-04: Version history is immutable
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// F-01: File create creates exactly one version
 #[tokio::test]
