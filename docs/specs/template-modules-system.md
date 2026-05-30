@@ -60,37 +60,37 @@ Index stores fast searchable projections.
   {
     "key": "notes",
     "displayName": "Notes",
-    "rootPath": "/Notes",
+    "rootPath": "/Workspace/Notes",
     "renderer": "notes"
   },
   {
     "key": "meetings",
     "displayName": "Meeting Notes",
-    "rootPath": "/Meetings",
+    "rootPath": "/Workspace/Meetings",
     "renderer": "meetings"
   },
   {
     "key": "standups",
     "displayName": "Standup Records",
-    "rootPath": "/Standups",
+    "rootPath": "/Workspace/Standups",
     "renderer": "standups"
   },
   {
     "key": "kanban",
     "displayName": "Kanban Dashboard",
-    "rootPath": "/Kanban",
+    "rootPath": "/Workspace/Kanban",
     "renderer": "kanban"
   },
   {
     "key": "decisions",
     "displayName": "Decisions",
-    "rootPath": "/Decisions",
+    "rootPath": "/Workspace/Decisions",
     "renderer": "decisions"
   },
   {
     "key": "shares",
     "displayName": "Shares",
-    "rootPath": "/Shares",
+    "rootPath": "/Workspace/Shares",
     "renderer": "shares"
   }
 ]
@@ -107,7 +107,7 @@ Required shape:
   "displayName": "Notes",
   "description": "Capture file-backed notes and reusable knowledge.",
   "enabled": true,
-  "rootPath": "/Notes",
+  "rootPath": "/Workspace/Notes",
   "renderer": "notes",
   "defaultTemplate": "template_default_note",
   "icon": "sticky-note",
@@ -220,7 +220,42 @@ Required shape:
 }
 ```
 
-## 7. Registry persistence
+## 7. Module root policy
+
+Canonical module root paths use the `/Workspace/<Module>` prefix.
+
+```text
+/Workspace/Notes
+/Workspace/Meetings
+/Workspace/Standups
+/Workspace/Kanban
+/Workspace/Decisions
+/Workspace/Brainstorming
+/Workspace/Shares
+```
+
+Legacy compatibility alias (read-only):
+
+```text
+/Notes
+/Meetings
+/Standups
+/Kanban
+/Decisions
+/Brainstorming
+/Shares
+```
+
+**Legacy Root Policy:**
+
+1. **Read compatibility** — Queries must remain visible for data stored at legacy roots. Listing operations must include both legacy and canonical paths.
+2. **Write canonical** — New items created from templates or module-specific services must be written exclusively under the canonical `/Workspace/<Module>` root. Services must not write new data to legacy roots.
+3. **No duplicate roots** — When ensuring a module root folder exists, the service must locate or create the folder under `/Workspace`. If the canonical folder already exists, it must be reused. Creation of a duplicate root is prohibited.
+4. **Explicit exceptions** — Any feature that requires write access to a legacy root must declare the exception in both this spec and `docs/contracts/template-module-contract.md`.
+
+New data must always write to the canonical `/Workspace/<Module>` path. Legacy paths are supported for read-fallback during migration but must not be used for new writes.
+
+## 8. Registry persistence
 
 Recommended default paths:
 
@@ -229,7 +264,7 @@ Recommended default paths:
 /.rustshare/system/templates/templates.json
 ```
 
-## 8. Startup behavior
+## 9. Startup behavior
 
 On application startup or workspace initialization:
 
@@ -238,11 +273,12 @@ On application startup or workspace initialization:
 3. Ensure predefined modules exist.
 4. Ensure predefined templates exist.
 5. Preserve admin changes.
-6. Ensure enabled module root folders exist.
-7. Do not delete disabled module data.
+6. Ensure enabled module root folders exist under the canonical `/Workspace/<Module>` path.
+7. Before creating a module root folder, verify the canonical path does not already exist. Reuse the existing folder; do not create a duplicate.
+8. Do not delete disabled module data.
 8. Do not overwrite custom templates.
 
-## 9. Create-from-template flow
+## 10. Create-from-template flow
 
 When a user creates an item from a template:
 
@@ -250,14 +286,14 @@ When a user creates an item from a template:
 2. Validate module enabled state.
 3. Load template.
 4. Validate form input.
-5. Resolve target path.
+5. Resolve target path to the canonical `/Workspace/<Module>` subtree.
 6. Create folder structure.
 7. Render default files.
 8. Create metadata sidecar.
 9. Append audit event.
 10. Refresh relevant indexes and dashboard summaries.
 
-## 10. Audit events
+## 11. Audit events
 
 Required event types:
 
