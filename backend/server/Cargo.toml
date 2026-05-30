@@ -133,6 +133,10 @@ path = "../tests/meetings_test.rs"
 name = "standups_test"
 path = "../tests/standups_test.rs"
 
+[[test]]
+name = "file_operations"
+path = "../tests/file_operations.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }

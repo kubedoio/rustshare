@@ -10,12 +10,12 @@
 //! Run with: cargo test --test file_operations -- --ignored
 
 use bytes::Bytes;
-use rustshare_core::domain::{File, FileVersion, User};
-use rustshare_core::services::FileService;
+use rustshare_core::domain::User;
+use rustshare_core::services::{FileService, FolderService};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
-use rustshare_core::events::EventBroadcaster;
+use rustshare_core::events::{AggregateType, EventBroadcaster, EventType};
 use rustshare_core::services::PermissionResolver;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
@@ -119,6 +119,143 @@ async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
 
 #[tokio::test]
 #[ignore] // Requires database and S3
+async fn test_file_upload_emits_audit_event() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+
+    // Create test user
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "audit_upload_user", tenant_id).await;
+
+    // Create FileService
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+
+    // Upload a file
+    let file_content = Bytes::from("Audit test content for upload event");
+    let uploaded_file = file_service
+        .upload_file(user.id, "audit-upload.txt".to_string(), None, file_content.clone(), "text/plain".to_string(), tenant_id)
+        .await
+        .expect("Failed to upload file");
+
+    // Verify that a durable FileUploaded event exists in the event store
+    let events = event_store
+        .get_events(uploaded_file.id, AggregateType::File)
+        .await
+        .expect("Failed to fetch events from event store");
+
+    assert!(!events.is_empty(), "File upload must emit at least one audit event");
+    let upload_event = events.iter().find(|e| e.event_type == EventType::FileUploaded);
+    assert!(
+        upload_event.is_some(),
+        "Events must contain a FileUploaded audit event"
+    );
+    let event = upload_event.unwrap();
+    assert_eq!(event.aggregate_id, uploaded_file.id);
+    assert_eq!(event.aggregate_type, AggregateType::File);
+    assert_eq!(event.user_id, user.id);
+
+    // Cleanup
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_file_delete_emits_audit_event() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "audit_delete_user", tenant_id).await;
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+
+    // Upload then delete
+    let file_content = Bytes::from("Content to delete");
+    let uploaded_file = file_service
+        .upload_file(user.id, "audit-delete.txt".to_string(), None, file_content, "text/plain".to_string(), tenant_id)
+        .await
+        .expect("Failed to upload file");
+
+    file_service
+        .delete_file(uploaded_file.id, user.id)
+        .await
+        .expect("Failed to delete file");
+
+    // Verify FileDeleted event exists
+    let events = event_store
+        .get_events(uploaded_file.id, AggregateType::File)
+        .await
+        .expect("Failed to fetch events");
+
+    let delete_event = events.iter().find(|e| e.event_type == EventType::FileDeleted);
+    assert!(
+        delete_event.is_some(),
+        "Events must contain a FileDeleted audit event"
+    );
+    let event = delete_event.unwrap();
+    assert_eq!(event.aggregate_id, uploaded_file.id);
+    assert_eq!(event.user_id, user.id);
+
+    // Cleanup
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_file_move_emits_audit_event() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "audit_move_user", tenant_id).await;
+
+    // Create root folder and target folder
+    let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
+    metadata_store.create_folder(&root_folder).await.expect("Failed to create root folder");
+
+    let target_folder = rustshare_core::domain::Folder::new_child(
+        "Target".to_string(),
+        "/Target".to_string(),
+        root_folder.id,
+        user.id,
+        tenant_id,
+    );
+    metadata_store.create_folder(&target_folder).await.expect("Failed to create target folder");
+
+    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+
+    let file_content = Bytes::from("Content to move");
+    let uploaded_file = file_service
+        .upload_file(user.id, "audit-move.txt".to_string(), None, file_content, "text/plain".to_string(), tenant_id)
+        .await
+        .expect("Failed to upload file");
+
+    // Move the file
+    let _moved_file = file_service
+        .move_file(uploaded_file.id, Some(target_folder.id), user.id)
+        .await
+        .expect("Failed to move file");
+
+    // Verify FileMoved event exists
+    let events = event_store
+        .get_events(uploaded_file.id, AggregateType::File)
+        .await
+        .expect("Failed to fetch events");
+
+    let move_event = events.iter().find(|e| e.event_type == EventType::FileMoved);
+    assert!(
+        move_event.is_some(),
+        "Events must contain a FileMoved audit event"
+    );
+    let event = move_event.unwrap();
+    assert_eq!(event.aggregate_id, uploaded_file.id);
+    assert_eq!(event.user_id, user.id);
+
+    // Cleanup
+    file_service.delete_file(uploaded_file.id, user.id).await.ok();
+    sqlx::query("DELETE FROM folders WHERE id = $1").bind(target_folder.id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM folders WHERE id = $1").bind(root_folder.id).execute(&pool).await.ok();
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
 async fn test_file_upload_download_flow() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
 
@@ -160,7 +297,7 @@ async fn test_file_upload_download_flow() {
 
     // Step 3: Get download URL
     let download_url = file_service
-        .get_download_url(uploaded_file.id, user.id, 3600)
+        .get_download_url(uploaded_file.id, user.id)
         .await
         .expect("Failed to get download URL");
 

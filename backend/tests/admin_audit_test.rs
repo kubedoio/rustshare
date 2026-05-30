@@ -1,16 +1,14 @@
-//! Integration tests: Admin audit log SQL queries (Task 6).
+//! Integration tests: Admin audit log SQL queries (Task 6 / Step 13).
 //!
 //! Tests the UNION ALL CTE that the list_audit_log handler runs:
 //!   - admin_action rows
 //!   - security_event rows
+//!   - share_access rows
 //!   - Filtering by type
 //!   - Filtering by user_id
 //!   - Date-range filtering
 //!   - Pagination (LIMIT/OFFSET)
-//!
-//! Note: share_access rows require a valid shares row (FK → shares → files → users).
-//! The share_access branch is excluded from these tests to keep setup simple;
-//! the CTE union logic for that branch is structurally identical to the other branches.
+//!   - Durable evidence in events table
 //!
 //! Run with: cargo test --test admin_audit_test -- --ignored
 
@@ -63,14 +61,85 @@ async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
     id
 }
 
+async fn create_test_file(pool: &sqlx::PgPool, owner_id: Uuid) -> Uuid {
+    let file_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO files (id, name, path, size, content_hash, storage_key, mime_type, owner_id, current_version, tenant_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, NOW(), NOW())",
+    )
+    .bind(file_id)
+    .bind("audit_test_file.txt")
+    .bind("/audit_test_file.txt")
+    .bind(1024_i64)
+    .bind("sha256:abcd1234")
+    .bind(format!("files/{}/v1", file_id))
+    .bind("text/plain")
+    .bind(owner_id)
+    .bind(Uuid::new_v4()) // tenant_id
+    .execute(pool)
+    .await
+    .expect("create test file");
+    file_id
+}
+
+async fn create_test_share(pool: &sqlx::PgPool, file_id: Uuid, created_by: Uuid) -> Uuid {
+    let share_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO shares (id, file_id, share_token, permissions, upload_only, access_count, created_by, tenant_id, created_at, updated_at)
+         VALUES ($1, $2, $3, 'View', false, 0, $4, $5, NOW(), NOW())",
+    )
+    .bind(share_id)
+    .bind(file_id)
+    .bind(format!("token_{}", share_id))
+    .bind(created_by)
+    .bind(Uuid::new_v4()) // tenant_id
+    .execute(pool)
+    .await
+    .expect("create test share");
+    share_id
+}
+
+async fn create_test_share_access_log(pool: &sqlx::PgPool, share_id: Uuid, action: &str, success: bool) {
+    sqlx::query(
+        "INSERT INTO share_access_log (share_id, action, success, ip_address, accessed_at)
+         VALUES ($1, $2, $3, '127.0.0.1'::inet, NOW())",
+    )
+    .bind(share_id)
+    .bind(action)
+    .bind(success)
+    .execute(pool)
+    .await
+    .expect("create share access log");
+}
+
 async fn cleanup(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
     for id in user_ids {
+        sqlx::query("DELETE FROM share_access_log WHERE share_id IN (SELECT id FROM shares WHERE created_by = $1)")
+            .bind(id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM shares WHERE created_by = $1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM events WHERE user_id = $1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .ok();
         sqlx::query("DELETE FROM user_security_events WHERE user_id = $1")
             .bind(id)
             .execute(pool)
             .await
             .ok();
         sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1 OR target_id = $1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM files WHERE owner_id = $1")
             .bind(id)
             .execute(pool)
             .await
@@ -110,6 +179,17 @@ const ADMIN_ACTION_BRANCH: &str = "SELECT
     aa.actor_id AS actor_id
 FROM admin_actions aa
 LEFT JOIN users u ON u.id = aa.actor_id";
+
+const SHARE_ACCESS_BRANCH: &str = "SELECT
+    sal.id,
+    sal.accessed_at AS occurred_at,
+    'share_access'::text AS event_type,
+    COALESCE(sal.actor_label, 'anonymous')::text AS actor_label,
+    sal.action::text AS action_type,
+    sal.share_id::text AS target_label,
+    json_build_object('ip_address', sal.ip_address::text, 'success', sal.success)::jsonb AS detail,
+    NULL::uuid AS actor_id
+FROM share_access_log sal";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -507,4 +587,173 @@ async fn test_audit_pagination() {
     }
 
     cleanup(&pool, &[actor_id]).await;
+}
+
+
+// ---------------------------------------------------------------------------
+// Share access branch tests
+// ---------------------------------------------------------------------------
+
+/// Query type=share_access returns share_access_log rows only.
+#[tokio::test]
+#[ignore]
+async fn test_audit_filter_share_access_type() {
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let user_id = create_test_user(&pool, suffix).await;
+    let file_id = create_test_file(&pool, user_id).await;
+    let share_id = create_test_share(&pool, file_id, user_id).await;
+
+    // Insert a share_access_log row
+    create_test_share_access_log(&pool, share_id, "download", true).await;
+
+    let cte = format!("WITH all_events AS (\n{SHARE_ACCESS_BRANCH}\n)");
+    let sql = format!(
+        "{cte}
+         SELECT id, occurred_at, event_type, actor_label, action_type, target_label, detail, actor_id
+         FROM all_events
+         WHERE target_label = $1
+         ORDER BY occurred_at DESC
+         LIMIT 100 OFFSET 0"
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(share_id.to_string())
+        .fetch_all(&pool)
+        .await
+        .expect("query share_access branch");
+
+    assert!(
+        !rows.is_empty(),
+        "share_access branch must return rows for our share"
+    );
+
+    for row in &rows {
+        let et: String = row.try_get("event_type").unwrap();
+        assert_eq!(et, "share_access", "All rows must have event_type = share_access");
+        let action: String = row.try_get("action_type").unwrap();
+        assert_eq!(action, "download");
+    }
+
+    cleanup(&pool, &[user_id]).await;
+}
+
+/// UNION ALL of all three branches returns rows from all tables.
+#[tokio::test]
+#[ignore]
+async fn test_audit_all_type_union_with_three_branches() {
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let actor_id = create_test_admin(&pool, suffix).await;
+    let user_id = create_test_user(&pool, &format!("{suffix}_u")).await;
+    let file_id = create_test_file(&pool, actor_id).await;
+    let share_id = create_test_share(&pool, file_id, actor_id).await;
+
+    // Insert one of each branch type
+    sqlx::query(
+        "INSERT INTO admin_actions (actor_id, action_type, detail)
+         VALUES ($1, 'config.oidc_updated', '{}'::jsonb)",
+    )
+    .bind(actor_id)
+    .execute(&pool)
+    .await
+    .expect("insert admin_action");
+
+    let event_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_security_events (id, user_id, event_type, description, occurred_at)
+         VALUES ($1, $2, 'password_changed', 'Test password change', NOW())",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("insert security_event");
+
+    create_test_share_access_log(&pool, share_id, "download", true).await;
+
+    let union_sql = format!(
+        "{SECURITY_BRANCH}\nUNION ALL\n{ADMIN_ACTION_BRANCH}\nUNION ALL\n{SHARE_ACCESS_BRANCH}"
+    );
+    let cte = format!("WITH all_events AS (\n{union_sql}\n)");
+    let sql = format!(
+        "{cte}
+         SELECT id, occurred_at, event_type, actor_label, action_type, target_label, detail, actor_id
+         FROM all_events
+         ORDER BY occurred_at DESC
+         LIMIT 100 OFFSET 0"
+    );
+
+    let rows = sqlx::query(&sql)
+        .fetch_all(&pool)
+        .await
+        .expect("query full union");
+
+    let event_types: Vec<String> = rows
+        .iter()
+        .map(|r| r.try_get("event_type").unwrap())
+        .collect();
+
+    assert!(
+        event_types.contains(&"admin_action".to_string()),
+        "Union must include admin_action rows"
+    );
+    assert!(
+        event_types.contains(&"security_event".to_string()),
+        "Union must include security_event rows"
+    );
+    assert!(
+        event_types.contains(&"share_access".to_string()),
+        "Union must include share_access rows"
+    );
+
+    cleanup(&pool, &[actor_id, user_id]).await;
+}
+
+// ---------------------------------------------------------------------------
+// Durable evidence tests
+// ---------------------------------------------------------------------------
+
+/// Events written to the events table are durable and queryable.
+#[tokio::test]
+#[ignore]
+async fn test_audit_durable_evidence_in_events_table() {
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let user_id = create_test_user(&pool, suffix).await;
+    let file_id = Uuid::new_v4();
+
+    // Insert a FileUploaded event directly into the events table
+    sqlx::query(
+        "INSERT INTO events (event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), 1)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(serde_json::to_string(&serde_json::json!({"type": "FileUploaded"})).unwrap())
+    .bind(file_id)
+    .bind(serde_json::to_string(&serde_json::json!({"type": "file"})).unwrap())
+    .bind(serde_json::json!({"file_id": file_id.to_string(), "name": "audit.txt"}))
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("insert event");
+
+    // Verify the event is queryable
+    let rows = sqlx::query(
+        "SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, version
+         FROM events
+         WHERE aggregate_id = $1 AND aggregate_type = $2
+         ORDER BY timestamp ASC",
+    )
+    .bind(file_id)
+    .bind(serde_json::to_string(&serde_json::json!({"type": "file"})).unwrap())
+    .fetch_all(&pool)
+    .await
+    .expect("query events");
+
+    assert!(!rows.is_empty(), "Events table must contain the inserted audit event");
+    let event_type: String = rows[0].try_get("event_type").unwrap();
+    assert!(event_type.contains("FileUploaded"), "Event type should contain FileUploaded");
+
+    cleanup(&pool, &[user_id]).await;
 }
