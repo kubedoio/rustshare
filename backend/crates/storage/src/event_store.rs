@@ -16,6 +16,11 @@ impl EventStore {
         Self { pool }
     }
 
+    /// Access the underlying database pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Append a new event to the event store
     pub async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()> {
         sqlx::query!(

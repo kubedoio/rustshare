@@ -1,0 +1,288 @@
+//! Health and readiness handlers for operational monitoring.
+
+use std::collections::HashMap;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::Json;
+use serde::Serialize;
+use uuid::Uuid;
+
+use crate::state::AppState;
+
+/// Health of an individual system component.
+#[derive(Debug, Serialize)]
+pub struct ComponentHealth {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ComponentHealth {
+    fn healthy() -> Self {
+        Self {
+            status: "healthy".to_string(),
+            error: None,
+        }
+    }
+
+    fn unhealthy(error: impl Into<String>) -> Self {
+        Self {
+            status: "unhealthy".to_string(),
+            error: Some(error.into()),
+        }
+    }
+
+    fn disabled() -> Self {
+        Self {
+            status: "disabled".to_string(),
+            error: None,
+        }
+    }
+}
+
+/// Operational readiness response.
+///
+/// Distinct from the lightweight liveness probe (`/health`), this endpoint
+/// checks every runtime dependency required for the server to serve traffic.
+#[derive(Debug, Serialize)]
+pub struct ReadinessResponse {
+    pub status: String,
+    pub components: HashMap<String, ComponentHealth>,
+}
+
+/// Readiness probe endpoint (`GET /ready`).
+///
+/// Returns `200 OK` when all required dependencies are healthy.
+/// Returns `503 Service Unavailable` when any required dependency is unhealthy.
+///
+/// Components checked:
+/// - `database`        – metadata projection DB connectivity
+/// - `object_storage`  – S3/RustFS bucket accessibility
+/// - `event_delivery`  – event store DB + in-memory broadcaster health
+/// - `auth_session`    – JWT signing/verification + session table accessibility
+/// - `ai`              – AI service presence (optional; does not fail readiness)
+pub async fn readiness_check(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
+    let mut components = HashMap::new();
+
+    // ------------------------------------------------------------------
+    // Database (metadata projection)
+    // ------------------------------------------------------------------
+    let db_health = match sqlx::query("SELECT 1")
+        .fetch_one(state.metadata_store.pool())
+        .await
+    {
+        Ok(_) => ComponentHealth::healthy(),
+        Err(e) => ComponentHealth::unhealthy(format!("database connectivity failed: {e}")),
+    };
+    components.insert("database".to_string(), db_health);
+
+    // ------------------------------------------------------------------
+    // Object storage
+    // ------------------------------------------------------------------
+    let storage_health = match state.object_store.health_check().await {
+        Ok(_) => ComponentHealth::healthy(),
+        Err(e) => ComponentHealth::unhealthy(format!("object storage check failed: {e}")),
+    };
+    components.insert("object_storage".to_string(), storage_health);
+
+    // ------------------------------------------------------------------
+    // Event delivery (event store DB + broadcaster channel)
+    // ------------------------------------------------------------------
+    let event_db_ok = sqlx::query("SELECT 1")
+        .fetch_one(state.event_store.pool())
+        .await
+        .is_ok();
+    let broadcaster_ok = state.broadcaster.is_healthy();
+
+    let event_health = if !event_db_ok {
+        ComponentHealth::unhealthy("event store database connectivity failed")
+    } else if !broadcaster_ok {
+        ComponentHealth::unhealthy("event broadcaster channel is closed")
+    } else {
+        ComponentHealth::healthy()
+    };
+    components.insert("event_delivery".to_string(), event_health);
+
+    // ------------------------------------------------------------------
+    // Auth / session health
+    // ------------------------------------------------------------------
+    let auth_health = check_auth_health(&state).await;
+    components.insert("auth_session".to_string(), auth_health);
+
+    // ------------------------------------------------------------------
+    // AI / search index (optional)
+    // ------------------------------------------------------------------
+    let ai_health = if state.ai_service.is_some() {
+        // TODO: Add deeper AI/index health check once index lag metrics are available.
+        ComponentHealth::healthy()
+    } else {
+        ComponentHealth::disabled()
+    };
+    components.insert("ai".to_string(), ai_health);
+
+    // ------------------------------------------------------------------
+    // Overall readiness
+    // ------------------------------------------------------------------
+    let (http_status, response) = evaluate_readiness(components);
+    (http_status, Json(response))
+}
+
+async fn check_auth_health(state: &AppState) -> ComponentHealth {
+    // Verify JWT manager can round-trip a token.
+    let jwt_ok = {
+        let token = state
+            .jwt_manager
+            .generate(Uuid::nil(), "readiness@rustshare.local", Uuid::nil());
+        match token {
+            Ok(t) => state.jwt_manager.validate(&t).is_ok(),
+            Err(_) => false,
+        }
+    };
+
+    if !jwt_ok {
+        return ComponentHealth::unhealthy("jwt manager round-trip failed");
+    }
+
+    // Verify the session table is queryable.
+    let session_db_ok = sqlx::query("SELECT COUNT(*) FROM user_sessions LIMIT 1")
+        .fetch_one(state.metadata_store.pool())
+        .await
+        .is_ok();
+
+    if !session_db_ok {
+        return ComponentHealth::unhealthy("session table query failed");
+    }
+
+    ComponentHealth::healthy()
+}
+
+/// Evaluate overall readiness from individual component healths.
+pub fn evaluate_readiness(
+    components: HashMap<String, ComponentHealth>,
+) -> (StatusCode, ReadinessResponse) {
+    let required_ready = ["database", "object_storage", "event_delivery", "auth_session"]
+        .iter()
+        .all(|key| components.get(*key).map(|c| c.status == "healthy").unwrap_or(false));
+
+    let status = if required_ready {
+        "ready".to_string()
+    } else {
+        "not_ready".to_string()
+    };
+
+    let http_status = if required_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (http_status, ReadinessResponse { status, components })
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_component_health_variants_serialize() {
+        let healthy = ComponentHealth::healthy();
+        let unhealthy = ComponentHealth::unhealthy("boom");
+        let disabled = ComponentHealth::disabled();
+
+        let healthy_json = serde_json::to_value(&healthy).unwrap();
+        let unhealthy_json = serde_json::to_value(&unhealthy).unwrap();
+        let disabled_json = serde_json::to_value(&disabled).unwrap();
+
+        assert_eq!(healthy_json["status"], "healthy");
+        assert!(healthy_json.get("error").is_none());
+
+        assert_eq!(unhealthy_json["status"], "unhealthy");
+        assert_eq!(unhealthy_json["error"], "boom");
+
+        assert_eq!(disabled_json["status"], "disabled");
+        assert!(disabled_json.get("error").is_none());
+    }
+
+    #[test]
+    fn test_healthy_readiness_includes_all_required_checks() {
+        let mut components = HashMap::new();
+        components.insert("database".to_string(), ComponentHealth::healthy());
+        components.insert("object_storage".to_string(), ComponentHealth::healthy());
+        components.insert("event_delivery".to_string(), ComponentHealth::healthy());
+        components.insert("auth_session".to_string(), ComponentHealth::healthy());
+        components.insert("ai".to_string(), ComponentHealth::disabled());
+
+        let (http_status, response) = evaluate_readiness(components);
+        assert_eq!(http_status, StatusCode::OK);
+        assert_eq!(response.status, "ready");
+        assert!(response.components.contains_key("database"));
+        assert!(response.components.contains_key("object_storage"));
+        assert!(response.components.contains_key("event_delivery"));
+        assert!(response.components.contains_key("auth_session"));
+        assert!(response.components.contains_key("ai"));
+    }
+
+    #[test]
+    fn test_readiness_response_ready_when_all_required_healthy() {
+        let mut components = HashMap::new();
+        components.insert("database".to_string(), ComponentHealth::healthy());
+        components.insert("object_storage".to_string(), ComponentHealth::healthy());
+        components.insert("event_delivery".to_string(), ComponentHealth::healthy());
+        components.insert("auth_session".to_string(), ComponentHealth::healthy());
+        components.insert("ai".to_string(), ComponentHealth::disabled());
+
+        let (http_status, response) = evaluate_readiness(components);
+        assert_eq!(http_status, StatusCode::OK);
+        assert_eq!(response.status, "ready");
+    }
+
+    #[test]
+    fn test_readiness_response_not_ready_when_required_fails() {
+        let mut components = HashMap::new();
+        components.insert("database".to_string(), ComponentHealth::unhealthy("timeout"));
+        components.insert("object_storage".to_string(), ComponentHealth::healthy());
+        components.insert("event_delivery".to_string(), ComponentHealth::healthy());
+        components.insert("auth_session".to_string(), ComponentHealth::healthy());
+        components.insert("ai".to_string(), ComponentHealth::disabled());
+
+        let (http_status, response) = evaluate_readiness(components);
+        assert_eq!(http_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, "not_ready");
+    }
+
+    #[test]
+    fn test_disabled_ai_does_not_fail_readiness() {
+        let mut components = HashMap::new();
+        components.insert("database".to_string(), ComponentHealth::healthy());
+        components.insert("object_storage".to_string(), ComponentHealth::healthy());
+        components.insert("event_delivery".to_string(), ComponentHealth::healthy());
+        components.insert("auth_session".to_string(), ComponentHealth::healthy());
+        components.insert("ai".to_string(), ComponentHealth::disabled());
+
+        let (http_status, response) = evaluate_readiness(components);
+        assert_eq!(http_status, StatusCode::OK);
+        assert_eq!(response.status, "ready");
+    }
+
+    #[test]
+    fn test_simulated_dependency_failure_returns_not_ready() {
+        let mut components = HashMap::new();
+        components.insert("database".to_string(), ComponentHealth::healthy());
+        components.insert(
+            "object_storage".to_string(),
+            ComponentHealth::unhealthy("connection refused"),
+        );
+        components.insert("event_delivery".to_string(), ComponentHealth::healthy());
+        components.insert("auth_session".to_string(), ComponentHealth::healthy());
+        components.insert("ai".to_string(), ComponentHealth::disabled());
+
+        let (http_status, response) = evaluate_readiness(components);
+        assert_eq!(http_status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, "not_ready");
+    }
+}

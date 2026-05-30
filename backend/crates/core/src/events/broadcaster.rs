@@ -52,6 +52,13 @@ impl EventBroadcaster {
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<Event>> {
         self.tx.subscribe()
     }
+
+    /// Returns true if the broadcaster channel is open and can accept publishes.
+    pub fn is_healthy(&self) -> bool {
+        // Broadcast senders are always usable; send only fails when there are no
+        // receivers, which is a normal operational state, not a health failure.
+        true
+    }
 }
 
 #[cfg(test)]

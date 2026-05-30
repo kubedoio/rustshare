@@ -85,12 +85,74 @@ Current confidence by area:
 ## Observability Checklist
 
 - [x] Health endpoints exist
+- [x] Readiness endpoint exists
 - [x] Replication summary endpoint exists
 - [x] Replication target-health endpoint exists
 - [x] CLI replication health helper exists
 - [ ] Centralized metrics and dashboards are still partial
 - [ ] Centralized alerting is still partial
 - [ ] Error tracking / incident paging is not yet documented as complete
+
+### Operational Readiness Endpoints
+
+RustShare exposes two distinct health endpoints so operators can separate **process liveness** from **dependency readiness**.
+
+#### `GET /health` — Liveness Probe
+
+Lightweight. Returns `200 OK` when the Axum process is running.
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Use this for Kubernetes liveness probes or load-balancer health checks that only need to know whether the binary has started.
+
+#### `GET /health/ready` — Readiness Probe
+
+Returns `200 OK` when all **required** runtime dependencies are healthy. Returns `503 Service Unavailable` when any required dependency is unhealthy.
+
+Response body (stable, machine-readable JSON):
+
+```json
+{
+  "status": "ready",
+  "components": {
+    "database": { "status": "healthy" },
+    "object_storage": { "status": "healthy" },
+    "event_delivery": { "status": "healthy" },
+    "auth_session": { "status": "healthy" },
+    "ai": { "status": "disabled" }
+  }
+}
+```
+
+Component definitions:
+
+| Component | Required? | Meaning |
+|-----------|-----------|---------|
+| `database` | **Yes** | Metadata projection database is reachable and queryable. |
+| `object_storage` | **Yes** | S3/RustFS bucket is accessible. |
+| `event_delivery` | **Yes** | Event-store database is reachable **and** the in-memory broadcaster channel is open. |
+| `auth_session` | **Yes** | JWT manager can round-trip a token **and** the `user_sessions` table is queryable. |
+| `ai` | No | AI / semantic-search service is present. Reports `disabled` when `RUSTSHARE_AI_ENABLED` is off or the service is not initialized; a disabled AI component **does not** fail readiness. |
+
+If a component is unhealthy, the response includes an `error` field:
+
+```json
+{
+  "status": "not_ready",
+  "components": {
+    "object_storage": {
+      "status": "unhealthy",
+      "error": "object storage check failed: connection refused"
+    }
+  }
+}
+```
+
+Use `/health/ready` for Kubernetes readiness probes or load-balancer membership decisions.
 
 Reference planning docs:
 

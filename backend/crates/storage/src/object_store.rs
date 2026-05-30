@@ -115,6 +115,17 @@ impl ObjectStore {
             .await
     }
 
+    /// Health check: verify the object store bucket is accessible.
+    pub async fn health_check(&self) -> Result<()> {
+        self.client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .with_context(|| format!("object storage bucket `{}` is not accessible", self.bucket))?;
+        Ok(())
+    }
+
     /// Generate a presigned URL with optional response-content-disposition
     pub async fn get_presigned_url_with_disposition(
         &self,

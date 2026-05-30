@@ -3,7 +3,9 @@ use axum::Router;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
-    Router::new().route("/health", get(crate::health_check))
+    Router::new()
+        .route("/health", get(crate::health_check))
+        .route("/health/ready", get(crate::handlers::readiness_check))
 }
 
 pub fn auth_routes() -> Router<AppState> {

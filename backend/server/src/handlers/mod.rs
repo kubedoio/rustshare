@@ -13,6 +13,7 @@ pub mod features;
 mod files;
 mod folders;
 mod groups;
+pub mod health;
 pub mod invites;
 mod kanban;
 mod meetings;
@@ -41,6 +42,7 @@ pub use brainstorming::{
 };
 pub use collab::collab_handler;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
+pub use health::readiness_check;
 pub use files::{
     delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
     get_file_versions, list_deleted_items, list_files, list_starred_items, move_file,
