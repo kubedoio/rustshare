@@ -1304,11 +1304,10 @@ impl KanbanService {
         }
         // Reject hidden metadata filenames (before stripping dots)
         let trimmed = name.trim();
-        if trimmed == ".rustshare-board.json"
-            || trimmed == ".rustshare-column.json"
-            || trimmed == ".rustshare-card.json"
+        if trimmed.starts_with(".rustshare")
             || trimmed == "events.jsonl"
             || trimmed == "index.md"
+            || trimmed == "index.editor.json"
         {
             return Err(KanbanError::InvalidName("Reserved filename".to_string()));
         }
@@ -1323,10 +1322,7 @@ impl KanbanService {
             ));
         }
         // Reject hidden metadata filenames again after sanitization
-        if sanitized == "rustshare-board.json"
-            || sanitized == "rustshare-column.json"
-            || sanitized == "rustshare-card.json"
-        {
+        if sanitized.starts_with("rustshare") {
             return Err(KanbanError::InvalidName("Reserved filename".to_string()));
         }
         Ok(sanitized)
@@ -2967,6 +2963,11 @@ impl KanbanService {
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let attachments_folder = self
             .get_attachments_folder(card_id, user_id, tenant_id)
             .await?;
@@ -3024,6 +3025,10 @@ impl KanbanService {
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         self.file_service
             .delete_file(attachment_id, user_id)
@@ -3713,8 +3718,10 @@ mod tests {
     fn test_sanitize_attachment_name_rejects_reserved_names() {
         assert!(KanbanService::sanitize_attachment_name(".rustshare-board.json").is_err());
         assert!(KanbanService::sanitize_attachment_name(".rustshare-card.json").is_err());
+        assert!(KanbanService::sanitize_attachment_name(".rustshare.json").is_err());
         assert!(KanbanService::sanitize_attachment_name("events.jsonl").is_err());
         assert!(KanbanService::sanitize_attachment_name("index.md").is_err());
+        assert!(KanbanService::sanitize_attachment_name("index.editor.json").is_err());
     }
 
     #[test]

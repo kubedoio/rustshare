@@ -1809,9 +1809,8 @@ async fn contract_kanban_attachment_rejects_reserved_names() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_kanban_attachment_allows_generic_rustshare() {
-    // CURRENT BEHAVIOR (bug): sanitize_attachment_name only rejects specific .rustshare-* files,
-    // not the generic prefix. Step 12 should reject all .rustshare* filenames.
+async fn contract_kanban_attachment_rejects_generic_rustshare() {
+    // FIXED: sanitize_attachment_name now rejects all .rustshare* filenames.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "kanban_attach_generic", tenant_id).await;
@@ -1852,8 +1851,8 @@ async fn contract_kanban_attachment_allows_generic_rustshare() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: generic .rustshare.json should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        "generic .rustshare.json should be rejected: {:?}",
         result
     );
 
@@ -1862,8 +1861,8 @@ async fn contract_kanban_attachment_allows_generic_rustshare() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_kanban_attachment_allows_editor_json() {
-    // CURRENT BEHAVIOR (bug): sanitize_attachment_name does not reject *.editor.json.
+async fn contract_kanban_attachment_rejects_editor_json() {
+    // FIXED: sanitize_attachment_name now rejects index.editor.json.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "kanban_attach_editor", tenant_id).await;
@@ -1904,8 +1903,8 @@ async fn contract_kanban_attachment_allows_editor_json() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: index.editor.json should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        "index.editor.json should be rejected: {:?}",
         result
     );
 

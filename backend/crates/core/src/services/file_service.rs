@@ -1292,9 +1292,33 @@ where
             ));
         }
 
-        if name.contains('\0') {
+        if name.contains('\\') {
+            return Err(FileError::InvalidName(
+                "File name cannot contain backslash (\\)".to_string(),
+            ));
+        }
+
+        if name.contains("..") {
+            return Err(FileError::InvalidName(
+                "File name cannot contain '..'".to_string(),
+            ));
+        }
+
+        if name.starts_with('\0') || name.contains('\0') {
             return Err(FileError::InvalidName(
                 "File name cannot contain null character".to_string(),
+            ));
+        }
+
+        // Reject hidden metadata filenames reserved for RustShare internals
+        if name.starts_with(".rustshare") {
+            return Err(FileError::InvalidName(
+                "File name cannot start with '.rustshare'".to_string(),
+            ));
+        }
+        if name == "index.editor.json" {
+            return Err(FileError::InvalidName(
+                "File name 'index.editor.json' is reserved".to_string(),
             ));
         }
 
@@ -1943,6 +1967,10 @@ mod tests {
         assert!(service.validate_file_name("").is_err());
         assert!(service.validate_file_name("path/file.txt").is_err());
         assert!(service.validate_file_name("file\0name.txt").is_err());
+        assert!(service.validate_file_name("..secret.txt").is_err());
+        assert!(service.validate_file_name("secret\\file.txt").is_err());
+        assert!(service.validate_file_name(".rustshare.json").is_err());
+        assert!(service.validate_file_name("index.editor.json").is_err());
     }
 
     // Tests for get_file

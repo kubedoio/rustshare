@@ -1300,9 +1300,8 @@ async fn contract_cross_tenant_rename_note_denied() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_attachment_upload_allows_dotdot_filename() {
-    // CURRENT BEHAVIOR (bug): FileService::validate_file_name does not reject '..' substring.
-    // Step 12 should enforce rejection of '..' in attachment filenames.
+async fn contract_note_attachment_upload_rejects_dotdot_filename() {
+    // FIXED: FileService::validate_file_name now rejects '..' substring.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_attach_dotdot", tenant_id).await;
@@ -1340,8 +1339,8 @@ async fn contract_note_attachment_upload_allows_dotdot_filename() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: dotdot filename should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        "dotdot filename should be rejected: {:?}",
         result
     );
 
@@ -1350,8 +1349,8 @@ async fn contract_note_attachment_upload_allows_dotdot_filename() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_attachment_upload_allows_backslash_filename() {
-    // CURRENT BEHAVIOR (bug): FileService::validate_file_name does not reject '\'.
+async fn contract_note_attachment_upload_rejects_backslash_filename() {
+    // FIXED: FileService::validate_file_name now rejects '\'.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_attach_backslash", tenant_id).await;
@@ -1389,8 +1388,8 @@ async fn contract_note_attachment_upload_allows_backslash_filename() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: backslash filename should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        "backslash filename should be rejected: {:?}",
         result
     );
 
@@ -1399,8 +1398,8 @@ async fn contract_note_attachment_upload_allows_backslash_filename() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_attachment_upload_allows_rustshare_hidden_filename() {
-    // CURRENT BEHAVIOR (bug): FileService does not reject .rustshare* filenames.
+async fn contract_note_attachment_upload_rejects_rustshare_hidden_filename() {
+    // FIXED: FileService now rejects .rustshare* filenames.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_attach_rustshare", tenant_id).await;
@@ -1438,8 +1437,8 @@ async fn contract_note_attachment_upload_allows_rustshare_hidden_filename() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: .rustshare.json should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        ".rustshare.json should be rejected: {:?}",
         result
     );
 
@@ -1448,8 +1447,8 @@ async fn contract_note_attachment_upload_allows_rustshare_hidden_filename() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_attachment_upload_allows_editor_json_filename() {
-    // CURRENT BEHAVIOR (bug): FileService does not reject index.editor.json.
+async fn contract_note_attachment_upload_rejects_editor_json_filename() {
+    // FIXED: FileService now rejects index.editor.json.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_attach_editor", tenant_id).await;
@@ -1487,8 +1486,8 @@ async fn contract_note_attachment_upload_allows_editor_json_filename() {
         .await;
 
     assert!(
-        result.is_ok(),
-        "BUG: index.editor.json should be rejected but is currently allowed: {:?}",
+        result.is_err(),
+        "index.editor.json should be rejected: {:?}",
         result
     );
 
@@ -1497,8 +1496,8 @@ async fn contract_note_attachment_upload_allows_editor_json_filename() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_bundle_count_includes_hidden_files() {
-    // CURRENT BEHAVIOR (bug): count_bundle_contents does not filter hidden metadata files.
+async fn contract_note_bundle_count_excludes_hidden_files() {
+    // FIXED: count_bundle_contents now filters hidden metadata files.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_attach_hidden", tenant_id).await;
@@ -1508,7 +1507,7 @@ async fn contract_note_bundle_count_includes_hidden_files() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service = create_file_service(event_store, metadata_store.clone(), object_store.clone(), &pool);
 
     let note = service
         .create_note(
@@ -1530,7 +1529,7 @@ async fn contract_note_bundle_count_includes_hidden_files() {
         .find(|f| f.name == "attachments")
         .unwrap();
 
-    // Upload a regular file and a hidden metadata file
+    // Upload a regular file
     file_service
         .upload_file(
             user.id,
@@ -1542,25 +1541,26 @@ async fn contract_note_bundle_count_includes_hidden_files() {
         )
         .await
         .unwrap();
-    file_service
-        .upload_file(
-            user.id,
-            ".rustshare.json".to_string(),
-            Some(attachments_folder.id),
-            Bytes::from("hidden"),
-            "application/json".to_string(),
-            tenant_id,
-        )
-        .await
-        .unwrap();
+
+    // Inject a hidden metadata file directly to verify filtering in counts
+    let hidden_file = rustshare_core::domain::File::new(
+        ".rustshare.json".to_string(),
+        format!("{}/.rustshare.json", attachments_folder.path.trim_end_matches('/')),
+        "d41d8cd98f00b204e9800998ecf8427e".to_string(), // empty md5
+        0,
+        "application/json".to_string(),
+        Some(attachments_folder.id),
+        user.id,
+        tenant_id,
+    );
+    metadata_store.create_file(&hidden_file).await.unwrap();
 
     let notes = service.list_notes(user.id, tenant_id, Some(10)).await.unwrap();
     let found = notes.iter().find(|n| n.id == note.id).unwrap();
 
-    // BUG: hidden file is counted as an attachment
     assert_eq!(
-        found.attachment_count, 2,
-        "BUG: hidden metadata file should not be counted but currently is"
+        found.attachment_count, 1,
+        "hidden metadata file should not be counted"
     );
 
     cleanup_user(&pool, user.id).await;

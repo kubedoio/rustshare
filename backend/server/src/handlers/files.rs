@@ -99,9 +99,18 @@ pub async fn upload_file(
             "File name must not exceed 255 characters",
         ));
     }
-    if file_name.contains('\0') || file_name.contains('/') {
+    if file_name.contains('\0')
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains("..")
+    {
         return Err(AppError::bad_request(
             "File name contains invalid characters",
+        ));
+    }
+    if file_name.starts_with(".rustshare") || file_name == "index.editor.json" {
+        return Err(AppError::bad_request(
+            "File name is reserved for internal use",
         ));
     }
 

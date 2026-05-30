@@ -641,6 +641,11 @@ impl NoteService {
         file.name == "note.md"
     }
 
+    /// Returns true if a file is hidden metadata that should not be counted or exposed.
+    fn is_hidden_metadata_file(name: &str) -> bool {
+        name.starts_with(".rustshare") || name.ends_with(".editor.json")
+    }
+
     /// Count visible files in a note bundle's attachments, drawings, and exports subfolders.
     async fn count_bundle_contents(
         &self,
@@ -666,7 +671,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    attachment_count = files.len() as i64;
+                    attachment_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 "drawings" => {
                     let files = self
@@ -674,7 +682,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    drawing_count = files.len() as i64;
+                    drawing_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 "exports" => {
                     let files = self
@@ -682,7 +693,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    export_count = files.len() as i64;
+                    export_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 _ => {}
             }
