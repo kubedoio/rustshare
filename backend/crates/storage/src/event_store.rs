@@ -150,30 +150,33 @@ impl EventStore {
         before_id: Option<Uuid>,
         limit: i64,
     ) -> Result<Vec<Event>> {
-        let event_types = vec![
-            "FileUploaded",
-            "FileModified",
-            "FileRenamed",
-            "FileMoved",
-            "FileDeleted",
-            "FileRestored",
-            "FolderCreated",
-            "FolderRenamed",
-            "FolderMoved",
-            "FolderDeleted",
-            "ShareCreated",
-            "ShareRevoked",
-            "ShareUpdated",
-            "ShareReceivedByUser",
-            "SharePermissionChanged",
-            "ShareRevokedFromUser",
-            "BrainstormBoardModified",
-            "MeetingNoteModified",
-            "DecisionModified",
-            "StandupModified",
-            "KanbanModified",
-            "NoteModified",
-        ];
+        let event_types: Vec<String> = vec![
+            EventType::FileUploaded,
+            EventType::FileModified,
+            EventType::FileRenamed,
+            EventType::FileMoved,
+            EventType::FileDeleted,
+            EventType::FileRestored,
+            EventType::FolderCreated,
+            EventType::FolderRenamed,
+            EventType::FolderMoved,
+            EventType::FolderDeleted,
+            EventType::ShareCreated,
+            EventType::ShareRevoked,
+            EventType::ShareUpdated,
+            EventType::ShareReceivedByUser,
+            EventType::SharePermissionChanged,
+            EventType::ShareRevokedFromUser,
+            EventType::BrainstormBoardModified,
+            EventType::MeetingNoteModified,
+            EventType::DecisionModified,
+            EventType::StandupModified,
+            EventType::KanbanModified,
+            EventType::NoteModified,
+        ]
+        .into_iter()
+        .map(|et| serde_json::to_string(&et).unwrap())
+        .collect();
 
         let rows = sqlx::query(
             r#"
@@ -228,6 +231,51 @@ mod tests {
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         PgPool::connect(&database_url).await.unwrap()
+    }
+
+    #[test]
+    fn test_query_recent_events_event_type_serialization_matches_append() {
+        // query_recent_events builds its event type filter by serializing
+        // EventType variants with serde_json::to_string. append() stores
+        // event_type the same way. This test ensures the formats match.
+        let event_types = vec![
+            EventType::FileUploaded,
+            EventType::FileModified,
+            EventType::FileRenamed,
+            EventType::FileMoved,
+            EventType::FileDeleted,
+            EventType::FileRestored,
+            EventType::FolderCreated,
+            EventType::FolderRenamed,
+            EventType::FolderMoved,
+            EventType::FolderDeleted,
+            EventType::ShareCreated,
+            EventType::ShareRevoked,
+            EventType::ShareUpdated,
+            EventType::ShareReceivedByUser,
+            EventType::SharePermissionChanged,
+            EventType::ShareRevokedFromUser,
+            EventType::BrainstormBoardModified,
+            EventType::MeetingNoteModified,
+            EventType::DecisionModified,
+            EventType::StandupModified,
+            EventType::KanbanModified,
+            EventType::NoteModified,
+        ];
+
+        for et in event_types {
+            let serialized = serde_json::to_string(&et).unwrap();
+            // Verify it's a JSON object with a "type" key, not a plain string.
+            assert!(
+                serialized.starts_with("{\"type\":\""),
+                "EventType {:?} serializes as {} which is not the expected JSON object format",
+                et,
+                serialized
+            );
+            // Verify round-trip deserialization works.
+            let deserialized: EventType = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(et, deserialized);
+        }
     }
 
     #[tokio::test]
