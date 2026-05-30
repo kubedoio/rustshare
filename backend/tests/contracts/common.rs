@@ -9,6 +9,7 @@ use rustshare_core::services::{
     FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_server::services::note_service::NoteService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -74,6 +75,18 @@ impl TestContext {
             self.metadata_store.clone(),
             self.broadcaster.clone(),
             permission_resolver,
+        )
+    }
+
+    /// Create a new NoteService instance
+    pub fn note_service(&self) -> NoteService {
+        let file_service = Arc::new(self.file_service());
+        let folder_service = Arc::new(self.folder_service());
+        NoteService::new(
+            file_service,
+            folder_service,
+            self.metadata_store.clone(),
+            self.object_store.clone(),
         )
     }
 }
@@ -287,6 +300,51 @@ pub async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
         .execute(pool)
         .await
         .ok();
+}
+
+/// Create a test group and return its ID
+pub async fn create_test_group(
+    pool: &PgPool,
+    name: &str,
+    tenant_id: Uuid,
+    created_by: Uuid,
+) -> Uuid {
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO user_groups (id, name, tenant_id, created_by)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(group_id)
+    .bind(name)
+    .bind(tenant_id)
+    .bind(created_by)
+    .execute(pool)
+    .await
+    .expect("Failed to create test group");
+
+    group_id
+}
+
+/// Add a user to a group
+pub async fn add_user_to_group(pool: &PgPool, group_id: Uuid, user_id: Uuid) {
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to add user to group");
+}
+
+/// Remove a user from a group
+pub async fn remove_user_from_group(pool: &PgPool, group_id: Uuid, user_id: Uuid) {
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to remove user from group");
 }
 
 /// Cleanup a tenant and all its data

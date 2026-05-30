@@ -113,6 +113,26 @@ path = "../tests/group_sharing_test.rs"
 name = "compat_layer_integration_test"
 path = "../tests/compat_layer_integration_test.rs"
 
+[[test]]
+name = "contracts"
+path = "../tests/contracts/main.rs"
+
+[[test]]
+name = "readiness_test"
+path = "../tests/readiness_test.rs"
+
+[[test]]
+name = "decisions_test"
+path = "../tests/decisions_test.rs"
+
+[[test]]
+name = "meetings_test"
+path = "../tests/meetings_test.rs"
+
+[[test]]
+name = "standups_test"
+path = "../tests/standups_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }

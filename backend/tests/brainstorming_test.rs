@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use rustshare_core::domain::User;
-use rustshare_server::services::brainstorming_service::BrainstormingService;
+use rustshare_server::services::brainstorming_service::{BrainstormError, BrainstormingService};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -378,5 +378,577 @@ async fn test_invalid_excalidraw_rejected() {
     assert!(result2.is_err());
 
     cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+// LB-02: Negative tenant/permission contract tests
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_brainstorm_board_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "brainstorm_user_a", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "brainstorm_user_b", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let result = service.get_board(board_folder.id, user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Cross-tenant get_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_save_board_source_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "brainstorm_user_a2", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "brainstorm_user_b2", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let result = service
+        .save_board_source(board_folder.id, user_b.id, tenant_b, r#"{"type":"excalidraw","version":2,"elements":[]}"#.to_string())
+        .await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Cross-tenant save_board_source should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_delete_board_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "brainstorm_user_a3", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "brainstorm_user_b3", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let result = service.delete_board(board_folder.id, user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Cross-tenant delete_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_list_brainstorm_boards_does_not_leak() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "brainstorm_user_a4", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "brainstorm_user_b4", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    assert!(
+        !list_b.iter().any(|b| b.title == "Secret Board"),
+        "Cross-tenant list_boards should not leak boards"
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_get_brainstorm_board_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let user_owner = create_test_user(&ctx.metadata_store, "brainstorm_owner", tenant_id).await;
+    let user_other = create_test_user(&ctx.metadata_store, "brainstorm_other", tenant_id).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"private-id","type":"brainstorming.board","title":"Private Board","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let result = service.get_board(board_folder.id, user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Same-tenant unauthorized get_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_owner.id).await;
+    cleanup_user(&ctx.pool, user_other.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+async fn contract_same_tenant_unauthorized_get_board_source_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let user_owner = create_test_user(&ctx.metadata_store, "brainstorm_owner2", tenant_id).await;
+    let user_other = create_test_user(&ctx.metadata_store, "brainstorm_other2", tenant_id).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+
+    let meta_content = r#"{"id":"private-id","type":"brainstorming.board","title":"Private Board","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta_content.as_bytes(),
+    )
+    .await;
+
+    let result = service.get_board_source(board_folder.id, user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Same-tenant unauthorized get_board_source should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_owner.id).await;
+    cleanup_user(&ctx.pool, user_other.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_board_source_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "bs_ct_source_a", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "bs_ct_source_b", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+    let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta.as_bytes(),
+    )
+    .await;
+
+    let result = service.get_board_source(board_folder.id, user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Cross-tenant get_board_source should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_update_board_preview_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+    let user_a = create_test_user(&ctx.metadata_store, "bs_ct_preview_a", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "bs_ct_preview_b", tenant_b).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+    let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_a.id,
+        tenant_a,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta.as_bytes(),
+    )
+    .await;
+
+    let png_bytes = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    let result = service.update_board_preview(board_folder.id, user_b.id, tenant_b, png_bytes).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Cross-tenant update_board_preview should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, tenant_a).await;
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_save_board_source_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let user_owner = create_test_user(&ctx.metadata_store, "bs_owner_save", tenant_id).await;
+    let user_other = create_test_user(&ctx.metadata_store, "bs_other_save", tenant_id).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+    let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta.as_bytes(),
+    )
+    .await;
+
+    let result = service
+        .save_board_source(
+            board_folder.id,
+            user_other.id,
+            tenant_id,
+            r#"{"type":"excalidraw","version":2,"elements":[{"id":"text1","type":"text","x":100,"y":100,"width":100,"height":20,"text":"Hacked"}]}"#.to_string(),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Same-tenant unauthorized save_board_source should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_owner.id).await;
+    cleanup_user(&ctx.pool, user_other.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_delete_board_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let user_owner = create_test_user(&ctx.metadata_store, "bs_owner_del", tenant_id).await;
+    let user_other = create_test_user(&ctx.metadata_store, "bs_other_del", tenant_id).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+    let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta.as_bytes(),
+    )
+    .await;
+
+    let result = service.delete_board(board_folder.id, user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Same-tenant unauthorized delete_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_owner.id).await;
+    cleanup_user(&ctx.pool, user_other.id).await;
+    cleanup_tenant(&ctx.pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_update_board_preview_denied() {
+    let ctx = setup_test_env().await;
+    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let user_owner = create_test_user(&ctx.metadata_store, "bs_owner_preview", tenant_id).await;
+    let user_other = create_test_user(&ctx.metadata_store, "bs_other_preview", tenant_id).await;
+
+    let service = BrainstormingService::new(
+        Arc::new(ctx.file_service()),
+        Arc::new(ctx.folder_service()),
+        Arc::clone(&ctx.metadata_store),
+        Arc::clone(&ctx.object_store),
+    );
+
+    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
+    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        "board.excalidraw",
+        b"{\"type\":\"excalidraw\",\"version\":2,\"elements\":[]}",
+    )
+    .await;
+    let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
+    create_test_file(
+        &ctx.file_service(),
+        user_owner.id,
+        tenant_id,
+        Some(board_folder.id),
+        ".rustshare.json",
+        meta.as_bytes(),
+    )
+    .await;
+
+    let png_bytes = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    let result = service.update_board_preview(board_folder.id, user_other.id, tenant_id, png_bytes).await;
+    assert!(
+        matches!(result, Err(BrainstormError::PermissionDenied)),
+        "Same-tenant unauthorized update_board_preview should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&ctx.pool, user_owner.id).await;
+    cleanup_user(&ctx.pool, user_other.id).await;
     cleanup_tenant(&ctx.pool, tenant_id).await;
 }

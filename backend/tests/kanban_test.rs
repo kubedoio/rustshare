@@ -26,7 +26,7 @@ use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserRepository};
 use rustshare_server::services::kanban_service::{
-    CreateBoardInput, CreateCardInput, KanbanService, MoveCardInput,
+    CreateBoardInput, CreateCardInput, KanbanError, KanbanService, MoveCardInput,
 };
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -876,4 +876,764 @@ async fn contract_disabling_module_does_not_delete_data() {
     assert!(boards_after.iter().any(|b| b.id == board_id));
 
     cleanup_user(&pool, user.id).await;
+}
+// LB-02: Negative tenant/permission contract tests
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_board_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_user_a", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_user_b", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_board(board.id.clone(), user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant get_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_update_board_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_user_a2", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_user_b2", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .update_board(
+            board.id.clone(),
+            rustshare_server::services::kanban_service::UpdateBoardInput {
+                title: Some("Hacked".to_string()),
+                labels: None,
+                settings: None,
+                archived: None,
+            },
+            user_b.id,
+            tenant_b,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant update_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_delete_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_user_a3", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_user_b3", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .delete_card(card.id.parse().unwrap(), user_b.id, tenant_b)
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant delete_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_list_boards_does_not_leak() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_user_a4", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_user_b4", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let _board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    assert!(
+        !list_b.iter().any(|b| b.title == "Secret"),
+        "Cross-tenant list_boards should not leak boards"
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_get_board_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_board(board.id.clone(), user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized get_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner2", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other2", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: Some("detail".to_string()),
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized get_card_detail should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_create_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_a5", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_b5", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+
+    let result = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Hacked".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_b.id,
+            tenant_b,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant create_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_move_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_a6", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_b6", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .move_card(
+            card.id.parse().unwrap(),
+            MoveCardInput {
+                board_id: board.id.clone(),
+                target_column_id: ready.id.clone(),
+                target_order: Some(2000),
+                before_card_id: None,
+                after_card_id: None,
+            },
+            user_b.id,
+            tenant_b,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant move_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_archive_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_a7", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_b7", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service.archive_card(card.id.parse().unwrap(), user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant archive_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_a8", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_b8", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_card(card.id.parse().unwrap(), user_b.id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant get_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_card_detail_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "kanban_ct_a9", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "kanban_ct_b9", tenant_b).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: Some("detail".to_string()),
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_a.id,
+            tenant_a,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_card_detail(card.id.parse().unwrap(), user_b.id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Cross-tenant get_card_detail should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_create_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_card", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_card", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+
+    let result = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Hacked".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_other.id,
+            tenant_id,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized create_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_move_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_move", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_move", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .move_card(
+            card.id.parse().unwrap(),
+            MoveCardInput {
+                board_id: board.id.clone(),
+                target_column_id: ready.id.clone(),
+                target_order: Some(2000),
+                before_card_id: None,
+                after_card_id: None,
+            },
+            user_other.id,
+            tenant_id,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized move_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_archive_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_arch", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_arch", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service.archive_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized archive_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_delete_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_delc", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_delc", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service.delete_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized delete_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_get_card_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_gc", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_gc", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user_owner.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_card(card.id.parse().unwrap(), user_other.id).await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized get_card should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_list_boards_does_not_leak() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_list", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_list", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let _board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+
+    let list_other = service.list_boards(user_other.id, tenant_id).await.unwrap();
+    assert!(
+        !list_other.iter().any(|b| b.title == "Private"),
+        "Same-tenant unauthorized list_boards should not leak boards"
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_update_board_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "kanban_owner_ub", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "kanban_other_ub", tenant_id).await;
+    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let board = service
+        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .await
+        .unwrap();
+
+    let result = service
+        .update_board(
+            board.id.clone(),
+            rustshare_server::services::kanban_service::UpdateBoardInput {
+                title: Some("Hacked".to_string()),
+                labels: None,
+                settings: None,
+                archived: None,
+            },
+            user_other.id,
+            tenant_id,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Same-tenant unauthorized update_board should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
 }

@@ -3,7 +3,7 @@
 //! Tests that user data is properly isolated between tenants.
 //! Contract: User from tenant A cannot access resources from tenant B.
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::services::{FileError, FolderError};
 
 /// G-01-01: User from tenant A cannot access file from tenant B
