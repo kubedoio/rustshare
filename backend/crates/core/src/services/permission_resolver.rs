@@ -335,13 +335,35 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
 
+        // Folder owners implicitly have Admin on all descendants
+        if folder.owner_id == user_id {
+            let cache_key = CacheKey::Folder(user_id, folder_id);
+            self.cache
+                .write()
+                .await
+                .insert(cache_key, Some(SharePermissions::Admin));
+            return Ok(Some(SharePermissions::Admin));
+        }
+
         // Build the list of folder IDs to check: current folder + all ancestors
         let mut folder_ids_to_check = vec![folder_id];
 
         // Add ancestor_ids from the folder document if available
         // Folder documents now store ancestor_ids for efficient permission resolution
         if let Some(ref ancestor_ids) = folder.ancestor_ids {
-            folder_ids_to_check.extend(ancestor_ids.iter().copied());
+            for &ancestor_id in ancestor_ids {
+                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id).await? {
+                    if ancestor.owner_id == user_id {
+                        let cache_key = CacheKey::Folder(user_id, ancestor_id);
+                        self.cache
+                            .write()
+                            .await
+                            .insert(cache_key, Some(SharePermissions::Admin));
+                        return Ok(Some(SharePermissions::Admin));
+                    }
+                }
+                folder_ids_to_check.push(ancestor_id);
+            }
         } else {
             // Fallback: Walk up the tree using parent_folder_id
             // This maintains backward compatibility with folders created before ancestor_ids
@@ -360,6 +382,15 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
                 // Fetch parent to continue walking
                 if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                    // Ancestor owners also implicitly have Admin
+                    if parent.owner_id == user_id {
+                        let cache_key = CacheKey::Folder(user_id, parent_id);
+                        self.cache
+                            .write()
+                            .await
+                            .insert(cache_key, Some(SharePermissions::Admin));
+                        return Ok(Some(SharePermissions::Admin));
+                    }
                     current_id = parent.parent_folder_id;
                 } else {
                     break;
@@ -749,12 +780,42 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
 
+        // Folder owners implicitly have Admin on all descendants
+        if folder.owner_id == user_id {
+            let cache_key = CacheKey::Folder(user_id, folder_id);
+            self.cache
+                .write()
+                .await
+                .insert(cache_key, Some(SharePermissions::Admin));
+            return Ok(Some((
+                SharePermissions::Admin,
+                None,
+                PermissionSource::Owner,
+            )));
+        }
+
         // Build the list of folder IDs to check: current folder + all ancestors
         let mut folder_ids_to_check = vec![folder_id];
 
         // Add ancestor_ids from the folder document if available
         if let Some(ref ancestor_ids) = folder.ancestor_ids {
-            folder_ids_to_check.extend(ancestor_ids.iter().copied());
+            for &ancestor_id in ancestor_ids {
+                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id).await? {
+                    if ancestor.owner_id == user_id {
+                        let cache_key = CacheKey::Folder(user_id, ancestor_id);
+                        self.cache
+                            .write()
+                            .await
+                            .insert(cache_key, Some(SharePermissions::Admin));
+                        return Ok(Some((
+                            SharePermissions::Admin,
+                            None,
+                            PermissionSource::Owner,
+                        )));
+                    }
+                }
+                folder_ids_to_check.push(ancestor_id);
+            }
         } else {
             // Fallback: Walk up the tree using parent_folder_id
             let mut current_id = folder.parent_folder_id;
@@ -772,6 +833,19 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
                 // Fetch parent to continue walking
                 if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                    // Ancestor owners also implicitly have Admin
+                    if parent.owner_id == user_id {
+                        let cache_key = CacheKey::Folder(user_id, parent_id);
+                        self.cache
+                            .write()
+                            .await
+                            .insert(cache_key, Some(SharePermissions::Admin));
+                        return Ok(Some((
+                            SharePermissions::Admin,
+                            None,
+                            PermissionSource::Owner,
+                        )));
+                    }
                     current_id = parent.parent_folder_id;
                 } else {
                     break;
