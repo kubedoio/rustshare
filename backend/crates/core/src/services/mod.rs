@@ -10,6 +10,7 @@ mod notification_service;
 mod permission_resolver;
 mod scim_service;
 mod scim_v2_service;
+mod search_service;
 mod share_errors;
 mod share_service;
 mod thumbnail_service;
@@ -51,6 +52,7 @@ pub use scim_v2_service::{
     ScimV2ResourceType, ScimV2Schema, ScimV2SchemaAttribute, ScimV2SchemaExtension, ScimV2Service,
     ScimV2ServiceProviderConfig, ScimV2SupportConfig, ScimV2User, ScimV2UserRecord,
 };
+pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use share_errors::ShareError;
 pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,

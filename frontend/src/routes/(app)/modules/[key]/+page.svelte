@@ -3,11 +3,15 @@
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { currentUser } from '$lib/stores/auth';
 	import ModulePageRenderer from './ModulePageRenderer.svelte';
-	import { Info } from 'lucide-svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
+	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
+	import { Info, ShieldAlert, Loader2 } from 'lucide-svelte';
 
 	let key = $derived($page.params.key || '');
 	let module = $derived(getModuleByKey(key));
 	let user = $derived($currentUser);
+	let moduleResolved = $derived(module !== undefined);
 
 	// Permissions check
 	let canUse = $derived(module?.enabled && module?.permissions.workspaceMembersCanUse);

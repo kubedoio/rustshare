@@ -18,7 +18,7 @@ H1/H2/H3, bold, italic, underline, bullet list, numbered list, task list, blockq
 
 ## Attachments
 
-Image upload stores in attachments and inserts relative Markdown; file upload stores in attachments and inserts link/card; hidden metadata not listed; invalid filenames and path traversal rejected.
+Image upload stores in attachments and inserts relative Markdown; file upload stores in attachments and inserts link/card; hidden metadata not listed; invalid filenames and path traversal rejected. Denied delete of a non-attachment file must not create an attachments folder or remove the unrelated file.
 
 ## Export
 

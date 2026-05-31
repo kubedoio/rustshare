@@ -13,6 +13,7 @@ pub mod features;
 mod files;
 mod folders;
 mod groups;
+pub mod health;
 pub mod invites;
 mod kanban;
 mod meetings;
@@ -52,6 +53,7 @@ pub use folders::{
     get_root_contents, move_folder, permanently_delete_folder, rename_folder,
     restore_folder_from_trash, toggle_folder_star,
 };
+pub use health::readiness_check;
 pub use kanban::{
     add_card_attachment, add_card_label, archive_board, archive_card, assign_card_member,
     create_board, create_card, create_checklist, create_checklist_item, create_label, delete_card,
@@ -61,7 +63,8 @@ pub use kanban::{
     update_card_description, update_label,
 };
 pub use notifications::{
-    count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
+    count_unread_notifications, delete_notification, list_activity, list_notifications,
+    mark_notification_read,
 };
 pub use profile::{get_profile, update_profile, update_trash_retention};
 pub use public_shares::{
@@ -79,7 +82,8 @@ pub use validated_json::ValidatedJson;
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
 pub use decisions::{
-    create_decision, get_decision, list_decisions, rename_decision, update_decision,
+    create_decision, delete_decision, get_decision, list_decisions, rename_decision,
+    update_decision,
 };
 pub use features::get_features;
 pub use groups::{
@@ -87,13 +91,13 @@ pub use groups::{
     list_folder_group_shares, list_my_groups, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{accept_invite, create_invite, get_invite};
-pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
+pub use meetings::{create_meeting, delete_meeting, get_meeting, list_meetings, update_meeting};
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
     list_recent_notes, move_note, rename_note, save_note, toggle_visibility,
 };
-pub use standups::{create_standup, get_standup, list_standups, update_standup};
+pub use standups::{create_standup, delete_standup, get_standup, list_standups, update_standup};
 pub use user_shares::{
     create_file_share, create_folder_share, get_user_shared_folder_contents,
     get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,

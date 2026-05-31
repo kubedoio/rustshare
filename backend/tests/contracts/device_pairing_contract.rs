@@ -8,7 +8,7 @@
 //! - C-05: Device tokens are tenant-scoped
 //! - C-06: Device sync respects file permissions
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::domain::{DevicePairRequest, DeviceToken};
 
 /// C-01: Device pairing creates scoped trust relationship

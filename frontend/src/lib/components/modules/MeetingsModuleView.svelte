@@ -3,6 +3,8 @@
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import {
 		CalendarDays,
@@ -175,9 +177,13 @@
 			</div>
 		{/if}
 		{#if $meetingsQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $meetingsQuery.isError}
+			<ErrorState
+				title="Failed to load meetings"
+				message={$meetingsQuery.error?.message || 'Unknown error'}
+				onRetry={() => $meetingsQuery.refetch()}
+			/>
 		{:else if meetings.length === 0}
 			<EmptyState
 				icon={'📅'}

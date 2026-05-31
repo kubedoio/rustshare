@@ -584,12 +584,18 @@ impl KanbanService {
         card_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         if meta.labels.contains(&label_id) {
@@ -624,12 +630,18 @@ impl KanbanService {
         card_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         let initial_len = meta.labels.len();
@@ -665,12 +677,18 @@ impl KanbanService {
         card_id: Uuid,
         assignee_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         if meta.assignees.contains(&assignee_id) {
@@ -705,12 +723,18 @@ impl KanbanService {
         card_id: Uuid,
         assignee_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut meta = self.load_card_metadata(&card_folder, user_id).await?;
 
         let initial_len = meta.assignees.len();
@@ -1066,6 +1090,7 @@ impl KanbanService {
         board_id: Uuid,
         input: CreateLabelInput,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanLabel, KanbanError> {
         self.validate_color(&input.color)?;
 
@@ -1074,6 +1099,10 @@ impl KanbanService {
             .get_folder(board_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
@@ -1098,6 +1127,7 @@ impl KanbanService {
         label_id: String,
         input: UpdateLabelInput,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanLabel, KanbanError> {
         if let Some(ref color) = input.color {
             self.validate_color(color)?;
@@ -1108,6 +1138,10 @@ impl KanbanService {
             .get_folder(board_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
@@ -1146,12 +1180,17 @@ impl KanbanService {
         board_id: Uuid,
         label_id: String,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), KanbanError> {
         let board_folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if board_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         let mut meta = self.load_board_metadata(&board_folder, user_id).await?;
 
@@ -1265,11 +1304,10 @@ impl KanbanService {
         }
         // Reject hidden metadata filenames (before stripping dots)
         let trimmed = name.trim();
-        if trimmed == ".rustshare-board.json"
-            || trimmed == ".rustshare-column.json"
-            || trimmed == ".rustshare-card.json"
+        if trimmed.starts_with(".rustshare")
             || trimmed == "events.jsonl"
             || trimmed == "index.md"
+            || trimmed == "index.editor.json"
         {
             return Err(KanbanError::InvalidName("Reserved filename".to_string()));
         }
@@ -1284,10 +1322,7 @@ impl KanbanService {
             ));
         }
         // Reject hidden metadata filenames again after sanitization
-        if sanitized == "rustshare-board.json"
-            || sanitized == "rustshare-column.json"
-            || sanitized == "rustshare-card.json"
-        {
+        if sanitized.starts_with("rustshare") {
             return Err(KanbanError::InvalidName("Reserved filename".to_string()));
         }
         Ok(sanitized)
@@ -1479,12 +1514,17 @@ impl KanbanService {
         &self,
         card_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanCard, KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         self.load_card(&card_folder, user_id).await
     }
@@ -1493,12 +1533,17 @@ impl KanbanService {
         &self,
         card_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<KanbanCardDetail, KanbanError> {
         let card_folder = self
             .folder_service
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
 
         let summary = self.load_card(&card_folder, user_id).await?;
 
@@ -1525,7 +1570,7 @@ impl KanbanService {
         let attachments = match frontmatter_attachments {
             Some(a) if !a.is_empty() => a,
             _ => {
-                self.load_card_attachments(&card_folder, user_id, card_folder.tenant_id)
+                self.load_card_attachments(&card_folder, user_id, tenant_id)
                     .await?
             }
         };
@@ -1605,7 +1650,7 @@ impl KanbanService {
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
 
-        self.get_card(card_id, user_id).await
+        self.get_card(card_id, user_id, tenant_id).await
     }
 
     pub async fn update_card_description(
@@ -1621,6 +1666,10 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let mut card_meta = self.load_card_metadata(&card_folder, user_id).await?;
         self.write_card_index(&card_folder, &content, user_id, tenant_id)
             .await?;
@@ -1630,7 +1679,7 @@ impl KanbanService {
         self.write_card_metadata(&card_folder, &card_meta, user_id, tenant_id)
             .await?;
 
-        self.get_card(card_id, user_id).await
+        self.get_card(card_id, user_id, tenant_id).await
     }
 
     pub async fn move_card(
@@ -2854,26 +2903,31 @@ impl KanbanService {
         &self,
         card_folder: &Folder,
         user_id: UserId,
-        tenant_id: Uuid,
+        _tenant_id: Uuid,
     ) -> Result<Vec<KanbanCardAttachment>, KanbanError> {
-        let folders = self
-            .metadata_store
-            .list_folders(Some(card_folder.id), user_id, tenant_id)
+        let contents = self
+            .folder_service
+            .list_contents(card_folder.id, user_id)
             .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
+            .map_err(KanbanError::from)?;
 
-        let attachments_folder = match folders.into_iter().find(|f| f.name == "attachments") {
+        let attachments_folder = match contents
+            .folders
+            .into_iter()
+            .find(|f| f.name == "attachments")
+        {
             Some(f) => f,
             None => return Ok(vec![]),
         };
 
-        let files = self
-            .metadata_store
-            .list_files(Some(attachments_folder.id), user_id, tenant_id)
+        let attachment_contents = self
+            .folder_service
+            .list_contents(attachments_folder.id, user_id)
             .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
+            .map_err(KanbanError::from)?;
 
-        Ok(files
+        Ok(attachment_contents
+            .files
             .into_iter()
             .map(|f| KanbanCardAttachment {
                 id: f.id.to_string(),
@@ -2913,6 +2967,11 @@ impl KanbanService {
             .get_folder(card_id, user_id)
             .await
             .map_err(KanbanError::from)?;
+
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         let attachments_folder = self
             .get_attachments_folder(card_id, user_id, tenant_id)
             .await?;
@@ -2971,6 +3030,23 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
+        if card_folder.tenant_id != tenant_id {
+            return Err(KanbanError::PermissionDenied);
+        }
+
+        let attachments_folder = self
+            .find_attachments_folder(card_id, user_id, tenant_id)
+            .await?
+            .ok_or(KanbanError::PermissionDenied)?;
+        let attachment = self
+            .file_service
+            .get_file(attachment_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+        if attachment.parent_folder_id != Some(attachments_folder.id) {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         self.file_service
             .delete_file(attachment_id, user_id)
             .await
@@ -3007,12 +3083,10 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, KanbanError> {
-        let folders = self
-            .metadata_store
-            .list_folders(Some(card_folder_id), user_id, tenant_id)
-            .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
-        if let Some(f) = folders.into_iter().find(|f| f.name == "attachments") {
+        if let Some(f) = self
+            .find_attachments_folder(card_folder_id, user_id, tenant_id)
+            .await?
+        {
             Ok(f)
         } else {
             self.folder_service
@@ -3025,6 +3099,20 @@ impl KanbanService {
                 .await
                 .map_err(KanbanError::from)
         }
+    }
+
+    async fn find_attachments_folder(
+        &self,
+        card_folder_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Option<Folder>, KanbanError> {
+        let folders = self
+            .metadata_store
+            .list_folders(Some(card_folder_id), user_id, tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+        Ok(folders.into_iter().find(|f| f.name == "attachments"))
     }
 
     // --- Card Checklists ---
@@ -3659,8 +3747,10 @@ mod tests {
     fn test_sanitize_attachment_name_rejects_reserved_names() {
         assert!(KanbanService::sanitize_attachment_name(".rustshare-board.json").is_err());
         assert!(KanbanService::sanitize_attachment_name(".rustshare-card.json").is_err());
+        assert!(KanbanService::sanitize_attachment_name(".rustshare.json").is_err());
         assert!(KanbanService::sanitize_attachment_name("events.jsonl").is_err());
         assert!(KanbanService::sanitize_attachment_name("index.md").is_err());
+        assert!(KanbanService::sanitize_attachment_name("index.editor.json").is_err());
     }
 
     #[test]

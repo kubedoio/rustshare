@@ -188,6 +188,7 @@ export function getEnabledDashboardModules(modules: ModuleConfig[]): ModuleConfi
 	return modules
 		.map(normalizeModuleConfig)
 		.filter((module) => {
+			if (module.enabled === false) return false;
 			const dashboard = getModuleDashboardConfig(module);
 			return dashboard.enabled !== false && dashboard.widget?.enabled !== false;
 		})
@@ -197,7 +198,7 @@ export function getEnabledDashboardModules(modules: ModuleConfig[]): ModuleConfi
 export function getEnabledSidebarModules(modules: ModuleConfig[]): ModuleConfig[] {
 	return modules
 		.map(normalizeModuleConfig)
-		.filter((module) => getModuleSidebarConfig(module).enabled === true)
+		.filter((module) => module.enabled !== false && getModuleSidebarConfig(module).enabled === true)
 		.sort((a, b) => getModuleSidebarConfig(a).order - getModuleSidebarConfig(b).order);
 }
 

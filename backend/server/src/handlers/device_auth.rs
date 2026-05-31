@@ -768,18 +768,18 @@ mod tests {
         expires_at: chrono::DateTime<chrono::Utc>,
         approved_at: Option<chrono::DateTime<chrono::Utc>>,
     ) {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO device_pair_requests (id, device_code, user_code, user_id, expires_at, approved_at)
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            Uuid::new_v4(),
-            device_code,
-            user_code,
-            user_id,
-            expires_at,
-            approved_at
         )
+        .bind(Uuid::new_v4())
+        .bind(device_code)
+        .bind(user_code)
+        .bind(user_id)
+        .bind(expires_at)
+        .bind(approved_at)
         .execute(pool)
         .await
         .expect("Failed to insert test pair request");
@@ -787,7 +787,7 @@ mod tests {
 
     async fn insert_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
         let suffix = user_id.as_simple().to_string();
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO users (
                 id,
@@ -801,55 +801,56 @@ mod tests {
             )
             VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)
             "#,
-            user_id,
-            format!("device_pairing_test_{}", suffix),
-            format!("device_pairing_test_{}@example.com", suffix),
-            "test-password-hash",
-            "Device Pairing Test",
-            10_737_418_240_i64,
-            Uuid::nil()
         )
+        .bind(user_id)
+        .bind(format!("device_pairing_test_{}", suffix))
+        .bind(format!("device_pairing_test_{}@example.com", suffix))
+        .bind("test-password-hash")
+        .bind("Device Pairing Test")
+        .bind(10_737_418_240_i64)
+        .bind(Uuid::nil())
         .execute(pool)
         .await
         .expect("Failed to insert test user");
     }
 
     async fn cleanup_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
-        sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
             .execute(pool)
             .await
             .ok();
     }
 
     async fn device_token_count(pool: &sqlx::PgPool, user_id: Uuid) -> i64 {
-        sqlx::query!(
+        sqlx::query(
             r#"
             SELECT COUNT(*)::bigint AS count
             FROM device_tokens
             WHERE user_id = $1
             "#,
-            user_id
         )
+        .bind(user_id)
         .fetch_one(pool)
         .await
         .expect("Failed to count device tokens")
-        .count
+        .get::<Option<i64>, _>("count")
         .unwrap_or(0)
     }
 
     async fn pair_request_count(pool: &sqlx::PgPool, device_code: &str) -> i64 {
-        sqlx::query!(
+        sqlx::query(
             r#"
             SELECT COUNT(*)::bigint AS count
             FROM device_pair_requests
             WHERE device_code = $1
             "#,
-            device_code
         )
+        .bind(device_code)
         .fetch_one(pool)
         .await
         .expect("Failed to count device pair requests")
-        .count
+        .get::<Option<i64>, _>("count")
         .unwrap_or(0)
     }
 
@@ -883,13 +884,11 @@ mod tests {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(device_token_count(&pool, user_id).await, 0);
 
-        sqlx::query!(
-            "DELETE FROM device_pair_requests WHERE device_code = $1",
-            device_code
-        )
-        .execute(&pool)
-        .await
-        .ok();
+        sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
+            .bind(device_code)
+            .execute(&pool)
+            .await
+            .ok();
         cleanup_test_user(&pool, user_id).await;
     }
 
@@ -940,7 +939,8 @@ mod tests {
         assert_eq!(device_token_count(&pool, user_id).await, 1);
         assert_eq!(pair_request_count(&pool, device_code).await, 0);
 
-        sqlx::query!("DELETE FROM device_tokens WHERE user_id = $1", user_id)
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
             .execute(&pool)
             .await
             .ok();
@@ -981,7 +981,8 @@ mod tests {
 
         assert_eq!(pair_request_count(&pool, device_code).await, 0);
 
-        sqlx::query!("DELETE FROM device_tokens WHERE user_id = $1", user_id)
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
             .execute(&pool)
             .await
             .ok();

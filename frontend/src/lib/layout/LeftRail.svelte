@@ -5,7 +5,14 @@
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import { getEnabledSidebarModules, getModuleSidebarConfig } from '$lib/modules/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
-	import { FolderOpen, Settings, PanelLeftOpen, PanelLeftClose } from 'lucide-svelte';
+	import {
+		FolderOpen,
+		Settings,
+		PanelLeftOpen,
+		PanelLeftClose,
+		AlertCircle,
+		RefreshCw
+	} from 'lucide-svelte';
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
 
@@ -122,7 +129,60 @@
 		{/each}
 
 		<!-- Module Navigation -->
-		{#if sidebarModules.length > 0}
+		{#if $modulesQuery.isLoading}
+			<div class="my-2 border-t border-base-300/50 pt-2">
+				{#if railExpanded}
+					<div class="mb-1 px-3 py-1.5">
+						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+							>Modules</span
+						>
+					</div>
+				{/if}
+				{#each Array.from({ length: 3 }) as _, i (i)}
+					<div class="flex h-11 items-center px-3" class:justify-center={!railExpanded}>
+						<div class="h-5 w-5 animate-pulse rounded bg-base-300/60"></div>
+						{#if railExpanded}
+							<div class="ml-3 h-4 w-24 animate-pulse rounded bg-base-300/60"></div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else if $modulesQuery.isError}
+			<div class="my-2 border-t border-base-300/50 pt-2">
+				{#if railExpanded}
+					<div class="px-3 py-1.5">
+						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+							>Modules</span
+						>
+					</div>
+					<div class="px-3 py-2">
+						<div class="flex items-center gap-2 text-xs text-error">
+							<AlertCircle size={14} />
+							<span>Failed to load</span>
+						</div>
+						<button
+							type="button"
+							class="mt-1 flex items-center gap-1 text-xs text-brand-500 hover:text-brand-600"
+							onclick={() => $modulesQuery.refetch()}
+						>
+							<RefreshCw size={12} />
+							Retry
+						</button>
+					</div>
+				{:else}
+					<div class="flex h-11 items-center justify-center">
+						<button
+							type="button"
+							class="flex h-8 w-8 items-center justify-center rounded-lg text-error transition-colors hover:bg-error/10"
+							aria-label="Retry loading modules"
+							onclick={() => $modulesQuery.refetch()}
+						>
+							<AlertCircle size={18} />
+						</button>
+					</div>
+				{/if}
+			</div>
+		{:else if sidebarModules.length > 0}
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">

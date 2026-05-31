@@ -4,6 +4,8 @@
 	import { listBrainstormBoards, createBrainstormBoard } from '$lib/api/brainstorming';
 	import { activityStore } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
@@ -141,9 +143,13 @@
 	</div>
 	<div class="flex flex-col gap-4">
 		{#if $boardsQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $boardsQuery.isError}
+			<ErrorState
+				title="Failed to load boards"
+				message={$boardsQuery.error?.message || 'Unknown error'}
+				onRetry={() => $boardsQuery.refetch()}
+			/>
 		{:else if ($boardsQuery.data ?? []).length === 0}
 			<EmptyState
 				icon={'💡'}

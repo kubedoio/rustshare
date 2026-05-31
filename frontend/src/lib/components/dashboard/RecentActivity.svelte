@@ -1,41 +1,24 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { getActivityDisplay, getRelativeTime, type Activity } from '$lib/stores/activity';
+	import { onMount } from 'svelte';
+	import {
+		serverActivityStore,
+		getActivityDisplay,
+		getRelativeTime,
+		getActivityHref
+	} from '$lib/stores/activity';
 	import { getActivityVerb, getUserInitials } from '$lib/utils/dashboard';
 	import DashboardSectionHeader from './DashboardSectionHeader.svelte';
 	import DashboardEmptyState from './DashboardEmptyState.svelte';
 
 	let {
-		activities,
 		userName = undefined
 	}: {
-		activities: Activity[];
 		userName?: string | undefined;
 	} = $props();
 
-	function getActivityHref(activity: Activity): string | null {
-		if (!activity.artifactId) return null;
-
-		switch (activity.moduleKey) {
-			case 'notes':
-				return `/modules/notes/${activity.artifactId}`;
-			case 'meetings':
-				return `/modules/meetings/${activity.artifactId}`;
-			case 'standups':
-				return `/modules/standups/${activity.artifactId}`;
-			case 'decisions':
-				return `/modules/decisions/${activity.artifactId}`;
-			case 'brainstorming':
-				return `/modules/brainstorming/${activity.artifactId}`;
-			case 'kanban':
-				return '/modules/kanban';
-			case 'shares':
-				return `/modules/shares/${activity.artifactId}`;
-			default:
-				// Fallback for file-system artifacts
-				return `/files?preview=${activity.artifactId}`;
-		}
-	}
+	onMount(() => {
+		serverActivityStore.fetch(6);
+	});
 </script>
 
 <section class="recent-activity" aria-label="Recent activity">
@@ -45,14 +28,22 @@
 			window.location.href = '/settings?tab=activity';
 		}}
 	/>
-	{#if activities.length === 0}
+	{#if $serverActivityStore.loading}
+		<div class="py-6 text-center">
+			<div
+				class="inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+			></div>
+		</div>
+	{:else if $serverActivityStore.error}
+		<DashboardEmptyState description={$serverActivityStore.error} minimal />
+	{:else if $serverActivityStore.items.length === 0}
 		<DashboardEmptyState
 			description="Activity will appear here as you work in your workspace."
 			minimal
 		/>
 	{:else}
 		<ul class="activity-list">
-			{#each activities as activity}
+			{#each $serverActivityStore.items as activity}
 				{@const href = getActivityHref(activity)}
 				{@const display = getActivityDisplay(activity)}
 				{#if href}
@@ -85,7 +76,11 @@
 						title="This activity record cannot be opened"
 					>
 						<div class="activity-icon-wrap">
-							{display.icon}
+							{#if typeof display.icon === 'string'}
+								{display.icon}
+							{:else}
+								<svelte:component this={display.icon} size={16} />
+							{/if}
 						</div>
 						<div class="activity-body">
 							<span class="activity-text">

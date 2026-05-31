@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DashboardPage from './+page.svelte';
@@ -20,44 +20,143 @@ vi.mock('$lib/api/users', () => ({
 vi.mock('$lib/modules/registry', async (importOriginal) => {
 	const mod = await importOriginal<typeof import('$lib/modules/registry')>();
 	return {
-		...mod,
-		getEnabledModules: vi.fn(() => [
-			{
-				key: 'kanban',
-				displayName: 'Kanban',
-				ui: {
-					dashboard: {
-						enabled: true,
-						order: 10,
-						widget: { enabled: true }
-					}
-				}
-			},
-			{
-				key: 'notes',
-				displayName: 'Notes',
-				ui: {
-					dashboard: {
-						enabled: true,
-						order: 20,
-						widget: { enabled: true }
-					}
-				}
-			},
-			{
-				key: 'unknown',
-				displayName: 'Unknown',
-				ui: {
-					dashboard: {
-						enabled: true,
-						order: 30,
-						widget: { enabled: true }
-					}
-				}
-			}
-		])
+		...mod
 	};
 });
+
+vi.mock('$lib/modules/moduleActions', () => ({
+	runModulePrimaryAction: vi.fn()
+}));
+
+const mockEnabledModules = [
+	{
+		id: 'module-notes',
+		module_key: 'notes',
+		display_name: 'Notes',
+		description: 'Recent notes',
+		enabled: true,
+		root_path: '/Workspace/Notes',
+		renderer: 'notes',
+		default_template: 'template_default_note',
+		icon: 'sticky-note',
+		schema_version: '1',
+		permissions: {
+			admin_can_configure: true,
+			workspace_members_can_use: true,
+			allow_public_share: true,
+			allow_internal_share: true
+		},
+		ai_indexing: { enabled: true },
+		audit: { enabled: true },
+		ui_config: {
+			dashboard: {
+				enabled: true,
+				order: 10,
+				primaryAction: {
+					label: 'New note',
+					action: 'create-from-template',
+					template: 'template_default_note'
+				}
+			}
+		},
+		created_at: '2026-04-30T00:00:00Z',
+		updated_at: '2026-04-30T00:00:00Z'
+	},
+	{
+		id: 'module-kanban',
+		module_key: 'kanban',
+		display_name: 'Kanban',
+		description: 'Kanban boards',
+		enabled: true,
+		root_path: '/Workspace/Kanban',
+		renderer: 'kanban',
+		default_template: 'template_default_kanban',
+		icon: 'columns',
+		schema_version: '1',
+		permissions: {
+			admin_can_configure: true,
+			workspace_members_can_use: true,
+			allow_public_share: true,
+			allow_internal_share: true
+		},
+		ai_indexing: { enabled: true },
+		audit: { enabled: true },
+		ui_config: {
+			dashboard: {
+				enabled: true,
+				order: 20,
+				primaryAction: {
+					label: 'New Kanban board',
+					action: 'create-from-template',
+					template: 'template_default_kanban'
+				}
+			}
+		},
+		created_at: '2026-04-30T00:00:00Z',
+		updated_at: '2026-04-30T00:00:00Z'
+	},
+	{
+		id: 'module-decisions',
+		module_key: 'decisions',
+		display_name: 'Decisions',
+		description: 'Decision records',
+		enabled: false,
+		root_path: '/Workspace/Decisions',
+		renderer: 'decisions',
+		default_template: 'template_default_decision',
+		icon: 'path-separation',
+		schema_version: '1',
+		permissions: {
+			admin_can_configure: true,
+			workspace_members_can_use: true,
+			allow_public_share: true,
+			allow_internal_share: true
+		},
+		ai_indexing: { enabled: true },
+		audit: { enabled: true },
+		ui_config: {
+			dashboard: {
+				enabled: true,
+				order: 30,
+				primaryAction: {
+					label: 'New decision record',
+					action: 'create-from-template',
+					template: 'template_default_decision'
+				}
+			}
+		},
+		created_at: '2026-04-30T00:00:00Z',
+		updated_at: '2026-04-30T00:00:00Z'
+	},
+	{
+		id: 'module-no-action',
+		module_key: 'no-action',
+		display_name: 'No Action Module',
+		description: 'A module without a primary action',
+		enabled: true,
+		root_path: '/Workspace/NoAction',
+		renderer: 'generic',
+		default_template: null,
+		icon: 'folder',
+		schema_version: '1',
+		permissions: {
+			admin_can_configure: true,
+			workspace_members_can_use: true,
+			allow_public_share: true,
+			allow_internal_share: true
+		},
+		ai_indexing: { enabled: true },
+		audit: { enabled: true },
+		ui_config: {
+			dashboard: {
+				enabled: true,
+				order: 40
+			}
+		},
+		created_at: '2026-04-30T00:00:00Z',
+		updated_at: '2026-04-30T00:00:00Z'
+	}
+];
 
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
@@ -98,25 +197,17 @@ vi.mock('$lib/query-compat', () => ({
 				isLoading: false
 			});
 		}
+		if (key === 'enabled-modules') {
+			return readable({
+				data: mockEnabledModules,
+				isLoading: false
+			});
+		}
 		if (key === 'workspace-module-summaries') {
 			return readable({
 				data: [
 					{
-						module: { key: 'kanban', displayName: 'Kanban' },
-						summary: {
-							total_items: 1,
-							recent_items: [
-								{
-									id: 'board-1',
-									name: 'Kanban Board',
-									item_type: 'folder',
-									updated_at: new Date().toISOString()
-								}
-							]
-						}
-					},
-					{
-						module: { key: 'notes', displayName: 'Notes' },
+						module: mockEnabledModules[0],
 						summary: {
 							total_items: 1,
 							recent_items: [
@@ -130,14 +221,14 @@ vi.mock('$lib/query-compat', () => ({
 						}
 					},
 					{
-						module: { key: 'unknown', displayName: 'Unknown' },
+						module: mockEnabledModules[1],
 						summary: {
 							total_items: 1,
 							recent_items: [
 								{
-									id: 'unknown-1',
-									name: 'Unknown Widget.md',
-									item_type: 'file',
+									id: 'board-1',
+									name: 'Kanban Board',
+									item_type: 'folder',
 									updated_at: new Date().toISOString()
 								}
 							]
@@ -168,13 +259,36 @@ vi.mock('$lib/stores/activity', () => ({
 			moduleKey: 'notes'
 		}
 	]),
+	serverActivityStore: {
+		subscribe: readable({
+			items: [
+				{
+					id: 'act-1',
+					type: 'note_created',
+					fileName: 'New Name.md',
+					timestamp: new Date().toISOString(),
+					artifactId: 'note-123',
+					moduleKey: 'notes',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		}).subscribe,
+		fetch: vi.fn(),
+		loadMore: vi.fn(),
+		reset: vi.fn()
+	},
 	getActivityDisplay: vi.fn(() => ({
 		icon: '📝',
 		title: 'Note created',
 		description: '',
 		color: '#ea580c'
 	})),
-	getRelativeTime: vi.fn(() => 'Just now')
+	getRelativeTime: vi.fn(() => 'Just now'),
+	getActivityHref: vi.fn(() => '/modules/notes/note-123')
 }));
 
 vi.mock('$lib/stores/auth', () => ({
@@ -238,12 +352,48 @@ describe('Dashboard Page Workspace Surface', () => {
 		});
 	});
 
-	it('enriches activity names from current data instead of stale store value', async () => {
+	it('renders server-sourced recent activity', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
 			expect(screen.getByText('New Name.md')).toBeTruthy();
-			expect(screen.queryByText('Old Name.md')).toBeNull();
+		});
+	});
+});
+
+describe('Dashboard Page Registry-Driven Quick Actions', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('renders quick actions only for enabled modules with primary actions', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			const quickActionsSection = screen.getByLabelText('Quick actions');
+			expect(within(quickActionsSection).getByText('New note')).toBeTruthy();
+			expect(within(quickActionsSection).getByText('New Kanban board')).toBeTruthy();
+		});
+
+		// Decisions is disabled → no quick action
+		const quickActionsSection = screen.getByLabelText('Quick actions');
+		expect(within(quickActionsSection).queryByText('New decision record')).toBeNull();
+	});
+
+	it('hides disabled modules from quick actions', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			const quickActionsSection = screen.getByLabelText('Quick actions');
+			expect(within(quickActionsSection).queryByText('New decision record')).toBeNull();
+		});
+	});
+
+	it('hides modules without primary actions from quick actions', async () => {
+		render(DashboardPage);
+
+		await vi.waitFor(() => {
+			expect(screen.queryByText('New No Action Module')).toBeNull();
 		});
 	});
 });

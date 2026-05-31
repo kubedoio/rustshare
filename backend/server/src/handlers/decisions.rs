@@ -37,11 +37,29 @@ pub async fn create_decision(
         .create_decision(
             auth.user_id,
             auth.tenant_id,
-            req.title,
+            req.title.clone(),
             req.category,
             req.content,
         )
         .await?;
+
+    let payload = DecisionModifiedPayload {
+        decision_id: decision.id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision.id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(decision)))
 }
@@ -53,7 +71,7 @@ pub async fn get_decision(
 ) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
-        .get_decision(decision_id, auth.user_id)
+        .get_decision(decision_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(decision))
@@ -77,6 +95,7 @@ pub async fn update_decision(
         .update_decision(
             decision_id,
             auth.user_id,
+            auth.tenant_id,
             req.title,
             req.content,
             req.status,
@@ -95,7 +114,11 @@ pub async fn update_decision(
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         auth.user_id,
     );
-    state.broadcaster.publish(event);
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(decision))
 }
@@ -113,7 +136,7 @@ pub async fn rename_decision(
 ) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
-        .rename_decision(decision_id, auth.user_id, req.title)
+        .rename_decision(decision_id, auth.user_id, auth.tenant_id, req.title)
         .await?;
 
     let payload = DecisionModifiedPayload {
@@ -128,9 +151,48 @@ pub async fn rename_decision(
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         auth.user_id,
     );
-    state.broadcaster.publish(event);
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(decision))
+}
+
+pub async fn delete_decision(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(decision_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let decision = state
+        .decision_service
+        .get_decision(decision_id, auth.user_id, auth.tenant_id)
+        .await?;
+    state
+        .decision_service
+        .delete_decision(decision_id, auth.user_id, auth.tenant_id)
+        .await?;
+
+    let payload = DecisionModifiedPayload {
+        decision_id: decision_id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn list_decisions(

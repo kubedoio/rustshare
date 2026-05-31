@@ -40,6 +40,24 @@ pub async fn create_meeting(
         )
         .await?;
 
+    let payload = MeetingNoteModifiedPayload {
+        meeting_id: meeting.id.to_string(),
+        title: meeting.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::MeetingNoteModified,
+        meeting.id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     Ok((StatusCode::CREATED, Json(meeting)))
 }
 
@@ -50,7 +68,7 @@ pub async fn get_meeting(
 ) -> Result<Json<MeetingNote>, AppError> {
     let meeting = state
         .meeting_service
-        .get_meeting(meeting_id, auth.user_id)
+        .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(meeting))
@@ -74,6 +92,7 @@ pub async fn update_meeting(
         .update_meeting(
             meeting_id,
             auth.user_id,
+            auth.tenant_id,
             req.title,
             req.content,
             req.attendees,
@@ -92,9 +111,48 @@ pub async fn update_meeting(
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         auth.user_id,
     );
-    state.broadcaster.publish(event);
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(meeting))
+}
+
+pub async fn delete_meeting(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(meeting_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let meeting = state
+        .meeting_service
+        .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
+        .await?;
+    state
+        .meeting_service
+        .delete_meeting(meeting_id, auth.user_id, auth.tenant_id)
+        .await?;
+
+    let payload = MeetingNoteModifiedPayload {
+        meeting_id: meeting_id.to_string(),
+        title: meeting.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::MeetingNoteModified,
+        meeting_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn list_meetings(

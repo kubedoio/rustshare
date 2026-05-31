@@ -43,6 +43,7 @@ describe('Module Page Dynamic Route', () => {
 		rootPath: '/Test',
 		renderer: 'generic',
 		defaultTemplate: null,
+		icon: 'folder',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,

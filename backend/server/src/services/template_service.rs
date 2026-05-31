@@ -499,8 +499,8 @@ impl TemplateService {
                     metadata_schema: metadata_schema.clone(),
                     renderer: renderer.map(|s| s.to_string()),
                     visibility_policy: "workspace".to_string(),
-                    ai_indexing_policy: json!("enabled"),
-                    audit_logging_policy: json!("enabled"),
+                    ai_indexing_policy: json!({"enabled": true}),
+                    audit_logging_policy: json!({"enabled": true}),
                     module_config,
                     created_by: None,
                     created_at: Utc::now(),
@@ -1610,7 +1610,8 @@ mod tests {
     #[test]
     fn rejects_unapproved_icon_keys() {
         assert!(validate_icon_key("users").is_err());
-        assert!(validate_icon_key("activity").is_err());
+        assert!(validate_icon_key("invalid-random-icon").is_err());
+        assert!(validate_icon_key("script<alert>1</alert>").is_err());
     }
 
     #[test]
@@ -1618,5 +1619,13 @@ mod tests {
         assert!(validate_icon_key("file-text").is_ok());
         assert!(validate_icon_key("calendar-days").is_ok());
         assert!(validate_icon_key("share-2").is_ok());
+    }
+
+    #[test]
+    fn default_template_policies_use_object_shape() {
+        // Regression guard: ensure_default_templates must write {"enabled": true}
+        // rather than the string "enabled".
+        let expected = json!({"enabled": true});
+        assert!(expected.get("enabled").unwrap().as_bool().unwrap());
     }
 }

@@ -4,6 +4,8 @@
 	import { listAllUserShares, revokeShare } from '$lib/api/shares';
 	import { getShareTypeLabel } from '$lib/api/types';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
 	import {
@@ -114,9 +116,13 @@
 
 	<div class="flex flex-col gap-4">
 		{#if $sharesQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $sharesQuery.isError}
+			<ErrorState
+				title="Failed to load shares"
+				message={$sharesQuery.error?.message || 'Unknown error'}
+				onRetry={() => $sharesQuery.refetch()}
+			/>
 		{:else if shares.length === 0}
 			<EmptyState
 				icon={'🔗'}

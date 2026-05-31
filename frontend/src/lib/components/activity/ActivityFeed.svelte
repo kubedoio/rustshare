@@ -1,58 +1,47 @@
 <script lang="ts">
-	import { activityStore, getActivityDisplay, getRelativeTime } from '$lib/stores/activity';
-	import type { Activity } from '$lib/stores/activity';
-	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
-	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
+	import { onMount } from 'svelte';
+	import {
+		serverActivityStore,
+		getActivityDisplay,
+		getRelativeTime,
+		getActivityHref
+	} from '$lib/stores/activity';
 
 	let {
 		maxItems = 10,
-		showClearButton = true,
 		showHeader = true
 	}: {
 		maxItems?: number;
-		showClearButton?: boolean;
 		showHeader?: boolean;
 	} = $props();
 
-	let showConfirmModal = $state(false);
+	onMount(() => {
+		serverActivityStore.fetch(maxItems);
+	});
 
-	let recentActivities = $derived(
-		$activityStore.filter((a) => !isInternalRustShareFile(a.fileName)).slice(0, maxItems)
-	);
-
-	function handleClearHistory() {
-		showConfirmModal = true;
-	}
-
-	function onConfirmClear() {
-		activityStore.clearHistory();
-		showConfirmModal = false;
-	}
-
-	function handleRemoveActivity(id: string) {
-		activityStore.removeActivity(id);
+	function handleLoadMore() {
+		serverActivityStore.loadMore(maxItems);
 	}
 </script>
 
 <div class="space-y-4">
-	<!-- Header -->
 	{#if showHeader}
 		<div class="flex items-center justify-between">
 			<h3 class="text-lg font-semibold">Recent Activity</h3>
-			{#if showClearButton && $activityStore.length > 0}
-				<button
-					class="btn text-[11px] btn-ghost btn-xs"
-					onclick={handleClearHistory}
-					title="Clear all history"
-				>
-					Clear All
-				</button>
-			{/if}
 		</div>
 	{/if}
 
-	<!-- Activity List -->
-	{#if recentActivities.length === 0}
+	{#if $serverActivityStore.loading && $serverActivityStore.items.length === 0}
+		<div class="py-8 text-center">
+			<div
+				class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+			></div>
+		</div>
+	{:else if $serverActivityStore.error && $serverActivityStore.items.length === 0}
+		<div class="py-8 text-center text-error">
+			<p class="text-sm">{$serverActivityStore.error}</p>
+		</div>
+	{:else if $serverActivityStore.items.length === 0}
 		<div class="py-8 text-center text-base-content/60">
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
@@ -72,77 +61,103 @@
 		</div>
 	{:else}
 		<div class="space-y-2">
-			{#each recentActivities as activity (activity.id)}
+			{#each $serverActivityStore.items as activity (activity.id)}
 				{@const display = getActivityDisplay(activity)}
-				<div
-					class="group flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-base-200/50"
-				>
-					<div class="mt-0.5 flex-shrink-0 text-lg">
-						{#if typeof display.icon === 'string'}
-							{display.icon}
-						{:else}
-							<svelte:component
-								this={display.icon}
-								size={18}
-								style={display.color.startsWith('#') ? `color: ${display.color}` : undefined}
-								class={!display.color.startsWith('#') ? display.color : undefined}
-							/>
-						{/if}
-					</div>
-					<div class="min-w-0 flex-1">
-						{#if display.color.startsWith('#')}
-							<p class="text-[13px] leading-tight font-medium" style="color: {display.color}">
-								{display.title}
-							</p>
-						{:else}
-							<p class="text-[13px] leading-tight font-medium {display.color}">
-								{display.title}
-							</p>
-						{/if}
-						<p class="mt-0.5 truncate text-[12px] text-base-content/70">
-							{display.description}
-						</p>
-						<p class="mt-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase">
-							{getRelativeTime(activity.timestamp)}
-						</p>
-					</div>
-					<button
-						class="btn btn-circle opacity-0 btn-ghost transition-opacity btn-xs group-hover:opacity-100"
-						onclick={() => handleRemoveActivity(activity.id)}
-						title="Remove"
+				{@const href = getActivityHref(activity)}
+				{#if href}
+					<a
+						{href}
+						class="group flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-base-200/50"
 					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="1.5"
-							stroke="currentColor"
-							class="h-4 w-4 text-base-content/50 hover:text-error"
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-						</svg>
-					</button>
-				</div>
+						<div class="mt-0.5 flex-shrink-0 text-lg">
+							{#if typeof display.icon === 'string'}
+								{display.icon}
+							{:else}
+								<svelte:component
+									this={display.icon}
+									size={18}
+									style={display.color.startsWith('#') ? `color: ${display.color}` : undefined}
+									class={!display.color.startsWith('#') ? display.color : undefined}
+								/>
+							{/if}
+						</div>
+						<div class="min-w-0 flex-1">
+							{#if display.color.startsWith('#')}
+								<p class="text-[13px] leading-tight font-medium" style="color: {display.color}">
+									{display.title}
+								</p>
+							{:else}
+								<p class="text-[13px] leading-tight font-medium {display.color}">
+									{display.title}
+								</p>
+							{/if}
+							<p class="mt-0.5 truncate text-[12px] text-base-content/70">
+								{display.description}
+							</p>
+							<p
+								class="mt-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase"
+							>
+								{getRelativeTime(activity.timestamp)}
+							</p>
+						</div>
+					</a>
+				{:else}
+					<div
+						class="group flex cursor-not-allowed items-start gap-3 rounded-lg p-3 opacity-60"
+						title="This activity record cannot be opened"
+					>
+						<div class="mt-0.5 flex-shrink-0 text-lg">
+							{#if typeof display.icon === 'string'}
+								{display.icon}
+							{:else}
+								<svelte:component
+									this={display.icon}
+									size={18}
+									style={display.color.startsWith('#') ? `color: ${display.color}` : undefined}
+									class={!display.color.startsWith('#') ? display.color : undefined}
+								/>
+							{/if}
+						</div>
+						<div class="min-w-0 flex-1">
+							{#if display.color.startsWith('#')}
+								<p class="text-[13px] leading-tight font-medium" style="color: {display.color}">
+									{display.title}
+								</p>
+							{:else}
+								<p class="text-[13px] leading-tight font-medium {display.color}">
+									{display.title}
+								</p>
+							{/if}
+							<p class="mt-0.5 truncate text-[12px] text-base-content/70">
+								{display.description}
+							</p>
+							<p
+								class="mt-1 text-[10px] font-semibold tracking-wider text-base-content/40 uppercase"
+							>
+								{getRelativeTime(activity.timestamp)}
+							</p>
+						</div>
+					</div>
+				{/if}
 			{/each}
 		</div>
 
-		{#if $activityStore.length > maxItems}
+		{#if $serverActivityStore.hasMore}
 			<div class="pt-2 text-center">
-				<p class="text-[10px] font-medium tracking-wider text-base-content/40 uppercase">
-					Showing {maxItems} of {$activityStore.length} activities
-				</p>
+				<button
+					class="btn btn-ghost btn-sm text-xs"
+					onclick={handleLoadMore}
+					disabled={$serverActivityStore.loading}
+				>
+					{#if $serverActivityStore.loading}
+						<span
+							class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+						></span>
+					{:else}
+						Load more
+					{/if}
+				</button>
 			</div>
 		{/if}
 	{/if}
 </div>
-
-<ConfirmModal
-	open={showConfirmModal}
-	title="Clear Activity History"
-	message="Clear all activity history? This cannot be undone."
-	confirmLabel="Clear All"
-	cancelLabel="Cancel"
-	danger={true}
-	onConfirm={onConfirmClear}
-	onCancel={() => (showConfirmModal = false)}
-/>

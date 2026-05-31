@@ -85,6 +85,13 @@ impl FileMetadataStoreOps for MetadataStore {
         self.find_folder_by_id(id, owner_id).await
     }
 
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
+    }
+
     async fn find_file_by_id(
         &self,
         id: uuid::Uuid,

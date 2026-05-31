@@ -3,7 +3,9 @@ use axum::Router;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
-    Router::new().route("/health", get(crate::health_check))
+    Router::new()
+        .route("/health", get(crate::health_check))
+        .route("/health/ready", get(crate::handlers::readiness_check))
 }
 
 pub fn auth_routes() -> Router<AppState> {
@@ -375,7 +377,7 @@ pub fn kanban_routes() -> Router<AppState> {
 }
 
 pub fn decision_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/decisions", get(crate::handlers::list_decisions))
         .route("/api/v1/decisions", post(crate::handlers::create_decision))
@@ -385,13 +387,17 @@ pub fn decision_routes() -> Router<AppState> {
             put(crate::handlers::update_decision),
         )
         .route(
+            "/api/v1/decisions/{id}",
+            delete(crate::handlers::delete_decision),
+        )
+        .route(
             "/api/v1/decisions/{id}/rename",
             post(crate::handlers::rename_decision),
         )
 }
 
 pub fn meeting_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/meetings", get(crate::handlers::list_meetings))
         .route("/api/v1/meetings", post(crate::handlers::create_meeting))
@@ -400,10 +406,14 @@ pub fn meeting_routes() -> Router<AppState> {
             "/api/v1/meetings/{id}",
             put(crate::handlers::update_meeting),
         )
+        .route(
+            "/api/v1/meetings/{id}",
+            delete(crate::handlers::delete_meeting),
+        )
 }
 
 pub fn standup_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/standups", get(crate::handlers::list_standups))
         .route("/api/v1/standups", post(crate::handlers::create_standup))
@@ -411,6 +421,10 @@ pub fn standup_routes() -> Router<AppState> {
         .route(
             "/api/v1/standups/{id}",
             put(crate::handlers::update_standup),
+        )
+        .route(
+            "/api/v1/standups/{id}",
+            delete(crate::handlers::delete_standup),
         )
 }
 
@@ -947,6 +961,7 @@ pub fn notification_routes() -> Router<AppState> {
             "/api/v1/notifications/{id}",
             delete(crate::handlers::delete_notification),
         )
+        .route("/api/v1/activity", get(crate::handlers::list_activity))
 }
 
 pub fn invite_routes() -> Router<AppState> {

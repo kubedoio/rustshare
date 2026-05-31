@@ -7,6 +7,9 @@ describe('icon registry', () => {
 		expect(APPROVED_MODULE_ICONS).toContain('calendar-days');
 		expect(APPROVED_MODULE_ICONS).toContain('clipboard-list');
 		expect(APPROVED_MODULE_ICONS).toContain('share-2');
+		expect(APPROVED_MODULE_ICONS).toContain('lightbulb');
+		expect(APPROVED_MODULE_ICONS).toContain('activity');
+		expect(APPROVED_MODULE_ICONS).toContain('path-separation');
 		expect(DEFAULT_MODULE_ICON).toBe('folder');
 	});
 

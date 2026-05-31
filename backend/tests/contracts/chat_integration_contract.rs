@@ -8,7 +8,7 @@
 //! - H-05: Unfurl handles deleted files gracefully
 //! - H-06: Unfurl rate limiting
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::ShareError;
 use rustshare_storage::{EventStore, MetadataStore};
@@ -29,9 +29,9 @@ fn create_share_service(
     EventStore,
     MetadataStore,
     MockJwtManager,
-    crate::contracts::common::MockNotificationRepo,
+    crate::common::MockNotificationRepo,
 > {
-    crate::contracts::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
+    crate::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
 }
 
 /// H-01: Unfurl checks permissions before returning preview

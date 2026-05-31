@@ -1,9 +1,10 @@
 //! Event store implementation.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::events::*;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Event store for append-only event log
@@ -14,6 +15,11 @@ pub struct EventStore {
 impl EventStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Access the underlying database pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Append a new event to the event store
@@ -132,6 +138,88 @@ impl EventStore {
 
         Ok(events)
     }
+
+    /// Query recent file/module/share mutation events for a tenant.
+    ///
+    /// Returns events ordered by timestamp descending (newest first).
+    /// Supports cursor pagination via `before_timestamp` and `before_id`.
+    pub async fn query_recent_events(
+        &self,
+        tenant_id: Uuid,
+        before_timestamp: Option<DateTime<Utc>>,
+        before_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Event>> {
+        let event_types: Vec<String> = vec![
+            EventType::FileUploaded,
+            EventType::FileModified,
+            EventType::FileRenamed,
+            EventType::FileMoved,
+            EventType::FileDeleted,
+            EventType::FileRestored,
+            EventType::FolderCreated,
+            EventType::FolderRenamed,
+            EventType::FolderMoved,
+            EventType::FolderDeleted,
+            EventType::ShareCreated,
+            EventType::ShareRevoked,
+            EventType::ShareUpdated,
+            EventType::ShareReceivedByUser,
+            EventType::SharePermissionChanged,
+            EventType::ShareRevokedFromUser,
+            EventType::BrainstormBoardModified,
+            EventType::MeetingNoteModified,
+            EventType::DecisionModified,
+            EventType::StandupModified,
+            EventType::KanbanModified,
+            EventType::NoteModified,
+        ]
+        .into_iter()
+        .map(|et| serde_json::to_string(&et).unwrap())
+        .collect();
+
+        let rows = sqlx::query(
+            r#"
+            SELECT e.event_id, e.event_type, e.aggregate_id, e.aggregate_type, e.payload, e.user_id, e.timestamp, e.version
+            FROM events e
+            JOIN users u ON u.id = e.user_id
+            WHERE u.tenant_id = $1
+              AND e.event_type = ANY($2)
+              AND ($3::timestamptz IS NULL OR (e.timestamp, e.event_id) < ($3, $4))
+            ORDER BY e.timestamp DESC, e.event_id DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&event_types)
+        .bind(before_timestamp)
+        .bind(before_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let events = rows
+            .into_iter()
+            .map(|row| {
+                Ok(Event {
+                    id: row.try_get("event_id")?,
+                    event_type: serde_json::from_str(
+                        row.try_get::<String, _>("event_type")?.as_str(),
+                    )?,
+                    aggregate_id: row.try_get("aggregate_id")?,
+                    aggregate_type: serde_json::from_str(
+                        row.try_get::<String, _>("aggregate_type")?.as_str(),
+                    )?,
+                    payload: row.try_get("payload")?,
+                    user_id: row.try_get("user_id")?,
+                    timestamp: row.try_get("timestamp")?,
+                    version: row.try_get("version")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(events)
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +235,51 @@ mod tests {
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
         PgPool::connect(&database_url).await.unwrap()
+    }
+
+    #[test]
+    fn test_query_recent_events_event_type_serialization_matches_append() {
+        // query_recent_events builds its event type filter by serializing
+        // EventType variants with serde_json::to_string. append() stores
+        // event_type the same way. This test ensures the formats match.
+        let event_types = vec![
+            EventType::FileUploaded,
+            EventType::FileModified,
+            EventType::FileRenamed,
+            EventType::FileMoved,
+            EventType::FileDeleted,
+            EventType::FileRestored,
+            EventType::FolderCreated,
+            EventType::FolderRenamed,
+            EventType::FolderMoved,
+            EventType::FolderDeleted,
+            EventType::ShareCreated,
+            EventType::ShareRevoked,
+            EventType::ShareUpdated,
+            EventType::ShareReceivedByUser,
+            EventType::SharePermissionChanged,
+            EventType::ShareRevokedFromUser,
+            EventType::BrainstormBoardModified,
+            EventType::MeetingNoteModified,
+            EventType::DecisionModified,
+            EventType::StandupModified,
+            EventType::KanbanModified,
+            EventType::NoteModified,
+        ];
+
+        for et in event_types {
+            let serialized = serde_json::to_string(&et).unwrap();
+            // Verify it's a JSON object with a "type" key, not a plain string.
+            assert!(
+                serialized.starts_with("{\"type\":\""),
+                "EventType {:?} serializes as {} which is not the expected JSON object format",
+                et,
+                serialized
+            );
+            // Verify round-trip deserialization works.
+            let deserialized: EventType = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(et, deserialized);
+        }
     }
 
     #[tokio::test]

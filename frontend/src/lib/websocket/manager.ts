@@ -23,7 +23,9 @@ import type {
 	BrainstormBoardModifiedPayload,
 	MeetingNoteModifiedPayload,
 	DecisionModifiedPayload,
-	StandupModifiedPayload
+	StandupModifiedPayload,
+	KanbanModifiedPayload,
+	NoteModifiedPayload
 } from './events';
 
 const managerState = {
@@ -93,6 +95,8 @@ function registerEventHandlers(wsClient: ReturnType<typeof getWebSocketClient>):
 	wsClient.on('MeetingNoteModified', handleMeetingNoteModified);
 	wsClient.on('DecisionModified', handleDecisionModified);
 	wsClient.on('StandupModified', handleStandupModified);
+	wsClient.on('KanbanModified', handleKanbanModified);
+	wsClient.on('NoteModified', handleNoteModified);
 }
 
 // Helper to check if event is from current user
@@ -413,6 +417,8 @@ function handleBrainstormBoardModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['brainstorm-board', payload.board_id] });
 	queryClient.invalidateQueries({ queryKey: ['brainstorm-board-source', payload.board_id] });
 	queryClient.invalidateQueries({ queryKey: ['brainstorm-boards'] });
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Brainstorm board "${payload.title}" was updated`, 'info');
 	}
@@ -423,6 +429,8 @@ function handleMeetingNoteModified(event: WebSocketEvent): void {
 	if (!payload) return;
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'meetings', payload.meeting_id] });
 	queryClient.invalidateQueries({ queryKey: ['meetings'] });
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Meeting note "${payload.title}" was updated`, 'info');
 	}
@@ -433,6 +441,8 @@ function handleDecisionModified(event: WebSocketEvent): void {
 	if (!payload) return;
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'decisions', payload.decision_id] });
 	queryClient.invalidateQueries({ queryKey: ['decisions'] });
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Decision "${payload.title}" was updated`, 'info');
 	}
@@ -443,8 +453,41 @@ function handleStandupModified(event: WebSocketEvent): void {
 	if (!payload) return;
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'standups', payload.standup_id] });
 	queryClient.invalidateQueries({ queryKey: ['standups'] });
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Standup "${payload.title}" was updated`, 'info');
+	}
+}
+
+function handleKanbanModified(event: WebSocketEvent): void {
+	const payload = event.payload as KanbanModifiedPayload | undefined;
+	if (!payload) return;
+	if (payload.board_id) {
+		queryClient.invalidateQueries({ queryKey: ['kanban-board', payload.board_id] });
+		queryClient.invalidateQueries({ queryKey: ['kanban-cards', payload.board_id] });
+		queryClient.invalidateQueries({ queryKey: ['kanban-boards'] });
+	}
+	if (payload.card_id) {
+		queryClient.invalidateQueries({ queryKey: ['kanban-card', payload.card_id] });
+		queryClient.invalidateQueries({ queryKey: ['kanban-card-detail', payload.card_id] });
+	}
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show('Kanban board was updated', 'info');
+	}
+}
+
+function handleNoteModified(event: WebSocketEvent): void {
+	const payload = event.payload as NoteModifiedPayload | undefined;
+	if (!payload) return;
+	queryClient.invalidateQueries({ queryKey: ['note', payload.note_id] });
+	queryClient.invalidateQueries({ queryKey: ['notes'] });
+	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	if (!isOwnEvent(event)) {
+		toastStore.show(`Note "${payload.title}" was updated`, 'info');
 	}
 }
 

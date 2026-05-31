@@ -54,6 +54,7 @@ describe('NotesModuleView', () => {
 				rootPath: '/Workspace/Notes',
 				renderer: 'notes',
 				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
 				schemaVersion: '1.0',
 				permissions: {
 					adminCanConfigure: true,
@@ -109,6 +110,7 @@ describe('NotesModuleView', () => {
 				rootPath: '/Workspace/Notes',
 				renderer: 'notes',
 				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
 				schemaVersion: '1.0',
 				permissions: {
 					adminCanConfigure: true,
@@ -172,6 +174,7 @@ describe('NotesModuleView', () => {
 				rootPath: '/Workspace/Notes',
 				renderer: 'notes',
 				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
 				schemaVersion: '1.0',
 				permissions: {
 					adminCanConfigure: true,
@@ -236,6 +239,7 @@ describe('NotesModuleView', () => {
 				rootPath: '/Workspace/Notes',
 				renderer: 'notes',
 				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
 				schemaVersion: '1.0',
 				permissions: {
 					adminCanConfigure: true,
@@ -300,6 +304,7 @@ describe('NotesModuleView', () => {
 				rootPath: '/Workspace/Notes',
 				renderer: 'notes',
 				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
 				schemaVersion: '1.0',
 				permissions: {
 					adminCanConfigure: true,

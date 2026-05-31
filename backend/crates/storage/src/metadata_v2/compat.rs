@@ -93,6 +93,13 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
+            None => Ok(None),
+        }
+    }
+
     async fn find_file_by_id(
         &self,
         id: uuid::Uuid,

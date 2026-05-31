@@ -1,18 +1,71 @@
 import { render, screen } from '@testing-library/svelte';
-import { describe, it, expect, vi } from 'vitest';
-import RecentActivity from './RecentActivity.svelte';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('$app/navigation', () => ({
-	goto: vi.fn()
-}));
+const mockDeps = vi.hoisted(() => {
+	let state: {
+		items: Array<{
+			id: string;
+			type: string;
+			fileName: string;
+			timestamp: string;
+			artifactId?: string;
+			moduleKey?: string;
+			accessible?: boolean;
+		}>;
+		loading: boolean;
+		error: string | null;
+		hasMore: boolean;
+		cursor: { before_timestamp: string; before_id: string } | null;
+	} = {
+		items: [],
+		loading: false,
+		error: null,
+		hasMore: true,
+		cursor: null
+	};
+	const subscribers = new Set<(s: typeof state) => void>();
+
+	return {
+		setState: (newState: typeof state) => {
+			state = newState;
+			subscribers.forEach((fn) => fn(state));
+		},
+		subscribe: (fn: (s: typeof state) => void) => {
+			fn(state);
+			subscribers.add(fn);
+			return () => subscribers.delete(fn);
+		},
+		fetch: vi.fn(),
+		loadMore: vi.fn(),
+		reset: vi.fn()
+	};
+});
 
 vi.mock('$lib/stores/activity', () => ({
+	serverActivityStore: {
+		subscribe: mockDeps.subscribe,
+		fetch: mockDeps.fetch,
+		loadMore: mockDeps.loadMore,
+		reset: mockDeps.reset
+	},
 	getActivityDisplay: vi.fn((activity) => ({
 		icon: null,
 		title: activity.type,
 		color: '#000'
 	})),
-	getRelativeTime: vi.fn(() => '2 hours ago')
+	getRelativeTime: vi.fn(() => '2 hours ago'),
+	getActivityHref: vi.fn((activity) => {
+		if (!activity.artifactId || activity.accessible === false) return null;
+		if (activity.moduleKey === 'notes') return `/modules/notes/${activity.artifactId}`;
+		if (activity.moduleKey === 'meetings') return `/modules/meetings/${activity.artifactId}`;
+		if (activity.moduleKey === 'standups') return `/modules/standups/${activity.artifactId}`;
+		if (activity.moduleKey === 'decisions') return `/modules/decisions/${activity.artifactId}`;
+		if (activity.moduleKey === 'brainstorming')
+			return `/modules/brainstorming/${activity.artifactId}`;
+		if (activity.moduleKey === 'kanban') return '/modules/kanban';
+		if (activity.moduleKey === 'shares') return `/modules/shares/${activity.artifactId}`;
+		return `/files?preview=${activity.artifactId}`;
+	})
 }));
 
 vi.mock('$lib/utils/dashboard', () => ({
@@ -20,51 +73,105 @@ vi.mock('$lib/utils/dashboard', () => ({
 	getUserInitials: vi.fn(() => 'AJ')
 }));
 
-describe('RecentActivity', () => {
-	const mockActivities = [
-		{
-			id: '1',
-			type: 'note_created' as const,
-			fileName: 'My Note',
-			timestamp: new Date().toISOString(),
-			artifactId: 'note-123',
-			moduleKey: 'notes'
-		},
-		{
-			id: '2',
-			type: 'kanban_created' as const,
-			fileName: 'My Board',
-			timestamp: new Date().toISOString(),
-			artifactId: 'board-456',
-			moduleKey: 'kanban'
-		},
-		{
-			id: '3',
-			type: 'file_uploaded' as const,
-			fileName: 'legacy.txt',
-			timestamp: new Date().toISOString()
-		}
-	];
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn()
+}));
 
-	it('renders activity list with items', () => {
+import RecentActivity from './RecentActivity.svelte';
+
+describe('RecentActivity', () => {
+	beforeEach(() => {
+		mockDeps.setState({
+			items: [],
+			loading: false,
+			error: null,
+			hasMore: true,
+			cursor: null
+		});
+		vi.clearAllMocks();
+	});
+
+	it('renders loading state initially', () => {
+		mockDeps.setState({
+			items: [],
+			loading: true,
+			error: null,
+			hasMore: true,
+			cursor: null
+		});
+
 		render(RecentActivity, {
-			props: {
-				activities: mockActivities,
-				userName: 'Alice Johnson'
-			}
+			props: { userName: 'Alice Johnson' }
+		});
+
+		expect(screen.getByLabelText('Recent activity')).toBeTruthy();
+		expect(mockDeps.fetch).toHaveBeenCalledWith(6);
+	});
+
+	it('renders activity list with items after fetch', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'note_created',
+					fileName: 'My Note',
+					timestamp: new Date().toISOString(),
+					artifactId: 'note-123',
+					moduleKey: 'notes'
+				},
+				{
+					id: '2',
+					type: 'kanban_created',
+					fileName: 'My Board',
+					timestamp: new Date().toISOString(),
+					artifactId: 'board-456',
+					moduleKey: 'kanban'
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
 		});
 
 		expect(screen.getByText('My Note')).toBeTruthy();
 		expect(screen.getByText('My Board')).toBeTruthy();
-		expect(screen.getByText('legacy.txt')).toBeTruthy();
 	});
 
-	it('renders clickable links for activities with artifactId and moduleKey', () => {
+	it('renders clickable links for accessible activities', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'note_created',
+					fileName: 'My Note',
+					timestamp: new Date().toISOString(),
+					artifactId: 'note-123',
+					moduleKey: 'notes',
+					accessible: true
+				},
+				{
+					id: '2',
+					type: 'kanban_created',
+					fileName: 'My Board',
+					timestamp: new Date().toISOString(),
+					artifactId: 'board-456',
+					moduleKey: 'kanban',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
 		render(RecentActivity, {
-			props: {
-				activities: mockActivities,
-				userName: 'Alice Johnson'
-			}
+			props: { userName: 'Alice Johnson' }
 		});
 
 		const links = screen.getAllByRole('link');
@@ -77,95 +184,177 @@ describe('RecentActivity', () => {
 		expect(kanbanLink.getAttribute('href')).toBe('/modules/kanban');
 	});
 
-	it('renders stale items for legacy activities without artifactId', () => {
+	it('renders stale items for inaccessible activities', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'file_uploaded',
+					fileName: 'revoked.txt',
+					timestamp: new Date().toISOString(),
+					artifactId: 'file-123',
+					accessible: false
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
 		render(RecentActivity, {
-			props: {
-				activities: [mockActivities[2]],
-				userName: 'Alice Johnson'
-			}
+			props: { userName: 'Alice Johnson' }
+		});
+
+		expect(screen.queryByRole('link')).toBeNull();
+		expect(screen.getByText('revoked.txt')).toBeTruthy();
+	});
+
+	it('renders stale items for activities without artifactId', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'file_uploaded',
+					fileName: 'legacy.txt',
+					timestamp: new Date().toISOString()
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
 		});
 
 		expect(screen.queryByRole('link')).toBeNull();
 		expect(screen.getByText('legacy.txt')).toBeTruthy();
 	});
 
-	it('navigates to correct module routes', () => {
-		const routeTestActivities = [
-			{
-				id: 'n1',
-				type: 'note_created' as const,
-				fileName: 'Note',
-				timestamp: new Date().toISOString(),
-				artifactId: 'n-id',
-				moduleKey: 'notes'
-			},
-			{
-				id: 'm1',
-				type: 'meeting_created' as const,
-				fileName: 'Meeting',
-				timestamp: new Date().toISOString(),
-				artifactId: 'm-id',
-				moduleKey: 'meetings'
-			},
-			{
-				id: 's1',
-				type: 'standup_created' as const,
-				fileName: 'Standup',
-				timestamp: new Date().toISOString(),
-				artifactId: 's-id',
-				moduleKey: 'standups'
-			},
-			{
-				id: 'd1',
-				type: 'decision_created' as const,
-				fileName: 'Decision',
-				timestamp: new Date().toISOString(),
-				artifactId: 'd-id',
-				moduleKey: 'decisions'
-			},
-			{
-				id: 'b1',
-				type: 'brainstorm_created' as const,
-				fileName: 'Brainstorm',
-				timestamp: new Date().toISOString(),
-				artifactId: 'b-id',
-				moduleKey: 'brainstorming'
-			},
-			{
-				id: 'k1',
-				type: 'kanban_created' as const,
-				fileName: 'Kanban',
-				timestamp: new Date().toISOString(),
-				artifactId: 'k-id',
-				moduleKey: 'kanban'
-			},
-			{
-				id: 'sh1',
-				type: 'share_created' as const,
-				fileName: 'Share',
-				timestamp: new Date().toISOString(),
-				artifactId: 'sh-id',
-				moduleKey: 'shares'
-			},
-			{
-				id: 'f1',
-				type: 'file_uploaded' as const,
-				fileName: 'File',
-				timestamp: new Date().toISOString(),
-				artifactId: 'f-id',
-				moduleKey: undefined
-			}
-		];
+	it('renders empty state when no activities', () => {
+		mockDeps.setState({
+			items: [],
+			loading: false,
+			error: null,
+			hasMore: true,
+			cursor: null
+		});
 
 		render(RecentActivity, {
-			props: {
-				activities: routeTestActivities,
-				userName: 'Alice Johnson'
-			}
+			props: { userName: 'Alice Johnson' }
+		});
+
+		expect(
+			screen.getByText('Activity will appear here as you work in your workspace.')
+		).toBeTruthy();
+	});
+
+	it('renders error state on fetch failure', () => {
+		mockDeps.setState({
+			items: [],
+			loading: false,
+			error: 'Failed to load activity',
+			hasMore: true,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
+		});
+
+		expect(screen.getByText('Failed to load activity')).toBeTruthy();
+	});
+
+	it('calls fetch on mount with limit 6', () => {
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
+		});
+
+		expect(mockDeps.fetch).toHaveBeenCalledTimes(1);
+		expect(mockDeps.fetch).toHaveBeenCalledWith(6);
+	});
+
+	it('navigates to correct module routes', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: 'n1',
+					type: 'note_created',
+					fileName: 'Note',
+					timestamp: new Date().toISOString(),
+					artifactId: 'n-id',
+					moduleKey: 'notes',
+					accessible: true
+				},
+				{
+					id: 'm1',
+					type: 'meeting_created',
+					fileName: 'Meeting',
+					timestamp: new Date().toISOString(),
+					artifactId: 'm-id',
+					moduleKey: 'meetings',
+					accessible: true
+				},
+				{
+					id: 's1',
+					type: 'standup_created',
+					fileName: 'Standup',
+					timestamp: new Date().toISOString(),
+					artifactId: 's-id',
+					moduleKey: 'standups',
+					accessible: true
+				},
+				{
+					id: 'd1',
+					type: 'decision_created',
+					fileName: 'Decision',
+					timestamp: new Date().toISOString(),
+					artifactId: 'd-id',
+					moduleKey: 'decisions',
+					accessible: true
+				},
+				{
+					id: 'b1',
+					type: 'brainstorm_created',
+					fileName: 'Brainstorm',
+					timestamp: new Date().toISOString(),
+					artifactId: 'b-id',
+					moduleKey: 'brainstorming',
+					accessible: true
+				},
+				{
+					id: 'sh1',
+					type: 'share_created',
+					fileName: 'Share',
+					timestamp: new Date().toISOString(),
+					artifactId: 'sh-id',
+					moduleKey: 'shares',
+					accessible: true
+				},
+				{
+					id: 'f1',
+					type: 'file_uploaded',
+					fileName: 'File',
+					timestamp: new Date().toISOString(),
+					artifactId: 'f-id',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
 		});
 
 		const links = screen.getAllByRole('link');
-		expect(links).toHaveLength(8);
+		expect(links).toHaveLength(7);
 
 		expect(screen.getByRole('link', { name: /open note/i }).getAttribute('href')).toBe(
 			'/modules/notes/n-id'
@@ -181,9 +370,6 @@ describe('RecentActivity', () => {
 		);
 		expect(screen.getByRole('link', { name: /open brainstorm/i }).getAttribute('href')).toBe(
 			'/modules/brainstorming/b-id'
-		);
-		expect(screen.getByRole('link', { name: /open kanban/i }).getAttribute('href')).toBe(
-			'/modules/kanban'
 		);
 		expect(screen.getByRole('link', { name: /open share/i }).getAttribute('href')).toBe(
 			'/modules/shares/sh-id'

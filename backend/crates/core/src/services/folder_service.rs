@@ -331,9 +331,7 @@ where
     }
 
     fn is_hidden_file(name: &str) -> bool {
-        name == ".rustshare-board.json"
-            || name == ".rustshare-column.json"
-            || name == ".rustshare-card.json"
+        name.starts_with(".rustshare")
             || name == "events.jsonl"
             || name == "index.md"
             || name == "__primary__.md"

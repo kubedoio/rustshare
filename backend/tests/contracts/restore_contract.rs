@@ -5,7 +5,7 @@
 //! - F-04: Restore preserves file identity and path
 //! - G-06: Backup artifacts can restore tenant data
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// F-04-01: Deleted file can be restored with history
 #[tokio::test]

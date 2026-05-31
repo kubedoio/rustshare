@@ -82,6 +82,7 @@
 	import FileEditorPane from './FileEditorPane.svelte';
 	import EmptyTrashModal from '$lib/components/modals/EmptyTrashModal.svelte';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
+	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 
 	// ============================================================================
 	// STATE
@@ -1669,6 +1670,8 @@
 		}
 	}}
 />
+
+<OfflineBanner />
 
 <DropZone
 	onFilesDropped={handleFilesSelected}

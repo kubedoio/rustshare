@@ -2486,18 +2486,19 @@ impl MetadataStore {
             .collect()
     }
 
-    /// Update a share's password and expiration
+    /// Update a share's password, expiration, and permissions
     pub async fn update_share(&self, share: &Share) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE shares
-            SET password_hash = $2, expires_at = $3, tenant_id = $4
-            WHERE id = $1 AND created_by = $5
+            SET password_hash = $2, expires_at = $3, tenant_id = $4, permissions = $5
+            WHERE id = $1 AND created_by = $6
             "#,
             share.id,
             share.password_hash,
             share.expires_at,
             share.tenant_id,
+            Self::permission_to_db_value(share.permissions),
             share.created_by
         )
         .execute(&self.pool)
@@ -2681,7 +2682,8 @@ mod tests {
         assert_eq!(found_user.username, "testuser");
 
         // Cleanup
-        sqlx::query!("DELETE FROM users WHERE email = $1", "test@example.com")
+        sqlx::query("DELETE FROM users WHERE email = $1")
+            .bind("test@example.com")
             .execute(&pool)
             .await
             .unwrap();
@@ -2758,7 +2760,8 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -2856,13 +2859,15 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup (file_versions will cascade delete with file)
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", user.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3020,28 +3025,33 @@ mod tests {
 
         // Cleanup: Delete folders (cascade will handle children)
         // Delete in order: leaf -> parent
-        sqlx::query!("DELETE FROM folders WHERE id = $1", work_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(work_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", docs_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(docs_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", photos_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(photos_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", root_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(root_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3182,18 +3192,21 @@ mod tests {
         assert!(revoked_share.is_some());
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3255,16 +3268,16 @@ mod tests {
 
         // Create backing group row for the FK used by recipient_group_id.
         let group_id = Uuid::new_v4();
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO user_groups (id, name, description, created_by)
             VALUES ($1, $2, $3, $4)
             "#,
-            group_id,
-            format!("test-group-{}", group_id),
-            Some("Test group".to_string()),
-            owner.id
         )
+        .bind(group_id)
+        .bind(format!("test-group-{}", group_id))
+        .bind(Some("Test group".to_string()))
+        .bind(owner.id)
         .execute(&pool)
         .await
         .unwrap();
@@ -3297,19 +3310,23 @@ mod tests {
         assert_eq!(public_shares[0].share.id, public_share.id);
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(group_id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3371,14 +3388,12 @@ mod tests {
 
         // Cleanup
         store.delete_file(file.id, user_a.id).await.unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3428,14 +3443,12 @@ mod tests {
 
         // Cleanup
         store.delete_folder(folder.id, user_a.id).await.unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3508,21 +3521,21 @@ mod tests {
         assert!(still_exists.is_some(), "User A's share should still exist");
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE id = $1", share.id)
+        sqlx::query("DELETE FROM shares WHERE id = $1")
+            .bind(share.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

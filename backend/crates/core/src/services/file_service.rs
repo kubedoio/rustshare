@@ -73,6 +73,11 @@ pub trait MetadataStoreOps: Send + Sync {
         owner_id: uuid::Uuid,
     ) -> Result<Option<Folder>>;
 
+    /// Find a folder by ID without ownership filtering.
+    ///
+    /// Callers must verify access before using this method.
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
+
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
@@ -276,11 +281,13 @@ where
         // 2. Calculate SHA256 hash of content
         let content_hash = self.calculate_sha256(&content);
 
-        // 3. Check parent folder exists (if provided) and verify ownership
+        // 3. Check parent folder exists (if provided) and verify permissions
         let parent_path = if let Some(folder_id) = parent_folder_id {
+            // Use unchecked lookup so we can distinguish "folder doesn't exist"
+            // from "user lacks permission".
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, owner_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
@@ -496,18 +503,19 @@ where
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
-        // 1. Check permissions first using the resolver
-        self.require_file_permission(user_id, file_id, SharePermissions::View)
-            .await?;
-
-        // 2. Find file by ID. Access was verified above, so this must not be
-        // owner-filtered; shared recipients are allowed to read non-owned files.
+        // 1. Find file by ID first. Deleted or non-existent files must return
+        // NotFound rather than PermissionDenied.
         let file = self
             .metadata_store
             .find_file_by_id_unchecked(file_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
+
+        // 2. Check permissions. Access was verified above, so this must not be
+        // owner-filtered; shared recipients are allowed to read non-owned files.
+        self.require_file_permission(user_id, file_id, SharePermissions::View)
+            .await?;
 
         Ok(file)
     }
@@ -1292,9 +1300,28 @@ where
             ));
         }
 
-        if name.contains('\0') {
+        if name.contains('\\') {
+            return Err(FileError::InvalidName(
+                "File name cannot contain backslash (\\)".to_string(),
+            ));
+        }
+
+        if name.contains("..") {
+            return Err(FileError::InvalidName(
+                "File name cannot contain '..'".to_string(),
+            ));
+        }
+
+        if name.starts_with('\0') || name.contains('\0') {
             return Err(FileError::InvalidName(
                 "File name cannot contain null character".to_string(),
+            ));
+        }
+
+        // Reject reserved editor metadata filename
+        if name == "index.editor.json" {
+            return Err(FileError::InvalidName(
+                "File name 'index.editor.json' is reserved".to_string(),
             ));
         }
 
@@ -1472,6 +1499,10 @@ mod tests {
             id: uuid::Uuid,
             _owner_id: uuid::Uuid,
         ) -> Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
@@ -1943,6 +1974,9 @@ mod tests {
         assert!(service.validate_file_name("").is_err());
         assert!(service.validate_file_name("path/file.txt").is_err());
         assert!(service.validate_file_name("file\0name.txt").is_err());
+        assert!(service.validate_file_name("..secret.txt").is_err());
+        assert!(service.validate_file_name("secret\\file.txt").is_err());
+        assert!(service.validate_file_name("index.editor.json").is_err());
     }
 
     // Tests for get_file

@@ -191,14 +191,70 @@ Configuration is via environment variables prefixed with `RUSTSHARE_RATE_LIMIT_`
 
 ## 9. Audit Logging
 
+### Audit Taxonomy
+
+RustShare maintains durable audit evidence for all security-sensitive operations. Events are stored in append-only tables and are queryable via the admin audit endpoint (`GET /api/v1/admin/audit`).
+
+#### Security Events
+
+Stored in `user_security_events`.
+
+| Event | Event Type | Actor | Detail |
+|-------|------------|-------|--------|
+| Login | `login` | User ID | IP, user-agent, session ID |
+| Logout | `logout` | User ID | Session ID |
+| Failed authentication | `login_failed` | User ID (or `NULL`) | IP, user-agent, reason |
+| Permission denied | `permission_denied` | User ID | Resource type, resource ID, action attempted |
+| Password changed | `password_changed` | User ID | IP, user-agent |
+
+#### File Events
+
+Stored in the `events` table (event-sourced aggregate log) with `aggregate_type = 'file'`.
+
+| Event | Event Type | Aggregate | Durable Payload |
+|-------|------------|-----------|-----------------|
+| Upload | `FileUploaded` | File ID | Name, path, size, hash, owner, actor info |
+| Download | *(via share_access_log for public links)* | File/Share ID | IP, user-agent, session |
+| Replace / new version | `FileModified` | File ID | Old/new version, old/new hash, size delta |
+| Rename | `FileRenamed` | File ID | Old/new name, old/new path |
+| Move | `FileMoved` | File ID | Old/new parent folder, old/new path |
+| Delete | `FileDeleted` | File ID | File name, folder ID |
+| Restore | `FileRestored` | File ID | Restored-from version, hash, size |
+
+#### Share Events
+
+Stored in both the `events` table (event-sourced) and `share_access_log` (projection).
+
+| Event | Event Type | Destination | Durable Payload |
+|-------|------------|-------------|-----------------|
+| Share created | `ShareCreated` | `events` | Share ID, file/folder ID, token, permissions, expiry |
+| Share revoked | `ShareRevoked` | `events` | Share ID, file/folder ID, revoked-by user |
+| Public link accessed (allowed) | `download` / `upload` / `browse` | `share_access_log` | IP, user-agent, actor type, session ID, success=true |
+| Public link accessed (denied) | `download` / `upload` / `session_create` | `share_access_log` | IP, user-agent, actor type, session ID, success=false |
+| Share permission changed | `SharePermissionChanged` | `events` | Old/new permissions, changed-by user |
+
+> **Note on denied access:** The infrastructure to log denied public share access attempts exists (`share_access_log` supports `success = false`), but handler-level integration for revoked, expired, and password-failure denials is a documented gap tracked by contract test S-11.
+
+#### Admin Actions
+
+Stored in `admin_actions`.
+
+| Event | Event Type | Actor | Target | Detail |
+|-------|------------|-------|--------|--------|
+| User created | `user.created` | Admin ID | User ID | Created-by, initial quota |
+| User disabled | `user.disabled` | Admin ID | User ID | Reason |
+| Config updated | `config.*` | Admin ID | Tenant/system | Changed keys, old/new values |
+
 ### What Is Logged
 
 | Action | Destination |
 |--------|-------------|
-| Login / logout | `user_security_events` table |
+| Login / logout / failed auth | `user_security_events` table |
 | Password changes | `user_security_events` table |
-| Share created / revoked | `share_access_log` + `events` table |
-| Public share accessed / downloaded / uploaded | `share_access_log` (with IP, user-agent, actor type) |
+| File uploaded / modified / renamed / moved / deleted / restored | `events` table (aggregate log) |
+| Share created / revoked / permission changed | `events` table + `share_access_log` |
+| Public share accessed / downloaded / uploaded (allowed) | `share_access_log` (with IP, user-agent, actor type) |
+| Public share access denied (revoked, expired, bad password) | `share_access_log` (infrastructure ready; handler integration gap) |
 | Replication failures | `replication_attempts` table + application logs |
 
 ### Log Locations
@@ -207,8 +263,11 @@ Configuration is via environment variables prefixed with `RUSTSHARE_RATE_LIMIT_`
 - **Nginx logs:** `/var/log/nginx/access.log` and `error.log` inside the Nginx container.
 - **PostgreSQL logs:** Container stdout or configured log file.
 - **RustFS logs:** Container stdout and `/logs` volume.
+- **Audit tables:** `events`, `user_security_events`, `share_access_log`, `admin_actions` — all in PostgreSQL.
 
 > **Note:** Centralized log aggregation (e.g., Loki, ELK, CloudWatch) is not included in the default deployment. Operators should configure this according to their monitoring stack.
+
+> **Durability guarantee:** Audit events in `events`, `user_security_events`, `share_access_log`, and `admin_actions` are committed in the same database transaction as the operation they describe (or in a subsequent retryable write). They are retained indefinitely unless explicitly purged by an operator.
 
 ---
 

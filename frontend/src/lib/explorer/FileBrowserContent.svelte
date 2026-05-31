@@ -8,6 +8,8 @@
 	import FileGrid from '$lib/files/FileGrid.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import FileListSkeleton from '$lib/components/common/FileListSkeleton.svelte';
+	import FileGridSkeleton from '$lib/components/common/FileGridSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import { FolderOpen } from 'lucide-svelte';
 
 	interface Props {

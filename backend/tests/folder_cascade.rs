@@ -115,6 +115,21 @@ async fn create_test_user(metadata_store: &MetadataStore, username: &str, tenant
 
 /// Cleanup test user from database
 async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
+    // Delete user's files first (cascade will handle versions)
+    sqlx::query("DELETE FROM files WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .ok();
+
+    // Delete user's folders
+    sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .ok();
+
+    // Delete the user
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(pool)

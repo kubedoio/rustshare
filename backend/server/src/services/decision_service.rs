@@ -152,19 +152,15 @@ impl DecisionService {
     }
 
     /// Ensure the root "Decisions" folder exists.
+    /// Ensure the canonical /Workspace/Decisions folder exists.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical /Workspace/Decisions path. Legacy roots are read-only.
     async fn ensure_decisions_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, DecisionError> {
-        let root_folders = self
-            .metadata_store
-            .list_folders(None, owner_id, tenant_id)
-            .await
-            .map_err(|e| DecisionError::Database(e.to_string()))?;
-        if let Some(folder) = root_folders.into_iter().find(|f| f.name == "Decisions") {
-            return Ok(folder);
-        }
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -384,8 +380,16 @@ impl DecisionService {
         Ok(max_id + 1)
     }
 
-    pub async fn get_decision(&self, id: Uuid, user_id: UserId) -> Result<Decision, DecisionError> {
+    pub async fn get_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Decision, DecisionError> {
         let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
         let content_bytes = self
             .object_store
             .get(&file.storage_key())
@@ -407,15 +411,50 @@ impl DecisionService {
         })
     }
 
+    pub async fn delete_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), DecisionError> {
+        let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+        // Delete sidecar if it exists
+        let stem = file.name.trim_end_matches(".md");
+        let sidecar_name = format!("{}.rustshare.json", stem);
+        let siblings = self
+            .metadata_store
+            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .await
+            .map_err(|e| DecisionError::Database(e.to_string()))?;
+        if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
+            self.file_service
+                .delete_file(sidecar.id, user_id)
+                .await
+                .map_err(DecisionError::from)?;
+        }
+        self.file_service
+            .delete_file(id, user_id)
+            .await
+            .map_err(DecisionError::from)?;
+        Ok(())
+    }
+
     pub async fn update_decision(
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         title: Option<String>,
         content: Option<String>,
         status: Option<String>,
     ) -> Result<Decision, DecisionError> {
         let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
         let mut meta = self.load_metadata(&file, user_id, file.tenant_id).await?;
 
         if let Some(t) = title {
@@ -456,7 +495,7 @@ impl DecisionService {
                 .await?;
         }
 
-        self.get_decision(id, user_id).await
+        self.get_decision(id, user_id, tenant_id).await
     }
 
     /// Rename a decision (updates title and filename, preserving DEC-ID prefix).
@@ -464,9 +503,13 @@ impl DecisionService {
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         new_title: String,
     ) -> Result<Decision, DecisionError> {
         let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
 
         // Validate title
         let trimmed = new_title.trim();
@@ -532,6 +575,6 @@ impl DecisionService {
         }
 
         // Return updated decision
-        self.get_decision(id, user_id).await
+        self.get_decision(id, user_id, tenant_id).await
     }
 }

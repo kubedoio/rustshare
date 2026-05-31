@@ -70,6 +70,14 @@ ui.dashboard.order
 
 If Notes is enabled, dashboard shows first 4 recent notes.
 
+### Permission-visible dashboard summaries
+
+Dashboard module summaries include items owned by the viewer and items visible
+through active user or group shares. Revoked and expired shares are excluded.
+
+For Kanban, a board directly shared with the viewer appears in the dashboard
+boards list even when the `/Workspace/Kanban` root folder is not shared.
+
 ### Notes disabled
 
 If Notes is disabled, Recent Notes section is hidden.

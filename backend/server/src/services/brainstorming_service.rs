@@ -14,6 +14,7 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -209,13 +210,17 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<BrainstormBoard, BrainstormError> {
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
             .map_err(BrainstormError::from)?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
 
         // Verify it's under /Brainstorming (legacy) or /Workspace/Brainstorming
         if !(folder.path.starts_with("/Brainstorming")
@@ -231,7 +236,7 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<String, BrainstormError> {
         tracing::info!(board_id = %board_id, user_id = %user_id, "get_board_source: start");
 
@@ -243,6 +248,11 @@ impl BrainstormingService {
                 tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "get_board_source: folder lookup failed");
                 BrainstormError::from(e)
             })?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "get_board_source: folder found");
 
         let file = self
@@ -320,6 +330,11 @@ impl BrainstormingService {
                 tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "save_board_source: folder lookup failed");
                 BrainstormError::from(e)
             })?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "save_board_source: folder found");
 
         // Update board.excalidraw
@@ -388,6 +403,10 @@ impl BrainstormingService {
             .await
             .map_err(BrainstormError::from)?;
 
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
         let preview_file = self
             .find_file_in_folder(folder.id, user_id, "preview.png")
             .await?;
@@ -422,13 +441,17 @@ impl BrainstormingService {
         &self,
         board_id: Uuid,
         user_id: UserId,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
     ) -> Result<(), BrainstormError> {
         let folder = self
             .folder_service
             .get_folder(board_id, user_id)
             .await
             .map_err(BrainstormError::from)?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
 
         if !(folder.path.starts_with("/Brainstorming")
             || folder.path.starts_with("/Workspace/Brainstorming"))
@@ -573,10 +596,10 @@ impl BrainstormingService {
     async fn load_board_metadata(
         &self,
         folder: &Folder,
-        user_id: UserId,
+        _user_id: UserId,
     ) -> Result<BoardMetadata, BrainstormError> {
         if let Some(file) = self
-            .find_file_in_folder(folder.id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder.id, folder.tenant_id, ".rustshare.json")
             .await?
         {
             let content = self
@@ -619,27 +642,29 @@ impl BrainstormingService {
 
         let meta_json = serde_json::to_vec_pretty(&meta)?;
 
+        let folder = self
+            .folder_service
+            .get_folder(folder_id, user_id)
+            .await
+            .map_err(BrainstormError::from)?;
+
         let meta_file = self
-            .find_file_in_folder(folder_id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder_id, folder.tenant_id, ".rustshare.json")
             .await?;
 
         if let Some(file) = meta_file {
-            self.file_service
-                .edit_file(file.id, user_id, Bytes::from(meta_json), "overwrite", None)
-                .await
-                .map_err(BrainstormError::from)?;
+            self.write_internal_file(file, Bytes::from(meta_json))
+                .await?;
         } else {
-            self.file_service
-                .upload_file(
-                    user_id,
-                    ".rustshare.json".to_string(),
-                    Some(folder_id),
-                    Bytes::from(meta_json),
-                    "application/json".to_string(),
-                    tenant_id,
-                )
-                .await
-                .map_err(BrainstormError::from)?;
+            self.create_internal_file(
+                &folder,
+                user_id,
+                tenant_id,
+                ".rustshare.json",
+                Bytes::from(meta_json),
+                "application/json",
+            )
+            .await?;
         }
 
         Ok(())
@@ -657,7 +682,7 @@ impl BrainstormingService {
             .map_err(BrainstormError::from)?;
 
         if let Some(file) = self
-            .find_file_in_folder(folder_id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder_id, folder.tenant_id, ".rustshare.json")
             .await?
         {
             let content = self
@@ -700,11 +725,99 @@ impl BrainstormingService {
             .map_err(BrainstormError::from)?;
         Ok(contents.files.into_iter().find(|f| f.name == name))
     }
+
+    async fn find_internal_file_in_folder(
+        &self,
+        folder_id: Uuid,
+        tenant_id: Uuid,
+        name: &str,
+    ) -> Result<Option<File>, BrainstormError> {
+        let files = self
+            .metadata_store
+            .list_files_by_parent(Some(folder_id), tenant_id)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+        Ok(files.into_iter().find(|f| f.name == name))
+    }
+
+    async fn create_internal_file(
+        &self,
+        folder: &Folder,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        name: &str,
+        content: Bytes,
+        mime_type: &str,
+    ) -> Result<File, BrainstormError> {
+        let content_hash = hex::encode(Sha256::digest(&content));
+        let file = File::new(
+            name.to_string(),
+            format!("{}/{}", folder.path, name),
+            content_hash,
+            content.len() as i64,
+            mime_type.to_string(),
+            Some(folder.id),
+            owner_id,
+            tenant_id,
+        );
+
+        self.object_store
+            .put(&file.storage_key(), content)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
+        self.metadata_store
+            .create_file(&file)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+
+        Ok(file)
+    }
+
+    async fn write_internal_file(
+        &self,
+        mut file: File,
+        content: Bytes,
+    ) -> Result<(), BrainstormError> {
+        file.content_hash = hex::encode(Sha256::digest(&content));
+        file.size = content.len() as i64;
+        file.modified_at = Utc::now();
+        file.current_version += 1;
+
+        self.object_store
+            .put(&file.storage_key(), content)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 // ============================================================================
 // Utilities
 // ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slugify_basic() {
+        assert_eq!(slugify("Hello World!"), "hello-world");
+        assert_eq!(slugify("Valid-Slug-123"), "valid-slug-123");
+    }
+
+    #[test]
+    fn test_permission_denied_error_variant() {
+        assert!(matches!(
+            BrainstormError::PermissionDenied,
+            BrainstormError::PermissionDenied
+        ));
+    }
+}
 
 fn slugify(title: &str) -> String {
     title
