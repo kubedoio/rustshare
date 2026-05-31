@@ -1,0 +1,19 @@
+{
+    "db_name": "PostgreSQL",
+    "query": "\n            UPDATE shares\n            SET password_hash = $2, expires_at = $3, tenant_id = $4, permissions = $5\n            WHERE id = $1 AND created_by = $6\n            ",
+    "describe": {
+        "columns": [],
+        "parameters": {
+            "Left": [
+                "Uuid",
+                "Varchar",
+                "Timestamptz",
+                "Uuid",
+                "Varchar",
+                "Uuid"
+            ]
+        },
+        "nullable": []
+    },
+    "hash": "b4ef154b99fdea24a62efab11b27afb107ce71585ee5cbd25ba8fcde6953ae62"
+}

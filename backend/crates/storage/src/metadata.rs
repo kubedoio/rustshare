@@ -2486,18 +2486,19 @@ impl MetadataStore {
             .collect()
     }
 
-    /// Update a share's password and expiration
+    /// Update a share's password, expiration, and permissions
     pub async fn update_share(&self, share: &Share) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE shares
-            SET password_hash = $2, expires_at = $3, tenant_id = $4
-            WHERE id = $1 AND created_by = $5
+            SET password_hash = $2, expires_at = $3, tenant_id = $4, permissions = $5
+            WHERE id = $1 AND created_by = $6
             "#,
             share.id,
             share.password_hash,
             share.expires_at,
             share.tenant_id,
+            Self::permission_to_db_value(share.permissions),
             share.created_by
         )
         .execute(&self.pool)
