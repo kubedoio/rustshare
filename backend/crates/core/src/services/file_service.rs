@@ -503,18 +503,19 @@ where
     /// - `FileError::NotFound` if the file doesn't exist
     /// - `FileError::PermissionDenied` if the user doesn't have access
     pub async fn get_file(&self, file_id: uuid::Uuid, user_id: UserId) -> Result<File, FileError> {
-        // 1. Check permissions first using the resolver
-        self.require_file_permission(user_id, file_id, SharePermissions::View)
-            .await?;
-
-        // 2. Find file by ID. Access was verified above, so this must not be
-        // owner-filtered; shared recipients are allowed to read non-owned files.
+        // 1. Find file by ID first. Deleted or non-existent files must return
+        // NotFound rather than PermissionDenied.
         let file = self
             .metadata_store
             .find_file_by_id_unchecked(file_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::NotFound(file_id))?;
+
+        // 2. Check permissions. Access was verified above, so this must not be
+        // owner-filtered; shared recipients are allowed to read non-owned files.
+        self.require_file_permission(user_id, file_id, SharePermissions::View)
+            .await?;
 
         Ok(file)
     }
