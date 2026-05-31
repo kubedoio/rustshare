@@ -73,6 +73,11 @@ pub trait MetadataStoreOps: Send + Sync {
         owner_id: uuid::Uuid,
     ) -> Result<Option<Folder>>;
 
+    /// Find a folder by ID without ownership filtering.
+    ///
+    /// Callers must verify access before using this method.
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Folder>>;
+
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
@@ -276,11 +281,13 @@ where
         // 2. Calculate SHA256 hash of content
         let content_hash = self.calculate_sha256(&content);
 
-        // 3. Check parent folder exists (if provided) and verify ownership
+        // 3. Check parent folder exists (if provided) and verify permissions
         let parent_path = if let Some(folder_id) = parent_folder_id {
+            // Use unchecked lookup so we can distinguish "folder doesn't exist"
+            // from "user lacks permission".
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, owner_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::ParentFolderNotFound(folder_id))?;
@@ -1491,6 +1498,10 @@ mod tests {
             id: uuid::Uuid,
             _owner_id: uuid::Uuid,
         ) -> Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
