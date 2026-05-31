@@ -1310,12 +1310,7 @@ where
             ));
         }
 
-        // Reject hidden metadata filenames reserved for RustShare internals
-        if name.starts_with(".rustshare") {
-            return Err(FileError::InvalidName(
-                "File name cannot start with '.rustshare'".to_string(),
-            ));
-        }
+        // Reject reserved editor metadata filename
         if name == "index.editor.json" {
             return Err(FileError::InvalidName(
                 "File name 'index.editor.json' is reserved".to_string(),
@@ -1969,7 +1964,6 @@ mod tests {
         assert!(service.validate_file_name("file\0name.txt").is_err());
         assert!(service.validate_file_name("..secret.txt").is_err());
         assert!(service.validate_file_name("secret\\file.txt").is_err());
-        assert!(service.validate_file_name(".rustshare.json").is_err());
         assert!(service.validate_file_name("index.editor.json").is_err());
     }
 

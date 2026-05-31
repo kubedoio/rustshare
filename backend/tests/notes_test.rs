@@ -1548,59 +1548,6 @@ async fn contract_note_attachment_upload_rejects_backslash_filename() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
-async fn contract_note_attachment_upload_rejects_rustshare_hidden_filename() {
-    // FIXED: FileService now rejects .rustshare* filenames.
-    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "note_attach_rustshare", tenant_id).await;
-    let service = create_note_service(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-        &pool,
-    );
-    let file_service =
-        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
-
-    let note = service
-        .create_note(
-            user.id,
-            tenant_id,
-            Some("Attach Test".to_string()),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    let bundle_folder_id = note.parent_folder_id.unwrap();
-    let subfolders = metadata_store
-        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
-        .await
-        .unwrap();
-    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
-
-    let result = file_service
-        .upload_file(
-            user.id,
-            ".rustshare.json".to_string(),
-            Some(attachments_folder.id),
-            Bytes::from("test"),
-            "application/json".to_string(),
-            tenant_id,
-        )
-        .await;
-
-    assert!(
-        result.is_err(),
-        ".rustshare.json should be rejected: {:?}",
-        result
-    );
-
-    cleanup_user(&pool, user.id).await;
-}
-
-#[tokio::test]
-#[ignore = "Requires database and S3"]
 async fn contract_note_attachment_upload_rejects_editor_json_filename() {
     // FIXED: FileService now rejects index.editor.json.
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
