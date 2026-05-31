@@ -222,12 +222,8 @@ async fn contract_decision_does_not_appear_in_notes_list() {
         object_store.clone(),
         &pool,
     );
-    let note_service = create_note_service(
-        event_store,
-        metadata_store.clone(),
-        object_store,
-        &pool,
-    );
+    let note_service =
+        create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     // Create a decision
     let decision = decision_service
@@ -291,7 +287,11 @@ async fn contract_rename_decision_updates_filename_and_metadata() {
         .unwrap();
 
     let original_name = decision.name;
-    let original_prefix = original_name.split('-').take(2).collect::<Vec<_>>().join("-");
+    let original_prefix = original_name
+        .split('-')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("-");
 
     // Rename the decision
     let renamed = service
@@ -300,7 +300,10 @@ async fn contract_rename_decision_updates_filename_and_metadata() {
         .unwrap();
 
     // 1. Name should still have DEC- prefix and .md suffix
-    assert!(renamed.name.starts_with(&original_prefix), "DEC-ID prefix should be preserved");
+    assert!(
+        renamed.name.starts_with(&original_prefix),
+        "DEC-ID prefix should be preserved"
+    );
     assert!(renamed.name.ends_with(".md"));
     // 2. Title should be updated
     assert_eq!(renamed.metadata.title, "Updated Title");
@@ -364,12 +367,8 @@ async fn contract_list_decisions_only_returns_decisions() {
         object_store.clone(),
         &pool,
     );
-    let note_service = create_note_service(
-        event_store,
-        metadata_store.clone(),
-        object_store,
-        &pool,
-    );
+    let note_service =
+        create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     // Create a decision
     let decision = decision_service
@@ -470,7 +469,14 @@ async fn contract_cross_tenant_update_decision_denied() {
         .unwrap();
 
     let result = service
-        .update_decision(decision.id, user_b.id, tenant_b, Some("Hacked".to_string()), None, Some("evil".to_string()))
+        .update_decision(
+            decision.id,
+            user_b.id,
+            tenant_b,
+            Some("Hacked".to_string()),
+            None,
+            Some("evil".to_string()),
+        )
         .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
@@ -503,7 +509,9 @@ async fn contract_cross_tenant_rename_decision_denied() {
         .await
         .unwrap();
 
-    let result = service.rename_decision(decision.id, user_b.id, tenant_b, "Hacked".to_string()).await;
+    let result = service
+        .rename_decision(decision.id, user_b.id, tenant_b, "Hacked".to_string())
+        .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
         "Cross-tenant rename_decision should be denied, got {:?}",
@@ -565,7 +573,9 @@ async fn contract_same_tenant_unauthorized_get_decision_denied() {
         .await
         .unwrap();
 
-    let result = service.get_decision(decision.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_decision(decision.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
         "Same-tenant unauthorized get_decision should be denied, got {:?}",
@@ -597,7 +607,14 @@ async fn contract_same_tenant_unauthorized_update_decision_denied() {
         .unwrap();
 
     let result = service
-        .update_decision(decision.id, user_other.id, tenant_id, Some("Hacked".to_string()), None, Some("evil".to_string()))
+        .update_decision(
+            decision.id,
+            user_other.id,
+            tenant_id,
+            Some("Hacked".to_string()),
+            None,
+            Some("evil".to_string()),
+        )
         .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
@@ -629,7 +646,9 @@ async fn contract_same_tenant_unauthorized_rename_decision_denied() {
         .await
         .unwrap();
 
-    let result = service.rename_decision(decision.id, user_other.id, tenant_id, "Hacked".to_string()).await;
+    let result = service
+        .rename_decision(decision.id, user_other.id, tenant_id, "Hacked".to_string())
+        .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
         "Same-tenant unauthorized rename_decision should be denied, got {:?}",

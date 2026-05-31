@@ -116,9 +116,14 @@
 	});
 
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
-	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError || $moduleSummariesQuery.isError);
+	let isError = $derived(
+		$allFilesQuery.isError || $enabledModulesQuery.isError || $moduleSummariesQuery.isError
+	);
 	let errorMessage = $derived(
-		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || $moduleSummariesQuery.error?.message || 'Unknown error'
+		$allFilesQuery.error?.message ||
+			$enabledModulesQuery.error?.message ||
+			$moduleSummariesQuery.error?.message ||
+			'Unknown error'
 	);
 
 	// ---------------------------------------------------------------------------
@@ -331,10 +336,10 @@
 		<div class="dashboard-grid">
 			<!-- Left column -->
 			<div class="dashboard-main">
-					<MetricCards cards={summaryCards} />
-					<DashboardWidgetGrid modules={dashboardModules} />
-					<RecentActivity userName={$currentUser?.display_name} />
-				</div>
+				<MetricCards cards={summaryCards} />
+				<DashboardWidgetGrid modules={dashboardModules} />
+				<RecentActivity userName={$currentUser?.display_name} />
+			</div>
 
 			<!-- Right column -->
 			<div class="dashboard-sidebar">

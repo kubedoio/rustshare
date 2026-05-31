@@ -163,7 +163,17 @@ describe('workspace surface contract drift guard', () => {
 			...baseModule,
 			module_key: 'kanban',
 			renderer: 'kanban',
-			ui_config: { page: { enabled: true, route: '/modules/kanban', renderer: 'kanban', layout: 'kanban-board', emptyStateTitle: '', emptyStateDescription: '', emptyStateAction: '' } }
+			ui_config: {
+				page: {
+					enabled: true,
+					route: '/modules/kanban',
+					renderer: 'kanban',
+					layout: 'kanban-board',
+					emptyStateTitle: '',
+					emptyStateDescription: '',
+					emptyStateAction: ''
+				}
+			}
 		} satisfies ModuleConfig;
 		const notes = { ...baseModule, module_key: 'notes', renderer: 'notes' } satisfies ModuleConfig;
 
@@ -212,7 +222,11 @@ describe('workspace surface contract drift guard', () => {
 						size: 'small',
 						columns: { desktop: 3, tablet: 6, mobile: 12 },
 						maxItems: 4,
-						primaryAction: { label: 'New Note', action: 'create-from-template', template: 'template_default_note' }
+						primaryAction: {
+							label: 'New Note',
+							action: 'create-from-template',
+							template: 'template_default_note'
+						}
 					}
 				},
 				page: {
@@ -223,7 +237,11 @@ describe('workspace surface contract drift guard', () => {
 					emptyStateTitle: 'No notes yet',
 					emptyStateDescription: 'Create your first note.',
 					emptyStateAction: 'New Note',
-					primaryAction: { label: 'New Note', action: 'create-from-template', template: 'template_default_note' }
+					primaryAction: {
+						label: 'New Note',
+						action: 'create-from-template',
+						template: 'template_default_note'
+					}
 				}
 			}
 		} satisfies ModuleConfig;

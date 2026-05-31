@@ -100,7 +100,10 @@ pub async fn get_note(
     auth: AuthenticatedUser,
     Path(note_id): Path<Uuid>,
 ) -> Result<Json<GetNoteResponse>, AppError> {
-    let note = state.note_service.get_note(note_id, auth.user_id, auth.tenant_id).await?;
+    let note = state
+        .note_service
+        .get_note(note_id, auth.user_id, auth.tenant_id)
+        .await?;
 
     let public_url = note
         .metadata
@@ -379,7 +382,10 @@ pub async fn duplicate_note(
     auth: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<DuplicateNoteResponse>), AppError> {
-    let note = state.note_service.duplicate_note(id, auth.user_id, auth.tenant_id).await?;
+    let note = state
+        .note_service
+        .duplicate_note(id, auth.user_id, auth.tenant_id)
+        .await?;
 
     Ok((
         StatusCode::CREATED,

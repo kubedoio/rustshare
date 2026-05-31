@@ -86,7 +86,13 @@ pub async fn update_standup(
 ) -> Result<Json<StandupRecord>, AppError> {
     let standup = state
         .standup_service
-        .update_standup(standup_id, auth.user_id, auth.tenant_id, req.title, req.content)
+        .update_standup(
+            standup_id,
+            auth.user_id,
+            auth.tenant_id,
+            req.title,
+            req.content,
+        )
         .await?;
 
     let payload = StandupModifiedPayload {

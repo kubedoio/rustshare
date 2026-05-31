@@ -380,7 +380,12 @@ impl DecisionService {
         Ok(max_id + 1)
     }
 
-    pub async fn get_decision(&self, id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Decision, DecisionError> {
+    pub async fn get_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Decision, DecisionError> {
         let file = self.file_service.get_file(id, user_id).await?;
         if file.tenant_id != tenant_id {
             return Err(DecisionError::PermissionDenied);

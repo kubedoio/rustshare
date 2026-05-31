@@ -326,4 +326,3 @@ Tests to add/update:
 Acceptance criteria:
 
 - Root path behavior is deterministic and covered by tests.
-

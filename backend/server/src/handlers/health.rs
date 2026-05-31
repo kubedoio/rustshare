@@ -62,7 +62,9 @@ pub struct ReadinessResponse {
 /// - `event_delivery`  – event store DB + in-memory broadcaster health
 /// - `auth_session`    – JWT signing/verification + session table accessibility
 /// - `ai`              – AI service presence (optional; does not fail readiness)
-pub async fn readiness_check(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
+pub async fn readiness_check(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<ReadinessResponse>) {
     let mut components = HashMap::new();
 
     // ------------------------------------------------------------------
@@ -131,9 +133,10 @@ pub async fn readiness_check(State(state): State<AppState>) -> (StatusCode, Json
 async fn check_auth_health(state: &AppState) -> ComponentHealth {
     // Verify JWT manager can round-trip a token.
     let jwt_ok = {
-        let token = state
-            .jwt_manager
-            .generate(Uuid::nil(), "readiness@rustshare.local", Uuid::nil());
+        let token =
+            state
+                .jwt_manager
+                .generate(Uuid::nil(), "readiness@rustshare.local", Uuid::nil());
         match token {
             Ok(t) => state.jwt_manager.validate(&t).is_ok(),
             Err(_) => false,
@@ -161,9 +164,19 @@ async fn check_auth_health(state: &AppState) -> ComponentHealth {
 pub fn evaluate_readiness(
     components: HashMap<String, ComponentHealth>,
 ) -> (StatusCode, ReadinessResponse) {
-    let required_ready = ["database", "object_storage", "event_delivery", "auth_session"]
-        .iter()
-        .all(|key| components.get(*key).map(|c| c.status == "healthy").unwrap_or(false));
+    let required_ready = [
+        "database",
+        "object_storage",
+        "event_delivery",
+        "auth_session",
+    ]
+    .iter()
+    .all(|key| {
+        components
+            .get(*key)
+            .map(|c| c.status == "healthy")
+            .unwrap_or(false)
+    });
 
     let status = if required_ready {
         "ready".to_string()
@@ -244,7 +257,10 @@ mod tests {
     #[test]
     fn test_readiness_response_not_ready_when_required_fails() {
         let mut components = HashMap::new();
-        components.insert("database".to_string(), ComponentHealth::unhealthy("timeout"));
+        components.insert(
+            "database".to_string(),
+            ComponentHealth::unhealthy("timeout"),
+        );
         components.insert("object_storage".to_string(), ComponentHealth::healthy());
         components.insert("event_delivery".to_string(), ComponentHealth::healthy());
         components.insert("auth_session".to_string(), ComponentHealth::healthy());

@@ -36,12 +36,8 @@ pub struct SearchResult {
 #[allow(async_fn_in_trait)]
 pub trait SearchIndexRepository: Send + Sync {
     /// Search for resources matching the query
-    async fn search(
-        &self,
-        tenant_id: Uuid,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchResult>>;
+    async fn search(&self, tenant_id: Uuid, query: &str, limit: usize)
+        -> Result<Vec<SearchResult>>;
 }
 
 /// Search result item with permission information
@@ -79,10 +75,7 @@ where
     PR: PermissionResolverOps,
 {
     /// Create a new SearchService instance
-    pub fn new(
-        search_repo: Arc<SR>,
-        permission_resolver: Arc<PermissionResolver<PR>>,
-    ) -> Self {
+    pub fn new(search_repo: Arc<SR>, permission_resolver: Arc<PermissionResolver<PR>>) -> Self {
         Self {
             search_repo,
             permission_resolver,
@@ -337,7 +330,9 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     s.file_id.is_none()
-                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
                         && s.recipient_user_id == Some(recipient_user_id)
                 })
                 .cloned()
@@ -354,7 +349,9 @@ mod tests {
                 .iter()
                 .filter(|s| {
                     s.file_id.is_none()
-                        && s.folder_id.map(|fid| folder_ids.contains(&fid)).unwrap_or(false)
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
                         && s.recipient_group_id
                             .map(|gid| group_ids.contains(&gid))
                             .unwrap_or(false)
@@ -447,7 +444,10 @@ mod tests {
         permission_ops.add_file(file);
         search_repo.add_result(tenant_id, search_result(file_id, "document.txt", user_id));
 
-        let results = service.search(user_id, tenant_id, "document", 10).await.unwrap();
+        let results = service
+            .search(user_id, tenant_id, "document", 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "document.txt");
     }
@@ -471,7 +471,10 @@ mod tests {
         search_repo.add_result(tenant_a, search_result(file_a, "tenant_a_doc.txt", user_id));
         search_repo.add_result(tenant_b, search_result(file_b, "tenant_b_doc.txt", user_id));
 
-        let results = service.search(user_id, tenant_a, "tenant", 10).await.unwrap();
+        let results = service
+            .search(user_id, tenant_a, "tenant", 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "tenant_a_doc.txt");
     }
@@ -491,7 +494,10 @@ mod tests {
         permission_ops.add_file(make_file(file_id, "private.txt", owner_id, tenant_id));
         search_repo.add_result(tenant_id, search_result(file_id, "private.txt", owner_id));
 
-        let results = service.search(other_user, tenant_id, "private", 10).await.unwrap();
+        let results = service
+            .search(other_user, tenant_id, "private", 10)
+            .await
+            .unwrap();
         assert!(results.is_empty(), "Unauthorized files should be excluded");
     }
 
@@ -509,8 +515,14 @@ mod tests {
         // File is in the index but NOT in the permission ops (simulating deletion)
         search_repo.add_result(tenant_id, search_result(file_id, "deleted.txt", user_id));
 
-        let results = service.search(user_id, tenant_id, "deleted", 10).await.unwrap();
-        assert!(results.is_empty(), "Deleted files should be excluded from search");
+        let results = service
+            .search(user_id, tenant_id, "deleted", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Deleted files should be excluded from search"
+        );
     }
 
     #[tokio::test]
@@ -535,8 +547,14 @@ mod tests {
         ));
         search_repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
 
-        let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
-        assert!(results.is_empty(), "Revoked shares should be excluded from search");
+        let results = service
+            .search(recipient_id, tenant_id, "shared", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Revoked shares should be excluded from search"
+        );
     }
 
     #[tokio::test]
@@ -561,8 +579,14 @@ mod tests {
         ));
         search_repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
 
-        let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
-        assert!(results.is_empty(), "Expired shares should be excluded from search");
+        let results = service
+            .search(recipient_id, tenant_id, "shared", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Expired shares should be excluded from search"
+        );
     }
 
     #[tokio::test]
@@ -589,8 +613,14 @@ mod tests {
             search_repo.add_result(tenant_id, search_result(file_id, name, user_id));
         }
 
-        let results = service.search(user_id, tenant_id, "rustshare", 10).await.unwrap();
-        assert!(results.is_empty(), "Hidden metadata files should be excluded");
+        let results = service
+            .search(user_id, tenant_id, "rustshare", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Hidden metadata files should be excluded"
+        );
     }
 
     #[tokio::test]
@@ -608,7 +638,10 @@ mod tests {
         search_repo.add_result(tenant_id, search_result(file_id, "stale.txt", user_id));
 
         // Search should succeed, just skip the stale result
-        let results = service.search(user_id, tenant_id, "stale", 10).await.unwrap();
+        let results = service
+            .search(user_id, tenant_id, "stale", 10)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -624,8 +657,16 @@ mod tests {
 
         for i in 0..5 {
             let file_id = Uuid::new_v4();
-            permission_ops.add_file(make_file(file_id, &format!("doc{}.txt", i), user_id, tenant_id));
-            search_repo.add_result(tenant_id, search_result(file_id, &format!("doc{}.txt", i), user_id));
+            permission_ops.add_file(make_file(
+                file_id,
+                &format!("doc{}.txt", i),
+                user_id,
+                tenant_id,
+            ));
+            search_repo.add_result(
+                tenant_id,
+                search_result(file_id, &format!("doc{}.txt", i), user_id),
+            );
         }
 
         let results = service.search(user_id, tenant_id, "doc", 3).await.unwrap();

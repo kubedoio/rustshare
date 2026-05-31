@@ -11,17 +11,22 @@
 
 use bytes::Bytes;
 use rustshare_core::domain::User;
+use rustshare_core::events::{AggregateType, EventBroadcaster, EventType};
+use rustshare_core::services::PermissionResolver;
 use rustshare_core::services::{FileService, FolderService};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
-use rustshare_core::events::{AggregateType, EventBroadcaster, EventType};
-use rustshare_core::services::PermissionResolver;
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use uuid::Uuid;
 
 /// Setup test environment with database and S3 connections
-async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<ObjectStore>) {
+async fn setup_test_env() -> (
+    PgPool,
+    Arc<EventStore>,
+    Arc<MetadataStore>,
+    Arc<ObjectStore>,
+) {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
 
@@ -50,7 +55,6 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
 
     (pool, event_store, metadata_store, object_store)
 }
-
 
 fn create_file_service(
     event_store: Arc<EventStore>,
@@ -127,12 +131,24 @@ async fn test_file_upload_emits_audit_event() {
     let user = create_test_user(&metadata_store, "audit_upload_user", tenant_id).await;
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload a file
     let file_content = Bytes::from("Audit test content for upload event");
     let uploaded_file = file_service
-        .upload_file(user.id, "audit-upload.txt".to_string(), None, file_content.clone(), "text/plain".to_string(), tenant_id)
+        .upload_file(
+            user.id,
+            "audit-upload.txt".to_string(),
+            None,
+            file_content.clone(),
+            "text/plain".to_string(),
+            tenant_id,
+        )
         .await
         .expect("Failed to upload file");
 
@@ -142,8 +158,13 @@ async fn test_file_upload_emits_audit_event() {
         .await
         .expect("Failed to fetch events from event store");
 
-    assert!(!events.is_empty(), "File upload must emit at least one audit event");
-    let upload_event = events.iter().find(|e| e.event_type == EventType::FileUploaded);
+    assert!(
+        !events.is_empty(),
+        "File upload must emit at least one audit event"
+    );
+    let upload_event = events
+        .iter()
+        .find(|e| e.event_type == EventType::FileUploaded);
     assert!(
         upload_event.is_some(),
         "Events must contain a FileUploaded audit event"
@@ -164,12 +185,24 @@ async fn test_file_delete_emits_audit_event() {
 
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "audit_delete_user", tenant_id).await;
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload then delete
     let file_content = Bytes::from("Content to delete");
     let uploaded_file = file_service
-        .upload_file(user.id, "audit-delete.txt".to_string(), None, file_content, "text/plain".to_string(), tenant_id)
+        .upload_file(
+            user.id,
+            "audit-delete.txt".to_string(),
+            None,
+            file_content,
+            "text/plain".to_string(),
+            tenant_id,
+        )
         .await
         .expect("Failed to upload file");
 
@@ -184,7 +217,9 @@ async fn test_file_delete_emits_audit_event() {
         .await
         .expect("Failed to fetch events");
 
-    let delete_event = events.iter().find(|e| e.event_type == EventType::FileDeleted);
+    let delete_event = events
+        .iter()
+        .find(|e| e.event_type == EventType::FileDeleted);
     assert!(
         delete_event.is_some(),
         "Events must contain a FileDeleted audit event"
@@ -207,7 +242,10 @@ async fn test_file_move_emits_audit_event() {
 
     // Create root folder and target folder
     let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);
-    metadata_store.create_folder(&root_folder).await.expect("Failed to create root folder");
+    metadata_store
+        .create_folder(&root_folder)
+        .await
+        .expect("Failed to create root folder");
 
     let target_folder = rustshare_core::domain::Folder::new_child(
         "Target".to_string(),
@@ -216,13 +254,28 @@ async fn test_file_move_emits_audit_event() {
         user.id,
         tenant_id,
     );
-    metadata_store.create_folder(&target_folder).await.expect("Failed to create target folder");
+    metadata_store
+        .create_folder(&target_folder)
+        .await
+        .expect("Failed to create target folder");
 
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     let file_content = Bytes::from("Content to move");
     let uploaded_file = file_service
-        .upload_file(user.id, "audit-move.txt".to_string(), None, file_content, "text/plain".to_string(), tenant_id)
+        .upload_file(
+            user.id,
+            "audit-move.txt".to_string(),
+            None,
+            file_content,
+            "text/plain".to_string(),
+            tenant_id,
+        )
         .await
         .expect("Failed to upload file");
 
@@ -248,9 +301,20 @@ async fn test_file_move_emits_audit_event() {
     assert_eq!(event.user_id, user.id);
 
     // Cleanup
-    file_service.delete_file(uploaded_file.id, user.id).await.ok();
-    sqlx::query("DELETE FROM folders WHERE id = $1").bind(target_folder.id).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM folders WHERE id = $1").bind(root_folder.id).execute(&pool).await.ok();
+    file_service
+        .delete_file(uploaded_file.id, user.id)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(target_folder.id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(root_folder.id)
+        .execute(&pool)
+        .await
+        .ok();
     cleanup_user(&pool, user.id).await;
 }
 
@@ -264,7 +328,12 @@ async fn test_file_upload_download_flow() {
     let user = create_test_user(&metadata_store, "fileops_user", tenant_id).await;
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Step 1: Upload a file
     let file_content = Bytes::from("Hello, this is test file content!");
@@ -272,7 +341,14 @@ async fn test_file_upload_download_flow() {
     let mime_type = "text/plain".to_string();
 
     let uploaded_file = file_service
-        .upload_file(user.id, file_name.clone(), None, file_content.clone(), mime_type.clone(), tenant_id)
+        .upload_file(
+            user.id,
+            file_name.clone(),
+            None,
+            file_content.clone(),
+            mime_type.clone(),
+            tenant_id,
+        )
         .await
         .expect("Failed to upload file");
 
@@ -316,10 +392,7 @@ async fn test_file_upload_download_flow() {
 
     // Verify deletion - file should not be found
     let result = file_service.get_file(uploaded_file.id, user.id).await;
-    assert!(
-        result.is_err(),
-        "File should not exist after deletion"
-    );
+    assert!(result.is_err(), "File should not exist after deletion");
 
     // Cleanup
     cleanup_user(&pool, user.id).await;
@@ -364,7 +437,12 @@ async fn test_file_upload_with_parent_folder() {
         .expect("Failed to create parent folder");
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload file to parent folder
     let file_content = Bytes::from("Document content in folder");
@@ -425,7 +503,12 @@ async fn test_file_deduplication() {
     let user = create_test_user(&metadata_store, "fileops_dedup_user", tenant_id).await;
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload same content twice with different names
     let file_content = Bytes::from("Identical content for deduplication test");
@@ -505,7 +588,12 @@ async fn test_move_file_to_folder() {
         .expect("Failed to create target folder");
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload a file at root (no parent folder)
     let file_content = Bytes::from("File to be moved");
@@ -595,7 +683,12 @@ async fn test_move_file_to_root() {
         .expect("Failed to create source folder");
 
     // Create FileService
-    let file_service = create_file_service(event_store.clone(), metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     // Upload a file in source folder
     let file_content = Bytes::from("File to move to root");

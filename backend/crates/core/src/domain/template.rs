@@ -118,21 +118,45 @@ mod tests {
         assert!(obj.contains_key("id"), "missing id");
         assert!(obj.contains_key("template_key"), "missing template_key");
         assert!(obj.contains_key("module_key"), "missing module_key");
-        assert!(obj.contains_key("folder_structure"), "missing folder_structure");
+        assert!(
+            obj.contains_key("folder_structure"),
+            "missing folder_structure"
+        );
         assert!(obj.contains_key("default_files"), "missing default_files");
-        assert!(obj.contains_key("metadata_schema"), "missing metadata_schema");
-        assert!(obj.contains_key("visibility_policy"), "missing visibility_policy");
-        assert!(obj.contains_key("ai_indexing_policy"), "missing ai_indexing_policy");
-        assert!(obj.contains_key("audit_logging_policy"), "missing audit_logging_policy");
+        assert!(
+            obj.contains_key("metadata_schema"),
+            "missing metadata_schema"
+        );
+        assert!(
+            obj.contains_key("visibility_policy"),
+            "missing visibility_policy"
+        );
+        assert!(
+            obj.contains_key("ai_indexing_policy"),
+            "missing ai_indexing_policy"
+        );
+        assert!(
+            obj.contains_key("audit_logging_policy"),
+            "missing audit_logging_policy"
+        );
         assert!(obj.contains_key("module_config"), "missing module_config");
         assert!(obj.contains_key("created_by"), "missing created_by");
-        assert!(obj.contains_key("system_template"), "missing system_template");
+        assert!(
+            obj.contains_key("system_template"),
+            "missing system_template"
+        );
         assert!(obj.contains_key("tenant_id"), "missing tenant_id");
 
         // TemplateDefaultFile must serialize with camelCase contentType
         let files = obj.get("default_files").unwrap().as_array().unwrap();
         let first_file = files.first().unwrap().as_object().unwrap();
-        assert!(first_file.contains_key("contentType"), "missing contentType in default_files");
-        assert!(!first_file.contains_key("content_type"), "snake_case content_type leaked into default_files serialization");
+        assert!(
+            first_file.contains_key("contentType"),
+            "missing contentType in default_files"
+        );
+        assert!(
+            !first_file.contains_key("content_type"),
+            "snake_case content_type leaked into default_files serialization"
+        );
     }
 }

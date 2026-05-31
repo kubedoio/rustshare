@@ -366,17 +366,17 @@ describe('Dashboard Page Registry-Driven Quick Actions', () => {
 		vi.clearAllMocks();
 	});
 
-		it('renders quick actions only for enabled modules with primary actions', async () => {
-			render(DashboardPage);
+	it('renders quick actions only for enabled modules with primary actions', async () => {
+		render(DashboardPage);
 
-			await vi.waitFor(() => {
-				const quickActionsSection = screen.getByLabelText('Quick actions');
-				expect(within(quickActionsSection).getByText('New note')).toBeTruthy();
-				expect(within(quickActionsSection).getByText('New Kanban board')).toBeTruthy();
-			});
-
-			// Decisions is disabled → no quick action
+		await vi.waitFor(() => {
 			const quickActionsSection = screen.getByLabelText('Quick actions');
+			expect(within(quickActionsSection).getByText('New note')).toBeTruthy();
+			expect(within(quickActionsSection).getByText('New Kanban board')).toBeTruthy();
+		});
+
+		// Decisions is disabled → no quick action
+		const quickActionsSection = screen.getByLabelText('Quick actions');
 		expect(within(quickActionsSection).queryByText('New decision record')).toBeNull();
 	});
 

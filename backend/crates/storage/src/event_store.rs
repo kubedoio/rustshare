@@ -203,9 +203,13 @@ impl EventStore {
             .map(|row| {
                 Ok(Event {
                     id: row.try_get("event_id")?,
-                    event_type: serde_json::from_str(row.try_get::<String, _>("event_type")?.as_str())?,
+                    event_type: serde_json::from_str(
+                        row.try_get::<String, _>("event_type")?.as_str(),
+                    )?,
                     aggregate_id: row.try_get("aggregate_id")?,
-                    aggregate_type: serde_json::from_str(row.try_get::<String, _>("aggregate_type")?.as_str())?,
+                    aggregate_type: serde_json::from_str(
+                        row.try_get::<String, _>("aggregate_type")?.as_str(),
+                    )?,
                     payload: row.try_get("payload")?,
                     user_id: row.try_get("user_id")?,
                     timestamp: row.try_get("timestamp")?,

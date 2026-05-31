@@ -396,14 +396,8 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
     let owner = create_test_user(&ctx.metadata_store, "upload_revoke_owner", tenant_id).await;
 
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(
-        &folder_service,
-        owner.id,
-        tenant_id,
-        "RevokeDropbox",
-        None,
-    )
-    .await;
+    let folder =
+        create_test_folder(&folder_service, owner.id, tenant_id, "RevokeDropbox", None).await;
 
     let share_service = create_share_service(&ctx);
 
@@ -523,7 +517,9 @@ async fn test_upload_only_session_cannot_list_folder_contents() {
     // TODO: list_public_folder_contents should reject upload-only shares.
     // Currently the service returns contents and the handler blocks it.
     // Once the service enforces this, uncomment the assertion below.
-    let result = share_service.list_public_folder_contents(&token, None).await;
+    let result = share_service
+        .list_public_folder_contents(&token, None)
+        .await;
     assert!(
         result.is_err(),
         "Upload-only share should not allow listing folder contents"
@@ -547,14 +543,8 @@ async fn test_upload_only_already_issued_session_rejected_after_revoke() {
     let owner = create_test_user(&ctx.metadata_store, "upload_session_owner", tenant_id).await;
 
     let folder_service = ctx.folder_service();
-    let folder = create_test_folder(
-        &folder_service,
-        owner.id,
-        tenant_id,
-        "SessionDropbox",
-        None,
-    )
-    .await;
+    let folder =
+        create_test_folder(&folder_service, owner.id, tenant_id, "SessionDropbox", None).await;
 
     let share_service = create_share_service(&ctx);
 

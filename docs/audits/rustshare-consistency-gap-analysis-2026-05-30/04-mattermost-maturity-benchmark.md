@@ -36,4 +36,3 @@ Mattermost is used here only as a maturity benchmark for stable collaboration be
 - Do not copy Mattermost channels, messaging, or product shape.
 - Do not add enterprise breadth before RustShare file/workspace contracts are stable.
 - Do not create new collaboration concepts unless they support file/workspace stability.
-

@@ -18,14 +18,14 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
-    FileService, FolderService, NotificationService,
-    PermissionResolver, ShareService, ThumbnailService,
+    FileService, FolderService, NotificationService, PermissionResolver, ShareService,
+    ThumbnailService,
 };
 use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
-use rustshare_server::handlers::health::{ComponentHealth, evaluate_readiness, readiness_check};
+use rustshare_server::handlers::health::{evaluate_readiness, readiness_check, ComponentHealth};
 use rustshare_server::state::AppState;
 
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
@@ -84,8 +84,9 @@ async fn setup_test_env() -> AppState {
         permission_resolver.clone(),
     ));
 
-    let share_notification_repo =
-        Arc::new(rustshare_storage::repos::ShareNotificationRepoImpl::new(pool.clone()));
+    let share_notification_repo = Arc::new(
+        rustshare_storage::repos::ShareNotificationRepoImpl::new(pool.clone()),
+    );
 
     let share_service = Arc::new(ShareService::new(
         event_store.clone(),
@@ -106,20 +107,18 @@ async fn setup_test_env() -> AppState {
     let share_repository = Arc::new(ShareRepository::new(pool.clone()));
 
     #[allow(deprecated)]
-    let user_share_service = Arc::new(
-        rustshare_core::services::UserShareService::new(
-            rustshare_core::services::UserShareServiceDeps {
-                share_repo: share_repository.clone(),
-                user_repo: user_repository.clone(),
-                file_repo: file_repository.clone(),
-                folder_repo: folder_repository.clone(),
-                permission_resolver: permission_resolver.clone(),
-                notification_service: notification_service.clone(),
-                event_store: event_store.clone(),
-                broadcaster: broadcaster.clone(),
-            },
-        ),
-    );
+    let user_share_service = Arc::new(rustshare_core::services::UserShareService::new(
+        rustshare_core::services::UserShareServiceDeps {
+            share_repo: share_repository.clone(),
+            user_repo: user_repository.clone(),
+            file_repo: file_repository.clone(),
+            folder_repo: folder_repository.clone(),
+            permission_resolver: permission_resolver.clone(),
+            notification_service: notification_service.clone(),
+            event_store: event_store.clone(),
+            broadcaster: broadcaster.clone(),
+        },
+    ));
 
     let note_service = Arc::new(rustshare_server::services::note_service::NoteService::new(
         file_service.clone(),
@@ -128,49 +127,57 @@ async fn setup_test_env() -> AppState {
         object_store.clone(),
     ));
 
-    let decision_service =
-        Arc::new(rustshare_server::services::decision_service::DecisionService::new(
+    let decision_service = Arc::new(
+        rustshare_server::services::decision_service::DecisionService::new(
             file_service.clone(),
             folder_service.clone(),
             metadata_store.clone(),
             object_store.clone(),
-        ));
+        ),
+    );
 
-    let meeting_service =
-        Arc::new(rustshare_server::services::meeting_service::MeetingService::new(
+    let meeting_service = Arc::new(
+        rustshare_server::services::meeting_service::MeetingService::new(
             file_service.clone(),
             folder_service.clone(),
             metadata_store.clone(),
             object_store.clone(),
-        ));
+        ),
+    );
 
-    let standup_service =
-        Arc::new(rustshare_server::services::standup_service::StandupService::new(
+    let standup_service = Arc::new(
+        rustshare_server::services::standup_service::StandupService::new(
             file_service.clone(),
             folder_service.clone(),
             metadata_store.clone(),
             object_store.clone(),
-        ));
+        ),
+    );
 
-    let module_service = Arc::new(rustshare_server::services::module_service::ModuleService::new(
-        folder_service.clone(),
-        metadata_store.clone(),
-    ));
+    let module_service = Arc::new(
+        rustshare_server::services::module_service::ModuleService::new(
+            folder_service.clone(),
+            metadata_store.clone(),
+        ),
+    );
 
-    let template_service =
-        Arc::new(rustshare_server::services::template_service::TemplateService::new(
+    let template_service = Arc::new(
+        rustshare_server::services::template_service::TemplateService::new(
             file_service.clone(),
             folder_service.clone(),
             metadata_store.clone(),
-        ));
+        ),
+    );
 
-    let kanban_service = Arc::new(rustshare_server::services::kanban_service::KanbanService::new(
-        file_service.clone(),
-        folder_service.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-        user_repository.clone(),
-    ));
+    let kanban_service = Arc::new(
+        rustshare_server::services::kanban_service::KanbanService::new(
+            file_service.clone(),
+            folder_service.clone(),
+            metadata_store.clone(),
+            object_store.clone(),
+            user_repository.clone(),
+        ),
+    );
 
     let brainstorming_service = Arc::new(
         rustshare_server::services::brainstorming_service::BrainstormingService::new(
@@ -244,10 +251,7 @@ async fn test_readiness_healthy_with_real_deps() {
         response.components.get("auth_session").unwrap().status,
         "healthy"
     );
-    assert_eq!(
-        response.components.get("ai").unwrap().status,
-        "disabled"
-    );
+    assert_eq!(response.components.get("ai").unwrap().status, "disabled");
 }
 
 #[tokio::test]
@@ -260,10 +264,7 @@ async fn test_readiness_disabled_ai_does_not_fail() {
 
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(response.status, "ready");
-    assert_eq!(
-        response.components.get("ai").unwrap().status,
-        "disabled"
-    );
+    assert_eq!(response.components.get("ai").unwrap().status, "disabled");
 }
 
 // ---------------------------------------------------------------------------
@@ -273,11 +274,41 @@ async fn test_readiness_disabled_ai_does_not_fail() {
 #[test]
 fn test_healthy_readiness_includes_all_required_checks() {
     let mut components = HashMap::new();
-    components.insert("database".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("object_storage".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("event_delivery".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("auth_session".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("ai".to_string(), ComponentHealth { status: "disabled".to_string(), error: None });
+    components.insert(
+        "database".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "object_storage".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "event_delivery".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "auth_session".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "ai".to_string(),
+        ComponentHealth {
+            status: "disabled".to_string(),
+            error: None,
+        },
+    );
 
     let (status_code, response) = evaluate_readiness(components);
     assert_eq!(status_code, StatusCode::OK);
@@ -292,28 +323,88 @@ fn test_healthy_readiness_includes_all_required_checks() {
 #[test]
 fn test_disabled_ai_does_not_fail_readiness() {
     let mut components = HashMap::new();
-    components.insert("database".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("object_storage".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("event_delivery".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("auth_session".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("ai".to_string(), ComponentHealth { status: "disabled".to_string(), error: None });
+    components.insert(
+        "database".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "object_storage".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "event_delivery".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "auth_session".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "ai".to_string(),
+        ComponentHealth {
+            status: "disabled".to_string(),
+            error: None,
+        },
+    );
 
     let (status_code, response) = evaluate_readiness(components);
     assert_eq!(status_code, StatusCode::OK);
-    assert_eq!(response.status, "ready", "disabled AI should not make readiness fail");
+    assert_eq!(
+        response.status, "ready",
+        "disabled AI should not make readiness fail"
+    );
 }
 
 #[test]
 fn test_simulated_dependency_failure_returns_not_ready() {
     let mut components = HashMap::new();
-    components.insert("database".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
+    components.insert(
+        "database".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
     components.insert(
         "object_storage".to_string(),
-        ComponentHealth { status: "unhealthy".to_string(), error: Some("connection refused".to_string()) },
+        ComponentHealth {
+            status: "unhealthy".to_string(),
+            error: Some("connection refused".to_string()),
+        },
     );
-    components.insert("event_delivery".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("auth_session".to_string(), ComponentHealth { status: "healthy".to_string(), error: None });
-    components.insert("ai".to_string(), ComponentHealth { status: "disabled".to_string(), error: None });
+    components.insert(
+        "event_delivery".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "auth_session".to_string(),
+        ComponentHealth {
+            status: "healthy".to_string(),
+            error: None,
+        },
+    );
+    components.insert(
+        "ai".to_string(),
+        ComponentHealth {
+            status: "disabled".to_string(),
+            error: None,
+        },
+    );
 
     let (status_code, response) = evaluate_readiness(components);
     assert_eq!(status_code, StatusCode::SERVICE_UNAVAILABLE);

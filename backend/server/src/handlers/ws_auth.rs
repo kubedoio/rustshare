@@ -41,7 +41,10 @@ pub async fn validate_client_token(
             Uuid::parse_str(&claims.sub)
                 .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid user ID".to_string()))?,
         );
-        return Ok(ClientIdentity::User { user_id, tenant_id: claims.tenant_id });
+        return Ok(ClientIdentity::User {
+            user_id,
+            tenant_id: claims.tenant_id,
+        });
     }
 
     // Try to decode as share session JWT
@@ -93,7 +96,10 @@ pub async fn resolve_ws_client_identity(
             return Err((StatusCode::UNAUTHORIZED, "Invalid session".to_string()));
         };
 
-        return Ok(ClientIdentity::User { user_id: session.user_id, tenant_id: session.tenant_id });
+        return Ok(ClientIdentity::User {
+            user_id: session.user_id,
+            tenant_id: session.tenant_id,
+        });
     }
 
     Err(last_error.unwrap_or((

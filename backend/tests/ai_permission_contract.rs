@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use rustshare_core::domain::{File, Share, SharePermissions};
-use rustshare_core::services::{AiService, ContentIndexer, EmbeddingGenerator, PermissionResolver, PermissionResolverOps};
+use rustshare_core::services::{
+    AiService, ContentIndexer, EmbeddingGenerator, PermissionResolver, PermissionResolverOps,
+};
 
 // Mock embedding generator
 struct MockEmbeddingGenerator;
@@ -89,7 +91,10 @@ impl PermissionResolverOps for MockPermissionOps {
         Ok(self.files.lock().unwrap().get(&id).cloned())
     }
 
-    async fn find_folder_by_id(&self, _id: Uuid) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+    async fn find_folder_by_id(
+        &self,
+        _id: Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
         Ok(None)
     }
 
@@ -190,10 +195,7 @@ async fn test_ai_excludes_revoked_shares() {
         .semantic_search("shared", recipient_id, tenant_id, 10)
         .await
         .unwrap();
-    assert!(
-        results.is_empty(),
-        "AI should exclude revoked shares"
-    );
+    assert!(results.is_empty(), "AI should exclude revoked shares");
 }
 
 /// A-06: AI excludes expired shares
@@ -234,10 +236,7 @@ async fn test_ai_excludes_expired_shares() {
         .semantic_search("shared", recipient_id, tenant_id, 10)
         .await
         .unwrap();
-    assert!(
-        results.is_empty(),
-        "AI should exclude expired shares"
-    );
+    assert!(results.is_empty(), "AI should exclude expired shares");
 }
 
 /// A-07: AI excludes hidden metadata and module sidecars

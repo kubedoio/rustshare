@@ -12,7 +12,9 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use rustshare_core::domain::{File, Folder, Share, SharePermissions};
-use rustshare_core::services::{PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService};
+use rustshare_core::services::{
+    PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService,
+};
 
 // Mock search repository for unit-style contract tests
 struct MockSearchRepo {
@@ -27,7 +29,12 @@ impl MockSearchRepo {
     }
 
     fn add_result(&self, tenant_id: Uuid, result: SearchResult) {
-        self.results.lock().unwrap().entry(tenant_id).or_default().push(result);
+        self.results
+            .lock()
+            .unwrap()
+            .entry(tenant_id)
+            .or_default()
+            .push(result);
     }
 }
 
@@ -629,7 +636,10 @@ async fn test_search_excludes_revoked_shares() {
 
     // Recipient can access via file service before revoke
     let access_before = file_service.get_file(file.id, recipient.id).await;
-    assert!(access_before.is_ok(), "Recipient should access shared file before revoke");
+    assert!(
+        access_before.is_ok(),
+        "Recipient should access shared file before revoke"
+    );
 
     // Revoke the share
     sqlx::query("UPDATE shares SET revoked_at = NOW() WHERE id = $1")
@@ -697,10 +707,7 @@ async fn test_search_excludes_expired_shares() {
 
     // Recipient cannot access because share is expired
     let access = file_service.get_file(file.id, recipient.id).await;
-    assert!(
-        access.is_err(),
-        "Search should exclude expired shares"
-    );
+    assert!(access.is_err(), "Search should exclude expired shares");
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;
@@ -731,7 +738,10 @@ async fn test_search_excludes_hidden_metadata() {
         repo.add_result(tenant_id, search_result(file_id, name, user_id));
     }
 
-    let results = service.search(user_id, tenant_id, "rustshare", 10).await.unwrap();
+    let results = service
+        .search(user_id, tenant_id, "rustshare", 10)
+        .await
+        .unwrap();
     assert!(
         results.is_empty(),
         "Hidden metadata files should be excluded from search"

@@ -60,7 +60,8 @@ vi.mock('$lib/stores/activity', () => ({
 		if (activity.moduleKey === 'meetings') return `/modules/meetings/${activity.artifactId}`;
 		if (activity.moduleKey === 'standups') return `/modules/standups/${activity.artifactId}`;
 		if (activity.moduleKey === 'decisions') return `/modules/decisions/${activity.artifactId}`;
-		if (activity.moduleKey === 'brainstorming') return `/modules/brainstorming/${activity.artifactId}`;
+		if (activity.moduleKey === 'brainstorming')
+			return `/modules/brainstorming/${activity.artifactId}`;
 		if (activity.moduleKey === 'kanban') return '/modules/kanban';
 		if (activity.moduleKey === 'shares') return `/modules/shares/${activity.artifactId}`;
 		return `/files?preview=${activity.artifactId}`;

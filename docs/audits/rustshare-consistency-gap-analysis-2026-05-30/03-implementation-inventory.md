@@ -137,4 +137,3 @@ Frontend:
 - Module root path compatibility between legacy roots and `/Workspace` is not fully resolved in docs.
 - Editor document API contract is not clearly implemented as routes.
 - Health/metrics/audit export/backup visibility are not mature enough for contract O-01/O-04.
-

@@ -1,15 +1,13 @@
 //! Integration tests for the Brainstorming module.
 
 use bytes::Bytes;
-use rustshare_core::domain::User;
 use rustshare_server::services::brainstorming_service::{BrainstormError, BrainstormingService};
 use std::sync::Arc;
-use uuid::Uuid;
 
 mod contracts;
 use contracts::common::{
-    cleanup_tenant, cleanup_user, create_test_file, create_test_folder, create_test_user,
-    setup_test_env, setup_test_tenant,
+    cleanup_tenant, cleanup_user, create_hidden_test_file, create_test_file, create_test_folder,
+    create_test_user, setup_test_env, setup_test_tenant,
 };
 
 #[tokio::test]
@@ -80,13 +78,14 @@ async fn test_create_and_get_brainstorm_board() {
     .await;
 
     let meta_content = r#"{"id":"test-id","type":"brainstorming.board","title":"Test Board","slug":"test-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -150,13 +149,14 @@ async fn test_save_board_source_updates_metadata() {
     .await;
 
     let meta_content = r#"{"id":"save-id","type":"brainstorming.board","title":"Save Test","slug":"save-test","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -230,13 +230,14 @@ async fn test_update_board_preview() {
     .await;
 
     let meta_content = r#"{"id":"preview-id","type":"brainstorming.board","title":"Preview Test","slug":"preview-test","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -398,8 +399,18 @@ async fn contract_cross_tenant_get_brainstorm_board_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -412,17 +423,20 @@ async fn contract_cross_tenant_get_brainstorm_board_denied() {
     .await;
 
     let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board(board_folder.id, user_b.id, tenant_b).await;
+    let result = service
+        .get_board(board_folder.id, user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant get_board should be denied, got {:?}",
@@ -451,8 +465,18 @@ async fn contract_cross_tenant_save_board_source_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -465,18 +489,24 @@ async fn contract_cross_tenant_save_board_source_denied() {
     .await;
 
     let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
     let result = service
-        .save_board_source(board_folder.id, user_b.id, tenant_b, r#"{"type":"excalidraw","version":2,"elements":[]}"#.to_string())
+        .save_board_source(
+            board_folder.id,
+            user_b.id,
+            tenant_b,
+            r#"{"type":"excalidraw","version":2,"elements":[]}"#.to_string(),
+        )
         .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
@@ -506,8 +536,18 @@ async fn contract_cross_tenant_delete_board_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -520,17 +560,20 @@ async fn contract_cross_tenant_delete_board_denied() {
     .await;
 
     let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.delete_board(board_folder.id, user_b.id, tenant_b).await;
+    let result = service
+        .delete_board(board_folder.id, user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant delete_board should be denied, got {:?}",
@@ -559,8 +602,18 @@ async fn contract_cross_tenant_list_brainstorm_boards_does_not_leak() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -573,13 +626,14 @@ async fn contract_cross_tenant_list_brainstorm_boards_does_not_leak() {
     .await;
 
     let meta_content = r#"{"id":"secret-id","type":"brainstorming.board","title":"Secret Board","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -610,8 +664,18 @@ async fn contract_same_tenant_unauthorized_get_brainstorm_board_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -624,17 +688,20 @@ async fn contract_same_tenant_unauthorized_get_brainstorm_board_denied() {
     .await;
 
     let meta_content = r#"{"id":"private-id","type":"brainstorming.board","title":"Private Board","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board(board_folder.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_board(board_folder.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Same-tenant unauthorized get_board should be denied, got {:?}",
@@ -658,8 +725,18 @@ async fn contract_same_tenant_unauthorized_get_board_source_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
 
     create_test_file(
         &ctx.file_service(),
@@ -672,17 +749,20 @@ async fn contract_same_tenant_unauthorized_get_board_source_denied() {
     .await;
 
     let meta_content = r#"{"id":"private-id","type":"brainstorming.board","title":"Private Board","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta_content.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board_source(board_folder.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_board_source(board_folder.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Same-tenant unauthorized get_board_source should be denied, got {:?}",
@@ -693,7 +773,6 @@ async fn contract_same_tenant_unauthorized_get_board_source_denied() {
     cleanup_user(&ctx.pool, user_other.id).await;
     cleanup_tenant(&ctx.pool, tenant_id).await;
 }
-
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
@@ -711,8 +790,18 @@ async fn contract_cross_tenant_get_board_source_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -723,17 +812,20 @@ async fn contract_cross_tenant_get_board_source_denied() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board_source(board_folder.id, user_b.id, tenant_b).await;
+    let result = service
+        .get_board_source(board_folder.id, user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant get_board_source should be denied, got {:?}",
@@ -762,8 +854,18 @@ async fn contract_cross_tenant_update_board_preview_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -774,18 +876,21 @@ async fn contract_cross_tenant_update_board_preview_denied() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
     let png_bytes = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    let result = service.update_board_preview(board_folder.id, user_b.id, tenant_b, png_bytes).await;
+    let result = service
+        .update_board_preview(board_folder.id, user_b.id, tenant_b, png_bytes)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant update_board_preview should be denied, got {:?}",
@@ -813,8 +918,18 @@ async fn contract_same_tenant_unauthorized_save_board_source_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_owner.id,
@@ -825,13 +940,14 @@ async fn contract_same_tenant_unauthorized_save_board_source_denied() {
     )
     .await;
     let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -869,8 +985,18 @@ async fn contract_same_tenant_unauthorized_delete_board_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_owner.id,
@@ -881,17 +1007,20 @@ async fn contract_same_tenant_unauthorized_delete_board_denied() {
     )
     .await;
     let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.delete_board(board_folder.id, user_other.id, tenant_id).await;
+    let result = service
+        .delete_board(board_folder.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Same-tenant unauthorized delete_board should be denied, got {:?}",
@@ -918,8 +1047,18 @@ async fn contract_same_tenant_unauthorized_update_board_preview_denied() {
         Arc::clone(&ctx.object_store),
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_owner.id,
@@ -930,18 +1069,21 @@ async fn contract_same_tenant_unauthorized_update_board_preview_denied() {
     )
     .await;
     let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
     let png_bytes = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    let result = service.update_board_preview(board_folder.id, user_other.id, tenant_id, png_bytes).await;
+    let result = service
+        .update_board_preview(board_folder.id, user_other.id, tenant_id, png_bytes)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Same-tenant unauthorized update_board_preview should be denied, got {:?}",

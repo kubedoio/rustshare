@@ -64,7 +64,7 @@ async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
 async fn create_test_file(pool: &sqlx::PgPool, owner_id: Uuid) -> Uuid {
     let file_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO files (id, name, path, size, content_hash, storage_key, mime_type, owner_id, current_version, tenant_id, created_at, updated_at)
+        "INSERT INTO files (id, name, path, size, content_hash, storage_key, mime_type, owner_id, current_version, tenant_id, created_at, modified_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, NOW(), NOW())",
     )
     .bind(file_id)
@@ -85,8 +85,8 @@ async fn create_test_file(pool: &sqlx::PgPool, owner_id: Uuid) -> Uuid {
 async fn create_test_share(pool: &sqlx::PgPool, file_id: Uuid, created_by: Uuid) -> Uuid {
     let share_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO shares (id, file_id, share_token, permissions, upload_only, access_count, created_by, tenant_id, created_at, updated_at)
-         VALUES ($1, $2, $3, 'View', false, 0, $4, $5, NOW(), NOW())",
+        "INSERT INTO shares (id, file_id, share_token, permissions, upload_only, access_count, created_by, tenant_id, created_at)
+         VALUES ($1, $2, $3, 'View', false, 0, $4, $5, NOW())",
     )
     .bind(share_id)
     .bind(file_id)
@@ -99,7 +99,12 @@ async fn create_test_share(pool: &sqlx::PgPool, file_id: Uuid, created_by: Uuid)
     share_id
 }
 
-async fn create_test_share_access_log(pool: &sqlx::PgPool, share_id: Uuid, action: &str, success: bool) {
+async fn create_test_share_access_log(
+    pool: &sqlx::PgPool,
+    share_id: Uuid,
+    action: &str,
+    success: bool,
+) {
     sqlx::query(
         "INSERT INTO share_access_log (share_id, action, success, ip_address, accessed_at)
          VALUES ($1, $2, $3, '127.0.0.1'::inet, NOW())",
@@ -589,7 +594,6 @@ async fn test_audit_pagination() {
     cleanup(&pool, &[actor_id]).await;
 }
 
-
 // ---------------------------------------------------------------------------
 // Share access branch tests
 // ---------------------------------------------------------------------------
@@ -630,7 +634,10 @@ async fn test_audit_filter_share_access_type() {
 
     for row in &rows {
         let et: String = row.try_get("event_type").unwrap();
-        assert_eq!(et, "share_access", "All rows must have event_type = share_access");
+        assert_eq!(
+            et, "share_access",
+            "All rows must have event_type = share_access"
+        );
         let action: String = row.try_get("action_type").unwrap();
         assert_eq!(action, "download");
     }
@@ -751,9 +758,15 @@ async fn test_audit_durable_evidence_in_events_table() {
     .await
     .expect("query events");
 
-    assert!(!rows.is_empty(), "Events table must contain the inserted audit event");
+    assert!(
+        !rows.is_empty(),
+        "Events table must contain the inserted audit event"
+    );
     let event_type: String = rows[0].try_get("event_type").unwrap();
-    assert!(event_type.contains("FileUploaded"), "Event type should contain FileUploaded");
+    assert!(
+        event_type.contains("FileUploaded"),
+        "Event type should contain FileUploaded"
+    );
 
     cleanup(&pool, &[user_id]).await;
 }

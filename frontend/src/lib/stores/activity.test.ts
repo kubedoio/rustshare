@@ -43,7 +43,17 @@ describe('Activity Store', () => {
 		it('should start with empty history on fresh import', async () => {
 			// activityStore no longer persists to localStorage;
 			// serverActivityStore is the canonical source.
-			localStorage.setItem('activity-history', JSON.stringify([{ id: '1', type: 'file_uploaded', fileName: 'test.txt', timestamp: new Date().toISOString() }]));
+			localStorage.setItem(
+				'activity-history',
+				JSON.stringify([
+					{
+						id: '1',
+						type: 'file_uploaded',
+						fileName: 'test.txt',
+						timestamp: new Date().toISOString()
+					}
+				])
+			);
 
 			vi.resetModules();
 			const { activityStore: freshStore } = await import('./activity');
@@ -274,9 +284,7 @@ describe('Activity Store', () => {
 				next_cursor: null
 			};
 
-			vi.mocked(apiClient.get)
-				.mockResolvedValueOnce(firstPage)
-				.mockResolvedValueOnce(secondPage);
+			vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
 
 			await serverActivityStore.fetch(10);
 			expect(get(serverActivityStore).items).toHaveLength(1);
@@ -360,7 +368,17 @@ describe('Activity Store', () => {
 
 		it('should reset state', async () => {
 			const mockResponse = {
-				items: [{ id: 'evt-1', action: 'file_uploaded', resource_type: 'file', resource_id: 'f1', resource_name: 'a.txt', actor_id: 'u1', timestamp: '2026-05-30T10:00:00Z' }],
+				items: [
+					{
+						id: 'evt-1',
+						action: 'file_uploaded',
+						resource_type: 'file',
+						resource_id: 'f1',
+						resource_name: 'a.txt',
+						actor_id: 'u1',
+						timestamp: '2026-05-30T10:00:00Z'
+					}
+				],
 				next_cursor: null
 			};
 			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);

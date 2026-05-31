@@ -558,7 +558,10 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
         .validate_and_create_session(&token, None)
         .await
         .expect("Session should be created before revocation");
-    assert!(!session.upload_only, "Read share session should not be upload-only");
+    assert!(
+        !session.upload_only,
+        "Read share session should not be upload-only"
+    );
 
     // Revoke the share
     share_service
@@ -638,13 +641,10 @@ async fn test_public_share_revoke_emits_audit_event() {
         .expect("Failed to revoke share");
 
     // Verify the ShareRevoked event was broadcast
-    let event = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        receiver.recv(),
-    )
-    .await
-    .expect("Timed out waiting for event")
-    .expect("Event broadcaster closed");
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+        .await
+        .expect("Timed out waiting for event")
+        .expect("Event broadcaster closed");
 
     assert_eq!(
         event.event_type,
@@ -796,7 +796,9 @@ async fn test_public_share_create_emits_audit_event() {
         .await
         .expect("Failed to fetch share events");
 
-    let created_event = events.iter().find(|e| e.event_type == EventType::ShareCreated);
+    let created_event = events
+        .iter()
+        .find(|e| e.event_type == EventType::ShareCreated);
     assert!(
         created_event.is_some(),
         "Share creation must emit a durable ShareCreated event"
@@ -865,10 +867,16 @@ async fn test_public_share_allowed_access_is_auditable() {
         .await
         .expect("Must be able to query share access log");
 
-    assert!(!log_entries.is_empty(), "Share access log must contain the logged entry");
+    assert!(
+        !log_entries.is_empty(),
+        "Share access log must contain the logged entry"
+    );
     let entry = &log_entries[0];
     assert_eq!(entry.action, "download");
-    assert!(entry.success, "Logged entry should represent an allowed access");
+    assert!(
+        entry.success,
+        "Logged entry should represent an allowed access"
+    );
     assert_eq!(entry.actor_type.as_deref(), Some("public_share_session"));
 
     cleanup_user(&ctx.pool, owner.id).await;

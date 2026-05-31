@@ -123,10 +123,7 @@ async fn test_ai_excludes_revoked_shares() {
 
     // Recipient can no longer access
     let access_after = file_service.get_file(file.id, recipient.id).await;
-    assert!(
-        access_after.is_err(),
-        "AI should exclude revoked shares"
-    );
+    assert!(access_after.is_err(), "AI should exclude revoked shares");
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;
@@ -180,10 +177,7 @@ async fn test_ai_excludes_expired_shares() {
 
     // Recipient cannot access because share is expired
     let access = file_service.get_file(file.id, recipient.id).await;
-    assert!(
-        access.is_err(),
-        "AI should exclude expired shares"
-    );
+    assert!(access.is_err(), "AI should exclude expired shares");
 
     // Cleanup
     cleanup_user(&ctx.pool, owner.id).await;

@@ -11,6 +11,7 @@ use rustshare_core::services::{
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::note_service::NoteService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -214,6 +215,40 @@ pub async fn create_test_file(
         )
         .await
         .expect("Failed to create test file")
+}
+
+/// Seed a hidden/internal file directly, bypassing user-facing upload validation.
+pub async fn create_hidden_test_file(
+    ctx: &TestContext,
+    owner_id: Uuid,
+    tenant_id: Uuid,
+    parent_folder: &Folder,
+    name: &str,
+    content: &[u8],
+    mime_type: &str,
+) -> File {
+    let content_hash = hex::encode(Sha256::digest(content));
+    let file = File::new(
+        name.to_string(),
+        format!("{}/{}", parent_folder.path, name),
+        content_hash,
+        content.len() as i64,
+        mime_type.to_string(),
+        Some(parent_folder.id),
+        owner_id,
+        tenant_id,
+    );
+
+    ctx.object_store
+        .put(&file.storage_key(), Bytes::copy_from_slice(content))
+        .await
+        .expect("Failed to store hidden test file");
+    ctx.metadata_store
+        .create_file(&file)
+        .await
+        .expect("Failed to create hidden test file");
+
+    file
 }
 
 /// Create a test share service

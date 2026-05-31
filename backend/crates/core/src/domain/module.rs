@@ -142,7 +142,10 @@ mod tests {
         assert_eq!(module.module_key, "notes");
         assert_eq!(module.display_name, "Notes");
         assert_eq!(module.root_path, "/Workspace/Notes");
-        assert_eq!(module.default_template, Some("template_default_note".to_string()));
+        assert_eq!(
+            module.default_template,
+            Some("template_default_note".to_string())
+        );
         assert_eq!(module.schema_version, "1.0");
         assert_eq!(module.ai_indexing, serde_json::json!({"enabled": true}));
         assert_eq!(module.ui_config, serde_json::json!({}));
@@ -245,7 +248,10 @@ mod tests {
         assert!(obj.contains_key("module_key"), "missing module_key");
         assert!(obj.contains_key("display_name"), "missing display_name");
         assert!(obj.contains_key("root_path"), "missing root_path");
-        assert!(obj.contains_key("default_template"), "missing default_template");
+        assert!(
+            obj.contains_key("default_template"),
+            "missing default_template"
+        );
         assert!(obj.contains_key("schema_version"), "missing schema_version");
         assert!(obj.contains_key("ai_indexing"), "missing ai_indexing");
         assert!(obj.contains_key("ui_config"), "missing ui_config");
@@ -254,7 +260,10 @@ mod tests {
         assert!(obj.contains_key("tenant_id"), "missing tenant_id");
 
         // Canonical root path must not drift to legacy
-        assert_eq!(obj.get("root_path").unwrap().as_str().unwrap(), "/Workspace/Notes");
+        assert_eq!(
+            obj.get("root_path").unwrap().as_str().unwrap(),
+            "/Workspace/Notes"
+        );
 
         // Permissions must serialize with snake_case keys
         let perms = obj.get("permissions").unwrap().as_object().unwrap();

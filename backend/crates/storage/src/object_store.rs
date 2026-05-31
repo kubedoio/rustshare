@@ -122,7 +122,9 @@ impl ObjectStore {
             .bucket(&self.bucket)
             .send()
             .await
-            .with_context(|| format!("object storage bucket `{}` is not accessible", self.bucket))?;
+            .with_context(|| {
+                format!("object storage bucket `{}` is not accessible", self.bucket)
+            })?;
         Ok(())
     }
 

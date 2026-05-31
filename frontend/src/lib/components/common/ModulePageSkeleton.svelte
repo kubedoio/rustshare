@@ -14,7 +14,9 @@
 	</div>
 
 	<!-- Toolbar skeleton -->
-	<div class="flex flex-col gap-3 rounded-xl border border-base-300 bg-base-100 p-3 lg:flex-row lg:items-center">
+	<div
+		class="flex flex-col gap-3 rounded-xl border border-base-300 bg-base-100 p-3 lg:flex-row lg:items-center"
+	>
 		<div class="h-9 flex-1 animate-pulse rounded-lg bg-base-200"></div>
 		<div class="flex gap-2">
 			<div class="h-9 w-24 animate-pulse rounded-lg bg-base-200"></div>

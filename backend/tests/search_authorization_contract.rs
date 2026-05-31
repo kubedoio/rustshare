@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use rustshare_core::domain::{File, Folder, Share, SharePermissions};
-use rustshare_core::services::{PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService};
+use rustshare_core::services::{
+    PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService,
+};
 
 // Mock search repository
 struct MockSearchRepo {
@@ -23,7 +25,12 @@ impl MockSearchRepo {
     }
 
     fn add_result(&self, tenant_id: Uuid, result: SearchResult) {
-        self.results.lock().unwrap().entry(tenant_id).or_default().push(result);
+        self.results
+            .lock()
+            .unwrap()
+            .entry(tenant_id)
+            .or_default()
+            .push(result);
     }
 }
 
@@ -196,7 +203,10 @@ async fn test_search_returns_own_files() {
     ops.add_file(make_file(file_id, "document.txt", user_id, tenant_id));
     repo.add_result(tenant_id, search_result(file_id, "document.txt", user_id));
 
-    let results = service.search(user_id, tenant_id, "document", 10).await.unwrap();
+    let results = service
+        .search(user_id, tenant_id, "document", 10)
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "document.txt");
 }
@@ -219,7 +229,10 @@ async fn test_search_excludes_other_tenants() {
     repo.add_result(tenant_a, search_result(file_a, "tenant_a_doc.txt", user_id));
     repo.add_result(tenant_b, search_result(file_b, "tenant_b_doc.txt", user_id));
 
-    let results = service.search(user_id, tenant_a, "tenant", 10).await.unwrap();
+    let results = service
+        .search(user_id, tenant_a, "tenant", 10)
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "tenant_a_doc.txt");
 }
@@ -239,7 +252,10 @@ async fn test_search_excludes_unauthorized_content() {
     ops.add_file(make_file(file_id, "private.txt", owner_id, tenant_id));
     repo.add_result(tenant_id, search_result(file_id, "private.txt", owner_id));
 
-    let results = service.search(other_user, tenant_id, "private", 10).await.unwrap();
+    let results = service
+        .search(other_user, tenant_id, "private", 10)
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }
 
@@ -257,7 +273,10 @@ async fn test_search_excludes_deleted_files() {
     // File in index but not in permission ops (deleted)
     repo.add_result(tenant_id, search_result(file_id, "deleted.txt", user_id));
 
-    let results = service.search(user_id, tenant_id, "deleted", 10).await.unwrap();
+    let results = service
+        .search(user_id, tenant_id, "deleted", 10)
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }
 
@@ -283,7 +302,10 @@ async fn test_search_excludes_revoked_shares() {
     ));
     repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
 
-    let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
+    let results = service
+        .search(recipient_id, tenant_id, "shared", 10)
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }
 
@@ -309,7 +331,10 @@ async fn test_search_excludes_expired_shares() {
     ));
     repo.add_result(tenant_id, search_result(file_id, "shared.txt", owner_id));
 
-    let results = service.search(recipient_id, tenant_id, "shared", 10).await.unwrap();
+    let results = service
+        .search(recipient_id, tenant_id, "shared", 10)
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }
 
@@ -323,12 +348,21 @@ async fn test_search_excludes_hidden_metadata() {
     let user_id = Uuid::new_v4();
     let tenant_id = Uuid::new_v4();
 
-    for name in &[".rustshare_hidden", "events.jsonl", "index.md", "__primary__.md", "config.editor.json"] {
+    for name in &[
+        ".rustshare_hidden",
+        "events.jsonl",
+        "index.md",
+        "__primary__.md",
+        "config.editor.json",
+    ] {
         let file_id = Uuid::new_v4();
         ops.add_file(make_file(file_id, name, user_id, tenant_id));
         repo.add_result(tenant_id, search_result(file_id, name, user_id));
     }
 
-    let results = service.search(user_id, tenant_id, "rustshare", 10).await.unwrap();
+    let results = service
+        .search(user_id, tenant_id, "rustshare", 10)
+        .await
+        .unwrap();
     assert!(results.is_empty());
 }

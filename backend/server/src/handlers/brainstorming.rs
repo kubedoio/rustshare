@@ -26,7 +26,10 @@ pub struct ListBoardsResponse {
 }
 
 async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
-    let module = state.module_service.get_module("brainstorming", tenant_id).await;
+    let module = state
+        .module_service
+        .get_module("brainstorming", tenant_id)
+        .await;
     let module = match module {
         Ok(m) => m,
         Err(ModuleError::NotFound(_)) => {

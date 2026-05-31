@@ -141,7 +141,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Notes'),
 		renderer: 'notes',
 		defaultTemplate: 'template_default_note',
-			icon: 'sticky-note',
+		icon: 'sticky-note',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -196,7 +196,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Meetings'),
 		renderer: 'meetings',
 		defaultTemplate: 'template_default_meeting',
-			icon: 'calendar-days',
+		icon: 'calendar-days',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -251,7 +251,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Standups'),
 		renderer: 'standups',
 		defaultTemplate: 'template_default_standup',
-			icon: 'activity',
+		icon: 'activity',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -306,7 +306,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Kanban'),
 		renderer: 'kanban',
 		defaultTemplate: 'template_default_kanban',
-			icon: 'columns',
+		icon: 'columns',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -361,7 +361,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Decisions'),
 		renderer: 'decisions',
 		defaultTemplate: 'template_default_decision',
-			icon: 'path-separation',
+		icon: 'path-separation',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -416,7 +416,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Brainstorming'),
 		renderer: 'brainstorming',
 		defaultTemplate: 'template_blank_brainstorm',
-			icon: 'lightbulb',
+		icon: 'lightbulb',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,
@@ -471,7 +471,7 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		rootPath: getModuleRoot('Shares'),
 		renderer: 'shares',
 		defaultTemplate: null,
-			icon: 'share-2',
+		icon: 'share-2',
 		schemaVersion: '1.0',
 		permissions: {
 			adminCanConfigure: true,

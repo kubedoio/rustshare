@@ -14,6 +14,7 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -595,10 +596,10 @@ impl BrainstormingService {
     async fn load_board_metadata(
         &self,
         folder: &Folder,
-        user_id: UserId,
+        _user_id: UserId,
     ) -> Result<BoardMetadata, BrainstormError> {
         if let Some(file) = self
-            .find_file_in_folder(folder.id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder.id, folder.tenant_id, ".rustshare.json")
             .await?
         {
             let content = self
@@ -641,27 +642,29 @@ impl BrainstormingService {
 
         let meta_json = serde_json::to_vec_pretty(&meta)?;
 
+        let folder = self
+            .folder_service
+            .get_folder(folder_id, user_id)
+            .await
+            .map_err(BrainstormError::from)?;
+
         let meta_file = self
-            .find_file_in_folder(folder_id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder_id, folder.tenant_id, ".rustshare.json")
             .await?;
 
         if let Some(file) = meta_file {
-            self.file_service
-                .edit_file(file.id, user_id, Bytes::from(meta_json), "overwrite", None)
-                .await
-                .map_err(BrainstormError::from)?;
+            self.write_internal_file(file, Bytes::from(meta_json))
+                .await?;
         } else {
-            self.file_service
-                .upload_file(
-                    user_id,
-                    ".rustshare.json".to_string(),
-                    Some(folder_id),
-                    Bytes::from(meta_json),
-                    "application/json".to_string(),
-                    tenant_id,
-                )
-                .await
-                .map_err(BrainstormError::from)?;
+            self.create_internal_file(
+                &folder,
+                user_id,
+                tenant_id,
+                ".rustshare.json",
+                Bytes::from(meta_json),
+                "application/json",
+            )
+            .await?;
         }
 
         Ok(())
@@ -679,7 +682,7 @@ impl BrainstormingService {
             .map_err(BrainstormError::from)?;
 
         if let Some(file) = self
-            .find_file_in_folder(folder_id, user_id, ".rustshare.json")
+            .find_internal_file_in_folder(folder_id, folder.tenant_id, ".rustshare.json")
             .await?
         {
             let content = self
@@ -722,6 +725,75 @@ impl BrainstormingService {
             .map_err(BrainstormError::from)?;
         Ok(contents.files.into_iter().find(|f| f.name == name))
     }
+
+    async fn find_internal_file_in_folder(
+        &self,
+        folder_id: Uuid,
+        tenant_id: Uuid,
+        name: &str,
+    ) -> Result<Option<File>, BrainstormError> {
+        let files = self
+            .metadata_store
+            .list_files_by_parent(Some(folder_id), tenant_id)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+        Ok(files.into_iter().find(|f| f.name == name))
+    }
+
+    async fn create_internal_file(
+        &self,
+        folder: &Folder,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        name: &str,
+        content: Bytes,
+        mime_type: &str,
+    ) -> Result<File, BrainstormError> {
+        let content_hash = hex::encode(Sha256::digest(&content));
+        let file = File::new(
+            name.to_string(),
+            format!("{}/{}", folder.path, name),
+            content_hash,
+            content.len() as i64,
+            mime_type.to_string(),
+            Some(folder.id),
+            owner_id,
+            tenant_id,
+        );
+
+        self.object_store
+            .put(&file.storage_key(), content)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
+        self.metadata_store
+            .create_file(&file)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+
+        Ok(file)
+    }
+
+    async fn write_internal_file(
+        &self,
+        mut file: File,
+        content: Bytes,
+    ) -> Result<(), BrainstormError> {
+        file.content_hash = hex::encode(Sha256::digest(&content));
+        file.size = content.len() as i64;
+        file.modified_at = Utc::now();
+        file.current_version += 1;
+
+        self.object_store
+            .put(&file.storage_key(), content)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
+        self.metadata_store
+            .update_file(&file)
+            .await
+            .map_err(|e| BrainstormError::Database(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -740,7 +812,10 @@ mod tests {
 
     #[test]
     fn test_permission_denied_error_variant() {
-        assert!(matches!(BrainstormError::PermissionDenied, BrainstormError::PermissionDenied));
+        assert!(matches!(
+            BrainstormError::PermissionDenied,
+            BrainstormError::PermissionDenied
+        ));
     }
 }
 

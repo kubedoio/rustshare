@@ -2,7 +2,9 @@
 
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::events::{AggregateType, EventBroadcaster, EventType};
-use rustshare_core::services::{JwtOps, PermissionResolver, Resource, ShareError, ShareNotificationRepo, ShareService};
+use rustshare_core::services::{
+    JwtOps, PermissionResolver, Resource, ShareError, ShareNotificationRepo, ShareService,
+};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::metadata_v2::compat::MetadataStoreCompat;
 use rustshare_storage::{EventStore, MetadataStore};
@@ -117,14 +119,15 @@ async fn setup_group_share_fixture(pool: &PgPool) -> GroupShareFixture {
 
     let group_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)")
-        .bind(group_id)
-        .bind(format!("Test Group {}", test_id))
-        .bind(tenant_id)
-        .bind(owner_id)
-        .execute(pool)
-        .await
-        .unwrap();
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("Test Group {}", test_id))
+    .bind(tenant_id)
+    .bind(owner_id)
+    .execute(pool)
+    .await
+    .unwrap();
 
     sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
         .bind(group_id)
@@ -180,7 +183,11 @@ async fn setup_group_share_fixture(pool: &PgPool) -> GroupShareFixture {
     }
 }
 
-async fn cleanup_group_share_fixture(pool: &PgPool, fixture: &GroupShareFixture, share_id: Option<Uuid>) {
+async fn cleanup_group_share_fixture(
+    pool: &PgPool,
+    fixture: &GroupShareFixture,
+    share_id: Option<Uuid>,
+) {
     if let Some(sid) = share_id {
         sqlx::query("DELETE FROM shares WHERE id = $1")
             .bind(sid)
@@ -243,15 +250,22 @@ async fn test_create_group_share_success() {
     assert_eq!(share.file_id, Some(f.file_id));
     assert_eq!(share.recipient_group_id, Some(f.group_id));
     assert_eq!(share.permissions, SharePermissions::View);
-    assert!(share.share_token.is_none(), "Group share should not have a token");
+    assert!(
+        share.share_token.is_none(),
+        "Group share should not have a token"
+    );
 
     // Verify member has access via permission resolver
-    let resolver = PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
     let has_access = resolver
         .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
-    assert!(has_access, "Group member should have View access to shared file");
+    assert!(
+        has_access,
+        "Group member should have View access to shared file"
+    );
 
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
 }
@@ -364,8 +378,16 @@ async fn test_cross_tenant_sharing_blocked() {
     );
 
     // Cleanup cross-tenant data
-    sqlx::query("DELETE FROM users WHERE id = $1").bind(other_user_id).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM tenants WHERE id = $1").bind(other_tenant_id).execute(&pool).await.ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(other_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
     cleanup_group_share_fixture(&pool, &f, None).await;
 }
 
@@ -425,14 +447,18 @@ async fn test_revoke_group_share() {
         .await
         .expect("Failed to create group share");
 
-    let resolver = PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
 
     // Member should have access before revocation
     let has_access_before = resolver
         .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
-    assert!(has_access_before, "Member should have access before revocation");
+    assert!(
+        has_access_before,
+        "Member should have access before revocation"
+    );
 
     // Revoke the group share
     share_service
@@ -472,14 +498,18 @@ async fn test_group_share_access_fails_after_membership_removal() {
         .await
         .expect("Failed to create group share");
 
-    let resolver = PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
 
     // Member should have access before removal
     let has_access_before = resolver
         .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
-    assert!(has_access_before, "Member should have access before removal");
+    assert!(
+        has_access_before,
+        "Member should have access before removal"
+    );
 
     // Remove member from group
     sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
@@ -521,14 +551,18 @@ async fn test_update_group_share_permission() {
         .await
         .expect("Failed to create group share");
 
-    let resolver = PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
 
     // Initially View only
     let can_edit_before = resolver
         .check_file_permission(f.member_id, f.file_id, SharePermissions::Edit)
         .await
         .expect("Permission check failed");
-    assert!(!can_edit_before, "Member should not have Edit before update");
+    assert!(
+        !can_edit_before,
+        "Member should not have Edit before update"
+    );
 
     // Update to Edit
     let updated = share_service
@@ -617,7 +651,8 @@ async fn test_group_folder_share_revoke_denies_access() {
         .await
         .expect("Failed to create folder group share");
 
-    let resolver = PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
 
     // Member should have folder access before revocation
     let has_access_before = resolver

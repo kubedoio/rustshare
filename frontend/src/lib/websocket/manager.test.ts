@@ -57,7 +57,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 			},
 			connect: vi.fn().mockResolvedValue(undefined)
 		};
-		vi.mocked(getWebSocketClient).mockReturnValue(mockClient as unknown as ReturnType<typeof getWebSocketClient>);
+		vi.mocked(getWebSocketClient).mockReturnValue(
+			mockClient as unknown as ReturnType<typeof getWebSocketClient>
+		);
 	});
 
 	it('invalidates kanban queries on KanbanModified', async () => {
@@ -68,12 +70,22 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		};
 		handlers['KanbanModified'](event);
 
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['kanban-board', 'board-1'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['kanban-cards', 'board-1'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['kanban-board', 'board-1']
+		});
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['kanban-cards', 'board-1']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['kanban-boards'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['kanban-card', 'card-1'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['kanban-card-detail', 'card-1'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['kanban-card', 'card-1']
+		});
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['kanban-card-detail', 'card-1']
+		});
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 
@@ -87,7 +99,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['note', 'note-1'] });
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['notes'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 
@@ -99,9 +113,13 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		};
 		handlers['BrainstormBoardModified'](event);
 
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['brainstorm-board', 'board-1'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['brainstorm-board', 'board-1']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['brainstorm-boards'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 
@@ -114,7 +132,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		handlers['MeetingNoteModified'](event);
 
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['meetings'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 
@@ -127,7 +147,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		handlers['DecisionModified'](event);
 
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['decisions'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 
@@ -140,7 +162,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		handlers['StandupModified'](event);
 
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['standups'] });
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['workspace-module-summaries'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['workspace-module-summaries']
+		});
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
 	});
 });

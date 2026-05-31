@@ -40,7 +40,6 @@ pub use notification_service::{
     CreateNotification, NotificationRepositoryOps, NotificationService,
 };
 pub use permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
-pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use scim_service::{
     GroupRecord, ScimAction, ScimEmail, ScimError, ScimGroup, ScimGroupResult, ScimMember,
     ScimName, ScimRepository, ScimService, ScimUser, ScimUserResult,
@@ -53,6 +52,7 @@ pub use scim_v2_service::{
     ScimV2ResourceType, ScimV2Schema, ScimV2SchemaAttribute, ScimV2SchemaExtension, ScimV2Service,
     ScimV2ServiceProviderConfig, ScimV2SupportConfig, ScimV2User, ScimV2UserRecord,
 };
+pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use share_errors::ShareError;
 pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,

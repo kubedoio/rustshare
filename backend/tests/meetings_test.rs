@@ -200,7 +200,10 @@ async fn contract_get_meeting_returns_content_and_metadata() {
         .await
         .unwrap();
 
-    let meeting = service.get_meeting(created.id, user.id, tenant_id).await.unwrap();
+    let meeting = service
+        .get_meeting(created.id, user.id, tenant_id)
+        .await
+        .unwrap();
     assert_eq!(meeting.id, created.id);
     assert_eq!(meeting.content, "Notes");
     assert_eq!(meeting.metadata.title, "Standup");
@@ -377,7 +380,9 @@ async fn contract_same_tenant_unauthorized_get_meeting_denied() {
         .await
         .unwrap();
 
-    let result = service.get_meeting(meeting.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_meeting(meeting.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(MeetingError::PermissionDenied)),
         "Same-tenant unauthorized get_meeting should be denied, got {:?}",

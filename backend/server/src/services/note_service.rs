@@ -834,7 +834,12 @@ impl NoteService {
     }
 
     /// Read a note by file ID.
-    pub async fn get_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Note, NoteError> {
+    pub async fn get_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
         if file.tenant_id != tenant_id {
             return Err(NoteError::PermissionDenied);
@@ -1060,7 +1065,12 @@ impl NoteService {
     }
 
     /// Delete a note (and its sidecar).
-    pub async fn delete_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<(), NoteError> {
+    pub async fn delete_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
         if file.tenant_id != tenant_id {
             return Err(NoteError::PermissionDenied);
@@ -1164,7 +1174,12 @@ impl NoteService {
     }
 
     /// Duplicate a note (creates a copy of the bundle with new IDs).
-    pub async fn duplicate_note(&self, file_id: Uuid, user_id: UserId, tenant_id: Uuid) -> Result<Note, NoteError> {
+    pub async fn duplicate_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Note, NoteError> {
         let original = self.get_note(file_id, user_id, tenant_id).await?;
         let original_file = self.file_service.get_file(file_id, user_id).await?;
         let tenant_id = original_file.tenant_id;

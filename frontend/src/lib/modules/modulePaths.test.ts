@@ -53,10 +53,7 @@ describe('modulePaths', () => {
 
 	describe('getModuleReadPaths', () => {
 		it('includes both canonical and legacy paths', () => {
-			expect(getModuleReadPaths('Notes')).toEqual([
-				'/Workspace/Notes',
-				'/Notes'
-			]);
+			expect(getModuleReadPaths('Notes')).toEqual(['/Workspace/Notes', '/Notes']);
 		});
 
 		it('lists canonical path first', () => {
@@ -134,7 +131,15 @@ describe('modulePaths', () => {
 		});
 
 		it('canonical write path is always under /Workspace', () => {
-			const allModules = ['Notes', 'Meetings', 'Standups', 'Decisions', 'Kanban', 'Brainstorming', 'Shares'];
+			const allModules = [
+				'Notes',
+				'Meetings',
+				'Standups',
+				'Decisions',
+				'Kanban',
+				'Brainstorming',
+				'Shares'
+			];
 			for (const module of allModules) {
 				const writePath = getCanonicalWritePath(module);
 				expect(writePath.startsWith('/Workspace/')).toBe(true);

@@ -5,7 +5,14 @@
 	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
 	import { getEnabledSidebarModules, getModuleSidebarConfig } from '$lib/modules/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
-	import { FolderOpen, Settings, PanelLeftOpen, PanelLeftClose, AlertCircle, RefreshCw } from 'lucide-svelte';
+	import {
+		FolderOpen,
+		Settings,
+		PanelLeftOpen,
+		PanelLeftClose,
+		AlertCircle,
+		RefreshCw
+	} from 'lucide-svelte';
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
 

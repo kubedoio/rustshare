@@ -197,7 +197,10 @@ async fn contract_get_standup_returns_content_and_metadata() {
         .await
         .unwrap();
 
-    let standup = service.get_standup(created.id, user.id, tenant_id).await.unwrap();
+    let standup = service
+        .get_standup(created.id, user.id, tenant_id)
+        .await
+        .unwrap();
     assert_eq!(standup.id, created.id);
     assert_eq!(standup.content, "Notes");
     assert_eq!(standup.metadata.title, "Retro");
@@ -366,7 +369,9 @@ async fn contract_same_tenant_unauthorized_get_standup_denied() {
         .await
         .unwrap();
 
-    let result = service.get_standup(standup.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_standup(standup.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(StandupError::PermissionDenied)),
         "Same-tenant unauthorized get_standup should be denied, got {:?}",

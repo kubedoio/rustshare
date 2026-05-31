@@ -717,10 +717,10 @@ mod tests {
 
     // --- Configurable mock for permission-boundary tests ---
 
-    use std::collections::HashMap;
-    use std::sync::Mutex;
     use crate::domain::{File, Folder, Share, SharePermissions};
     use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     struct ConfigurableMockOps {
         files: Mutex<HashMap<Uuid, File>>,
@@ -881,7 +881,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.is_empty(), "AI search should exclude deleted/unreachable content");
+        assert!(
+            results.is_empty(),
+            "AI search should exclude deleted/unreachable content"
+        );
     }
 
     #[tokio::test]
@@ -923,7 +926,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.is_empty(), "AI search should exclude revoked shares");
+        assert!(
+            results.is_empty(),
+            "AI search should exclude revoked shares"
+        );
     }
 
     #[tokio::test]
@@ -967,7 +973,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.is_empty(), "AI search should exclude expired shares");
+        assert!(
+            results.is_empty(),
+            "AI search should exclude expired shares"
+        );
     }
 
     #[tokio::test]
@@ -1036,7 +1045,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(results.is_empty(), "AI with no indexed data should return empty results");
+        assert!(
+            results.is_empty(),
+            "AI with no indexed data should return empty results"
+        );
     }
 
     #[tokio::test]

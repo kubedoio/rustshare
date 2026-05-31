@@ -123,9 +123,9 @@ fn create_kanban_service(
         metadata_store.clone(),
         pool,
     ));
-    let user_repository = Arc::new(
-        rustshare_infrastructure::repositories::UserRepository::new(pool.clone()),
-    );
+    let user_repository = Arc::new(rustshare_infrastructure::repositories::UserRepository::new(
+        pool.clone(),
+    ));
     Arc::new(KanbanService::new(
         file_service,
         folder_service,
@@ -230,7 +230,13 @@ async fn contract_notes_cross_tenant_get_denied() {
     );
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -263,11 +269,26 @@ async fn contract_notes_cross_tenant_save_denied() {
     );
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let result = service.save_note(note.id, user_b.id, tenant_b, "hacked".to_string(), None, None).await;
+    let result = service
+        .save_note(
+            note.id,
+            user_b.id,
+            tenant_b,
+            "hacked".to_string(),
+            None,
+            None,
+        )
+        .await;
     assert!(
         matches!(result, Err(NoteError::PermissionDenied)),
         "Cross-tenant save_note should be denied, got {:?}",
@@ -296,7 +317,13 @@ async fn contract_notes_cross_tenant_delete_denied() {
     );
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -329,11 +356,20 @@ async fn contract_notes_cross_tenant_list_does_not_leak() {
     );
 
     let _note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let list_b = service.list_notes(user_b.id, tenant_b, Some(10)).await.unwrap();
+    let list_b = service
+        .list_notes(user_b.id, tenant_b, Some(10))
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|n| n.metadata.title == "Secret"),
         "Cross-tenant list_notes should not leak notes"
@@ -360,7 +396,13 @@ async fn contract_notes_same_tenant_unauthorized_denied() {
     );
 
     let note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -390,22 +432,39 @@ async fn contract_notes_shared_resource_only_through_intended_path() {
     );
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Shared".to_string()), None, Some("secret".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Shared".to_string()),
+            None,
+            Some("secret".to_string()),
+        )
         .await
         .unwrap();
 
     // Private note should not be accessible via public route
-    let result = service.get_public_note("nonexistentshareid12345678901234").await;
-    assert!(result.is_err(), "Random share_id should not access private note");
+    let result = service
+        .get_public_note("nonexistentshareid12345678901234")
+        .await;
+    assert!(
+        result.is_err(),
+        "Random share_id should not access private note"
+    );
 
     // Make public and verify access works through intended path
-    let public = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let share_id = public.metadata.public_share_id.unwrap();
     let public_note = service.get_public_note(&share_id).await.unwrap();
     assert_eq!(public_note.title, "Shared");
 
     // Revoke and verify denial
-    let _ = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let _ = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let result = service.get_public_note(&share_id).await;
     assert!(result.is_err(), "Revoked public note should deny access");
 
@@ -433,7 +492,13 @@ async fn contract_decisions_cross_tenant_get_denied() {
     );
 
     let decision = service
-        .create_decision(user_a.id, tenant_a, "Secret".to_string(), "Exec".to_string(), "content".to_string())
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
         .await
         .unwrap();
 
@@ -466,12 +531,25 @@ async fn contract_decisions_cross_tenant_update_denied() {
     );
 
     let decision = service
-        .create_decision(user_a.id, tenant_a, "Secret".to_string(), "Exec".to_string(), "content".to_string())
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
         .await
         .unwrap();
 
     let result = service
-        .update_decision(decision.id, user_b.id, tenant_b, Some("Hacked".to_string()), None, Some("evil".to_string()))
+        .update_decision(
+            decision.id,
+            user_b.id,
+            tenant_b,
+            Some("Hacked".to_string()),
+            None,
+            Some("evil".to_string()),
+        )
         .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
@@ -501,11 +579,19 @@ async fn contract_decisions_cross_tenant_rename_denied() {
     );
 
     let decision = service
-        .create_decision(user_a.id, tenant_a, "Secret".to_string(), "Exec".to_string(), "content".to_string())
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
         .await
         .unwrap();
 
-    let result = service.rename_decision(decision.id, user_b.id, tenant_b, "Hacked".to_string()).await;
+    let result = service
+        .rename_decision(decision.id, user_b.id, tenant_b, "Hacked".to_string())
+        .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
         "Cross-tenant rename_decision should be denied, got {:?}",
@@ -534,7 +620,13 @@ async fn contract_decisions_cross_tenant_list_does_not_leak() {
     );
 
     let _decision = service
-        .create_decision(user_a.id, tenant_a, "Secret".to_string(), "Exec".to_string(), "content".to_string())
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
         .await
         .unwrap();
 
@@ -565,11 +657,19 @@ async fn contract_decisions_same_tenant_unauthorized_denied() {
     );
 
     let decision = service
-        .create_decision(user_owner.id, tenant_id, "Private".to_string(), "Exec".to_string(), "content".to_string())
+        .create_decision(
+            user_owner.id,
+            tenant_id,
+            "Private".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
         .await
         .unwrap();
 
-    let result = service.get_decision(decision.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_decision(decision.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(DecisionError::PermissionDenied)),
         "Same-tenant unauthorized get_decision should be denied, got {:?}",
@@ -601,11 +701,19 @@ async fn contract_kanban_cross_tenant_get_board_denied() {
     );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
 
-    let result = service.get_board(board.id.clone(), user_b.id, tenant_b).await;
+    let result = service
+        .get_board(board.id.clone(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_board should be denied, got {:?}",
@@ -634,7 +742,13 @@ async fn contract_kanban_cross_tenant_update_board_denied() {
     );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
 
@@ -679,10 +793,20 @@ async fn contract_kanban_cross_tenant_delete_card_denied() {
     );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -701,7 +825,9 @@ async fn contract_kanban_cross_tenant_delete_card_denied() {
         .await
         .unwrap();
 
-    let result = service.delete_card(card.id.parse().unwrap(), user_b.id, tenant_b).await;
+    let result = service
+        .delete_card(card.id.parse().unwrap(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant delete_card should be denied, got {:?}",
@@ -730,7 +856,13 @@ async fn contract_kanban_cross_tenant_list_boards_does_not_leak() {
     );
 
     let _board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
 
@@ -761,11 +893,19 @@ async fn contract_kanban_same_tenant_unauthorized_get_board_denied() {
     );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
-    let result = service.get_board(board.id.clone(), user_other.id, tenant_id).await;
+    let result = service
+        .get_board(board.id.clone(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_board should be denied, got {:?}",
@@ -792,10 +932,20 @@ async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
     );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -814,7 +964,9 @@ async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    let result = service
+        .get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card_detail should be denied, got {:?}",
@@ -845,8 +997,18 @@ async fn contract_brainstorming_cross_tenant_get_board_denied() {
         &ctx.pool,
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -857,17 +1019,20 @@ async fn contract_brainstorming_cross_tenant_get_board_denied() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board(board_folder.id, user_b.id, tenant_b).await;
+    let result = service
+        .get_board(board_folder.id, user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant get_board should be denied, got {:?}",
@@ -895,8 +1060,18 @@ async fn contract_brainstorming_cross_tenant_save_source_denied() {
         &ctx.pool,
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -907,18 +1082,24 @@ async fn contract_brainstorming_cross_tenant_save_source_denied() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
     let result = service
-        .save_board_source(board_folder.id, user_b.id, tenant_b, r#"{"type":"excalidraw","version":2,"elements":[]}"#.to_string())
+        .save_board_source(
+            board_folder.id,
+            user_b.id,
+            tenant_b,
+            r#"{"type":"excalidraw","version":2,"elements":[]}"#.to_string(),
+        )
         .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
@@ -947,8 +1128,18 @@ async fn contract_brainstorming_cross_tenant_delete_board_denied() {
         &ctx.pool,
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -959,17 +1150,20 @@ async fn contract_brainstorming_cross_tenant_delete_board_denied() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.delete_board(board_folder.id, user_b.id, tenant_b).await;
+    let result = service
+        .delete_board(board_folder.id, user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Cross-tenant delete_board should be denied, got {:?}",
@@ -997,8 +1191,18 @@ async fn contract_brainstorming_cross_tenant_list_does_not_leak() {
         &ctx.pool,
     );
 
-    let root = service.ensure_brainstorming_root(user_a.id, tenant_a).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_a.id, tenant_a, "secret-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_a.id, tenant_a)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_a.id,
+        tenant_a,
+        "secret-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_a.id,
@@ -1009,13 +1213,14 @@ async fn contract_brainstorming_cross_tenant_list_does_not_leak() {
     )
     .await;
     let meta = r#"{"id":"s1","type":"brainstorming.board","title":"Secret","slug":"secret-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_a.id,
         tenant_a,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
@@ -1045,8 +1250,18 @@ async fn contract_brainstorming_same_tenant_unauthorized_get_board_denied() {
         &ctx.pool,
     );
 
-    let root = service.ensure_brainstorming_root(user_owner.id, tenant_id).await.unwrap();
-    let board_folder = create_test_folder(&ctx.folder_service(), user_owner.id, tenant_id, "private-board", Some(root.id)).await;
+    let root = service
+        .ensure_brainstorming_root(user_owner.id, tenant_id)
+        .await
+        .unwrap();
+    let board_folder = create_test_folder(
+        &ctx.folder_service(),
+        user_owner.id,
+        tenant_id,
+        "private-board",
+        Some(root.id),
+    )
+    .await;
     create_test_file(
         &ctx.file_service(),
         user_owner.id,
@@ -1057,17 +1272,20 @@ async fn contract_brainstorming_same_tenant_unauthorized_get_board_denied() {
     )
     .await;
     let meta = r#"{"id":"p1","type":"brainstorming.board","title":"Private","slug":"private-board","template":"template_blank_brainstorm","sourceFile":"board.excalidraw","previewFile":"preview.png","createdAt":"2026-04-30T00:00:00Z","updatedAt":"2026-04-30T00:00:00Z","schemaVersion":"1.0"}"#;
-    create_test_file(
-        &ctx.file_service(),
+    create_hidden_test_file(
+        &ctx,
         user_owner.id,
         tenant_id,
-        Some(board_folder.id),
+        &board_folder,
         ".rustshare.json",
         meta.as_bytes(),
+        "application/json",
     )
     .await;
 
-    let result = service.get_board(board_folder.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_board(board_folder.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(BrainstormError::PermissionDenied)),
         "Same-tenant unauthorized get_board should be denied, got {:?}",
@@ -1151,7 +1369,14 @@ async fn contract_meetings_cross_tenant_update_denied() {
         .unwrap();
 
     let result = service
-        .update_meeting(meeting.id, user_b.id, tenant_b, Some("Hacked".to_string()), Some("evil".to_string()), None)
+        .update_meeting(
+            meeting.id,
+            user_b.id,
+            tenant_b,
+            Some("Hacked".to_string()),
+            Some("evil".to_string()),
+            None,
+        )
         .await;
     assert!(
         matches!(result, Err(MeetingError::PermissionDenied)),
@@ -1230,7 +1455,9 @@ async fn contract_meetings_same_tenant_unauthorized_denied() {
         .await
         .unwrap();
 
-    let result = service.get_meeting(meeting.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_meeting(meeting.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(MeetingError::PermissionDenied)),
         "Same-tenant unauthorized get_meeting should be denied, got {:?}",
@@ -1312,7 +1539,13 @@ async fn contract_standups_cross_tenant_update_denied() {
         .unwrap();
 
     let result = service
-        .update_standup(standup.id, user_b.id, tenant_b, Some("Hacked".to_string()), Some("evil".to_string()))
+        .update_standup(
+            standup.id,
+            user_b.id,
+            tenant_b,
+            Some("Hacked".to_string()),
+            Some("evil".to_string()),
+        )
         .await;
     assert!(
         matches!(result, Err(StandupError::PermissionDenied)),
@@ -1389,7 +1622,9 @@ async fn contract_standups_same_tenant_unauthorized_denied() {
         .await
         .unwrap();
 
-    let result = service.get_standup(standup.id, user_other.id, tenant_id).await;
+    let result = service
+        .get_standup(standup.id, user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(StandupError::PermissionDenied)),
         "Same-tenant unauthorized get_standup should be denied, got {:?}",

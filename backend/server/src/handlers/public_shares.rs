@@ -139,10 +139,14 @@ fn ensure_share_session_matches(
 
 fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), AppError> {
     if share.revoked_at.is_some() {
-        return Err(AppError::from(rustshare_core::services::ShareError::Revoked));
+        return Err(AppError::from(
+            rustshare_core::services::ShareError::Revoked,
+        ));
     }
     if share.is_expired() {
-        return Err(AppError::from(rustshare_core::services::ShareError::Expired));
+        return Err(AppError::from(
+            rustshare_core::services::ShareError::Expired,
+        ));
     }
     Ok(())
 }

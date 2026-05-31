@@ -267,7 +267,10 @@ async fn contract_read_note_returns_content_and_metadata_unified() {
         .await
         .unwrap();
 
-    let note = service.get_note(created.id, user.id, tenant_id).await.unwrap();
+    let note = service
+        .get_note(created.id, user.id, tenant_id)
+        .await
+        .unwrap();
     assert_eq!(note.id, created.id);
     assert_eq!(note.content, "body");
     assert_eq!(note.metadata.title, "Read Test");
@@ -297,7 +300,14 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
     let old_updated_at = note.metadata.updated_at;
 
     let saved = service
-        .save_note(note.id, user.id, tenant_id, "new content".to_string(), None, None)
+        .save_note(
+            note.id,
+            user.id,
+            tenant_id,
+            "new content".to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -328,7 +338,10 @@ async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() 
         .unwrap();
 
     // Make public first to generate share_id
-    let _ = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let _ = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let share_id = service
         .get_note(note.id, user.id, tenant_id)
         .await
@@ -374,14 +387,20 @@ async fn contract_delete_note_invalidates_public_access() {
         .await
         .unwrap();
 
-    let public = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let share_id = public.metadata.public_share_id.unwrap();
 
     // Verify public access works before delete
     let before_delete = service.get_public_note(&share_id).await;
     assert!(before_delete.is_ok());
 
-    service.delete_note(note.id, user.id, tenant_id).await.unwrap();
+    service
+        .delete_note(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
 
     // Public access should fail after delete
     let after_delete = service.get_public_note(&share_id).await;
@@ -410,7 +429,14 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
     // Touch note_a so it becomes most recent
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     service
-        .save_note(note_a.id, user.id, tenant_id, "updated".to_string(), None, None)
+        .save_note(
+            note_a.id,
+            user.id,
+            tenant_id,
+            "updated".to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -445,7 +471,10 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
 
     assert_eq!(note.metadata.visibility, NoteVisibility::Private);
 
-    let public = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     assert_eq!(public.metadata.visibility, NoteVisibility::Public);
     let share_id = public
         .metadata
@@ -480,12 +509,18 @@ async fn contract_toggle_visibility_public_to_private_disables_access() {
         .await
         .unwrap();
 
-    let public = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let share_id = public.metadata.public_share_id.unwrap();
 
     assert!(service.get_public_note(&share_id).await.is_ok());
 
-    let private = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let private = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     assert_eq!(private.metadata.visibility, NoteVisibility::Private);
 
     assert!(service.get_public_note(&share_id).await.is_err());
@@ -534,7 +569,10 @@ async fn contract_public_note_page_does_not_leak_internal_paths() {
         .await
         .unwrap();
 
-    let public = service.toggle_visibility(note.id, user.id, tenant_id).await.unwrap();
+    let public = service
+        .toggle_visibility(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
     let share_id = public.metadata.public_share_id.unwrap();
 
     let anon = service.get_public_note(&share_id).await.unwrap();
@@ -667,7 +705,10 @@ async fn contract_delete_note_deletes_entire_bundle() {
 
     let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
 
-    service.delete_note(note.id, user.id, tenant_id).await.unwrap();
+    service
+        .delete_note(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
 
     // Bundle folder should be gone
     let folder = metadata_store
@@ -897,7 +938,10 @@ async fn contract_standalone_md_still_works() {
     assert_eq!(saved.content, "updated standalone");
 
     // delete_note should work (file deleted, no folder cascade)
-    service.delete_note(standalone.id, user.id, tenant_id).await.unwrap();
+    service
+        .delete_note(standalone.id, user.id, tenant_id)
+        .await
+        .unwrap();
 
     let deleted = metadata_store
         .find_file_by_id(standalone.id, user.id)
@@ -1026,7 +1070,13 @@ async fn contract_cross_tenant_get_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -1052,11 +1102,26 @@ async fn contract_cross_tenant_save_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let result = service.save_note(note.id, user_b.id, tenant_b, "hacked".to_string(), None, None).await;
+    let result = service
+        .save_note(
+            note.id,
+            user_b.id,
+            tenant_b,
+            "hacked".to_string(),
+            None,
+            None,
+        )
+        .await;
     assert!(
         matches!(result, Err(NoteError::PermissionDenied)),
         "Cross-tenant save_note should be denied, got {:?}",
@@ -1078,7 +1143,13 @@ async fn contract_cross_tenant_delete_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -1104,11 +1175,20 @@ async fn contract_cross_tenant_list_notes_does_not_leak() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let _note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let list_b = service.list_notes(user_b.id, tenant_b, Some(10)).await.unwrap();
+    let list_b = service
+        .list_notes(user_b.id, tenant_b, Some(10))
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|n| n.metadata.title == "Secret"),
         "Cross-tenant list_notes should not leak notes"
@@ -1128,7 +1208,13 @@ async fn contract_same_tenant_unauthorized_get_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -1152,22 +1238,32 @@ async fn contract_private_note_not_accessible_without_share_id() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Private Note".to_string()), None, Some("secret".to_string()))
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Private Note".to_string()),
+            None,
+            Some("secret".to_string()),
+        )
         .await
         .unwrap();
 
     // Private note should not be accessible via get_public_note
     // We need the public_share_id to even try; since it's private, there's no share_id.
     // The test documents that there is no backdoor to access private note content.
-    let result = service.get_public_note("nonexistentshareid12345678901234").await;
-    assert!(result.is_err(), "Random share_id should not access any note");
+    let result = service
+        .get_public_note("nonexistentshareid12345678901234")
+        .await;
+    assert!(
+        result.is_err(),
+        "Random share_id should not access any note"
+    );
 
     // Even the owner cannot access via public route without share_id
     assert!(note.metadata.public_share_id.is_none());
 
     cleanup_user(&pool, user.id).await;
 }
-
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
@@ -1179,11 +1275,26 @@ async fn contract_same_tenant_unauthorized_save_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let result = service.save_note(note.id, user_other.id, tenant_id, "hacked".to_string(), None, None).await;
+    let result = service
+        .save_note(
+            note.id,
+            user_other.id,
+            tenant_id,
+            "hacked".to_string(),
+            None,
+            None,
+        )
+        .await;
     assert!(
         matches!(result, Err(NoteError::PermissionDenied)),
         "Same-tenant unauthorized save_note should be denied, got {:?}",
@@ -1204,7 +1315,13 @@ async fn contract_same_tenant_unauthorized_delete_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
@@ -1229,11 +1346,19 @@ async fn contract_same_tenant_unauthorized_rename_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let result = service.rename_note(note.id, user_other.id, tenant_id, "Hacked".to_string()).await;
+    let result = service
+        .rename_note(note.id, user_other.id, tenant_id, "Hacked".to_string())
+        .await;
     assert!(
         matches!(result, Err(NoteError::PermissionDenied)),
         "Same-tenant unauthorized rename_note should be denied, got {:?}",
@@ -1254,11 +1379,20 @@ async fn contract_same_tenant_unauthorized_list_notes_does_not_leak() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let _note = service
-        .create_note(user_owner.id, tenant_id, Some("Private".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_owner.id,
+            tenant_id,
+            Some("Private".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let list_other = service.list_notes(user_other.id, tenant_id, Some(10)).await.unwrap();
+    let list_other = service
+        .list_notes(user_other.id, tenant_id, Some(10))
+        .await
+        .unwrap();
     assert!(
         !list_other.iter().any(|n| n.metadata.title == "Private"),
         "Same-tenant unauthorized list_notes should not leak notes"
@@ -1279,11 +1413,19 @@ async fn contract_cross_tenant_rename_note_denied() {
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user_a.id, tenant_a, Some("Secret".to_string()), None, Some("content".to_string()))
+        .create_note(
+            user_a.id,
+            tenant_a,
+            Some("Secret".to_string()),
+            None,
+            Some("content".to_string()),
+        )
         .await
         .unwrap();
 
-    let result = service.rename_note(note.id, user_b.id, tenant_b, "Hacked".to_string()).await;
+    let result = service
+        .rename_note(note.id, user_b.id, tenant_b, "Hacked".to_string())
+        .await;
     assert!(
         matches!(result, Err(NoteError::PermissionDenied)),
         "Cross-tenant rename_note should be denied, got {:?}",
@@ -1311,10 +1453,17 @@ async fn contract_note_attachment_upload_rejects_dotdot_filename() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Attach Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let bundle_folder_id = note.parent_folder_id.unwrap();
@@ -1322,10 +1471,7 @@ async fn contract_note_attachment_upload_rejects_dotdot_filename() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     let result = file_service
         .upload_file(
@@ -1360,10 +1506,17 @@ async fn contract_note_attachment_upload_rejects_backslash_filename() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Attach Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let bundle_folder_id = note.parent_folder_id.unwrap();
@@ -1371,10 +1524,7 @@ async fn contract_note_attachment_upload_rejects_backslash_filename() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     let result = file_service
         .upload_file(
@@ -1409,10 +1559,17 @@ async fn contract_note_attachment_upload_rejects_rustshare_hidden_filename() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Attach Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let bundle_folder_id = note.parent_folder_id.unwrap();
@@ -1420,10 +1577,7 @@ async fn contract_note_attachment_upload_rejects_rustshare_hidden_filename() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     let result = file_service
         .upload_file(
@@ -1458,10 +1612,17 @@ async fn contract_note_attachment_upload_rejects_editor_json_filename() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
-        .create_note(user.id, tenant_id, Some("Attach Test".to_string()), None, None)
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Attach Test".to_string()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let bundle_folder_id = note.parent_folder_id.unwrap();
@@ -1469,10 +1630,7 @@ async fn contract_note_attachment_upload_rejects_editor_json_filename() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     let result = file_service
         .upload_file(
@@ -1507,7 +1665,12 @@ async fn contract_note_bundle_count_excludes_hidden_files() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store.clone(), &pool);
+    let file_service = create_file_service(
+        event_store,
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     let note = service
         .create_note(
@@ -1524,10 +1687,7 @@ async fn contract_note_bundle_count_excludes_hidden_files() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     // Upload a regular file
     file_service
@@ -1545,7 +1705,10 @@ async fn contract_note_bundle_count_excludes_hidden_files() {
     // Inject a hidden metadata file directly to verify filtering in counts
     let hidden_file = rustshare_core::domain::File::new(
         ".rustshare.json".to_string(),
-        format!("{}/.rustshare.json", attachments_folder.path.trim_end_matches('/')),
+        format!(
+            "{}/.rustshare.json",
+            attachments_folder.path.trim_end_matches('/')
+        ),
         "d41d8cd98f00b204e9800998ecf8427e".to_string(), // empty md5
         0,
         "application/json".to_string(),
@@ -1555,7 +1718,10 @@ async fn contract_note_bundle_count_excludes_hidden_files() {
     );
     metadata_store.create_file(&hidden_file).await.unwrap();
 
-    let notes = service.list_notes(user.id, tenant_id, Some(10)).await.unwrap();
+    let notes = service
+        .list_notes(user.id, tenant_id, Some(10))
+        .await
+        .unwrap();
     let found = notes.iter().find(|n| n.id == note.id).unwrap();
 
     assert_eq!(
@@ -1617,7 +1783,8 @@ async fn contract_note_attachment_duplicate_overwrites() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let note = service
         .create_note(user.id, tenant_id, Some("Dup Test".to_string()), None, None)
@@ -1628,10 +1795,7 @@ async fn contract_note_attachment_duplicate_overwrites() {
         .list_folders(Some(bundle_folder_id), user.id, tenant_id)
         .await
         .unwrap();
-    let attachments_folder = subfolders
-        .iter()
-        .find(|f| f.name == "attachments")
-        .unwrap();
+    let attachments_folder = subfolders.iter().find(|f| f.name == "attachments").unwrap();
 
     let first = file_service
         .upload_file(
