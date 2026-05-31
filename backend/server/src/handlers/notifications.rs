@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use futures_util::stream::{self, StreamExt};
 use rustshare_core::domain::{Notification, SharePermissions};
-use rustshare_core::events::{AggregateType, EventType};
+use rustshare_core::events::{AggregateType, Event, EventType};
 
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
@@ -255,41 +255,38 @@ pub async fn list_activity(
     // Fetch recent mutation events for this tenant.
     let events = state
         .event_store
-        .query_recent_events(auth.tenant_id, query.before_timestamp, query.before_id, limit)
+        .query_recent_events(
+            auth.tenant_id,
+            query.before_timestamp,
+            query.before_id,
+            limit,
+        )
         .await?;
 
     // Build the permission-filtered activity list.
     // Permission checks are parallelized with limited concurrency to reduce
     // latency for active tenants while preserving event order.
-    let events_len = events.len();
     let last_raw_event = events.last().cloned();
-    let mut items = Vec::with_capacity(events.len());
-    let mut last_timestamp = None;
-    let mut last_id = None;
 
     let access_futures = events.into_iter().map(|event| {
         let state = state.clone();
         let auth = auth.clone();
         async move {
             let can_access = match event.aggregate_type {
-                AggregateType::File => {
-                    state
-                        .permission_resolver
-                        .check_file_permission(auth.user_id, event.aggregate_id, SharePermissions::View)
-                        .await
-                        .unwrap_or(false)
-                }
-                AggregateType::Folder => {
-                    state
-                        .permission_resolver
-                        .check_folder_permission(
-                            auth.user_id,
-                            event.aggregate_id,
-                            SharePermissions::View,
-                        )
-                        .await
-                        .unwrap_or(false)
-                }
+                AggregateType::File => state
+                    .permission_resolver
+                    .check_file_permission(auth.user_id, event.aggregate_id, SharePermissions::View)
+                    .await
+                    .unwrap_or(false),
+                AggregateType::Folder => state
+                    .permission_resolver
+                    .check_folder_permission(
+                        auth.user_id,
+                        event.aggregate_id,
+                        SharePermissions::View,
+                    )
+                    .await
+                    .unwrap_or(false),
                 AggregateType::Share => {
                     let row = sqlx::query("SELECT file_id, folder_id FROM shares WHERE id = $1")
                         .bind(event.aggregate_id)
@@ -303,7 +300,11 @@ pub async fn list_activity(
                             if let Some(fid) = file_id {
                                 state
                                     .permission_resolver
-                                    .check_file_permission(auth.user_id, fid, SharePermissions::View)
+                                    .check_file_permission(
+                                        auth.user_id,
+                                        fid,
+                                        SharePermissions::View,
+                                    )
                                     .await
                                     .unwrap_or(false)
                             } else if let Some(fid) = folder_id {
@@ -329,10 +330,23 @@ pub async fn list_activity(
         }
     });
 
-    let access_results: Vec<_> = stream::iter(access_futures)
-        .buffer_unordered(10)
-        .collect()
-        .await;
+    let access_results: Vec<_> = stream::iter(access_futures).buffered(10).collect().await;
+
+    Ok(Json(build_activity_response(
+        access_results,
+        limit,
+        last_raw_event,
+    ))
+    .into_response())
+}
+
+fn build_activity_response(
+    access_results: Vec<(Event, bool)>,
+    limit: i64,
+    last_raw_event: Option<Event>,
+) -> ListActivityResponse {
+    let events_len = access_results.len();
+    let mut items = Vec::with_capacity(access_results.len());
 
     for (event, can_access) in access_results {
         if !can_access {
@@ -354,20 +368,12 @@ pub async fn list_activity(
             actor_id: event.user_id,
             timestamp: event.timestamp.to_rfc3339(),
         });
-
-        last_timestamp = Some(event.timestamp);
-        last_id = Some(event.id);
     }
 
     let next_cursor = if events_len >= limit as usize {
         // Use the last event from the raw query as the cursor so the next
         // page starts after it, even if it was filtered out.
-        if let (Some(ts), Some(id)) = (last_timestamp, last_id) {
-            Some(ActivityCursor {
-                before_timestamp: ts.to_rfc3339(),
-                before_id: id,
-            })
-        } else if let Some(last_event) = last_raw_event {
+        if let Some(last_event) = last_raw_event {
             Some(ActivityCursor {
                 before_timestamp: last_event.timestamp.to_rfc3339(),
                 before_id: last_event.id,
@@ -379,11 +385,7 @@ pub async fn list_activity(
         None
     };
 
-    Ok(Json(ListActivityResponse {
-        items,
-        next_cursor,
-    })
-    .into_response())
+    ListActivityResponse { items, next_cursor }
 }
 
 /// Map an EventType to a stable snake_case action name.
@@ -528,8 +530,14 @@ mod tests {
 
     #[test]
     fn test_event_type_to_action_mapping() {
-        assert_eq!(event_type_to_action(&EventType::FileUploaded), "file_uploaded");
-        assert_eq!(event_type_to_action(&EventType::ShareCreated), "share_created");
+        assert_eq!(
+            event_type_to_action(&EventType::FileUploaded),
+            "file_uploaded"
+        );
+        assert_eq!(
+            event_type_to_action(&EventType::ShareCreated),
+            "share_created"
+        );
         assert_eq!(
             event_type_to_action(&EventType::BrainstormBoardModified),
             "brainstorm_board_modified"
@@ -555,5 +563,57 @@ mod tests {
             extract_resource_name(&EventType::DecisionModified, &payload),
             Some("My Decision".to_string())
         );
+    }
+
+    #[test]
+    fn test_build_activity_response_preserves_event_order_and_raw_cursor() {
+        let base_time = Utc::now();
+        let first = rustshare_core::events::Event {
+            id: Uuid::new_v4(),
+            event_type: EventType::FileUploaded,
+            aggregate_id: Uuid::new_v4(),
+            aggregate_type: AggregateType::File,
+            payload: serde_json::json!({"name": "first.txt"}),
+            user_id: Uuid::new_v4(),
+            timestamp: base_time,
+            version: 1,
+        };
+        let hidden = rustshare_core::events::Event {
+            id: Uuid::new_v4(),
+            event_type: EventType::FileUploaded,
+            aggregate_id: Uuid::new_v4(),
+            aggregate_type: AggregateType::File,
+            payload: serde_json::json!({"name": "hidden.txt"}),
+            user_id: Uuid::new_v4(),
+            timestamp: base_time - chrono::Duration::seconds(1),
+            version: 1,
+        };
+        let last_raw = rustshare_core::events::Event {
+            id: Uuid::new_v4(),
+            event_type: EventType::FileUploaded,
+            aggregate_id: Uuid::new_v4(),
+            aggregate_type: AggregateType::File,
+            payload: serde_json::json!({"name": "last.txt"}),
+            user_id: Uuid::new_v4(),
+            timestamp: base_time - chrono::Duration::seconds(2),
+            version: 1,
+        };
+
+        let response = build_activity_response(
+            vec![
+                (first.clone(), true),
+                (hidden, false),
+                (last_raw.clone(), true),
+            ],
+            3,
+            Some(last_raw.clone()),
+        );
+
+        assert_eq!(response.items.len(), 2);
+        assert_eq!(response.items[0].id, first.id);
+        assert_eq!(response.items[1].id, last_raw.id);
+        let cursor = response.next_cursor.unwrap();
+        assert_eq!(cursor.before_id, last_raw.id);
+        assert_eq!(cursor.before_timestamp, last_raw.timestamp.to_rfc3339());
     }
 }

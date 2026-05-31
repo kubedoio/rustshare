@@ -18,7 +18,7 @@
 - Evidence from code/docs: Contract G-01/G-02; module services filter by legacy and `/Workspace` paths; module handlers rely on enabled module visibility but object routes use specific services.
 - User impact: Unauthorized access risk to notes, boards, decisions, standups, or attachments.
 - Technical risk: Critical security regression.
-- Suggested fix direction: Add contract tests for each module object route under different users/tenants/shares before refactoring.
+- Suggested fix direction: Add contract tests for each module object route under different users/tenants/shares before refactoring. Dashboard summaries must use the same effective-visibility model as object access, including directly shared child objects whose module root is not shared.
 - Tests required: Notes, meetings, standups, decisions, kanban, brainstorming tenant and permission denial tests.
 - Estimated complexity: L
 
@@ -50,8 +50,8 @@
 - Evidence: `docs/contracts/editor-api-contract.md` specifies `/api/editor/documents`; routes do not define them; frontend uses file and module APIs.
 - User impact: Rich document attachments may behave differently across notes, kanban cards, and public shares.
 - Technical risk: Path traversal, hidden metadata exposure, broken portability.
-- Suggested fix direction: Decide whether file APIs satisfy the editor contract or add document-level APIs; then test.
-- Tests required: Upload/list/delete attachment, read/write permission, public rendering, hidden metadata exclusion.
+- Suggested fix direction: Decide whether file APIs satisfy the editor contract or add document-level APIs; then test. Module-level helpers must enforce object-local attachment folder scope: upload may create the `attachments/` folder, but read/list/delete paths must not create folders as a side effect.
+- Tests required: Upload/list/delete attachment, read/write permission, public rendering, hidden metadata exclusion, denied delete side-effect checks.
 - Estimated complexity: M/L
 
 ### HP-02: Dashboard not fully registry-driven
@@ -177,4 +177,3 @@
 - Suggested fix direction: Keep browser print first; add E2E only when needed.
 - Tests required: Printable view and route tests.
 - Estimated complexity: S/M
-

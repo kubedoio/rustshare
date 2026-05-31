@@ -21,6 +21,7 @@
 //! - `S3_BUCKET` / `RUSTFS_BUCKET` — defaults to `rustshare`
 //! - `S3_REGION` / `RUSTFS_REGION` — defaults to `us-east-1`
 
+use bytes::Bytes;
 use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
@@ -28,7 +29,6 @@ use rustshare_infrastructure::repositories::{PermissionResolverRepository, UserR
 use rustshare_server::services::kanban_service::{
     CreateBoardInput, CreateCardInput, KanbanError, KanbanService, MoveCardInput,
 };
-use bytes::Bytes;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -474,7 +474,9 @@ async fn contract_delete_card_removes_folder() {
         .await
         .expect("delete_card should succeed");
 
-    let result = service.get_card(card.id.parse().unwrap(), user.id, tenant_id).await;
+    let result = service
+        .get_card(card.id.parse().unwrap(), user.id, tenant_id)
+        .await;
     assert!(result.is_err());
 
     cleanup_user(&pool, user.id).await;
@@ -903,7 +905,9 @@ async fn contract_cross_tenant_get_board_denied() {
         .await
         .unwrap();
 
-    let result = service.get_board(board.id.clone(), user_b.id, tenant_b).await;
+    let result = service
+        .get_board(board.id.clone(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_board should be denied, got {:?}",
@@ -979,7 +983,11 @@ async fn contract_cross_tenant_delete_card_denied() {
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1062,7 +1070,9 @@ async fn contract_same_tenant_unauthorized_get_board_denied() {
         .await
         .unwrap();
 
-    let result = service.get_board(board.id.clone(), user_other.id, tenant_id).await;
+    let result = service
+        .get_board(board.id.clone(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_board should be denied, got {:?}",
@@ -1090,7 +1100,11 @@ async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1109,7 +1123,9 @@ async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    let result = service
+        .get_card_detail(card.id.parse().unwrap(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card_detail should be denied, got {:?}",
@@ -1119,7 +1135,6 @@ async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
     cleanup_user(&pool, user_owner.id).await;
     cleanup_user(&pool, user_other.id).await;
 }
-
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
@@ -1132,10 +1147,20 @@ async fn contract_cross_tenant_create_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
 
     let result = service
         .create_card(
@@ -1174,10 +1199,20 @@ async fn contract_cross_tenant_move_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
     let card = service
         .create_card(
@@ -1232,10 +1267,20 @@ async fn contract_cross_tenant_archive_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1254,7 +1299,9 @@ async fn contract_cross_tenant_archive_card_denied() {
         .await
         .unwrap();
 
-    let result = service.archive_card(card.id.parse().unwrap(), user_b.id, tenant_b).await;
+    let result = service
+        .archive_card(card.id.parse().unwrap(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant archive_card should be denied, got {:?}",
@@ -1276,10 +1323,20 @@ async fn contract_cross_tenant_get_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1298,7 +1355,9 @@ async fn contract_cross_tenant_get_card_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card(card.id.parse().unwrap(), user_b.id, tenant_b).await;
+    let result = service
+        .get_card(card.id.parse().unwrap(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_card should be denied, got {:?}",
@@ -1320,10 +1379,20 @@ async fn contract_cross_tenant_get_card_detail_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1342,7 +1411,9 @@ async fn contract_cross_tenant_get_card_detail_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card_detail(card.id.parse().unwrap(), user_b.id, tenant_b).await;
+    let result = service
+        .get_card_detail(card.id.parse().unwrap(), user_b.id, tenant_b)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Cross-tenant get_card_detail should be denied, got {:?}",
@@ -1363,10 +1434,20 @@ async fn contract_same_tenant_unauthorized_create_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
 
     let result = service
         .create_card(
@@ -1404,10 +1485,20 @@ async fn contract_same_tenant_unauthorized_move_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let ready = board.columns.iter().find(|c| c.slug == "01-Ready").unwrap();
     let card = service
         .create_card(
@@ -1461,10 +1552,20 @@ async fn contract_same_tenant_unauthorized_archive_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1483,7 +1584,9 @@ async fn contract_same_tenant_unauthorized_archive_card_denied() {
         .await
         .unwrap();
 
-    let result = service.archive_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    let result = service
+        .archive_card(card.id.parse().unwrap(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized archive_card should be denied, got {:?}",
@@ -1504,10 +1607,20 @@ async fn contract_same_tenant_unauthorized_delete_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1526,7 +1639,9 @@ async fn contract_same_tenant_unauthorized_delete_card_denied() {
         .await
         .unwrap();
 
-    let result = service.delete_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    let result = service
+        .delete_card(card.id.parse().unwrap(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized delete_card should be denied, got {:?}",
@@ -1547,10 +1662,20 @@ async fn contract_same_tenant_unauthorized_get_card_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1569,7 +1694,9 @@ async fn contract_same_tenant_unauthorized_get_card_denied() {
         .await
         .unwrap();
 
-    let result = service.get_card(card.id.parse().unwrap(), user_other.id, tenant_id).await;
+    let result = service
+        .get_card(card.id.parse().unwrap(), user_other.id, tenant_id)
+        .await;
     assert!(
         matches!(result, Err(KanbanError::PermissionDenied)),
         "Same-tenant unauthorized get_card should be denied, got {:?}",
@@ -1590,7 +1717,13 @@ async fn contract_same_tenant_unauthorized_list_boards_does_not_leak() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let _board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -1614,7 +1747,13 @@ async fn contract_same_tenant_unauthorized_update_board_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Private".to_string() }, user_owner.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Private".to_string(),
+            },
+            user_owner.id,
+            tenant_id,
+        )
         .await
         .unwrap();
 
@@ -1655,10 +1794,20 @@ async fn contract_kanban_attachment_rejects_dotdot() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1705,10 +1854,20 @@ async fn contract_kanban_attachment_rejects_path_separator() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1758,10 +1917,20 @@ async fn contract_kanban_attachment_rejects_reserved_names() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1817,10 +1986,20 @@ async fn contract_kanban_attachment_rejects_generic_rustshare() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1869,10 +2048,20 @@ async fn contract_kanban_attachment_rejects_editor_json() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1922,10 +2111,20 @@ async fn contract_kanban_attachment_cross_tenant_upload_denied() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Secret".to_string() }, user_a.id, tenant_a)
+        .create_board(
+            CreateBoardInput {
+                title: "Secret".to_string(),
+            },
+            user_a.id,
+            tenant_a,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -1984,7 +2183,11 @@ async fn contract_kanban_attachment_unauthorized_user_denied() {
         )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -2038,13 +2241,28 @@ async fn contract_kanban_card_detail_excludes_hidden_attachments() {
         object_store.clone(),
         &pool,
     );
-    let file_service = create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),
@@ -2111,6 +2329,113 @@ async fn contract_kanban_card_detail_excludes_hidden_attachments() {
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
+async fn contract_kanban_delete_attachment_rejects_non_attachment_file() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "kanban_attach_delete_scope", tenant_id).await;
+    let service = create_kanban_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store,
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+
+    let board = service
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
+    let card = service
+        .create_card(
+            board.id.clone(),
+            CreateCardInput {
+                title: "Card".to_string(),
+                column_id: Some(backlog.id.clone()),
+                content: None,
+                priority: None,
+                labels: None,
+                assignees: None,
+                due_date: None,
+            },
+            user.id,
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let card_contents = folder_service
+        .list_contents(card.id.parse().unwrap(), user.id)
+        .await
+        .unwrap();
+    let attachments_folder = card_contents
+        .folders
+        .iter()
+        .find(|folder| folder.name == "attachments")
+        .expect("create_card should create an attachments folder");
+    folder_service
+        .delete_folder(attachments_folder.id, user.id)
+        .await
+        .expect("test setup should remove empty attachments folder");
+
+    let unrelated = file_service
+        .upload_file(
+            user.id,
+            "unrelated.txt".to_string(),
+            None,
+            Bytes::from("keep me"),
+            "text/plain".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .delete_card_attachment(card.id.parse().unwrap(), unrelated.id, user.id, tenant_id)
+        .await;
+
+    assert!(
+        matches!(result, Err(KanbanError::PermissionDenied)),
+        "Deleting a non-attachment file through a card should be denied, got {:?}",
+        result
+    );
+    assert!(
+        file_service.get_file(unrelated.id, user.id).await.is_ok(),
+        "Unrelated file must still exist after denied attachment delete"
+    );
+    let card_contents_after_delete_attempt = folder_service
+        .list_contents(card.id.parse().unwrap(), user.id)
+        .await
+        .unwrap();
+    assert!(
+        card_contents_after_delete_attempt
+            .folders
+            .iter()
+            .all(|folder| folder.name != "attachments"),
+        "Denied attachment delete must not create an attachments folder"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
 async fn contract_kanban_attachment_duplicate_overwrites() {
     // CURRENT BEHAVIOR: write_binary_file_by_name updates existing files instead
     // of creating a duplicate or renaming.
@@ -2120,10 +2445,20 @@ async fn contract_kanban_attachment_duplicate_overwrites() {
     let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
 
     let board = service
-        .create_board(CreateBoardInput { title: "Attach".to_string() }, user.id, tenant_id)
+        .create_board(
+            CreateBoardInput {
+                title: "Attach".to_string(),
+            },
+            user.id,
+            tenant_id,
+        )
         .await
         .unwrap();
-    let backlog = board.columns.iter().find(|c| c.slug == "00-Backlog").unwrap();
+    let backlog = board
+        .columns
+        .iter()
+        .find(|c| c.slug == "00-Backlog")
+        .unwrap();
     let card = service
         .create_card(
             board.id.clone(),

@@ -2911,7 +2911,11 @@ impl KanbanService {
             .await
             .map_err(KanbanError::from)?;
 
-        let attachments_folder = match contents.folders.into_iter().find(|f| f.name == "attachments") {
+        let attachments_folder = match contents
+            .folders
+            .into_iter()
+            .find(|f| f.name == "attachments")
+        {
             Some(f) => f,
             None => return Ok(vec![]),
         };
@@ -3030,6 +3034,19 @@ impl KanbanService {
             return Err(KanbanError::PermissionDenied);
         }
 
+        let attachments_folder = self
+            .find_attachments_folder(card_id, user_id, tenant_id)
+            .await?
+            .ok_or(KanbanError::PermissionDenied)?;
+        let attachment = self
+            .file_service
+            .get_file(attachment_id, user_id)
+            .await
+            .map_err(KanbanError::from)?;
+        if attachment.parent_folder_id != Some(attachments_folder.id) {
+            return Err(KanbanError::PermissionDenied);
+        }
+
         self.file_service
             .delete_file(attachment_id, user_id)
             .await
@@ -3066,12 +3083,10 @@ impl KanbanService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, KanbanError> {
-        let folders = self
-            .metadata_store
-            .list_folders(Some(card_folder_id), user_id, tenant_id)
-            .await
-            .map_err(|e| KanbanError::Database(e.to_string()))?;
-        if let Some(f) = folders.into_iter().find(|f| f.name == "attachments") {
+        if let Some(f) = self
+            .find_attachments_folder(card_folder_id, user_id, tenant_id)
+            .await?
+        {
             Ok(f)
         } else {
             self.folder_service
@@ -3084,6 +3099,20 @@ impl KanbanService {
                 .await
                 .map_err(KanbanError::from)
         }
+    }
+
+    async fn find_attachments_folder(
+        &self,
+        card_folder_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Option<Folder>, KanbanError> {
+        let folders = self
+            .metadata_store
+            .list_folders(Some(card_folder_id), user_id, tenant_id)
+            .await
+            .map_err(|e| KanbanError::Database(e.to_string()))?;
+        Ok(folders.into_iter().find(|f| f.name == "attachments"))
     }
 
     // --- Card Checklists ---

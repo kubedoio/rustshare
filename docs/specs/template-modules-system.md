@@ -154,6 +154,22 @@ Required shape:
 }
 ```
 
+## Dashboard Summary Semantics
+
+Module summaries are computed by the backend from the module root path and the
+requesting user's current permissions.
+
+Rules:
+
+- Include owned files/folders under the module root.
+- Include files/folders visible through active user shares, active group shares,
+  or inherited folder shares.
+- Exclude revoked or expired shares.
+- Exclude hidden/system metadata from user-facing recent item lists.
+- For Kanban, the `kanban-overview` summary returns recent cards plus a
+  `boards` array. Directly shared board folders must appear in that `boards`
+  array even when the canonical `/Workspace/Kanban` root is not shared.
+
 ## 6. Template Definition
 
 Required shape:

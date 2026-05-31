@@ -19,10 +19,13 @@
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
+	import DashboardWidgetGrid from '$lib/components/dashboard/DashboardWidgetGrid.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { Share2, Clock, Package } from 'lucide-svelte';
+	import { getEnabledDashboardModules } from '$lib/modules/workspaceSurface';
+	import { moduleConfigToDefinition } from '$lib/modules/registry';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -88,6 +91,9 @@
 	);
 
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
+	let dashboardModules = $derived(
+		getEnabledDashboardModules($enabledModulesQuery.data ?? []).map(moduleConfigToDefinition)
+	);
 
 	let recentArtifacts = $derived(
 		allFiles
@@ -325,9 +331,10 @@
 		<div class="dashboard-grid">
 			<!-- Left column -->
 			<div class="dashboard-main">
-				<MetricCards cards={summaryCards} />
-				<RecentActivity userName={$currentUser?.display_name} />
-			</div>
+					<MetricCards cards={summaryCards} />
+					<DashboardWidgetGrid modules={dashboardModules} />
+					<RecentActivity userName={$currentUser?.display_name} />
+				</div>
 
 			<!-- Right column -->
 			<div class="dashboard-sidebar">

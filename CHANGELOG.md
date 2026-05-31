@@ -17,11 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documented permission-visible dashboard summary semantics, including directly shared Kanban boards whose module root is not shared.
+- Documented attachment folder side-effect rules: upload may create the `attachments/` folder, while read/list/delete paths must not.
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- Kanban attachment deletion now rejects non-attachment files without deleting them or creating a missing `attachments/` folder.
+- Kanban dashboard summaries now include directly shared board folders even when `/Workspace/Kanban` itself is not shared.
 
 ### Security
 

@@ -115,6 +115,19 @@ Moving a Kanban card between columns must:
 - refresh board index
 - preserve stable object ID
 
+Kanban attachment operations must:
+
+- create the card `attachments/` folder when adding an attachment if it is missing
+- reject deletion of a file that is not inside that card's `attachments/` folder
+- leave the unrelated file untouched after a denied delete
+- avoid creating an `attachments/` folder during denied delete
+
+Kanban dashboard summaries must:
+
+- include owned boards under `/Workspace/Kanban`
+- include directly shared board folders under another user's `/Workspace/Kanban`
+- not require the canonical `/Workspace/Kanban` root itself to be shared
+
 ## 6. Public share security tests
 
 Public share rendering must not expose:

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::services::icon_registry::is_approved_icon_key;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use sqlx::Row;
 
 #[allow(clippy::type_complexity)]
 fn default_modules() -> Vec<(
@@ -682,26 +683,84 @@ impl ModuleService {
         let root_path = module.root_path.trim_end_matches('/').to_string();
         let path_prefix = format!("{root_path}/%");
 
-        let row = sqlx::query!(
-            "SELECT COUNT(*) as count FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3",
-            tenant_id,
-            user_id,
-            &path_prefix
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM files f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND (
+                      s.file_id = f.id
+                      OR (
+                        shared_folder.id IS NOT NULL
+                        AND f.path LIKE shared_folder.path || '/%'
+                      )
+                    )
+                )
+              )
+            "#,
         )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(&path_prefix)
         .fetch_one(self.metadata_store.pool())
         .await;
-        let file_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+        let file_count = row
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0);
 
-        let row = sqlx::query!(
-            "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND path <> $4",
-            tenant_id,
-            user_id,
-            &path_prefix,
-            &root_path
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND f.path <> $4
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            "#,
         )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(&path_prefix)
+        .bind(&root_path)
         .fetch_one(self.metadata_store.pool())
         .await;
-        let folder_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+        let folder_count = row
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0);
 
         let total_items = file_count + folder_count;
 
@@ -885,29 +944,63 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name FROM files f LEFT JOIN folders pf ON f.parent_folder_id = pf.id WHERE f.tenant_id = $1 AND f.owner_id = $2 AND f.deleted_at IS NULL AND f.path LIKE $3 ORDER BY f.modified_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name
+            FROM files f
+            LEFT JOIN folders pf ON f.parent_folder_id = pf.id
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND (
+                      s.file_id = f.id
+                      OR (
+                        shared_folder.id IS NOT NULL
+                        AND f.path LIKE shared_folder.path || '/%'
+                      )
+                    )
+                )
+              )
+            ORDER BY f.modified_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| {
-                let display_name = if row.name == "note.md" {
-                    row.parent_name
+                let name: String = row.get("name");
+                let parent_name: Option<String> = row.try_get("parent_name").unwrap_or(None);
+                let display_name = if name == "note.md" {
+                    parent_name.unwrap_or(name)
                 } else {
-                    row.name
+                    name
                 };
                 SummaryItem {
-                    id: row.id.to_string(),
+                    id: row.get::<Uuid, _>("id").to_string(),
                     name: display_name,
                     item_type: "file".to_string(),
-                    updated_at: row.modified_at,
+                    updated_at: row.get("modified_at"),
                 }
             })
             .collect())
@@ -920,23 +1013,49 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY updated_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }
@@ -949,24 +1068,51 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND name LIKE $4 ORDER BY updated_at DESC LIMIT $5",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            name_pattern,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND f.name LIKE $4
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $5
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(name_pattern)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }
@@ -978,23 +1124,53 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $3 AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            root_path,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            JOIN folders root
+              ON root.id = f.parent_folder_id
+             AND root.path = $3
+             AND root.tenant_id = $1
+             AND root.deleted_at IS NULL
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(root_path)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }

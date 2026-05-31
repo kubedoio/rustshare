@@ -84,6 +84,16 @@ Rules:
 - `summaryMode` must be supported or fallback to generic.
 - `maxItems` should default to 4.
 
+Dashboard summaries are server-sourced and permission-visible. Counts and recent
+items must include resources the viewer owns and resources visible through active
+user or group shares, including inherited folder shares. Revoked or expired
+shares must not contribute to summary data.
+
+For folder-backed module summaries, direct shares to child objects are
+sufficient. A viewer who can access `/Workspace/Kanban/Board A` must see that
+board in the Kanban dashboard summary even if `/Workspace/Kanban` itself is not
+shared.
+
 ## 5. Primary action contract
 
 Supported actions:
@@ -115,6 +125,7 @@ Supported initial summary modes:
 recent-items
 today-status
 kanban-active-cards
+kanban-overview
 share-counts
 generic-file-summary
 ```

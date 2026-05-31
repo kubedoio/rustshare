@@ -212,11 +212,7 @@ where
 
             if let Some(perm) = permission {
                 // Generate snippet (first 200 chars of content)
-                let snippet = if document.content.len() > 200 {
-                    format!("{}...", &document.content[..200])
-                } else {
-                    document.content.clone()
-                };
+                let snippet = truncate_with_ellipsis(&document.content, 200);
 
                 // Sanitize snippet
                 let snippet = sanitize_snippet(&snippet);
@@ -302,11 +298,7 @@ where
             file_name: document.file_name.clone(),
             file_path: document.file_path.clone(),
             relevance_score: 1.0,
-            excerpt: if document.content.len() > 300 {
-                format!("{}...", &document.content[..300])
-            } else {
-                document.content.clone()
-            },
+            excerpt: truncate_with_ellipsis(&document.content, 300),
         };
 
         Ok(FileSummary {
@@ -456,17 +448,23 @@ fn sanitize_snippet(snippet: &str) -> String {
         .to_string()
 }
 
+fn truncate_with_ellipsis(content: &str, max_chars: usize) -> String {
+    let mut chars = content.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        content.to_string()
+    }
+}
+
 /// Generate a simple document summary.
 /// Phase 1.5: Basic summary generation.
 /// Future phases: Use LLM for more sophisticated summaries.
 fn generate_document_summary(document: &IndexedDocument) -> String {
     let word_count = document.content.split_whitespace().count();
 
-    let content_preview = if document.content.len() > 500 {
-        format!("{}...", &document.content[..500].trim())
-    } else {
-        document.content.clone()
-    };
+    let content_preview = truncate_with_ellipsis(document.content.trim(), 500);
 
     format!(
         "This {} file ({}) contains approximately {} words. Preview: {}",
@@ -705,6 +703,16 @@ mod tests {
         assert!(!sanitized.contains('\x00'));
         assert!(!sanitized.contains('\x01'));
         assert!(sanitized.contains('\n') || sanitized.contains(' '));
+    }
+
+    #[test]
+    fn test_preview_truncates_unicode_on_character_boundary() {
+        let content = "é".repeat(300);
+        let preview = truncate_with_ellipsis(&content, 200);
+
+        assert!(preview.ends_with("..."));
+        assert!(preview.is_char_boundary(preview.len() - 3));
+        assert_eq!(preview.trim_end_matches("...").chars().count(), 200);
     }
 
     // --- Configurable mock for permission-boundary tests ---

@@ -8,7 +8,7 @@ use rustshare_core::services::{FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::module_service::ModuleService;
 use rustshare_storage::{EventStore, MetadataStore};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -173,24 +173,23 @@ async fn contract_ensure_default_modules_is_idempotent_no_duplicate_roots() {
         .expect("first ensure_default_modules should succeed");
 
     // Count folders under Workspace after first call
-    let workspace_folder = sqlx::query!(
+    let workspace_folder = sqlx::query(
         "SELECT id FROM folders WHERE name = 'Workspace' AND tenant_id = $1 AND owner_id = $2",
-        tenant_id,
-        user.id
     )
-    .fetch_one(pool.as_ref())
+    .bind(tenant_id)
+    .bind(user.id)
+    .fetch_one(&pool)
     .await
     .expect("Workspace folder should exist");
+    let workspace_folder_id: Uuid = workspace_folder.get("id");
 
-    let first_count = sqlx::query!(
-        "SELECT COUNT(*) as count FROM folders WHERE parent_folder_id = $1",
-        workspace_folder.id
-    )
-    .fetch_one(pool.as_ref())
-    .await
-    .unwrap()
-    .count
-    .unwrap_or(0);
+    let first_count: i64 =
+        sqlx::query("SELECT COUNT(*) as count FROM folders WHERE parent_folder_id = $1")
+            .bind(workspace_folder_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("count");
 
     // Second call
     module_service
@@ -198,15 +197,13 @@ async fn contract_ensure_default_modules_is_idempotent_no_duplicate_roots() {
         .await
         .expect("second ensure_default_modules should succeed");
 
-    let second_count = sqlx::query!(
-        "SELECT COUNT(*) as count FROM folders WHERE parent_folder_id = $1",
-        workspace_folder.id
-    )
-    .fetch_one(pool.as_ref())
-    .await
-    .unwrap()
-    .count
-    .unwrap_or(0);
+    let second_count: i64 =
+        sqlx::query("SELECT COUNT(*) as count FROM folders WHERE parent_folder_id = $1")
+            .bind(workspace_folder_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("count");
 
     assert_eq!(
         first_count, second_count,
@@ -249,22 +246,22 @@ async fn contract_enable_module_ensures_canonical_root_without_duplicates() {
         .expect("re-enable_module should succeed");
 
     // Verify only one Kanban folder exists under Workspace
-    let workspace_folder = sqlx::query!(
+    let workspace_folder = sqlx::query(
         "SELECT id FROM folders WHERE name = 'Workspace' AND tenant_id = $1 AND owner_id = $2",
-        tenant_id,
-        user.id
     )
-    .fetch_one(pool.as_ref())
+    .bind(tenant_id)
+    .bind(user.id)
+    .fetch_one(&pool)
     .await
     .expect("Workspace folder should exist");
+    let workspace_folder_id: Uuid = workspace_folder.get("id");
 
-    let kanban_folders = sqlx::query!(
-        "SELECT id FROM folders WHERE parent_folder_id = $1 AND name = 'Kanban'",
-        workspace_folder.id
-    )
-    .fetch_all(pool.as_ref())
-    .await
-    .unwrap();
+    let kanban_folders =
+        sqlx::query("SELECT id FROM folders WHERE parent_folder_id = $1 AND name = 'Kanban'")
+            .bind(workspace_folder_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
     assert_eq!(
         kanban_folders.len(),
@@ -313,4 +310,99 @@ async fn contract_module_summary_reads_from_canonical_root() {
 
     cleanup_modules_and_folders(&pool, tenant_id, user.id).await;
     cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database
+async fn contract_kanban_summary_includes_directly_shared_board_without_shared_root() {
+    let (pool, event_store, metadata_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let owner = create_test_user(&metadata_store, "module_shared_board_owner", tenant_id).await;
+    let recipient =
+        create_test_user(&metadata_store, "module_shared_board_recipient", tenant_id).await;
+
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+    let module_service = ModuleService::new(folder_service.clone(), metadata_store.clone());
+
+    module_service
+        .ensure_default_modules(tenant_id)
+        .await
+        .unwrap();
+    module_service
+        .enable_module("kanban", owner.id, tenant_id)
+        .await
+        .unwrap();
+
+    let workspace = sqlx::query(
+        "SELECT id FROM folders WHERE name = 'Workspace' AND tenant_id = $1 AND owner_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .fetch_one(&pool)
+    .await
+    .expect("owner workspace should exist");
+    let workspace_id: Uuid = workspace.get("id");
+    let kanban_root =
+        sqlx::query("SELECT id FROM folders WHERE name = 'Kanban' AND parent_folder_id = $1")
+            .bind(workspace_id)
+            .fetch_one(&pool)
+            .await
+            .expect("owner kanban root should exist");
+    let kanban_root_id: Uuid = kanban_root.get("id");
+
+    let board = folder_service
+        .create_folder(
+            "Shared Board".to_string(),
+            Some(kanban_root_id),
+            owner.id,
+            tenant_id,
+        )
+        .await
+        .expect("test setup should create board");
+
+    sqlx::query(
+        r#"
+        INSERT INTO shares (
+            id, file_id, folder_id, share_token, created_by, permissions,
+            password_hash, expires_at, upload_only, access_count,
+            recipient_user_id, recipient_group_id, tenant_id
+        )
+        VALUES ($1, NULL, $2, NULL, $3, 'View', NULL, NULL, false, 0, $4, NULL, $5)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(board.id)
+    .bind(owner.id)
+    .bind(recipient.id)
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .expect("test setup should share board");
+
+    let summary = module_service
+        .get_module_summary("kanban", tenant_id, recipient.id)
+        .await
+        .expect("recipient should get kanban summary");
+    let boards = summary
+        .extra
+        .as_ref()
+        .and_then(|extra| extra.get("boards"))
+        .and_then(|boards| boards.as_array())
+        .expect("kanban summary should include boards array");
+
+    assert!(
+        boards.iter().any(|item| item
+            .get("id")
+            .and_then(|id| id.as_str())
+            .is_some_and(|id| id == board.id.to_string())),
+        "directly shared board should appear even when the module root is not shared"
+    );
+
+    cleanup_modules_and_folders(&pool, tenant_id, owner.id).await;
+    cleanup_user(&pool, recipient.id).await;
+    cleanup_user(&pool, owner.id).await;
 }
