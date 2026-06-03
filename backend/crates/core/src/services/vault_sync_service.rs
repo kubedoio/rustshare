@@ -605,6 +605,12 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         tenant_id: Uuid,
         user_id: Uuid,
     ) -> Result<Option<VaultDevice>, VaultSyncError> {
+        // Device IDs in the database are UUIDs; a non-UUID string can never
+        // match a registered device, so treat it as "not found".
+        if Uuid::parse_str(device_id).is_err() {
+            return Ok(None);
+        }
+
         let device = match self.store.get_device(device_id, tenant_id).await {
             Ok(device) => device,
             Err(VaultSyncError::DeviceNotFound(_)) => return Ok(None),
