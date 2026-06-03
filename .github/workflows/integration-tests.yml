@@ -93,15 +93,23 @@ jobs:
 
       - name: Create RustFS bucket
         run: |
+          set +e
           docker run --rm --network host \
             -e AWS_ACCESS_KEY_ID=rustfsadmin \
             -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
             amazon/aws-cli:2.34.59 \
             --endpoint-url http://127.0.0.1:9000 \
-            s3 mb s3://rustshare-files 2>&1 | tee /tmp/bucket-create.log || true
-          if grep -q "BucketAlreadyOwnedByYou" /tmp/bucket-create.log; then
+            s3 mb s3://rustshare-files > /tmp/bucket-create.log 2>&1
+          bucket_status=$?
+          set -e
+
+          cat /tmp/bucket-create.log
+
+          if [ "$bucket_status" -eq 0 ]; then
+            echo "Bucket created."
+          elif grep -q "BucketAlreadyOwnedByYou" /tmp/bucket-create.log; then
             echo "Bucket already exists, continuing..."
-          elif [ -s /tmp/bucket-create.log ]; then
+          else
             echo "Bucket creation failed:"
             cat /tmp/bucket-create.log
             exit 1
