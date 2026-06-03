@@ -188,6 +188,11 @@ async fn setup_test_env() -> AppState {
         ),
     );
 
+    let vault_sync_service = Arc::new(rustshare_core::services::VaultSyncService::new(
+        metadata_store.clone(),
+        object_store.clone(),
+    ));
+
     let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
 
     AppState {
@@ -219,6 +224,7 @@ async fn setup_test_env() -> AppState {
         template_service,
         kanban_service,
         brainstorming_service,
+        vault_sync_service,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

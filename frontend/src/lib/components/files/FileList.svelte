@@ -8,6 +8,7 @@
 	import { selectionStore } from '$lib/stores/selection';
 	import { detectEditorType } from '$lib/utils/editor';
 	import ShareIndicator from './ShareIndicator.svelte';
+	import VaultBadge from './VaultBadge.svelte';
 
 	interface Props {
 		folders?: Folder[];
@@ -110,7 +111,7 @@
 		</thead>
 		<tbody>
 			<!-- Folders -->
-			{#each folders as folder}
+			{#each folders as folder (folder.id)}
 				<tr class="hover">
 					<td>
 						<div class="flex items-center gap-3">
@@ -221,7 +222,7 @@
 			{/each}
 
 			<!-- Files -->
-			{#each files as file}
+			{#each files as file (file.id)}
 				<tr class="hover">
 					<td>
 						<div class="flex items-center gap-3">
@@ -253,6 +254,14 @@
 									shareCount={file.share_count || 0}
 									shareExpiresAt={file.share_expires_at || null}
 									size="sm"
+								/>
+							{/if}
+							{#if file.vault_id}
+								<VaultBadge
+									adapter={file.adapter}
+									vaultName={file.vault_name}
+									serverRev={file.server_rev}
+									lastSyncedAt={file.last_synced_at}
 								/>
 							{/if}
 							{#if replicationStatuses[file.id]}
@@ -353,6 +362,18 @@
 										}}>Version History</button
 									>
 								</li>
+								{#if file.adapter === 'obsidian_vault'}
+									<li>
+										<a
+											href={`obsidian://open?vault=${encodeURIComponent(file.vault_name || '')}&file=${encodeURIComponent(file.path)}`}
+											target="_blank"
+											rel="noopener noreferrer"
+											onclick={(e) => e.stopPropagation()}
+										>
+											Open in Obsidian
+										</a>
+									</li>
+								{/if}
 								<li>
 									<button
 										type="button"

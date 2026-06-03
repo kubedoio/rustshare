@@ -8,5 +8,7 @@ pub mod services;
 pub mod validation;
 
 // Re-export commonly used types
-pub use domain::{File, FileVersion, Folder, Share, User};
+pub use domain::{
+    File, FileVersion, Folder, Share, User, Vault, VaultAdapter, VaultDevice, VaultFile,
+};
 pub use events::{AggregateType, Event, EventType};

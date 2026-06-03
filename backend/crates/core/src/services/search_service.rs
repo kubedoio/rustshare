@@ -273,6 +273,7 @@ mod tests {
             self.files.lock().unwrap().insert(file.id, file);
         }
 
+        #[allow(dead_code)]
         fn add_folder(&self, folder: Folder) {
             self.folders.lock().unwrap().insert(folder.id, folder);
         }
@@ -678,6 +679,6 @@ mod tests {
 mod compilation_check {
     #[test]
     fn test_this_module_is_compiled() {
-        assert!(true);
+        // Module compilation check
     }
 }

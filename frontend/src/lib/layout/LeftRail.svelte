@@ -11,14 +11,16 @@
 		PanelLeftOpen,
 		PanelLeftClose,
 		AlertCircle,
-		RefreshCw
+		RefreshCw,
+		Archive
 	} from 'lucide-svelte';
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
 
 	const primaryItems = [
 		{ icon: WorkspaceIcon, label: 'Workspace', href: '/dashboard' },
-		{ icon: FolderOpen, label: 'Folders', href: '/files' }
+		{ icon: FolderOpen, label: 'Folders', href: '/files' },
+		{ icon: Archive, label: 'Vaults', href: '/vaults' }
 	];
 
 	const secondaryItems = [{ icon: Settings, label: 'Settings', href: '/settings' }];
@@ -41,9 +43,11 @@
 			? '/dashboard'
 			: pathname === '/files' || pathname.startsWith('/files')
 				? '/files'
-				: pathname === '/settings' || pathname.startsWith('/settings')
-					? '/settings'
-					: null
+				: pathname === '/vaults' || pathname.startsWith('/vaults')
+					? '/vaults'
+					: pathname === '/settings' || pathname.startsWith('/settings')
+						? '/settings'
+						: null
 	);
 
 	// Active module key extracted from /modules/{key}/... routes

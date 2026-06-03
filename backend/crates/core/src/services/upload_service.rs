@@ -1005,7 +1005,7 @@ mod tests {
 
     #[test]
     fn test_validate_file_name() {
-        assert!(true);
+        // Placeholder for future validation tests
     }
 
     #[tokio::test]

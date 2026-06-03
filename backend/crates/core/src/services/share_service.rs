@@ -1453,6 +1453,7 @@ mod tests {
             self.folders.lock().unwrap().push(folder);
         }
 
+        #[allow(dead_code)]
         fn add_user(&self, user: crate::domain::User) {
             self.users.lock().unwrap().push(user);
         }
@@ -2047,9 +2048,11 @@ mod tests {
         assert!(revoked_share.revoked_at.is_some());
 
         // Verify ShareRevoked event was emitted
-        let events = event_store.events.lock().unwrap();
-        assert_eq!(events.len(), 2); // ShareCreated + ShareRevoked
-        assert_eq!(events[1].event_type, EventType::ShareRevoked);
+        {
+            let events = event_store.events.lock().unwrap();
+            assert_eq!(events.len(), 2); // ShareCreated + ShareRevoked
+            assert_eq!(events[1].event_type, EventType::ShareRevoked);
+        }
 
         // Verify share can't be validated anymore
         let result = service
@@ -2145,7 +2148,7 @@ mod tests {
             .validate_and_create_session(&share_token, None)
             .await
             .unwrap();
-        assert!(session.token.len() > 0);
+        assert!(!session.token.is_empty());
 
         // Update share with password
         service
@@ -2154,9 +2157,11 @@ mod tests {
             .unwrap();
 
         // Verify ShareUpdated event was emitted
-        let events = event_store.events.lock().unwrap();
-        assert_eq!(events.len(), 2); // ShareCreated + ShareUpdated
-        assert_eq!(events[1].event_type, EventType::ShareUpdated);
+        {
+            let events = event_store.events.lock().unwrap();
+            assert_eq!(events.len(), 2); // ShareCreated + ShareUpdated
+            assert_eq!(events[1].event_type, EventType::ShareUpdated);
+        }
 
         // Verify share now requires password
         let result = service
@@ -2169,7 +2174,7 @@ mod tests {
             .validate_and_create_session(&share_token, Some("newpassword".to_string()))
             .await
             .unwrap();
-        assert!(session.token.len() > 0);
+        assert!(!session.token.is_empty());
     }
 
     #[tokio::test]

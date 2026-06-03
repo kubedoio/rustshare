@@ -94,6 +94,7 @@ async fn main() -> Result<()> {
         .merge(routes::decision_routes())
         .merge(routes::meeting_routes())
         .merge(routes::standup_routes())
+        .merge(routes::vault_sync_routes())
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
@@ -108,6 +109,9 @@ async fn main() -> Result<()> {
         ))
         // Tracing
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(
+            middleware::security_headers_middleware,
+        ))
         // All non-API requests are served by the compiled SPA bundle.
         .fallback_service(frontend_service());
 

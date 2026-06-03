@@ -14,7 +14,7 @@ use rustshare_core::{
     services::{
         AiService, ContentIndexer, FileService, FolderService, NotificationService,
         PermissionResolver, ShareService, SimpleEmbeddingGenerator, ThumbnailService,
-        UserShareService, UserShareServiceDeps,
+        UserShareService, UserShareServiceDeps, VaultSyncService,
     },
 };
 use rustshare_crypto::SecretEncryptionKey;
@@ -50,6 +50,7 @@ struct Services {
     ai_service: Option<Arc<AppAiService>>,
     upload_service: Arc<AppUploadService>,
     user_repository: Arc<UserRepository>,
+    vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
 }
 
 fn init_tracing() {
@@ -67,11 +68,9 @@ async fn init_database() -> Result<PgPool> {
             Box::pin(async move {
                 // Set a default restrictive user context.
                 // This will be overridden per-request by middleware.
-                sqlx::query!(
-                    "SET LOCAL app.current_user_id = '00000000-0000-0000-0000-000000000000'"
-                )
-                .execute(&mut *conn)
-                .await?;
+                sqlx::query!("SET app.current_user_id = '00000000-0000-0000-0000-000000000000'")
+                    .execute(&mut *conn)
+                    .await?;
                 Ok(true)
             })
         })
@@ -175,6 +174,11 @@ async fn init_services(
     folder_repository: Arc<FolderRepository>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
 ) -> Result<Services> {
+    let vault_sync_service = Arc::new(VaultSyncService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
+
     let (
         file_service,
         folder_service,
@@ -387,6 +391,7 @@ async fn init_services(
         ai_service,
         upload_service,
         user_repository,
+        vault_sync_service,
     })
 }
 
@@ -571,6 +576,7 @@ pub async fn init_app() -> Result<AppState> {
         user_repository: services.user_repository,
         public_base_url,
         collab_rooms: Arc::new(CollabRooms::new()),
+        vault_sync_service: services.vault_sync_service,
     };
 
     Ok(state)

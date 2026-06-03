@@ -43,6 +43,7 @@ mod search_authorization_contract;
 mod share_link_contract;
 mod storage_verification_contract;
 mod tenant_isolation_contract;
+mod vault_sync_contract;
 mod versioning_contract;
 
 // Re-export all tests so they are discovered by the test runner
@@ -57,4 +58,5 @@ pub use search_authorization_contract::*;
 pub use share_link_contract::*;
 pub use storage_verification_contract::*;
 pub use tenant_isolation_contract::*;
+pub use vault_sync_contract::*;
 pub use versioning_contract::*;

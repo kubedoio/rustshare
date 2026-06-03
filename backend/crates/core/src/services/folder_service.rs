@@ -793,6 +793,7 @@ mod tests {
     }
 
     impl MockEventStore {
+        #[allow(dead_code)]
         fn new() -> Self {
             Self {
                 events: Mutex::new(Vec::new()),
@@ -940,6 +941,7 @@ mod tests {
     }
 
     impl MockPermissionOps {
+        #[allow(dead_code)]
         fn new() -> Self {
             Self {
                 metadata_store: None,

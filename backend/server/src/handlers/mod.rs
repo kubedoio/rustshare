@@ -32,6 +32,7 @@ pub mod upload;
 mod user_shares;
 mod users;
 mod validated_json;
+pub mod vault_sync;
 mod workspace_surface;
 pub mod ws_auth;
 
@@ -117,7 +118,7 @@ use axum::{
     Json,
 };
 use rustshare_core::services::{
-    AiError, FileError, FolderError, NotificationError, ShareError, UploadError,
+    AiError, FileError, FolderError, NotificationError, ShareError, UploadError, VaultSyncError,
 };
 use serde::Serialize;
 
@@ -154,6 +155,11 @@ pub enum AppError {
     Unauthorized,
     Forbidden(String),
     Conflict(String),
+    VaultConflict {
+        client_rev: i64,
+        current_rev: i64,
+        server_sha256: Option<String>,
+    },
     Gone(String),
     UnsupportedMediaType(String),
     PayloadTooLarge(String),
@@ -204,6 +210,21 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            AppError::VaultConflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            } => {
+                let body = serde_json::json!({
+                    "error": "conflict",
+                    "message": "Conflict detected",
+                    "client_rev": client_rev,
+                    "current_rev": current_rev,
+                    "server_sha256": server_sha256,
+                    "resolution": "create_conflict_copy",
+                });
+                return (StatusCode::CONFLICT, Json(body)).into_response();
+            }
             AppError::Gone(msg) => (StatusCode::GONE, msg),
             AppError::UnsupportedMediaType(msg) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, msg),
             AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
@@ -480,6 +501,40 @@ impl From<crate::services::template_service::TemplateError> for AppError {
             TemplateError::PermissionDenied => AppError::Forbidden(err.to_string()),
             TemplateError::InvalidData(_) => AppError::BadRequest(err.to_string()),
             TemplateError::Storage(_) | TemplateError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<VaultSyncError> for AppError {
+    fn from(err: VaultSyncError) -> Self {
+        match err {
+            VaultSyncError::VaultNotFound(_)
+            | VaultSyncError::FileNotFound(_)
+            | VaultSyncError::DeviceNotFound(_) => AppError::NotFound(err.to_string()),
+            // Security note: returning server_sha256 in 409 responses enables client-side
+            // deduplication but acts as a confirmation oracle. This is an accepted MVP trade-off.
+            VaultSyncError::Conflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            } => AppError::VaultConflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            },
+            VaultSyncError::TombstoneConflict
+            | VaultSyncError::VaultAlreadyExists(_)
+            | VaultSyncError::FileAlreadyExists(_) => AppError::Conflict(err.to_string()),
+            VaultSyncError::ManifestTooLarge { .. } => AppError::PayloadTooLarge(err.to_string()),
+            VaultSyncError::InvalidPath(_) => AppError::BadRequest(err.to_string()),
+            VaultSyncError::InvalidName(_) => AppError::BadRequest(err.to_string()),
+            VaultSyncError::Unauthorized | VaultSyncError::DeviceRevoked => {
+                AppError::Forbidden(err.to_string())
+            }
+            VaultSyncError::Database(ref msg) | VaultSyncError::Storage(ref msg) => {
+                tracing::error!("Vault sync internal error: {}", msg);
                 AppError::Internal("Internal server error".to_string())
             }
         }

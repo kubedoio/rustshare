@@ -10,6 +10,7 @@
 	import { detectEditorType } from '$lib/utils/editor';
 	import FileThumbnail from './FileThumbnail.svelte';
 	import ShareIndicator from './ShareIndicator.svelte';
+	import VaultBadge from './VaultBadge.svelte';
 
 	interface Props {
 		item: File | Folder;
@@ -197,6 +198,14 @@
 								shareCount={item.share_count || 0}
 								shareExpiresAt={item.share_expires_at || null}
 								size="sm"
+							/>
+						{/if}
+						{#if !isFolder && fileItem?.vault_id}
+							<VaultBadge
+								adapter={fileItem.adapter}
+								vaultName={fileItem.vault_name}
+								serverRev={fileItem.server_rev}
+								lastSyncedAt={fileItem.last_synced_at}
 							/>
 						{/if}
 					</h3>
@@ -392,6 +401,33 @@
 								</svg>
 								Version History
 							</button>
+						</li>
+					{/if}
+					{#if !isFolder && fileItem?.adapter === 'obsidian_vault'}
+						<li>
+							<a
+								href={`obsidian://open?vault=${encodeURIComponent(fileItem.vault_name || '')}&file=${encodeURIComponent(fileItem.path)}`}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="flex items-center gap-2"
+								onclick={(e) => e.stopPropagation()}
+							>
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke-width="1.5"
+									stroke="currentColor"
+									class="h-4 w-4"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+									/>
+								</svg>
+								Open in Obsidian
+							</a>
 						</li>
 					{/if}
 					<li>
