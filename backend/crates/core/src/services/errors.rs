@@ -128,6 +128,10 @@ pub enum VaultSyncError {
     #[error("Tombstone conflict")]
     TombstoneConflict,
 
+    /// Manifest is too large to return without pagination.
+    #[error("Manifest exceeds maximum entry count: {limit}")]
+    ManifestTooLarge { limit: usize },
+
     /// The provided path is invalid.
     #[error("Invalid path: {0}")]
     InvalidPath(String),

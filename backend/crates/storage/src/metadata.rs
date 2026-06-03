@@ -2751,6 +2751,30 @@ impl MetadataStore {
         Ok(file)
     }
 
+    /// Get a file by vault ID and relative path, including tombstones.
+    pub async fn get_vault_file_including_deleted(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+    ) -> sqlx::Result<Option<VaultFile>> {
+        let file = sqlx::query_as::<_, VaultFile>(
+            r#"
+            SELECT id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            FROM vault_files
+            WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3
+            ORDER BY deleted ASC, server_rev DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(vault_id)
+        .bind(relative_path)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(file)
+    }
+
     /// List all files in a vault.
     pub async fn list_vault_files(
         &self,
@@ -3446,6 +3470,31 @@ impl MetadataStore {
             tenant_id
         )
         .fetch_optional(&self.pool)
+        .await?;
+        Ok(device)
+    }
+
+    /// Bind a device to a vault.
+    pub async fn bind_vault_device_to_vault(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+        vault_id: Uuid,
+    ) -> sqlx::Result<VaultDevice> {
+        let id = Uuid::parse_str(device_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+        let device = sqlx::query_as::<_, VaultDevice>(
+            r#"
+            UPDATE vault_devices
+            SET vault_id = $3, last_seen_at = NOW()
+            WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (vault_id IS NULL OR vault_id = $3)
+            RETURNING id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at
+            "#,
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .bind(vault_id)
+        .fetch_one(&self.pool)
         .await?;
         Ok(device)
     }

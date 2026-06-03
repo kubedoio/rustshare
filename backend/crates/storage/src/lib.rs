@@ -419,6 +419,18 @@ impl VaultStore for MetadataStore {
             .ok_or_else(|| VaultSyncError::FileNotFound(relative_path.to_string()))
     }
 
+    async fn get_file_including_deleted(
+        &self,
+        vault_id: uuid::Uuid,
+        relative_path: &str,
+        tenant_id: uuid::Uuid,
+    ) -> Result<VaultFile, VaultSyncError> {
+        self.get_vault_file_including_deleted(vault_id, relative_path, tenant_id)
+            .await
+            .map_err(|e| VaultSyncError::Database(e.to_string()))?
+            .ok_or_else(|| VaultSyncError::FileNotFound(relative_path.to_string()))
+    }
+
     async fn list_files(
         &self,
         vault_id: uuid::Uuid,
@@ -529,6 +541,31 @@ impl VaultStore for MetadataStore {
             .await
             .map_err(|e| VaultSyncError::Database(e.to_string()))?
             .ok_or_else(|| VaultSyncError::DeviceNotFound(device_id.to_string()))
+    }
+
+    async fn bind_device_to_vault(
+        &self,
+        device_id: &str,
+        tenant_id: uuid::Uuid,
+        vault_id: uuid::Uuid,
+    ) -> Result<VaultDevice, VaultSyncError> {
+        match self
+            .bind_vault_device_to_vault(device_id, tenant_id, vault_id)
+            .await
+        {
+            Ok(device) => Ok(device),
+            Err(sqlx::Error::RowNotFound) => {
+                match self.get_vault_device(device_id, tenant_id).await {
+                    Ok(Some(device)) if device.revoked_at.is_some() => {
+                        Err(VaultSyncError::DeviceRevoked)
+                    }
+                    Ok(Some(_)) => Err(VaultSyncError::Unauthorized),
+                    Ok(None) => Err(VaultSyncError::DeviceNotFound(device_id.to_string())),
+                    Err(e) => Err(VaultSyncError::Database(e.to_string())),
+                }
+            }
+            Err(e) => Err(VaultSyncError::Database(e.to_string())),
+        }
     }
 
     async fn revoke_device(

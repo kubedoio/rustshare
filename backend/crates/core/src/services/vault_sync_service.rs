@@ -130,20 +130,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             return Err(VaultSyncError::Unauthorized);
         }
 
-        // Verify device exists and belongs to the user.
-        let device = self.store.get_device(&req.device_id, tenant_id).await?;
-        if device.user_id != user_id {
-            return Err(VaultSyncError::Unauthorized);
-        }
-        if device.revoked_at.is_some() {
-            return Err(VaultSyncError::DeviceRevoked);
-        }
-
-        self.store
-            .update_device_last_seen(&req.device_id, tenant_id)
+        self.authorize_write_device(&req.device_id, tenant_id, user_id, req.vault_id)
             .await?;
 
-        // Blob is written to object store BEFORE the conditional DB update.
+        let existing = self
+            .store
+            .get_file_including_deleted(req.vault_id, &req.relative_path, tenant_id)
+            .await;
+
+        if let Ok(file) = &existing {
+            if file.deleted {
+                return Err(VaultSyncError::Conflict {
+                    client_rev: req.base_server_rev,
+                    current_rev: file.server_rev,
+                    server_sha256: file.sha256.clone(),
+                });
+            }
+        }
+
+        // Blob is written to object store before the conditional DB update.
         // This ordering is intentional: a dangling blob is harmless because
         // content-addressed storage deduplicates by SHA-256, but a missing
         // blob would break file references and violate data integrity.
@@ -157,11 +162,6 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             .put(&storage_key, req.content)
             .await
             .map_err(|e| VaultSyncError::Storage(e.to_string()))?;
-
-        let existing = self
-            .store
-            .get_file(req.vault_id, &req.relative_path, tenant_id)
-            .await;
 
         let file = match existing {
             Ok(file) => {
@@ -307,16 +307,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             return Err(VaultSyncError::Unauthorized);
         }
 
-        let device = self.store.get_device(&req.device_id, tenant_id).await?;
-        if device.user_id != user_id {
-            return Err(VaultSyncError::Unauthorized);
-        }
-        if device.revoked_at.is_some() {
-            return Err(VaultSyncError::DeviceRevoked);
-        }
-
-        self.store
-            .update_device_last_seen(&req.device_id, tenant_id)
+        self.authorize_write_device(&req.device_id, tenant_id, user_id, req.vault_id)
             .await?;
 
         let file = self
@@ -364,16 +355,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             return Err(VaultSyncError::Unauthorized);
         }
 
-        let device = self.store.get_device(&req.device_id, tenant_id).await?;
-        if device.user_id != user_id {
-            return Err(VaultSyncError::Unauthorized);
-        }
-        if device.revoked_at.is_some() {
-            return Err(VaultSyncError::DeviceRevoked);
-        }
-
-        self.store
-            .update_device_last_seen(&req.device_id, tenant_id)
+        self.authorize_write_device(&req.device_id, tenant_id, user_id, req.vault_id)
             .await?;
 
         let file = self
@@ -435,21 +417,18 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             .await?;
 
         const MAX_MANIFEST_ENTRIES: usize = 10_000;
-        let truncated = files.len() > MAX_MANIFEST_ENTRIES;
-        let capped = if truncated {
+        if files.len() > MAX_MANIFEST_ENTRIES {
             tracing::warn!(
-                "Manifest for vault {} exceeds {} entries ({} total); capping. \
-                 TODO: implement pagination via ?since_rev=",
+                "Manifest for vault {} exceeds {} entries; refusing partial manifest",
                 vault_id,
                 MAX_MANIFEST_ENTRIES,
-                files.len()
             );
-            &files[..MAX_MANIFEST_ENTRIES]
-        } else {
-            &files[..]
-        };
+            return Err(VaultSyncError::ManifestTooLarge {
+                limit: MAX_MANIFEST_ENTRIES,
+            });
+        }
 
-        let entries = capped
+        let entries = files
             .iter()
             .map(|f| VaultManifestEntry {
                 path: f.relative_path.clone(),
@@ -471,7 +450,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 generated_at: Utc::now(),
                 files: entries,
             },
-            truncated,
+            truncated: false,
         })
     }
 
@@ -573,6 +552,37 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             ));
         }
         Ok(trimmed.to_string())
+    }
+
+    async fn authorize_write_device(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        vault_id: Uuid,
+    ) -> Result<VaultDevice, VaultSyncError> {
+        let device = self.store.get_device(device_id, tenant_id).await?;
+        if device.user_id != user_id {
+            return Err(VaultSyncError::Unauthorized);
+        }
+        if device.revoked_at.is_some() {
+            return Err(VaultSyncError::DeviceRevoked);
+        }
+
+        let device = match device.vault_id {
+            Some(bound_vault_id) if bound_vault_id == vault_id => device,
+            Some(_) => return Err(VaultSyncError::Unauthorized),
+            None => {
+                self.store
+                    .bind_device_to_vault(device_id, tenant_id, vault_id)
+                    .await?
+            }
+        };
+
+        self.store
+            .update_device_last_seen(device_id, tenant_id)
+            .await?;
+        Ok(device)
     }
 
     fn validate_relative_path(&self, path: &str) -> Result<(), VaultSyncError> {
@@ -697,6 +707,22 @@ mod tests {
         }
 
         async fn get_file(
+            &self,
+            vault_id: Uuid,
+            relative_path: &str,
+            tenant_id: Uuid,
+        ) -> Result<VaultFile, VaultSyncError> {
+            let files = self.files.lock().await;
+            let file = files
+                .get(&(vault_id, relative_path.to_string()))
+                .ok_or_else(|| VaultSyncError::FileNotFound(relative_path.to_string()))?;
+            if file.tenant_id != tenant_id || file.deleted {
+                return Err(VaultSyncError::FileNotFound(relative_path.to_string()));
+            }
+            Ok(file.clone())
+        }
+
+        async fn get_file_including_deleted(
             &self,
             vault_id: Uuid,
             relative_path: &str,
@@ -868,6 +894,30 @@ mod tests {
             if device.tenant_id != tenant_id {
                 return Err(VaultSyncError::DeviceNotFound(device_id.to_string()));
             }
+            Ok(device.clone())
+        }
+
+        async fn bind_device_to_vault(
+            &self,
+            device_id: &str,
+            tenant_id: Uuid,
+            vault_id: Uuid,
+        ) -> Result<VaultDevice, VaultSyncError> {
+            let mut devices = self.devices.lock().await;
+            let device = devices
+                .get_mut(device_id)
+                .ok_or_else(|| VaultSyncError::DeviceNotFound(device_id.to_string()))?;
+            if device.tenant_id != tenant_id {
+                return Err(VaultSyncError::DeviceNotFound(device_id.to_string()));
+            }
+            if device.revoked_at.is_some() {
+                return Err(VaultSyncError::DeviceRevoked);
+            }
+            if matches!(device.vault_id, Some(bound_vault_id) if bound_vault_id != vault_id) {
+                return Err(VaultSyncError::Unauthorized);
+            }
+            device.vault_id = Some(vault_id);
+            device.last_seen_at = Utc::now();
             Ok(device.clone())
         }
 
@@ -1238,6 +1288,137 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, VaultSyncError::Conflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_device_binds_to_first_vault_and_cannot_write_another() {
+        let (store, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault_a = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "VaultA".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "device-1".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+        let vault_b = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "VaultB".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "device-1".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        let device = test_device(owner_id, tenant_id);
+        service
+            .register_device(device.clone(), owner_id)
+            .await
+            .unwrap();
+
+        let req_a = UploadVaultFileRequest {
+            vault_id: vault_a.id,
+            relative_path: "notes/a.md".to_string(),
+            content_type: Some("text/markdown".to_string()),
+            sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
+            size: 1,
+            base_server_rev: 0,
+            device_id: device.id.to_string(),
+            content: Bytes::from_static(b"a"),
+        };
+        service
+            .upload_file(req_a, tenant_id, owner_id)
+            .await
+            .unwrap();
+
+        let bound = store
+            .get_device(&device.id.to_string(), tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(bound.vault_id, Some(vault_a.id));
+
+        let req_b = UploadVaultFileRequest {
+            vault_id: vault_b.id,
+            relative_path: "notes/b.md".to_string(),
+            content_type: Some("text/markdown".to_string()),
+            sha256: "bbaaccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
+            size: 1,
+            base_server_rev: 0,
+            device_id: device.id.to_string(),
+            content: Bytes::from_static(b"b"),
+        };
+        let err = service
+            .upload_file(req_b, tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VaultSyncError::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn test_manifest_refuses_partial_results() {
+        let (store, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "TestVault".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "device-1".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        let mut files = store.files.lock().await;
+        for i in 0..10_001 {
+            let path = format!("notes/{i}.md");
+            files.insert(
+                (vault.id, path.clone()),
+                VaultFile {
+                    id: Uuid::new_v4(),
+                    tenant_id,
+                    vault_id: vault.id,
+                    relative_path: path,
+                    content_type: Some("text/markdown".to_string()),
+                    sha256: None,
+                    size: Some(0),
+                    server_rev: i,
+                    mtime_client: None,
+                    mtime_server: Utc::now(),
+                    deleted: false,
+                    deleted_at: None,
+                    last_writer_device_id: None,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            );
+        }
+        drop(files);
+
+        let err = service
+            .get_manifest(vault.id, tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VaultSyncError::ManifestTooLarge { limit: 10_000 }
+        ));
     }
 
     #[tokio::test]

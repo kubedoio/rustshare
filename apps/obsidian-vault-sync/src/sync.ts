@@ -55,6 +55,7 @@ export class SyncEngine {
     const detectedRenames = this.detectHashMatchRenames(localFiles);
     for (const rename of detectedRenames) {
       const remoteOld = remoteFiles.get(rename.oldPath);
+      let renamed = false;
       if (remoteOld && !remoteOld.deleted) {
         try {
           await this.api.renameFile(this.state.vault_id, {
@@ -64,18 +65,21 @@ export class SyncEngine {
             device_id: this.state.device_id,
           });
           remoteFiles.delete(rename.oldPath);
+          renamed = true;
         } catch (e) {
           result.errors.push(`Rename failed: ${rename.oldPath} -> ${rename.newPath}: ${e}`);
           continue;
         }
-      }
-      // Update local state: move entry from oldPath to newPath
-      if (this.state.files[rename.oldPath]) {
-        this.state.files[rename.newPath] = this.state.files[rename.oldPath];
+      } else {
+        syncLog.info(`No active remote entry for rename old path: ${rename.oldPath}`);
         delete this.state.files[rename.oldPath];
       }
-      // Remove oldPath from localFiles consideration; newPath is already present
-      localFiles.delete(rename.oldPath);
+
+      if (renamed && this.state.files[rename.oldPath]) {
+        this.state.files[rename.newPath] = this.state.files[rename.oldPath];
+        delete this.state.files[rename.oldPath];
+        localFiles.delete(rename.oldPath);
+      }
     }
 
     // Upload local-only or changed files
@@ -242,12 +246,38 @@ export class SyncEngine {
                 base_server_rev: remoteOld.server_rev,
                 device_id: this.state.device_id,
               });
+              if (this.state.files[op.oldPath]) {
+                this.state.files[op.path] = this.state.files[op.oldPath];
+                delete this.state.files[op.oldPath];
+              }
             } else {
               syncLog.info(`No active remote entry for rename old path: ${op.oldPath}`);
-            }
-            if (this.state.files[op.oldPath]) {
-              this.state.files[op.path] = this.state.files[op.oldPath];
-              delete this.state.files[op.oldPath];
+              const file = this.vault.getAbstractFileByPath(normalizePath(op.path));
+              if (!(file instanceof TFile)) {
+                syncLog.warn(`File not found for rename fallback upload: ${op.path}`);
+                continue;
+              }
+              const buffer = await this.vault.readBinary(file);
+              const hash = await sha256ArrayBuffer(buffer);
+              const remote = remoteFiles.get(op.path);
+
+              if (remote?.deleted) {
+                await this.handleUploadConflict(op.path, remote.server_rev, remote.sha256, hash);
+                result.conflicts++;
+              } else {
+                try {
+                  await this.uploadFile(op.path, remote?.server_rev ?? 0);
+                  delete this.state.files[op.oldPath];
+                  result.uploaded++;
+                } catch (e) {
+                  if (e instanceof UploadConflictError) {
+                    await this.handleUploadConflict(op.path, e.currentRev ?? manifest.server_rev, e.serverSha256);
+                    result.conflicts++;
+                  } else {
+                    throw e;
+                  }
+                }
+              }
             }
             break;
           }

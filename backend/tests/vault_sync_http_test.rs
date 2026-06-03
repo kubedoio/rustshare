@@ -529,7 +529,9 @@ async fn test_conflict_returns_structured_409() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["error"], "Conflict");
+    assert_eq!(json["error"], "conflict");
+    assert_eq!(json["message"], "Conflict detected");
+    assert_eq!(json["resolution"], "create_conflict_copy");
     assert!(json["client_rev"].is_number());
     assert!(json["current_rev"].is_number());
     assert!(json["server_sha256"].is_string() || json["server_sha256"].is_null());

@@ -216,10 +216,12 @@ impl IntoResponse for AppError {
                 server_sha256,
             } => {
                 let body = serde_json::json!({
-                    "error": "Conflict",
+                    "error": "conflict",
+                    "message": "Conflict detected",
                     "client_rev": client_rev,
                     "current_rev": current_rev,
                     "server_sha256": server_sha256,
+                    "resolution": "create_conflict_copy",
                 });
                 return (StatusCode::CONFLICT, Json(body)).into_response();
             }
@@ -525,6 +527,7 @@ impl From<VaultSyncError> for AppError {
             VaultSyncError::TombstoneConflict
             | VaultSyncError::VaultAlreadyExists(_)
             | VaultSyncError::FileAlreadyExists(_) => AppError::Conflict(err.to_string()),
+            VaultSyncError::ManifestTooLarge { .. } => AppError::PayloadTooLarge(err.to_string()),
             VaultSyncError::InvalidPath(_) => AppError::BadRequest(err.to_string()),
             VaultSyncError::InvalidName(_) => AppError::BadRequest(err.to_string()),
             VaultSyncError::Unauthorized | VaultSyncError::DeviceRevoked => {

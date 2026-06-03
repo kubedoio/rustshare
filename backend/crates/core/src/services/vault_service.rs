@@ -33,6 +33,14 @@ pub trait VaultStore: Send + Sync {
         tenant_id: Uuid,
     ) -> Result<VaultFile, VaultSyncError>;
 
+    /// Get a file by vault ID and relative path, including tombstones.
+    async fn get_file_including_deleted(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+    ) -> Result<VaultFile, VaultSyncError>;
+
     /// List all files in a vault.
     async fn list_files(
         &self,
@@ -87,6 +95,14 @@ pub trait VaultStore: Send + Sync {
         &self,
         device_id: &str,
         tenant_id: Uuid,
+    ) -> Result<VaultDevice, VaultSyncError>;
+
+    /// Bind an unbound device to a vault.
+    async fn bind_device_to_vault(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+        vault_id: Uuid,
     ) -> Result<VaultDevice, VaultSyncError>;
 
     /// Revoke a device.

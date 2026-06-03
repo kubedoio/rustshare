@@ -262,6 +262,26 @@ describe('SyncEngine', () => {
       expect(state.files['notes/new.md']).toBeDefined();
       expect(state.files['notes/new.md'].sha256).toBe(contentHash);
     });
+
+    it('uploads detected rename when remote old path is missing', async () => {
+      const content = 'content X';
+      const contentHash = await hash(content);
+      vault.addFile('notes/new.md', content);
+      state.files['notes/old.md'] = {
+        sha256: contentHash,
+        server_rev: 1,
+        last_synced_at: new Date().toISOString(),
+      };
+
+      const result = await engine.sync();
+
+      expect(result.uploaded).toBe(1);
+      expect(api.renames).toHaveLength(0);
+      expect(api.uploads).toEqual([{ path: 'notes/new.md', rev: 0 }]);
+      expect(state.files['notes/old.md']).toBeUndefined();
+      expect(state.files['notes/new.md']).toBeDefined();
+      expect(state.files['notes/new.md'].sha256).toBe(contentHash);
+    });
   });
 
   describe('incremental sync', () => {
@@ -364,6 +384,26 @@ describe('SyncEngine', () => {
         oldPath: 'notes/src.md',
         newPath: 'notes/dst.md',
       });
+      expect(state.files['notes/src.md']).toBeUndefined();
+      expect(state.files['notes/dst.md']).toBeDefined();
+      expect(state.files['notes/dst.md'].sha256).toBe(await hash('src'));
+    });
+
+    it('uploads renamed file when remote old path is missing', async () => {
+      vault.addFile('notes/dst.md', 'src');
+      state.files['notes/src.md'] = {
+        sha256: await hash('src'),
+        server_rev: 1,
+        last_synced_at: new Date().toISOString(),
+      };
+
+      const result = await engine.syncIncremental([
+        { path: 'notes/dst.md', type: 'rename', oldPath: 'notes/src.md' },
+      ]);
+
+      expect(result.uploaded).toBe(1);
+      expect(api.renames).toHaveLength(0);
+      expect(api.uploads).toEqual([{ path: 'notes/dst.md', rev: 0 }]);
       expect(state.files['notes/src.md']).toBeUndefined();
       expect(state.files['notes/dst.md']).toBeDefined();
       expect(state.files['notes/dst.md'].sha256).toBe(await hash('src'));
