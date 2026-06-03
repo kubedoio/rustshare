@@ -282,6 +282,35 @@ describe('SyncEngine', () => {
       expect(state.files['notes/new.md']).toBeDefined();
       expect(state.files['notes/new.md'].sha256).toBe(contentHash);
     });
+
+    it('records detected rename state when remote new path already has same content', async () => {
+      const content = 'content X';
+      const contentHash = await hash(content);
+      vault.addFile('notes/new.md', content);
+      state.files['notes/old.md'] = {
+        sha256: contentHash,
+        server_rev: 1,
+        last_synced_at: new Date().toISOString(),
+      };
+      api.manifest.files.push(
+        makeManifestEntry('notes/new.md', {
+          sha256: contentHash,
+          server_rev: 4,
+        })
+      );
+
+      const result = await engine.sync();
+
+      expect(result.uploaded).toBe(0);
+      expect(result.downloaded).toBe(0);
+      expect(result.conflicts).toBe(0);
+      expect(api.renames).toHaveLength(0);
+      expect(api.uploads).toHaveLength(0);
+      expect(state.files['notes/old.md']).toBeUndefined();
+      expect(state.files['notes/new.md']).toBeDefined();
+      expect(state.files['notes/new.md'].sha256).toBe(contentHash);
+      expect(state.files['notes/new.md'].server_rev).toBe(4);
+    });
   });
 
   describe('incremental sync', () => {

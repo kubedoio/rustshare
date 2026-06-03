@@ -129,6 +129,8 @@ export class SyncEngine {
             result.errors.push(`Conflict resolution failed: ${path}: ${e}`);
           }
         }
+      } else if (remote.sha256 === localHash) {
+        this.recordSyncedFile(path, localHash, remote.server_rev);
       } else if (remote.sha256 !== localHash) {
         // Both exist, hashes differ
         const localState = this.state.files[path];
@@ -410,11 +412,7 @@ export class SyncEngine {
       }
       throw e;
     }
-    this.state.files[path] = {
-      sha256: hash,
-      server_rev: resp.server_rev,
-      last_synced_at: new Date().toISOString(),
-    };
+    this.recordSyncedFile(path, hash, resp.server_rev);
     return resp;
   }
 
@@ -437,9 +435,13 @@ export class SyncEngine {
       await this.vault.adapter.mkdir(normalizePath(dir));
     }
     await this.vault.adapter.writeBinary(normalizedPath, data);
+    this.recordSyncedFile(path, remote.sha256 ?? await sha256ArrayBuffer(data), remote.server_rev);
+  }
+
+  private recordSyncedFile(path: string, sha256: string, serverRev: number): void {
     this.state.files[path] = {
-      sha256: remote.sha256 ?? await sha256ArrayBuffer(data),
-      server_rev: remote.server_rev,
+      sha256,
+      server_rev: serverRev,
       last_synced_at: new Date().toISOString(),
     };
   }

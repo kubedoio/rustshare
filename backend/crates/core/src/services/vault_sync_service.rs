@@ -55,6 +55,9 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         owner_user_id: Uuid,
     ) -> Result<Vault, VaultSyncError> {
         let name = self.validate_vault_name(&req.name)?;
+        let create_device = self
+            .get_bindable_create_device(&req.device_id, tenant_id, owner_user_id)
+            .await?;
 
         // Enforce unique vault names per user.
         let existing = self.store.list_vaults(tenant_id, owner_user_id).await?;
@@ -74,7 +77,18 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        self.store.create_vault(&vault).await
+        let vault = self.store.create_vault(&vault).await?;
+
+        if create_device.is_some() {
+            self.store
+                .bind_device_to_vault(&req.device_id, tenant_id, vault.id)
+                .await?;
+            self.store
+                .update_device_last_seen(&req.device_id, tenant_id)
+                .await?;
+        }
+
+        Ok(vault)
     }
 
     /// Get a vault by ID, verifying the requesting user is the owner.
@@ -585,6 +599,31 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         Ok(device)
     }
 
+    async fn get_bindable_create_device(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<VaultDevice>, VaultSyncError> {
+        let device = match self.store.get_device(device_id, tenant_id).await {
+            Ok(device) => device,
+            Err(VaultSyncError::DeviceNotFound(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        if device.user_id != user_id {
+            return Err(VaultSyncError::Unauthorized);
+        }
+        if device.revoked_at.is_some() {
+            return Err(VaultSyncError::DeviceRevoked);
+        }
+        if device.vault_id.is_some() {
+            return Err(VaultSyncError::Unauthorized);
+        }
+
+        Ok(Some(device))
+    }
+
     fn validate_relative_path(&self, path: &str) -> Result<(), VaultSyncError> {
         if path.is_empty() {
             return Err(VaultSyncError::InvalidPath("path is empty".to_string()));
@@ -1050,6 +1089,38 @@ mod tests {
         );
         assert_eq!(vault.tenant_id, tenant_id);
         assert_eq!(vault.owner_user_id, owner_id);
+    }
+
+    #[tokio::test]
+    async fn test_create_vault_binds_registered_device() {
+        let (store, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let device = test_device(owner_id, tenant_id);
+        service
+            .register_device(device.clone(), owner_id)
+            .await
+            .unwrap();
+
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "TestVault".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: device.id.to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        let bound_device = store
+            .get_device(&device.id.to_string(), tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(bound_device.vault_id, Some(vault.id));
     }
 
     #[tokio::test]
