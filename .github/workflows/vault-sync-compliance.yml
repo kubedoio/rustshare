@@ -35,9 +35,7 @@ jobs:
             --glob '!docs/adr/0027-*' \
             --glob '!docs/specs/naming-framing-compliance.md' \
             --glob '!docs/checklists/vault-sync-terminology-blocklist.md' \
-            --glob '!docs/implementation/vault-sync-prompts/**' \
             --glob '!docs/plans/*vault-sync*' \
-            --glob '!docs/rustshare-vault-sync-obsidian-docs/**' \
             --glob '!**/node_modules/**' \
             --glob '!**/target/**' \
             --glob '!backend/.sqlx/**' \

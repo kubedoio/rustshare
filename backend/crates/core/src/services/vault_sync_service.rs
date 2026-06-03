@@ -696,23 +696,6 @@ mod tests {
                 .collect())
         }
 
-        async fn increment_vault_rev(
-            &self,
-            vault_id: Uuid,
-            tenant_id: Uuid,
-        ) -> Result<i64, VaultSyncError> {
-            let mut vaults = self.vaults.lock().await;
-            let vault = vaults
-                .get_mut(&vault_id)
-                .ok_or(VaultSyncError::VaultNotFound(vault_id))?;
-            if vault.tenant_id != tenant_id {
-                return Err(VaultSyncError::VaultNotFound(vault_id));
-            }
-            vault.server_rev += 1;
-            vault.updated_at = Utc::now();
-            Ok(vault.server_rev)
-        }
-
         async fn get_file(
             &self,
             vault_id: Uuid,
@@ -743,23 +726,6 @@ mod tests {
                 .collect())
         }
 
-        async fn upsert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            files.insert((file.vault_id, file.relative_path.clone()), file.clone());
-            Ok(file.clone())
-        }
-
-        async fn insert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            if files.contains_key(&(file.vault_id, file.relative_path.clone())) {
-                return Err(VaultSyncError::Database(
-                    "duplicate key value violates unique constraint".to_string(),
-                ));
-            }
-            files.insert((file.vault_id, file.relative_path.clone()), file.clone());
-            Ok(file.clone())
-        }
-
         // Atomic methods: lock order is vaults → files to avoid deadlock.
         // Always acquire vaults first, then files. Never reverse this order.
         async fn insert_file_atomic(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
@@ -781,28 +747,6 @@ mod tests {
                 inserted.clone(),
             );
             Ok(inserted)
-        }
-
-        async fn update_file_conditional(
-            &self,
-            file: &VaultFile,
-            base_server_rev: i64,
-        ) -> Result<bool, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            let entry = files
-                .get_mut(&(file.vault_id, file.relative_path.clone()))
-                .ok_or_else(|| VaultSyncError::FileNotFound(file.relative_path.clone()))?;
-            if entry.server_rev != base_server_rev || entry.deleted {
-                return Ok(false);
-            }
-            entry.sha256 = file.sha256.clone();
-            entry.size = file.size;
-            entry.server_rev = file.server_rev;
-            entry.mtime_server = file.mtime_server;
-            entry.updated_at = file.updated_at;
-            entry.last_writer_device_id = file.last_writer_device_id.clone();
-            entry.content_type = file.content_type.clone();
-            Ok(true)
         }
 
         async fn update_file_conditional_atomic(
@@ -830,56 +774,6 @@ mod tests {
             entry.last_writer_device_id = file.last_writer_device_id.clone();
             entry.content_type = file.content_type.clone();
             Ok(Some(entry.clone()))
-        }
-
-        async fn tombstone_file(
-            &self,
-            vault_id: Uuid,
-            relative_path: &str,
-            tenant_id: Uuid,
-            new_rev: i64,
-            device_id: &str,
-        ) -> Result<VaultFile, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            let file = files
-                .get_mut(&(vault_id, relative_path.to_string()))
-                .ok_or_else(|| VaultSyncError::FileNotFound(relative_path.to_string()))?;
-            if file.tenant_id != tenant_id {
-                return Err(VaultSyncError::FileNotFound(relative_path.to_string()));
-            }
-            file.deleted = true;
-            file.deleted_at = Some(Utc::now());
-            file.server_rev = new_rev;
-            file.last_writer_device_id = Some(device_id.to_string());
-            file.updated_at = Utc::now();
-            Ok(file.clone())
-        }
-
-        async fn tombstone_file_conditional(
-            &self,
-            vault_id: Uuid,
-            relative_path: &str,
-            tenant_id: Uuid,
-            base_server_rev: i64,
-            new_rev: i64,
-            device_id: &str,
-        ) -> Result<bool, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            let file = files
-                .get_mut(&(vault_id, relative_path.to_string()))
-                .ok_or_else(|| VaultSyncError::FileNotFound(relative_path.to_string()))?;
-            if file.tenant_id != tenant_id {
-                return Err(VaultSyncError::FileNotFound(relative_path.to_string()));
-            }
-            if file.server_rev != base_server_rev || file.deleted {
-                return Ok(false);
-            }
-            file.deleted = true;
-            file.deleted_at = Some(Utc::now());
-            file.server_rev = new_rev;
-            file.last_writer_device_id = Some(device_id.to_string());
-            file.updated_at = Utc::now();
-            Ok(true)
         }
 
         async fn tombstone_file_conditional_atomic(
@@ -911,67 +805,6 @@ mod tests {
             file.last_writer_device_id = Some(device_id.to_string());
             file.updated_at = Utc::now();
             Ok(Some(file.clone()))
-        }
-
-        async fn rename_file(
-            &self,
-            vault_id: Uuid,
-            old_path: &str,
-            new_path: &str,
-            tenant_id: Uuid,
-            new_rev: i64,
-            device_id: &str,
-        ) -> Result<VaultFile, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            let file = files
-                .remove(&(vault_id, old_path.to_string()))
-                .ok_or_else(|| VaultSyncError::FileNotFound(old_path.to_string()))?;
-            if file.tenant_id != tenant_id {
-                return Err(VaultSyncError::FileNotFound(old_path.to_string()));
-            }
-            let mut new_file = file;
-            new_file.relative_path = new_path.to_string();
-            new_file.server_rev = new_rev;
-            new_file.last_writer_device_id = Some(device_id.to_string());
-            new_file.updated_at = Utc::now();
-            files.insert((vault_id, new_path.to_string()), new_file.clone());
-            Ok(new_file)
-        }
-
-        async fn rename_file_conditional(
-            &self,
-            vault_id: Uuid,
-            old_path: &str,
-            new_path: &str,
-            tenant_id: Uuid,
-            base_server_rev: i64,
-            new_rev: i64,
-            device_id: &str,
-        ) -> Result<bool, VaultSyncError> {
-            let mut files = self.files.lock().await;
-            if files.contains_key(&(vault_id, new_path.to_string())) {
-                let dest = files.get(&(vault_id, new_path.to_string())).unwrap();
-                if !dest.deleted {
-                    return Err(VaultSyncError::FileAlreadyExists(new_path.to_string()));
-                }
-            }
-            let file = files
-                .get_mut(&(vault_id, old_path.to_string()))
-                .ok_or_else(|| VaultSyncError::FileNotFound(old_path.to_string()))?;
-            if file.tenant_id != tenant_id {
-                return Err(VaultSyncError::FileNotFound(old_path.to_string()));
-            }
-            if file.server_rev != base_server_rev || file.deleted {
-                return Ok(false);
-            }
-            let mut new_file = file.clone();
-            new_file.relative_path = new_path.to_string();
-            new_file.server_rev = new_rev;
-            new_file.last_writer_device_id = Some(device_id.to_string());
-            new_file.updated_at = Utc::now();
-            files.remove(&(vault_id, old_path.to_string()));
-            files.insert((vault_id, new_path.to_string()), new_file);
-            Ok(true)
         }
 
         async fn rename_file_conditional_atomic(

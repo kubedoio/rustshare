@@ -25,13 +25,6 @@ pub trait VaultStore: Send + Sync {
         owner_id: Uuid,
     ) -> Result<Vec<Vault>, VaultSyncError>;
 
-    /// Atomically increment the server revision of a vault.
-    async fn increment_vault_rev(
-        &self,
-        vault_id: Uuid,
-        tenant_id: Uuid,
-    ) -> Result<i64, VaultSyncError>;
-
     /// Get a file by vault ID and relative path.
     async fn get_file(
         &self,
@@ -48,19 +41,6 @@ pub trait VaultStore: Send + Sync {
         limit: Option<i64>,
     ) -> Result<Vec<VaultFile>, VaultSyncError>;
 
-    /// Upsert a file in a vault.
-    async fn upsert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError>;
-
-    /// Insert a new file in a vault (fails if file already exists).
-    async fn insert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError>;
-
-    /// Update an existing file ONLY if its current server_rev matches base_server_rev.
-    async fn update_file_conditional(
-        &self,
-        file: &VaultFile,
-        base_server_rev: i64,
-    ) -> Result<bool, VaultSyncError>;
-
     /// Atomically increment vault revision and update an existing file ONLY if
     /// its current server_rev matches base_server_rev.  Returns the updated
     /// file on success, or `None` if the revision did not match.
@@ -74,27 +54,6 @@ pub trait VaultStore: Send + Sync {
     /// Returns the inserted file on success.
     async fn insert_file_atomic(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError>;
 
-    /// Tombstone (soft-delete) a file in a vault.
-    async fn tombstone_file(
-        &self,
-        vault_id: Uuid,
-        relative_path: &str,
-        tenant_id: Uuid,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<VaultFile, VaultSyncError>;
-
-    /// Tombstone a file ONLY if its current server_rev matches base_server_rev.
-    async fn tombstone_file_conditional(
-        &self,
-        vault_id: Uuid,
-        relative_path: &str,
-        tenant_id: Uuid,
-        base_server_rev: i64,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<bool, VaultSyncError>;
-
     /// Atomically increment vault revision and tombstone a file ONLY if its
     /// current server_rev matches base_server_rev.  Returns the updated file
     /// on success, or `None` if the revision did not match.
@@ -106,29 +65,6 @@ pub trait VaultStore: Send + Sync {
         base_server_rev: i64,
         device_id: &str,
     ) -> Result<Option<VaultFile>, VaultSyncError>;
-
-    /// Rename a file within a vault.
-    async fn rename_file(
-        &self,
-        vault_id: Uuid,
-        old_path: &str,
-        new_path: &str,
-        tenant_id: Uuid,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<VaultFile, VaultSyncError>;
-
-    /// Rename a file ONLY if its current server_rev matches base_server_rev.
-    async fn rename_file_conditional(
-        &self,
-        vault_id: Uuid,
-        old_path: &str,
-        new_path: &str,
-        tenant_id: Uuid,
-        base_server_rev: i64,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<bool, VaultSyncError>;
 
     /// Atomically increment vault revision and rename a file ONLY if its
     /// current server_rev matches base_server_rev.  Returns the updated file

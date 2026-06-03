@@ -407,19 +407,6 @@ impl VaultStore for MetadataStore {
             .map_err(|e| VaultSyncError::Database(e.to_string()))
     }
 
-    async fn increment_vault_rev(
-        &self,
-        vault_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> Result<i64, VaultSyncError> {
-        self.increment_vault_rev(vault_id, tenant_id)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => VaultSyncError::VaultNotFound(vault_id),
-                _ => VaultSyncError::Database(e.to_string()),
-            })
-    }
-
     async fn get_file(
         &self,
         vault_id: uuid::Uuid,
@@ -443,18 +430,6 @@ impl VaultStore for MetadataStore {
             .map_err(|e| VaultSyncError::Database(e.to_string()))
     }
 
-    async fn upsert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
-        self.upsert_vault_file(file)
-            .await
-            .map_err(|e| VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn insert_file(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
-        self.insert_vault_file(file)
-            .await
-            .map_err(|e| VaultSyncError::Database(e.to_string()))
-    }
-
     async fn insert_file_atomic(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError> {
         self.insert_vault_file_atomic(file)
             .await
@@ -462,16 +437,6 @@ impl VaultStore for MetadataStore {
                 sqlx::Error::RowNotFound => VaultSyncError::VaultNotFound(file.vault_id),
                 _ => VaultSyncError::Database(e.to_string()),
             })
-    }
-
-    async fn update_file_conditional(
-        &self,
-        file: &VaultFile,
-        base_server_rev: i64,
-    ) -> Result<bool, VaultSyncError> {
-        self.update_vault_file_conditional(file, base_server_rev)
-            .await
-            .map_err(|e| VaultSyncError::Database(e.to_string()))
     }
 
     async fn update_file_conditional_atomic(
@@ -485,53 +450,6 @@ impl VaultStore for MetadataStore {
                 sqlx::Error::RowNotFound => VaultSyncError::VaultNotFound(file.vault_id),
                 _ => VaultSyncError::Database(e.to_string()),
             })
-    }
-
-    async fn tombstone_file(
-        &self,
-        vault_id: uuid::Uuid,
-        relative_path: &str,
-        tenant_id: uuid::Uuid,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<VaultFile, VaultSyncError> {
-        self.tombstone_vault_file(vault_id, relative_path, tenant_id, new_rev, device_id)
-            .await
-            .map_err(|e| {
-                if let Some(err) = e.downcast_ref::<VaultFileStoreError>() {
-                    match err {
-                        VaultFileStoreError::NotFound => {
-                            VaultSyncError::FileNotFound(relative_path.to_string())
-                        }
-                        VaultFileStoreError::DestinationExists => {
-                            VaultSyncError::FileAlreadyExists(relative_path.to_string())
-                        }
-                    }
-                } else {
-                    VaultSyncError::Database(e.to_string())
-                }
-            })
-    }
-
-    async fn tombstone_file_conditional(
-        &self,
-        vault_id: uuid::Uuid,
-        relative_path: &str,
-        tenant_id: uuid::Uuid,
-        base_server_rev: i64,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<bool, VaultSyncError> {
-        self.tombstone_vault_file_conditional(
-            vault_id,
-            relative_path,
-            tenant_id,
-            base_server_rev,
-            new_rev,
-            device_id,
-        )
-        .await
-        .map_err(|e| VaultSyncError::Database(e.to_string()))
     }
 
     async fn tombstone_file_conditional_atomic(
@@ -553,69 +471,6 @@ impl VaultStore for MetadataStore {
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => VaultSyncError::VaultNotFound(vault_id),
             _ => VaultSyncError::Database(e.to_string()),
-        })
-    }
-
-    async fn rename_file(
-        &self,
-        vault_id: uuid::Uuid,
-        old_path: &str,
-        new_path: &str,
-        tenant_id: uuid::Uuid,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<VaultFile, VaultSyncError> {
-        self.rename_vault_file(vault_id, old_path, new_path, tenant_id, new_rev, device_id)
-            .await
-            .map_err(|e| {
-                if let Some(err) = e.downcast_ref::<VaultFileStoreError>() {
-                    match err {
-                        VaultFileStoreError::NotFound => {
-                            VaultSyncError::FileNotFound(old_path.to_string())
-                        }
-                        VaultFileStoreError::DestinationExists => {
-                            VaultSyncError::FileAlreadyExists(new_path.to_string())
-                        }
-                    }
-                } else {
-                    VaultSyncError::Database(e.to_string())
-                }
-            })
-    }
-
-    async fn rename_file_conditional(
-        &self,
-        vault_id: uuid::Uuid,
-        old_path: &str,
-        new_path: &str,
-        tenant_id: uuid::Uuid,
-        base_server_rev: i64,
-        new_rev: i64,
-        device_id: &str,
-    ) -> Result<bool, VaultSyncError> {
-        self.rename_vault_file_conditional(
-            vault_id,
-            old_path,
-            new_path,
-            tenant_id,
-            base_server_rev,
-            new_rev,
-            device_id,
-        )
-        .await
-        .map_err(|e| {
-            if let Some(err) = e.downcast_ref::<VaultFileStoreError>() {
-                match err {
-                    VaultFileStoreError::NotFound => {
-                        VaultSyncError::FileNotFound(old_path.to_string())
-                    }
-                    VaultFileStoreError::DestinationExists => {
-                        VaultSyncError::FileAlreadyExists(new_path.to_string())
-                    }
-                }
-            } else {
-                VaultSyncError::Database(e.to_string())
-            }
         })
     }
 
