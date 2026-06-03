@@ -1,0 +1,106 @@
+name: Vault Sync Compliance
+
+on:
+  push:
+    branches: [main, support-third-party-vault-v1]
+    paths:
+      - 'apps/obsidian-vault-sync/**'
+      - 'frontend/**'
+      - 'docs/**'
+      - 'backend/**'
+      - '.github/workflows/vault-sync-compliance.yml'
+  pull_request:
+    branches: [main, support-third-party-vault-v1]
+    paths:
+      - 'apps/obsidian-vault-sync/**'
+      - 'frontend/**'
+      - 'docs/**'
+      - 'backend/**'
+      - '.github/workflows/vault-sync-compliance.yml'
+
+jobs:
+  terminology-scan:
+    name: Terminology & Trademark Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Scan for forbidden terms
+        run: |
+          set +e
+          RESULT=$(rg -n "Obsidian Sync replacement|Obsidian Sync alternative|Obsidian Cloud|RustShare Obsidian Cloud|Obsidian-compatible cloud|Official Obsidian integration|Official Obsidian plugin|Official Obsidian sync|Obsidian-approved|Obsidian-certified|Powered by Obsidian|Better than Obsidian Sync|Drop-in replacement for Obsidian Sync|Enterprise Obsidian Sync|Obsidian team sync" \
+            --glob '!docs/adr/0027-*' \
+            --glob '!docs/specs/naming-framing-compliance.md' \
+            --glob '!docs/checklists/vault-sync-terminology-blocklist.md' \
+            --glob '!docs/implementation/vault-sync-prompts/**' \
+            --glob '!docs/plans/*vault-sync*' \
+            --glob '!docs/rustshare-vault-sync-obsidian-docs/**' \
+            --glob '!**/node_modules/**' \
+            --glob '!**/target/**' \
+            --glob '!backend/.sqlx/**' \
+            --glob '!frontend/build/**' \
+            --glob '!frontend/.svelte-kit/**' \
+            --glob '!rustshare_public_preview_handover/**' \
+            || true)
+
+          if [ -n "$RESULT" ]; then
+            echo "❌ Forbidden terminology detected:"
+            echo "$RESULT"
+            exit 1
+          else
+            echo "✅ No forbidden terminology detected."
+          fi
+
+      - name: Verify disclaimer in plugin source files
+        run: |
+          MISSING=0
+          for f in $(find apps/obsidian-vault-sync/src -name '*.ts'); do
+            if ! grep -q "Obsidian is a trademark of Dynalist Inc" "$f"; then
+              echo "Missing disclaimer: $f"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "❌ Some plugin source files are missing the trademark disclaimer."
+            exit 1
+          else
+            echo "✅ All plugin source files contain the trademark disclaimer."
+          fi
+
+      - name: Verify disclaimer in plugin manifest
+        run: |
+          if [ -f "apps/obsidian-vault-sync/manifest.json" ]; then
+            if grep -q "Obsidian is a trademark of Dynalist Inc" "apps/obsidian-vault-sync/manifest.json"; then
+              echo "✅ Plugin manifest contains disclaimer."
+            else
+              echo "⚠️ Plugin manifest does not contain disclaimer (optional but recommended)."
+            fi
+          fi
+
+  plugin-tests:
+    name: Plugin Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/obsidian-vault-sync/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/obsidian-vault-sync
+        run: npm ci
+
+      - name: Run tests
+        working-directory: apps/obsidian-vault-sync
+        run: npm test
+
+      - name: Build plugin
+        working-directory: apps/obsidian-vault-sync
+        run: npm run build

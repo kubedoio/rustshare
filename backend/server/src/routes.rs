@@ -1025,6 +1025,58 @@ pub fn public_share_routes() -> Router<AppState> {
         )
 }
 
+/// Vault sync routes.
+///
+/// Rate limiting is applied globally in `main.rs` via `rate_limit_middleware`,
+/// which classifies these endpoints as `VaultSyncRead`, `VaultSyncWrite`, or
+/// `VaultSyncUpload` based on method and path.
+pub fn vault_sync_routes() -> Router<AppState> {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::{delete, get, post, put};
+    Router::new()
+        .route(
+            "/api/vault-sync/v1/vaults",
+            post(crate::handlers::vault_sync::create_vault),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults",
+            get(crate::handlers::vault_sync::list_vaults),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}",
+            get(crate::handlers::vault_sync::get_vault),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/manifest",
+            get(crate::handlers::vault_sync::get_manifest),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            get(crate::handlers::vault_sync::download_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            put(crate::handlers::vault_sync::upload_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            delete(crate::handlers::vault_sync::delete_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/rename",
+            post(crate::handlers::vault_sync::rename_file),
+        )
+        .route(
+            "/api/vault-sync/v1/devices/register",
+            post(crate::handlers::vault_sync::register_device),
+        )
+        .route(
+            "/api/vault-sync/v1/devices/{device_id}",
+            delete(crate::handlers::vault_sync::revoke_device),
+        )
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+}
+
 pub fn sync_routes() -> Router<AppState> {
     use axum::routing::get;
     Router::new()

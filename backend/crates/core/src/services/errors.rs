@@ -105,6 +105,66 @@ pub enum FolderError {
     Database(String),
 }
 
+/// Errors that can occur during vault sync operations.
+#[derive(Debug, Error)]
+pub enum VaultSyncError {
+    /// Vault with the given ID was not found.
+    #[error("Vault not found: {0}")]
+    VaultNotFound(uuid::Uuid),
+
+    /// File with the given path was not found in the vault.
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+
+    /// Conflict during optimistic revision locking.
+    #[error("Conflict: client revision {client_rev}, current revision {current_rev}")]
+    Conflict {
+        client_rev: i64,
+        current_rev: i64,
+        server_sha256: Option<String>,
+    },
+
+    /// Tombstone conflict: file was deleted on the server.
+    #[error("Tombstone conflict")]
+    TombstoneConflict,
+
+    /// The provided path is invalid.
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+
+    /// Device with the given ID was not found.
+    #[error("Device not found: {0}")]
+    DeviceNotFound(String),
+
+    /// Device has been revoked.
+    #[error("Device revoked")]
+    DeviceRevoked,
+
+    /// User lacks permission for this vault operation.
+    #[error("Unauthorized")]
+    Unauthorized,
+
+    /// A vault with this name already exists.
+    #[error("Vault already exists: {0}")]
+    VaultAlreadyExists(String),
+
+    /// A file with this path already exists.
+    #[error("File already exists: {0}")]
+    FileAlreadyExists(String),
+
+    /// Vault name is invalid (e.g., empty, contains illegal characters, or too long).
+    #[error("Invalid vault name: {0}")]
+    InvalidName(String),
+
+    /// Database operation failed.
+    #[error("Database error: {0}")]
+    Database(String),
+
+    /// Storage operation failed.
+    #[error("Storage error: {0}")]
+    Storage(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,4 +314,63 @@ mod tests {
     // Note: Database error tests removed as they require sqlx::Error which cannot
     // be easily constructed in unit tests. The #[from] attribute ensures proper
     // automatic conversion from sqlx::Error to FolderError::Database.
+
+    #[test]
+    fn test_vault_sync_error_vault_not_found() {
+        let id = Uuid::new_v4();
+        let err = VaultSyncError::VaultNotFound(id);
+        assert_eq!(err.to_string(), format!("Vault not found: {}", id));
+    }
+
+    #[test]
+    fn test_vault_sync_error_conflict() {
+        let err = VaultSyncError::Conflict {
+            client_rev: 5,
+            current_rev: 10,
+            server_sha256: Some("abc123".to_string()),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Conflict"));
+        assert!(msg.contains("client revision 5"));
+        assert!(msg.contains("current revision 10"));
+    }
+
+    #[test]
+    fn test_vault_sync_error_tombstone_conflict() {
+        let err = VaultSyncError::TombstoneConflict;
+        assert_eq!(err.to_string(), "Tombstone conflict");
+    }
+
+    #[test]
+    fn test_vault_sync_error_invalid_path() {
+        let path = "../escape";
+        let err = VaultSyncError::InvalidPath(path.to_string());
+        assert_eq!(err.to_string(), format!("Invalid path: {}", path));
+    }
+
+    #[test]
+    fn test_vault_sync_error_device_revoked() {
+        let err = VaultSyncError::DeviceRevoked;
+        assert_eq!(err.to_string(), "Device revoked");
+    }
+
+    #[test]
+    fn test_vault_sync_error_unauthorized() {
+        let err = VaultSyncError::Unauthorized;
+        assert_eq!(err.to_string(), "Unauthorized");
+    }
+
+    #[test]
+    fn test_vault_sync_error_vault_already_exists() {
+        let name = "MyVault";
+        let err = VaultSyncError::VaultAlreadyExists(name.to_string());
+        assert_eq!(err.to_string(), format!("Vault already exists: {}", name));
+    }
+
+    #[test]
+    fn test_vault_sync_error_file_already_exists() {
+        let path = "notes/hello.md";
+        let err = VaultSyncError::FileAlreadyExists(path.to_string());
+        assert_eq!(err.to_string(), format!("File already exists: {}", path));
+    }
 }

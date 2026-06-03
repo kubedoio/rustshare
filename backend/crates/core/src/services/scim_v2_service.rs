@@ -1344,6 +1344,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
 /// Generate a temporary password hash for SCIM-provisioned users.
 #[cfg(test)]
+#[allow(dead_code)]
 fn generate_temporary_password_hash() -> String {
     use rand::Rng;
     let mut rng = rand::rng();

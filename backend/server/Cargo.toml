@@ -149,6 +149,10 @@ path = "../tests/file_operations.rs"
 name = "module_service_test"
 path = "../tests/module_service_test.rs"
 
+[[test]]
+name = "vault_sync_http_test"
+path = "../tests/vault_sync_http_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }

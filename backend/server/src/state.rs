@@ -102,6 +102,8 @@ pub struct ServiceState {
     pub kanban_service: Arc<services::kanban_service::KanbanService>,
     pub brainstorming_service: Arc<services::brainstorming_service::BrainstormingService>,
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
+    pub vault_sync_service:
+        Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
 }
 
 /// Application configuration and runtime state.
@@ -183,6 +185,8 @@ pub struct AppState {
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
     pub public_base_url: String,
     pub collab_rooms: Arc<CollabRooms>,
+    pub vault_sync_service:
+        Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
 }
 
 impl FromRef<AppState> for DatabaseState {
@@ -217,6 +221,7 @@ impl FromRef<AppState> for ServiceState {
             kanban_service: state.kanban_service.clone(),
             brainstorming_service: state.brainstorming_service.clone(),
             user_repository: state.user_repository.clone(),
+            vault_sync_service: state.vault_sync_service.clone(),
         }
     }
 }

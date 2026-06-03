@@ -3,10 +3,12 @@
 //! Provides utilities for setting up test tenants, users, files, folders, and shares.
 
 use bytes::Bytes;
-use rustshare_core::domain::{File, Folder, Share, SharePermissions, User};
+use rustshare_core::domain::{
+    CreateVaultRequest, File, Folder, Share, SharePermissions, User, Vault, VaultAdapter,
+};
 use rustshare_core::services::PermissionResolver;
 use rustshare_core::services::{
-    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService,
+    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService, VaultSyncService,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::note_service::NoteService;
@@ -89,6 +91,29 @@ impl TestContext {
             self.metadata_store.clone(),
             self.object_store.clone(),
         )
+    }
+
+    /// Create a new VaultSyncService instance
+    pub fn vault_sync_service(&self) -> VaultSyncService<MetadataStore, ObjectStore> {
+        VaultSyncService::new(self.metadata_store.clone(), self.object_store.clone())
+    }
+
+    /// Create a test vault
+    pub async fn create_test_vault(&self, name: &str, owner_id: Uuid, tenant_id: Uuid) -> Vault {
+        let service = self.vault_sync_service();
+        service
+            .create_vault(
+                CreateVaultRequest {
+                    name: name.to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "test-device".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap()
     }
 }
 

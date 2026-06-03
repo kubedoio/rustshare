@@ -94,13 +94,24 @@ export function renderMarkdown(markdown: string): string {
 		'<code class="bg-base-300 px-1 rounded text-sm">$1</code>'
 	);
 
-	// 12. Links
+	// 12. Wikilinks (Obsidian-style) — render as plain text since vaultId is unavailable here
+	rawHtml = rawHtml.replace(/!\[\[([^\]|]+)\]\]/g, (_, path: string) => {
+		return `<span class="wikilink-missing">[image: ${path.trim()}]</span>`;
+	});
+	rawHtml = rawHtml.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_, path: string, display: string) => {
+		return `<span class="wikilink-text">${display.trim()}</span>`;
+	});
+	rawHtml = rawHtml.replace(/\[\[([^\]|]+)\]\]/g, (_, path: string) => {
+		return `<span class="wikilink-text">${path.trim()}</span>`;
+	});
+
+	// 13. Links
 	rawHtml = rawHtml.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text: string, url: string) => {
 		const safeUrl = url.replace(/^javascript:/i, '#');
 		return `<a href="${safeUrl}" class="text-primary hover:underline" target="_blank" rel="noopener noreferrer">${text}</a>`;
 	});
 
-	// 13. Images
+	// 14. Images
 	rawHtml = rawHtml.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt: string, url: string) => {
 		const safeUrl = url.replace(/^javascript:/i, '#');
 		return `<img src="${safeUrl}" alt="${alt}" class="max-w-full rounded-lg my-2" />`;

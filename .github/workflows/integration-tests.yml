@@ -6,12 +6,14 @@ on:
     paths:
       - 'backend/**'
       - 'crates/**'
+      - 'apps/obsidian-vault-sync/**'
       - '.github/workflows/integration-tests.yml'
   push:
     branches: [main]
     paths:
       - 'backend/**'
       - 'crates/**'
+      - 'apps/obsidian-vault-sync/**'
       - '.github/workflows/integration-tests.yml'
   workflow_dispatch:
 
@@ -74,7 +76,7 @@ jobs:
             -e RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS=true \
             -e RUSTFS_DATA_DIR=/data \
             -e RUSTFS_LOGS_DIR=/logs \
-            rustfs/rustfs:latest
+            rustfs/rustfs:1.0.0-beta.6
 
       - name: Wait for RustFS to be ready
         run: |
@@ -94,15 +96,22 @@ jobs:
           docker run --rm --network host \
             -e AWS_ACCESS_KEY_ID=rustfsadmin \
             -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
-            amazon/aws-cli \
+            amazon/aws-cli:2.34.59 \
             --endpoint-url http://127.0.0.1:9000 \
-            s3 mb s3://rustshare-files 2>&1 | grep -v "BucketAlreadyOwnedByYou" || true
+            s3 mb s3://rustshare-files 2>&1 | tee /tmp/bucket-create.log || true
+          if grep -q "BucketAlreadyOwnedByYou" /tmp/bucket-create.log; then
+            echo "Bucket already exists, continuing..."
+          elif [ -s /tmp/bucket-create.log ]; then
+            echo "Bucket creation failed:"
+            cat /tmp/bucket-create.log
+            exit 1
+          fi
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --features postgres
+        run: cargo install sqlx-cli --features postgres --locked
 
       - name: Run migrations
         run: cd backend && sqlx migrate run
 
-      - name: Run integration and contract tests
+      - name: Run all integration tests
         run: cd backend && cargo test --all-features -- --ignored

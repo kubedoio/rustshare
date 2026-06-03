@@ -84,7 +84,7 @@
 	</div>
 {:else}
 	<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-		{#each folders as folder}
+		{#each folders as folder (folder.id)}
 			<FileListItem
 				item={folder}
 				isFolder={true}
@@ -98,7 +98,7 @@
 			/>
 		{/each}
 
-		{#each files as file}
+		{#each files as file (file.id)}
 			<FileListItem
 				item={file}
 				isFolder={false}

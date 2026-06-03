@@ -18,6 +18,8 @@ mod upload_service;
 pub mod upload_session;
 #[allow(deprecated)]
 mod user_share_service;
+mod vault_service;
+mod vault_sync_service;
 
 pub use ai::{
     ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument, SimpleEmbeddingGenerator,
@@ -26,7 +28,7 @@ pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,
 };
 pub use email_service::{EmailError, EmailService};
-pub use errors::{FileError, FolderError};
+pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,
     MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
@@ -70,3 +72,5 @@ pub use upload_session::{
 pub use user_share_service::{
     FileOps, FolderOps, ShareOps, UserOps, UserShareService, UserShareServiceDeps,
 };
+pub use vault_service::VaultStore;
+pub use vault_sync_service::VaultSyncService;

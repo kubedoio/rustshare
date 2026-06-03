@@ -5,3 +5,4 @@
 //! contract test suites (which use `crate::common` paths).
 
 pub mod common;
+pub mod vault_sync_contract;
