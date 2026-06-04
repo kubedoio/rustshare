@@ -209,7 +209,7 @@ export async function editFile(
 }
 
 export async function getFileContent(fileId: string): Promise<string> {
-	return apiClient.requestText(`/api/v1/files/${fileId}/content`);
+	return apiClient.requestText(`/files/${fileId}/content`);
 }
 
 // Trash operations

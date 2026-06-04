@@ -9,6 +9,34 @@ export class ApiClient {
 		return this.baseURL;
 	}
 
+	private buildURL(endpoint: string): string {
+		if (/^https?:\/\//i.test(endpoint)) {
+			return endpoint;
+		}
+
+		const normalizedBase = this.baseURL.replace(/\/$/, '');
+		const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+		if (normalizedEndpoint === normalizedBase || normalizedEndpoint.startsWith(`${normalizedBase}/`)) {
+			return normalizedEndpoint;
+		}
+
+		try {
+			const base = new URL(normalizedBase);
+			if (
+				base.pathname !== '/' &&
+				(normalizedEndpoint === base.pathname ||
+					normalizedEndpoint.startsWith(`${base.pathname.replace(/\/$/, '')}/`))
+			) {
+				return `${base.origin}${normalizedEndpoint}`;
+			}
+		} catch {
+			// Relative base URLs are handled by string concatenation below.
+		}
+
+		return `${normalizedBase}${normalizedEndpoint}`;
+	}
+
 	private async executeFetch(endpoint: string, options?: RequestInit): Promise<Response> {
 		const method = (options?.method || 'GET').toUpperCase();
 		const headers: Record<string, string> = {
@@ -35,7 +63,7 @@ export class ApiClient {
 			}
 		}
 
-		const response = await fetch(`${this.baseURL}${endpoint}`, {
+		const response = await fetch(this.buildURL(endpoint), {
 			...options,
 			headers,
 			credentials: 'include'
