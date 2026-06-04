@@ -18,10 +18,7 @@ describe('ApiClient URL construction', () => {
 
 		await client.get('/files');
 
-		expect(fetch).toHaveBeenCalledWith(
-			'/api/v1/files',
-			expect.objectContaining({ method: 'GET' })
-		);
+		expect(fetch).toHaveBeenCalledWith('/api/v1/files', expect.objectContaining({ method: 'GET' }));
 	});
 
 	it('does not duplicate a relative API base URL for already-prefixed endpoints', async () => {
