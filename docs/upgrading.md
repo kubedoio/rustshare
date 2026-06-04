@@ -184,7 +184,7 @@ If an upgrade fails or causes unexpected behavior:
 
 | Version | Breaking Change | Migration Path |
 |---------|-----------------|----------------|
-| 0.3.0 | No known breaking changes. | Follow the general upgrade steps and verify the deployment health check after restart. |
+| 0.4.0 | No known breaking changes. | Follow the general upgrade steps and verify the deployment health check after restart. |
 | — | — | — |
 
 ---
@@ -195,5 +195,5 @@ If an upgrade fails or causes unexpected behavior:
 
 | Version | Change | Details |
 |---------|--------|---------|
-| 0.3.0 | No changes. | No new, removed, or renamed environment variables are required for this release. |
+| 0.4.0 | No changes. | No new, removed, or renamed environment variables are required for this release. |
 | — | — | — |
