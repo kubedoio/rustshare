@@ -51,7 +51,11 @@
 	} from '$lib/api/folders';
 	import { listReceivedShares } from '$lib/api/shares';
 	import type { ReceivedShare } from '$lib/api/types';
-	import { extractFolderPaths, sortFolderPaths } from '$lib/utils/directoryUpload';
+	import {
+		extractFolderPaths,
+		sortFolderPaths,
+		type DirectoryUploadItem
+	} from '$lib/utils/directoryUpload';
 	import { queryClient } from '$lib/query-client';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileSortState, setSortField, setPageSize } from '$lib/stores/fileSort';
@@ -938,6 +942,9 @@
 
 		uploadTasks = [...uploadTasks, ...newTasks];
 
+		let successCount = 0;
+		let errorCount = 0;
+
 		for (let i = 0; i < files.length; i++) {
 			const taskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
 			if (taskIndex === -1) continue;
@@ -962,6 +969,7 @@
 					uploadTasks[finalTaskIndex].progress = 100;
 					uploadTasks = [...uploadTasks];
 				}
+				successCount++;
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
 				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
@@ -970,15 +978,13 @@
 					uploadTasks[errorTaskIndex].error = errorMessage;
 					uploadTasks = [...uploadTasks];
 				}
+				errorCount++;
 			}
 		}
 
-		const successCount = uploadTasks.filter((t) => t.status === 'success').length;
-		const errorCount = uploadTasks.filter((t) => t.status === 'error').length;
-
 		if (errorCount === 0) {
 			if (successCount === 1) {
-				const uploadedFile = uploadTasks.find((t) => t.status === 'success');
+				const uploadedFile = uploadTasks.find((t) => t.id === newTasks[0].id);
 				const filename = uploadedFile ? uploadedFile.fileName : '';
 				showNotification(`${truncateFilename(filename)} uploaded`, 'success');
 			} else {
@@ -994,14 +1000,10 @@
 		uploadTargetFolderId = null;
 	}
 
-	async function handleDirectoryUpload(files: globalThis.File[]) {
-		if (!canUpload || files.length === 0) return;
+	async function handleDirectoryUpload(items: DirectoryUploadItem[]) {
+		if (!canUpload || items.length === 0) return;
 
-		const items = files.map((file) => ({
-			file,
-			relativePath:
-				(file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-		}));
+		const baseFolderId = uploadTargetFolderId ?? currentFolderId;
 
 		const folderPaths = extractFolderPaths(items);
 		const sortedPaths = sortFolderPaths(folderPaths);
@@ -1017,7 +1019,11 @@
 			}
 
 			const folderName = path.slice(path.lastIndexOf('/') + 1);
-			const parentId = parentPath ? (folderIdMap.get(parentPath) ?? null) : currentFolderId;
+			if (parentPath && !folderIdMap.has(parentPath)) {
+				failedFolderPaths.add(path);
+				continue;
+			}
+			const parentId = parentPath ? folderIdMap.get(parentPath)! : baseFolderId;
 
 			try {
 				const contents = await getFolderContents(parentId);
@@ -1040,9 +1046,7 @@
 		}
 
 		const filesToUpload: { file: globalThis.File; parentFolderId: string | null }[] = [];
-		for (const file of files) {
-			const relativePath =
-				(file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+		for (const { file, relativePath } of items) {
 			const lastSlash = relativePath.lastIndexOf('/');
 
 			if (lastSlash > 0) {
@@ -1051,7 +1055,7 @@
 				const parentId = folderIdMap.get(folderPath) ?? null;
 				filesToUpload.push({ file, parentFolderId: parentId });
 			} else {
-				filesToUpload.push({ file, parentFolderId: currentFolderId });
+				filesToUpload.push({ file, parentFolderId: baseFolderId });
 			}
 		}
 
@@ -1069,6 +1073,9 @@
 		}));
 
 		uploadTasks = [...uploadTasks, ...newTasks];
+
+		let successCount = 0;
+		let errorCount = 0;
 
 		for (let i = 0; i < filesToUpload.length; i++) {
 			const { file, parentFolderId } = filesToUpload[i];
@@ -1096,6 +1103,7 @@
 					uploadTasks[finalTaskIndex].progress = 100;
 					uploadTasks = [...uploadTasks];
 				}
+				successCount++;
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
 				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
@@ -1104,11 +1112,9 @@
 					uploadTasks[errorTaskIndex].error = errorMessage;
 					uploadTasks = [...uploadTasks];
 				}
+				errorCount++;
 			}
 		}
-
-		const successCount = newTasks.filter((t) => t.status === 'success').length;
-		const errorCount = newTasks.filter((t) => t.status === 'error').length;
 
 		if (errorCount === 0) {
 			showNotification(`${successCount} item(s) uploaded`, 'success');
@@ -1121,6 +1127,7 @@
 		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 		queryClient.invalidateQueries({ queryKey: ['folder-tree'] });
 		queryClient.invalidateQueries({ queryKey: ['all-files'] });
+		uploadTargetFolderId = null;
 	}
 
 	function handleCloseProgress() {
@@ -1662,7 +1669,14 @@
 				(f) => (f as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath
 			);
 			if (isDirectory) {
-				handleDirectoryUpload(files);
+				handleDirectoryUpload(
+					files.map((file) => ({
+						file,
+						relativePath:
+							(file as globalThis.File & { webkitRelativePath?: string }).webkitRelativePath ||
+							file.name
+					}))
+				);
 			} else {
 				handleFilesSelected(files);
 			}
