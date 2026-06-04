@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use rand::{distr::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 use rustshare_core::domain::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

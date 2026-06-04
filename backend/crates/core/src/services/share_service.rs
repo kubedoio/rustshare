@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 use uuid::Uuid;
 

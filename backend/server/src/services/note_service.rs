@@ -1679,7 +1679,7 @@ fn extract_h1_title(content: &str) -> Option<String> {
 }
 
 fn generate_share_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
     (0..32)

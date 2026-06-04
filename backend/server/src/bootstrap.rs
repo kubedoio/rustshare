@@ -5,7 +5,7 @@ use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
 use anyhow::Result;
-use rand::Rng;
+use rand::RngExt;
 use rustshare_auth::{JwtManager, PasswordHasher};
 #[allow(deprecated)]
 use rustshare_core::{
