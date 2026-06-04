@@ -277,7 +277,11 @@ pub async fn ensure_optional_seed_user(
         return Ok(());
     }
 
-    if metadata_store.find_user_by_username(&username).await?.is_some() {
+    if metadata_store
+        .find_user_by_username(&username)
+        .await?
+        .is_some()
+    {
         tracing::warn!(
             username = %username,
             email = %email,
