@@ -22,7 +22,8 @@
 		Minus,
 		Table,
 		Paperclip,
-		MoreHorizontal
+		Undo2,
+		Redo2
 	} from 'lucide-svelte';
 	import { createEventDispatcher } from 'svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -56,13 +57,13 @@
 		return editor.isActive(name, attrs);
 	}
 
-	function can(command: string): boolean {
+	function canRun(command: 'undo' | 'redo'): boolean {
 		if (!editor || _tick < 0) return false;
 		try {
-			// Check if the command can be executed
-			return (editor.can() as Record<string, unknown>)[command] !== undefined;
+			const checker = editor.can() as unknown as Record<string, () => boolean>;
+			return checker[command]?.() ?? false;
 		} catch {
-			return true; // Assume available if check fails
+			return false;
 		}
 	}
 
@@ -101,6 +102,32 @@
 
 {#if editor}
 	<div class="editor-toolbar" role="toolbar" aria-label="Formatting toolbar">
+		<!-- History -->
+		<div class="toolbar-group">
+			<button
+				type="button"
+				class="toolbar-btn"
+				onclick={cmd((e) => e.chain().focus().undo().run())}
+				disabled={!canRun('undo')}
+				title="Undo"
+				aria-label="Undo"
+			>
+				<Undo2 size={16} />
+			</button>
+			<button
+				type="button"
+				class="toolbar-btn"
+				onclick={cmd((e) => e.chain().focus().redo().run())}
+				disabled={!canRun('redo')}
+				title="Redo"
+				aria-label="Redo"
+			>
+				<Redo2 size={16} />
+			</button>
+		</div>
+
+		<div class="toolbar-divider"></div>
+
 		<!-- Headings -->
 		<div class="toolbar-group">
 			<button
@@ -327,10 +354,6 @@
 		margin: 0 0.25rem;
 	}
 
-	.toolbar-spacer {
-		flex: 1;
-	}
-
 	.toolbar-btn {
 		display: inline-flex;
 		align-items: center;
@@ -350,6 +373,15 @@
 		background: var(--color-base-300, #d1d5db);
 	}
 
+	.toolbar-btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.4;
+	}
+
+	.toolbar-btn:disabled:hover {
+		background: transparent;
+	}
+
 	.toolbar-btn.active {
 		background: var(--color-primary, #3b82f6);
 		color: var(--color-primary-content, #fff);
@@ -358,13 +390,5 @@
 	.toolbar-btn:focus-visible {
 		outline: 2px solid var(--color-primary, #3b82f6);
 		outline-offset: 1px;
-	}
-
-	.toolbar-btn-subtle {
-		opacity: 0.5;
-	}
-
-	.toolbar-btn-subtle:hover {
-		opacity: 1;
 	}
 </style>

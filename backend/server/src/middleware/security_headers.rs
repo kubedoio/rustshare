@@ -9,6 +9,7 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
         return next.run(request).await;
     }
 
+    let allows_same_origin_frame = is_file_preview_path(request.uri().path());
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
@@ -16,13 +17,24 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
-    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "x-frame-options",
+        HeaderValue::from_static(if allows_same_origin_frame {
+            "SAMEORIGIN"
+        } else {
+            "DENY"
+        }),
+    );
     headers.insert(
         "referrer-policy",
         HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
 
     response
+}
+
+fn is_file_preview_path(path: &str) -> bool {
+    path.starts_with("/api/v1/files/") && path.ends_with("/preview")
 }
 
 #[cfg(test)]
@@ -35,6 +47,7 @@ mod tests {
         Router::new()
             .route("/health", get(|| async { "ok" }))
             .route("/api/vault-sync/v1/vaults", get(|| async { "ok" }))
+            .route("/api/v1/files/123/preview", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn(security_headers_middleware))
     }
 
@@ -65,6 +78,24 @@ mod tests {
         let headers = response.headers();
         assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
         assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(
+            headers.get("referrer-policy").unwrap(),
+            "strict-origin-when-cross-origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_file_preview_allows_same_origin_frame() {
+        let app = test_app();
+        let request = Request::builder()
+            .uri("/api/v1/files/123/preview")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers();
+        assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+        assert_eq!(headers.get("x-frame-options").unwrap(), "SAMEORIGIN");
         assert_eq!(
             headers.get("referrer-policy").unwrap(),
             "strict-origin-when-cross-origin"

@@ -5,6 +5,7 @@
 	import { getMonacoLanguage } from '$lib/utils/editor';
 	import BaseEditor from './BaseEditor.svelte';
 	import { createEventDispatcher } from 'svelte';
+	import { Redo2, Undo2 } from 'lucide-svelte';
 
 	let {
 		open = false,
@@ -33,6 +34,8 @@
 	let monaco: typeof import('monaco-editor') | null = $state(null);
 	let editor: import('monaco-editor').editor.IStandaloneCodeEditor | null = $state(null);
 	let hasChanges = $state(false);
+	let canUndo = $state(false);
+	let canRedo = $state(false);
 
 	// Monaco editor options
 	const editorOptions: import('monaco-editor').editor.IStandaloneEditorConstructionOptions = {
@@ -79,8 +82,12 @@
 			if (editor) {
 				content = editor.getValue();
 				hasChanges = content !== originalContent;
+				updateHistoryState();
 			}
 		});
+
+		editor.onDidChangeCursorSelection(updateHistoryState);
+		updateHistoryState();
 
 		// Force layout after a small delay to ensure it fits the container
 		setTimeout(() => {
@@ -105,6 +112,7 @@
 			// Update editor if it exists
 			if (editor) {
 				editor.setValue(content);
+				updateHistoryState();
 			}
 		} catch (err) {
 			if (file?.id !== targetFileId) return;
@@ -140,6 +148,7 @@
 
 			originalContent = content;
 			hasChanges = false;
+			updateHistoryState();
 
 			dispatch('saved', { file });
 			onSaved?.({ file });
@@ -153,6 +162,33 @@
 	function handleClose() {
 		dispatch('close');
 		onClose?.();
+	}
+
+	function getUndoRedoModel() {
+		return editor?.getModel() as
+			| (import('monaco-editor').editor.ITextModel & {
+					canUndo?: () => boolean;
+					canRedo?: () => boolean;
+			  })
+			| null;
+	}
+
+	function updateHistoryState() {
+		const model = getUndoRedoModel();
+		canUndo = model?.canUndo?.() ?? false;
+		canRedo = model?.canRedo?.() ?? false;
+	}
+
+	function undo() {
+		if (!editor || !canUndo) return;
+		editor.trigger('toolbar', 'undo', null);
+		updateHistoryState();
+	}
+
+	function redo() {
+		if (!editor || !canRedo) return;
+		editor.trigger('toolbar', 'redo', null);
+		updateHistoryState();
 	}
 
 	// Initialize editor when modal opens
@@ -198,7 +234,35 @@
 	on:close={handleClose}
 	on:save={handleSave}
 >
-	<div bind:this={editorContainer} class="h-full w-full"></div>
+	<div class="flex h-full flex-col overflow-hidden">
+		<div
+			class="flex flex-wrap items-center gap-1 border-b border-base-300 bg-base-200 px-3 py-2"
+			role="toolbar"
+			aria-label="Text editor toolbar"
+		>
+			<button
+				type="button"
+				class="inline-flex items-center justify-center rounded-md p-1.5 text-base-content transition-colors hover:bg-base-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+				onclick={undo}
+				disabled={!canUndo}
+				title="Undo"
+				aria-label="Undo"
+			>
+				<Undo2 size={16} />
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center justify-center rounded-md p-1.5 text-base-content transition-colors hover:bg-base-300 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+				onclick={redo}
+				disabled={!canRedo}
+				title="Redo"
+				aria-label="Redo"
+			>
+				<Redo2 size={16} />
+			</button>
+		</div>
+		<div bind:this={editorContainer} class="min-h-0 flex-1"></div>
+	</div>
 </BaseEditor>
 
 <style>

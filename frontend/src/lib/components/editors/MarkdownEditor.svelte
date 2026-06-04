@@ -127,6 +127,9 @@
 				editable={true}
 				hasAttachmentHandler={false}
 				{currentMarkdown}
+				on:change={(event) => {
+					currentMarkdown = event.detail.markdown;
+				}}
 			/>
 		{/if}
 	</div>

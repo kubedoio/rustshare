@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { collectFilesFromDataTransfer } from '$lib/utils/directoryUpload';
+	import {
+		collectFilesFromDataTransfer,
+		type DirectoryUploadItem
+	} from '$lib/utils/directoryUpload';
 	import UploadOverlay from '$lib/explorer/UploadOverlay.svelte';
 
 	interface Props {
 		disabled?: boolean;
 		onFilesDropped?: (files: globalThis.File[]) => void;
-		onDirectoryDropped?: (files: globalThis.File[]) => void;
+		onDirectoryDropped?: (items: DirectoryUploadItem[]) => void;
 		children?: import('svelte').Snippet;
 	}
 
@@ -64,8 +67,7 @@
 		if (containsDirectories(event) && event.dataTransfer?.items) {
 			const items = await collectFilesFromDataTransfer(event.dataTransfer.items);
 			if (items.length > 0) {
-				const files = items.map((i) => i.file);
-				onDirectoryDropped(files);
+				onDirectoryDropped(items);
 			}
 			return;
 		}
