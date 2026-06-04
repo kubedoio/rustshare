@@ -277,6 +277,15 @@ pub async fn ensure_optional_seed_user(
         return Ok(());
     }
 
+    if metadata_store.find_user_by_username(&username).await?.is_some() {
+        tracing::warn!(
+            username = %username,
+            email = %email,
+            "Skipping optional seed user because username already exists with a different email"
+        );
+        return Ok(());
+    }
+
     let password_hash = PasswordHasher::hash(&password)?;
     let user = User::new(
         username.clone(),
