@@ -17,7 +17,10 @@ export class ApiClient {
 		const normalizedBase = this.baseURL.replace(/\/$/, '');
 		const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
-		if (normalizedEndpoint === normalizedBase || normalizedEndpoint.startsWith(`${normalizedBase}/`)) {
+		if (
+			normalizedEndpoint === normalizedBase ||
+			normalizedEndpoint.startsWith(`${normalizedBase}/`)
+		) {
 			return normalizedEndpoint;
 		}
 
