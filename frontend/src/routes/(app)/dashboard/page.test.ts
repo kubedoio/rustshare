@@ -307,13 +307,18 @@ describe('Dashboard Page Workspace Surface', () => {
 		vi.clearAllMocks();
 	});
 
-	it('renders the dashboard widget grid', async () => {
+	it('renders the approved overview surfaces without module cards', async () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
+			expect(screen.getByRole('heading', { name: 'Workspace Overview' })).toBeTruthy();
 			expect(screen.getByLabelText('Workspace summary')).toBeTruthy();
 			expect(screen.getByLabelText('Recent activity')).toBeTruthy();
+			expect(screen.getByLabelText('Quick actions')).toBeTruthy();
 		});
+
+		expect(screen.queryByText('Kanban Dashboard')).toBeNull();
+		expect(screen.queryByText('/Workspace/Kanban')).toBeNull();
 	});
 
 	it('renders three metric summary cards', async () => {

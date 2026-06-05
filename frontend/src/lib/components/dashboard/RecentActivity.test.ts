@@ -70,7 +70,8 @@ vi.mock('$lib/stores/activity', () => ({
 
 vi.mock('$lib/utils/dashboard', () => ({
 	getActivityVerb: vi.fn(() => 'was created'),
-	getUserInitials: vi.fn(() => 'AJ')
+	getUserInitials: vi.fn(() => 'AJ'),
+	getModuleColor: vi.fn(() => ({ color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' }))
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -140,6 +141,36 @@ describe('RecentActivity', () => {
 
 		expect(screen.getByText('My Note')).toBeTruthy();
 		expect(screen.getByText('My Board')).toBeTruthy();
+	});
+
+	it('uses provided artifact names when activity resource name is unknown', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'file_modified',
+					fileName: 'Unknown',
+					timestamp: new Date().toISOString(),
+					artifactId: 'file-123',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: {
+				userName: 'Alice Johnson',
+				nameLookup: new Map([['file-123', 'Resolved File.md']])
+			}
+		});
+
+		expect(screen.getByText('Resolved File.md')).toBeTruthy();
+		expect(screen.queryByText('Unknown')).toBeNull();
+		expect(screen.getByRole('link', { name: /open resolved file\.md/i })).toBeTruthy();
 	});
 
 	it('renders clickable links for accessible activities', () => {

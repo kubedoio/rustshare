@@ -1,31 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
-	import { queryClient } from '$lib/query-client';
 	import { listAllFiles } from '$lib/api/files';
 	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
 	import { createNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { createBrainstormBoard } from '$lib/api/brainstorming';
-	import { currentUser } from '$lib/stores/auth';
 	import { activityStore } from '$lib/stores/activity';
-	import { filterUserVisibleEntries, isInternalRustShareFile } from '$lib/utils/artifactVisibility';
-	import { getModuleObjectHref, resolveModuleFolderId } from '$lib/modules/modulePages';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
 	import { todayDateString } from '$lib/utils/dashboard';
-	import type { ModuleSummary, ModuleConfig } from '$lib/api/types';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
-	import DashboardWidgetGrid from '$lib/components/dashboard/DashboardWidgetGrid.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import ErrorState from '$lib/components/common/ErrorState.svelte';
-	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { Share2, Clock, Package } from 'lucide-svelte';
-	import { getEnabledDashboardModules } from '$lib/modules/workspaceSurface';
-	import { moduleConfigToDefinition } from '$lib/modules/registry';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -54,30 +46,6 @@
 		queryFn: () => listEnabledModules()
 	});
 
-	const moduleSummariesQuery = createQuery({
-		queryKey: ['workspace-module-summaries'],
-		queryFn: async () => {
-			const { getModuleSummary } = await import('$lib/api/modules');
-			const modules = await queryClient.fetchQuery({
-				queryKey: ['enabled-modules'],
-				queryFn: () => listEnabledModules()
-			});
-			const results = await Promise.all(
-				modules.map(async (m) => {
-					try {
-						const summary: ModuleSummary = await getModuleSummary(m.module_key);
-						return { module: m, summary };
-					} catch {
-						return null;
-					}
-				})
-			);
-			return results.filter(
-				(r): r is { module: ModuleConfig; summary: ModuleSummary } => r !== null
-			);
-		}
-	});
-
 	// ---------------------------------------------------------------------------
 	// Derived state
 	// ---------------------------------------------------------------------------
@@ -91,9 +59,6 @@
 	);
 
 	let sharedItemsCount = $derived(allFiles.filter((f) => f.is_shared).length);
-	let dashboardModules = $derived(
-		getEnabledDashboardModules($enabledModulesQuery.data ?? []).map(moduleConfigToDefinition)
-	);
 
 	let recentArtifacts = $derived(
 		allFiles
@@ -101,30 +66,15 @@
 			.slice(0, 30)
 	);
 
-	// Build a lookup map from artifact ID → current name using data already loaded
-	let nameLookup = $derived.by(() => {
+	let activityNameLookup = $derived.by(() => {
 		const map = new Map<string, string>();
 		for (const file of allFiles) {
 			map.set(file.id, file.name);
-		}
-		for (const { summary } of $moduleSummariesQuery.data ?? []) {
-			for (const item of summary.recent_items) {
-				map.set(item.id, item.name);
-			}
 		}
 		return map;
 	});
 
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
-	let isError = $derived(
-		$allFilesQuery.isError || $enabledModulesQuery.isError || $moduleSummariesQuery.isError
-	);
-	let errorMessage = $derived(
-		$allFilesQuery.error?.message ||
-			$enabledModulesQuery.error?.message ||
-			$moduleSummariesQuery.error?.message ||
-			'Unknown error'
-	);
 
 	// ---------------------------------------------------------------------------
 	// Quick actions
@@ -239,6 +189,23 @@
 		}
 	}
 
+	function getQuickActionLabel(moduleKey: string, fallback: string): string {
+		switch (moduleKey) {
+			case 'brainstorming':
+				return 'New idea board';
+			case 'kanban':
+				return 'New Kanban board';
+			case 'meetings':
+				return 'New meeting note';
+			case 'notes':
+				return 'New note';
+			case 'shares':
+				return 'New share';
+			default:
+				return fallback;
+		}
+	}
+
 	const quickActions = $derived(
 		($enabledModulesQuery.data ?? [])
 			.filter((m) => m.enabled)
@@ -272,7 +239,10 @@
 				}
 
 				return {
-					label: primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`,
+					label: getQuickActionLabel(
+						module.module_key,
+						primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`
+					),
 					subtitle: module.description,
 					icon: module.icon,
 					iconColor: '#ea580c',
@@ -323,7 +293,7 @@
 	<div class="workspace-overview-page">
 		<!-- Header -->
 		<header class="overview-header">
-			<h1>Workspace overview</h1>
+			<h1>Workspace Overview</h1>
 			<p class="overview-subtitle">Your company memory, organized and easy to find.</p>
 		</header>
 
@@ -333,16 +303,14 @@
 			</div>
 		{/if}
 
-		<div class="dashboard-grid">
-			<!-- Left column -->
-			<div class="dashboard-main">
-				<MetricCards cards={summaryCards} />
-				<DashboardWidgetGrid modules={dashboardModules} />
-				<RecentActivity userName={$currentUser?.display_name} />
+		<MetricCards cards={summaryCards} />
+
+		<div class="dashboard-content-grid">
+			<div class="dashboard-primary">
+				<RecentActivity nameLookup={activityNameLookup} />
 			</div>
 
-			<!-- Right column -->
-			<div class="dashboard-sidebar">
+			<div class="dashboard-secondary">
 				<QuickActions actions={quickActions} {creating} />
 			</div>
 		</div>
@@ -371,7 +339,7 @@
 		padding: 0 2rem 3rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.5rem;
+		gap: 1.25rem;
 	}
 
 	.overview-header {
@@ -387,7 +355,7 @@
 		font-weight: 700;
 		color: var(--base-content);
 		font-family: 'Fraunces', serif;
-		letter-spacing: -0.02em;
+		letter-spacing: 0;
 	}
 
 	.overview-subtitle {
@@ -396,38 +364,24 @@
 		color: color-mix(in oklab, var(--base-content) 60%, transparent);
 	}
 
-	/* Dashboard grid */
-	.dashboard-grid {
+	.dashboard-content-grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
-		gap: 2rem;
+		grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+		gap: 1.25rem;
 		align-items: start;
 	}
 
-	.dashboard-main {
+	.dashboard-primary,
+	.dashboard-secondary {
 		display: flex;
 		flex-direction: column;
-		gap: 1.75rem;
 		min-width: 0;
 	}
 
-	.dashboard-sidebar {
-		display: flex;
-		flex-direction: column;
-		gap: 1.75rem;
-		min-width: 0;
-	}
-
-	/* Responsive */
 	@media (max-width: 1023px) {
-		.dashboard-grid {
+		.dashboard-content-grid {
 			grid-template-columns: minmax(0, 1fr);
-		}
-
-		.dashboard-sidebar {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: 1.5rem;
+			gap: 1rem;
 		}
 	}
 
@@ -435,10 +389,6 @@
 		.workspace-overview-page {
 			padding: 0 1rem 2rem;
 			gap: 1.25rem;
-		}
-
-		.dashboard-sidebar {
-			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 </style>
