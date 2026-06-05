@@ -17,6 +17,7 @@
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import { Share2, Clock, Package } from 'lucide-svelte';
 
 	// ---------------------------------------------------------------------------
@@ -75,6 +76,12 @@
 	});
 
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
+	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError);
+	let errorMessage = $derived(
+		$allFilesQuery.error?.message ||
+			$enabledModulesQuery.error?.message ||
+			'Unknown error'
+	);
 
 	// ---------------------------------------------------------------------------
 	// Quick actions
@@ -289,6 +296,8 @@
 
 {#if isLoading}
 	<DashboardSkeleton />
+{:else if isError}
+	<ErrorState message={errorMessage} onRetry={() => window.location.reload()} />
 {:else}
 	<div class="workspace-overview-page">
 		<!-- Header -->
