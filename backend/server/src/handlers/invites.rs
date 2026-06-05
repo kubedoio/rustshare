@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use rand::RngCore;
+use rand::Rng;
 use rustshare_auth::PasswordHasher;
 use rustshare_core::services::EmailService;
 use serde::{Deserialize, Serialize};

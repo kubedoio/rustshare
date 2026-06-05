@@ -37,7 +37,7 @@ serde_json = "1.0"
 # Crypto
 argon2 = "0.5"
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
-rand = "0.9"
+rand = "0.10"
 
 # S3 client
 aws-sdk-s3 = "1.17"
