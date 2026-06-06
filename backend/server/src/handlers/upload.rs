@@ -16,6 +16,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::{CreateSessionRequest, SessionStatusResponse};
 
 use super::AuthenticatedUser;
@@ -170,6 +171,20 @@ pub async fn create_upload_session(
             ));
         }
     };
+
+    // Verify upload permission for shared folders
+    if let Some(folder_id) = request.folder_id {
+        let has_permission = state
+            .permission_resolver
+            .check_folder_permission(auth.user_id, folder_id, SharePermissions::Edit)
+            .await
+            .map_err(|e| AppError::internal(format!("Permission check failed: {}", e)))?;
+        if !has_permission {
+            return Err(AppError::forbidden(
+                "You do not have permission to upload to this folder",
+            ));
+        }
+    }
 
     let create_request = CreateSessionRequest {
         folder_id: request.folder_id,

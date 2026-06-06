@@ -49,6 +49,7 @@
 		onPermanentDeleteFolder?: (folder: Folder) => void;
 		onShareFolder?: (folder: Folder) => void;
 		onMoveFolder?: (folder: Folder, targetFolderId: string | null) => void;
+		onDownloadFolder?: (folder: Folder) => void;
 		pagination?: import('svelte').Snippet;
 	}
 
@@ -89,6 +90,7 @@
 		onPermanentDeleteFolder = () => {},
 		onShareFolder = () => {},
 		onMoveFolder = () => {},
+		onDownloadFolder = () => {},
 		pagination
 	}: Props = $props();
 
@@ -152,6 +154,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onDownloadFolder}
 			{onRenameFile}
 			{onDeleteFile}
 			{onToggleFileStar}
@@ -188,6 +191,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onDownloadFolder}
 			{onRenameFile}
 			{onDeleteFile}
 			{onToggleFileStar}

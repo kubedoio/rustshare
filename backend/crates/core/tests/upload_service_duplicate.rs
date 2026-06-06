@@ -181,6 +181,16 @@ impl UploadMetadataStore for MockUploadMetadataStore {
             .cloned())
     }
 
+    async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>, UploadError> {
+        Ok(self
+            .folders
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|folder| folder.id == id)
+            .cloned())
+    }
+
     async fn find_file_by_path(
         &self,
         _path: &str,
@@ -440,6 +450,79 @@ async fn complete_upload_updates_existing_nested_file_in_place() {
     assert_eq!(updated.path, format!("{}/note1.md", child.path));
     assert_eq!(updated.parent_folder_id, Some(child.id));
     assert_eq!(updated.current_version, 6);
+
+    let events = event_store.events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, EventType::FileModified);
+}
+
+#[tokio::test]
+async fn complete_upload_to_shared_folder_creates_version_not_duplicate() {
+    let folder_owner = Uuid::new_v4();
+    let uploader = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+
+    let shared_folder = Folder::new_root_with_name("Shared".to_string(), folder_owner, tenant_id);
+
+    let mut session = UploadSession::new(
+        session_id,
+        tenant_id,
+        uploader,
+        Some(shared_folder.id),
+        "note1.md".to_string(),
+        "text/markdown".to_string(),
+        0,
+        1024 * 1024,
+        None,
+    );
+    session.status = UploadSessionStatus::InProgress;
+    session.mark_chunk_received(0);
+
+    let existing_file = File {
+        id: Uuid::new_v4(),
+        name: "note1.md".to_string(),
+        path: format!("{}/note1.md", shared_folder.path),
+        content_hash: "old-hash".to_string(),
+        size: 4,
+        mime_type: "text/markdown".to_string(),
+        parent_folder_id: Some(shared_folder.id),
+        owner_id: folder_owner,
+        current_version: 1,
+        created_at: Utc::now(),
+        modified_at: Utc::now(),
+        starred_at: None,
+        deleted_at: None,
+        tenant_id,
+    };
+
+    let repo = Arc::new(MockUploadRepo::new(session));
+    let metadata_store = Arc::new(MockUploadMetadataStore::with_folders(
+        Some(existing_file.clone()),
+        vec![shared_folder.clone()],
+    ));
+    let event_store = Arc::new(MockEventStore::new());
+    let service = UploadService::new(
+        repo.clone(),
+        Arc::new(MockUploadObjectStore),
+        metadata_store.clone(),
+        event_store.clone(),
+        Arc::new(EventBroadcaster::new(16)),
+    );
+
+    // Uploader (not owner) completes upload to shared folder
+    let response = service.complete_upload(session_id, uploader).await.unwrap();
+
+    // Should update existing file, not create a duplicate
+    assert_eq!(response.file_id, existing_file.id);
+    assert!(metadata_store.created_files.lock().unwrap().is_empty());
+    assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
+    assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
+
+    let updated = metadata_store.updated_files.lock().unwrap()[0].clone();
+    assert_eq!(updated.id, existing_file.id);
+    assert_eq!(updated.current_version, 2);
+    assert_eq!(updated.owner_id, folder_owner); // stays owned by folder owner
 
     let events = event_store.events.lock().unwrap();
     assert_eq!(events.len(), 1);

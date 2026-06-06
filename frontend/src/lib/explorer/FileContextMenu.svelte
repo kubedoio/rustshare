@@ -81,6 +81,13 @@
 						shortcut: 'Enter',
 						onClick: () => onAction('open')
 					},
+					{
+						id: 'download',
+						label: 'Download',
+						icon: Download,
+						shortcut: '⌘D',
+						onClick: () => onAction('download')
+					},
 					{ id: 'sep1', label: '', separator: true, onClick: () => {} }
 				);
 			} else {

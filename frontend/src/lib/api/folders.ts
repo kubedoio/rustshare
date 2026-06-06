@@ -94,3 +94,14 @@ export async function restoreFolderFromTrash(folderId: string): Promise<void> {
 export async function setFolderStarred(folderId: string, starred: boolean): Promise<void> {
 	return apiClient.patchVoid(`/folders/${folderId}/star`, { starred });
 }
+
+export async function downloadFolder(folderId: string): Promise<Blob> {
+	const response = await fetch(`/api/v1/folders/${folderId}/download`, {
+		credentials: 'include'
+	});
+	if (!response.ok) {
+		const errorText = await response.text().catch(() => 'Failed to download folder');
+		throw new Error(errorText);
+	}
+	return response.blob();
+}
