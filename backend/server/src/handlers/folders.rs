@@ -826,7 +826,10 @@ pub async fn download_folder(
         let mut buf = vec![0u8; 64 * 1024];
         match file.read(&mut buf).await {
             Ok(0) => None,
-            Ok(n) => Some((Ok::<_, std::io::Error>(Bytes::copy_from_slice(&buf[..n])), file)),
+            Ok(n) => Some((
+                Ok::<_, std::io::Error>(Bytes::copy_from_slice(&buf[..n])),
+                file,
+            )),
             Err(e) => Some((Err(e), file)),
         }
     });

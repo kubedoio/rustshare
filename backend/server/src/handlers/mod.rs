@@ -51,8 +51,8 @@ pub use files::{
 };
 pub use folders::{
     create_folder, delete_folder, download_folder, get_folder, get_folder_contents,
-    get_folder_tree, get_root_contents, move_folder, permanently_delete_folder,
-    rename_folder, restore_folder_from_trash, toggle_folder_star,
+    get_folder_tree, get_root_contents, move_folder, permanently_delete_folder, rename_folder,
+    restore_folder_from_trash, toggle_folder_star,
 };
 pub use health::readiness_check;
 pub use kanban::{

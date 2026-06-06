@@ -181,10 +181,7 @@ impl UploadMetadataStore for MockUploadMetadataStore {
             .cloned())
     }
 
-    async fn find_folder_by_id_unchecked(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<Folder>, UploadError> {
+    async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>, UploadError> {
         Ok(self
             .folders
             .lock()
@@ -458,7 +455,6 @@ async fn complete_upload_updates_existing_nested_file_in_place() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_type, EventType::FileModified);
 }
-
 
 #[tokio::test]
 async fn complete_upload_to_shared_folder_creates_version_not_duplicate() {

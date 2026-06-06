@@ -78,9 +78,7 @@
 	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
 	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError);
 	let errorMessage = $derived(
-		$allFilesQuery.error?.message ||
-			$enabledModulesQuery.error?.message ||
-			'Unknown error'
+		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || 'Unknown error'
 	);
 
 	// ---------------------------------------------------------------------------

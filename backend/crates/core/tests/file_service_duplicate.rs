@@ -440,7 +440,6 @@ async fn direct_upload_updates_existing_nested_file_in_place() {
     assert_eq!(events[0].event_type, EventType::FileModified);
 }
 
-
 // Permission ops mock that simulates a folder shared with Edit permission
 struct SharedFolderPermissionOps {
     folder: Folder,

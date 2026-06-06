@@ -1211,7 +1211,9 @@
 			parts.push(`Started ${fileSuccessCount} file download${fileSuccessCount === 1 ? '' : 's'}`);
 		}
 		if (folderSuccessCount > 0) {
-			parts.push(`Started ${folderSuccessCount} folder download${folderSuccessCount === 1 ? '' : 's'}`);
+			parts.push(
+				`Started ${folderSuccessCount} folder download${folderSuccessCount === 1 ? '' : 's'}`
+			);
 		}
 		if (totalSuccess < totalSelected) {
 			parts.push(`${totalSelected - totalSuccess} failed`);
@@ -1450,7 +1452,10 @@
 			showNotification(`${folder.name}.zip download started`, 'success');
 			activityStore.addActivity('folder_downloaded', folder.name);
 		} catch (error) {
-			showNotification(error instanceof Error ? error.message : 'Failed to download folder', 'error');
+			showNotification(
+				error instanceof Error ? error.message : 'Failed to download folder',
+				'error'
+			);
 		}
 	}
 
