@@ -9,7 +9,7 @@ use axum::{
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
@@ -662,6 +662,25 @@ fn is_hidden_kanban_file(name: &str) -> bool {
     ) || name.ends_with(".editor.json")
 }
 
+/// Sanitize a path for use in a zip archive, preventing zip-slip attacks.
+fn sanitize_zip_path(path: &str) -> Option<String> {
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        if component.is_empty() {
+            continue;
+        }
+        if component == ".." {
+            return None;
+        }
+        components.push(component);
+    }
+    if components.is_empty() {
+        None
+    } else {
+        Some(components.join("/"))
+    }
+}
+
 /// Download a folder and all its contents as a zip archive.
 ///
 /// GET /api/v1/folders/{id}/download
@@ -688,7 +707,7 @@ pub async fn download_folder(
     // 3. Collect all files in those folders
     let mut files = state
         .metadata_store
-        .find_files_in_folders(&folder_ids, auth.user_id, auth.tenant_id)
+        .find_files_in_folders(&folder_ids, folder.owner_id, auth.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Failed to list files: {e}")))?;
 
@@ -704,10 +723,40 @@ pub async fn download_folder(
         )));
     }
 
-    // 5. Build zip in a blocking task
+    // 5. Pre-fetch file contents before entering spawn_blocking
     let folder_name = folder.name.clone();
     let folder_path = folder.path.clone();
-    let object_store = Arc::clone(&state.object_store);
+    let mut file_contents: Vec<(String, Bytes)> = Vec::new();
+
+    for file in &files {
+        let relative_path = file
+            .path
+            .strip_prefix(&folder_path)
+            .unwrap_or(&file.path)
+            .trim_start_matches('/');
+
+        let sanitized = match sanitize_zip_path(relative_path) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(path = %relative_path, "Skipping file with invalid path containing ..");
+                continue;
+            }
+        };
+
+        let zip_path = format!("{}/{}", folder_name, sanitized);
+        let storage_key = format!("blobs/{}", file.content_hash);
+
+        match state.object_store.get(&storage_key).await {
+            Ok(bytes) => {
+                file_contents.push((zip_path, bytes));
+            }
+            Err(e) => {
+                tracing::warn!(file = %file.name, error = %e, "Failed to fetch file from object store");
+            }
+        }
+    }
+
+    // 6. Build zip in a blocking task
     let folder_name_for_zip = folder_name.clone();
 
     let temp_file = tokio::task::spawn_blocking(move || -> Result<tempfile::NamedTempFile, AppError> {
@@ -729,45 +778,24 @@ pub async fn download_folder(
                 if relative_path.is_empty() {
                     continue;
                 }
-                let dir_path = format!("{}/{}/", folder_name_for_zip, relative_path);
+                let Some(sanitized) = sanitize_zip_path(relative_path) else {
+                    tracing::warn!(path = %relative_path, "Skipping folder with invalid path containing ..");
+                    continue;
+                };
+                let dir_path = format!("{}/{}/", folder_name_for_zip, sanitized);
                 if let Err(e) = zip.add_directory(&dir_path, options) {
                     tracing::warn!(error = %e, path = %dir_path, "Failed to add directory to zip");
                 }
             }
 
             // Add files
-            for file in &files {
-                let relative_path = file
-                    .path
-                    .strip_prefix(&folder_path)
-                    .unwrap_or(&file.path)
-                    .trim_start_matches('/');
-                let zip_path = format!("{}/{}", folder_name_for_zip, relative_path);
-
-                let storage_key = format!("blobs/{}", file.content_hash);
-                let bytes = match tokio::runtime::Handle::try_current() {
-                    Ok(handle) => handle.block_on(async { object_store.get(&storage_key).await }),
-                    Err(_) => {
-                        // If no runtime, we can't fetch - skip this file
-                        tracing::warn!(file = %file.name, "No Tokio runtime available for object store fetch");
-                        continue;
-                    }
-                };
-
-                let bytes = match bytes {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::warn!(file = %file.name, error = %e, "Failed to fetch file from object store");
-                        continue;
-                    }
-                };
-
+            for (zip_path, bytes) in file_contents {
                 if let Err(e) = zip.start_file(&zip_path, options) {
-                    tracing::warn!(file = %file.name, error = %e, "Failed to start zip file");
+                    tracing::warn!(path = %zip_path, error = %e, "Failed to start zip file");
                     continue;
                 }
                 if let Err(e) = std::io::Write::write_all(&mut zip, &bytes) {
-                    tracing::warn!(file = %file.name, error = %e, "Failed to write file to zip");
+                    tracing::warn!(path = %zip_path, error = %e, "Failed to write file to zip");
                     continue;
                 }
             }
