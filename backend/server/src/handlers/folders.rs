@@ -2,10 +2,15 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
+use bytes::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use rustshare_core::domain::Folder;
@@ -636,4 +641,181 @@ pub async fn rename_folder(
 #[derive(Debug, Deserialize)]
 pub struct RenameFolderRequest {
     pub new_name: String,
+}
+
+// ============================================================================
+// Folder Download as Zip
+// ============================================================================
+
+const MAX_ZIP_SIZE_BYTES: i64 = 1024 * 1024 * 1024; // 1 GB
+
+/// Hidden kanban metadata files that should be excluded from zip downloads.
+fn is_hidden_kanban_file(name: &str) -> bool {
+    matches!(
+        name,
+        ".rustshare-board.json"
+            | ".rustshare-column.json"
+            | ".rustshare-card.json"
+            | "events.jsonl"
+            | "index.md"
+            | "__primary__.md"
+    ) || name.ends_with(".editor.json")
+}
+
+/// Download a folder and all its contents as a zip archive.
+///
+/// GET /api/v1/folders/{id}/download
+pub async fn download_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    // 1. Verify folder exists and user has access
+    let folder = state
+        .folder_service
+        .get_folder(folder_id, auth.user_id)
+        .await?;
+
+    // 2. Collect all descendant folders (includes the root folder)
+    let all_folders = state
+        .metadata_store
+        .find_descendant_folders(folder_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list folders: {e}")))?;
+
+    let folder_ids: Vec<Uuid> = all_folders.iter().map(|f| f.id).collect();
+
+    // 3. Collect all files in those folders
+    let mut files = state
+        .metadata_store
+        .find_files_in_folders(&folder_ids, auth.user_id, auth.tenant_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list files: {e}")))?;
+
+    // Filter out hidden kanban files
+    files.retain(|f| !is_hidden_kanban_file(&f.name));
+
+    // 4. Size limit check
+    let total_size: i64 = files.iter().map(|f| f.size).sum();
+    if total_size > MAX_ZIP_SIZE_BYTES {
+        return Err(AppError::bad_request(format!(
+            "Folder exceeds {}GB download limit",
+            MAX_ZIP_SIZE_BYTES / (1024 * 1024 * 1024)
+        )));
+    }
+
+    // 5. Build zip in a blocking task
+    let folder_name = folder.name.clone();
+    let folder_path = folder.path.clone();
+    let object_store = Arc::clone(&state.object_store);
+    let folder_name_for_zip = folder_name.clone();
+
+    let temp_file = tokio::task::spawn_blocking(move || -> Result<tempfile::NamedTempFile, AppError> {
+        let mut temp = tempfile::NamedTempFile::new()
+            .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+        {
+            let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(&mut temp));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            // Add empty folders as directory entries
+            for f in &all_folders {
+                let relative_path = f
+                    .path
+                    .strip_prefix(&folder_path)
+                    .unwrap_or(&f.path)
+                    .trim_start_matches('/');
+                if relative_path.is_empty() {
+                    continue;
+                }
+                let dir_path = format!("{}/{}/", folder_name_for_zip, relative_path);
+                if let Err(e) = zip.add_directory(&dir_path, options) {
+                    tracing::warn!(error = %e, path = %dir_path, "Failed to add directory to zip");
+                }
+            }
+
+            // Add files
+            for file in &files {
+                let relative_path = file
+                    .path
+                    .strip_prefix(&folder_path)
+                    .unwrap_or(&file.path)
+                    .trim_start_matches('/');
+                let zip_path = format!("{}/{}", folder_name_for_zip, relative_path);
+
+                let storage_key = format!("blobs/{}", file.content_hash);
+                let bytes = match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => handle.block_on(async { object_store.get(&storage_key).await }),
+                    Err(_) => {
+                        // If no runtime, we can't fetch - skip this file
+                        tracing::warn!(file = %file.name, "No Tokio runtime available for object store fetch");
+                        continue;
+                    }
+                };
+
+                let bytes = match bytes {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(file = %file.name, error = %e, "Failed to fetch file from object store");
+                        continue;
+                    }
+                };
+
+                if let Err(e) = zip.start_file(&zip_path, options) {
+                    tracing::warn!(file = %file.name, error = %e, "Failed to start zip file");
+                    continue;
+                }
+                if let Err(e) = std::io::Write::write_all(&mut zip, &bytes) {
+                    tracing::warn!(file = %file.name, error = %e, "Failed to write file to zip");
+                    continue;
+                }
+            }
+
+            zip.finish()
+                .map_err(|e| AppError::internal(format!("Failed to finalize zip: {e}")))?;
+        }
+
+        Ok(temp)
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("Zip generation task panicked: {e}")))??;
+
+    // 6. Stream the temp file back
+    let temp_path = temp_file.path().to_path_buf();
+    let file = tokio::fs::File::open(&temp_path)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to open temp file: {e}")))?;
+
+    let filename = format!("{}.zip", folder_name);
+    let content_disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        filename.replace('"', "\\\""),
+        urlencoding::encode(&filename)
+    );
+
+    let stream = futures_util::stream::unfold(file, |mut file| async move {
+        let mut buf = vec![0u8; 64 * 1024];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => Some((Ok::<_, std::io::Error>(Bytes::copy_from_slice(&buf[..n])), file)),
+            Err(e) => Some((Err(e), file)),
+        }
+    });
+
+    // Append a final chunk that drops the temp file after streaming
+    let stream = stream.chain(futures_util::stream::once(async move {
+        drop(temp_file);
+        Ok::<_, std::io::Error>(Bytes::new())
+    }));
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/zip"),
+            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
 }

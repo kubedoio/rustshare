@@ -282,7 +282,7 @@ where
         let content_hash = self.calculate_sha256(&content);
 
         // 3. Check parent folder exists (if provided) and verify permissions
-        let parent_path = if let Some(folder_id) = parent_folder_id {
+        let (parent_path, file_owner_id) = if let Some(folder_id) = parent_folder_id {
             // Use unchecked lookup so we can distinguish "folder doesn't exist"
             // from "user lacks permission".
             let folder = self
@@ -306,9 +306,11 @@ where
                 });
             }
 
-            folder.path.clone()
+            // Files in shared folders are owned by the folder owner so that
+            // deduplication and versioning work within the shared namespace.
+            (folder.path.clone(), folder.owner_id)
         } else {
-            String::new()
+            (String::new(), owner_id)
         };
 
         // 4. Construct path from parent path + name
@@ -336,7 +338,7 @@ where
         let size = content.len() as i64;
         if let Some(mut existing) = self
             .metadata_store
-            .find_file_by_path(&path, owner_id)
+            .find_file_by_path(&path, file_owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
         {
@@ -375,7 +377,7 @@ where
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
 
-            self.queue_replication_if_needed(existing.id, owner_id, &version)
+            self.queue_replication_if_needed(existing.id, file_owner_id, &version)
                 .await?;
 
             let payload = FileModifiedPayload {
@@ -416,7 +418,7 @@ where
             size,
             mime_type.clone(),
             parent_folder_id,
-            owner_id,
+            file_owner_id,
             tenant_id,
         );
 
@@ -429,7 +431,7 @@ where
             content_hash: content_hash.clone(),
             storage_key: storage_key.clone(),
             mime_type: mime_type.clone(),
-            owner_id,
+            owner_id: file_owner_id,
             parent_folder_id,
             actor_type: actor.actor_type.clone(),
             actor_user_id: actor.actor_user_id,
@@ -483,7 +485,7 @@ where
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
-        self.queue_replication_if_needed(file.id, owner_id, &version)
+        self.queue_replication_if_needed(file.id, file_owner_id, &version)
             .await?;
 
         // 9. Return File

@@ -38,6 +38,7 @@
 	import {
 		createFolder,
 		deleteFolder,
+		downloadFolder,
 		getFolderContents,
 		getFolderTree,
 		getSharedFolderContents,
@@ -1151,20 +1152,17 @@
 
 	async function handleBulkDownload() {
 		const selectedFileIds = new Set($selectionStore.selectedFileIds);
+		const selectedFolderIds = new Set($selectionStore.selectedFolderIds);
 		const selectedFiles = sortedFiles.filter((file) => selectedFileIds.has(file.id));
-		const skippedFolderCount = $selectionStore.selectedFolderIds.size;
+		const selectedFolders = sortedFolders.filter((folder) => selectedFolderIds.has(folder.id));
 
-		if (selectedFiles.length === 0) {
-			showNotification(
-				skippedFolderCount > 0
-					? 'Bulk download is available for files only right now'
-					: 'Select at least one file to download',
-				'info'
-			);
+		if (selectedFiles.length === 0 && selectedFolders.length === 0) {
+			showNotification('Select at least one item to download', 'info');
 			return;
 		}
 
-		let successCount = 0;
+		let fileSuccessCount = 0;
+		let folderSuccessCount = 0;
 
 		for (const file of selectedFiles) {
 			try {
@@ -1176,23 +1174,50 @@
 				}
 				window.open(downloadUrl, '_blank');
 				activityStore.addActivity('file_downloaded', file.name);
-				successCount += 1;
+				fileSuccessCount += 1;
 			} catch (error) {
 				console.error('Failed to download selected file:', file.name, error);
 			}
 		}
 
-		if (successCount === 0) {
+		for (const folder of selectedFolders) {
+			try {
+				const blob = await downloadFolder(folder.id);
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = `${folder.name}.zip`;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+				URL.revokeObjectURL(url);
+				activityStore.addActivity('folder_downloaded', folder.name);
+				folderSuccessCount += 1;
+			} catch (error) {
+				console.error('Failed to download selected folder:', folder.name, error);
+			}
+		}
+
+		const totalSuccess = fileSuccessCount + folderSuccessCount;
+		const totalSelected = selectedFiles.length + selectedFolders.length;
+
+		if (totalSuccess === 0) {
 			showNotification('Failed to start the selected downloads', 'error');
 			return;
 		}
 
-		const parts = [`Started ${successCount} download${successCount === 1 ? '' : 's'}`];
-		if (skippedFolderCount > 0) {
-			parts.push(`skipped ${skippedFolderCount} folder${skippedFolderCount === 1 ? '' : 's'}`);
+		const parts: string[] = [];
+		if (fileSuccessCount > 0) {
+			parts.push(`Started ${fileSuccessCount} file download${fileSuccessCount === 1 ? '' : 's'}`);
+		}
+		if (folderSuccessCount > 0) {
+			parts.push(`Started ${folderSuccessCount} folder download${folderSuccessCount === 1 ? '' : 's'}`);
+		}
+		if (totalSuccess < totalSelected) {
+			parts.push(`${totalSelected - totalSuccess} failed`);
 		}
 
-		showNotification(parts.join(', '), skippedFolderCount > 0 ? 'info' : 'success');
+		showNotification(parts.join(', '), totalSuccess < totalSelected ? 'info' : 'success');
 	}
 
 	function handleBulkMove() {
@@ -1407,6 +1432,25 @@
 			activityStore.addActivity('file_downloaded', file.name);
 		} catch (error) {
 			showNotification(error instanceof Error ? error.message : 'Failed to download', 'error');
+		}
+	}
+
+	async function handleDownloadFolder(folder: Folder) {
+		if (workspaceMode === 'deleted') return;
+		try {
+			const blob = await downloadFolder(folder.id);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `${folder.name}.zip`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+			showNotification(`${folder.name}.zip download started`, 'success');
+			activityStore.addActivity('folder_downloaded', folder.name);
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : 'Failed to download folder', 'error');
 		}
 	}
 
@@ -1781,6 +1825,7 @@
 			onPermanentDeleteFolder={handlePermanentDeleteFolder}
 			onShareFolder={handleShareFolder}
 			onMoveFolder={handleMoveFolderWithFallback}
+			onDownloadFolder={handleDownloadFolder}
 		>
 			{#snippet pagination()}
 				<div class="flex justify-center">

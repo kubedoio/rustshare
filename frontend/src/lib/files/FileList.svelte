@@ -26,6 +26,7 @@
 		onPermanentDeleteFolder?: (folder: Folder) => void;
 		onShareFolder?: (folder: Folder) => void;
 		onMoveFolder?: (folder: Folder, targetFolderId: string | null) => void;
+		onDownloadFolder?: (folder: Folder) => void;
 		onRenameFile?: (file: FileType, newName: string) => void;
 		onDeleteFile?: (file: FileType) => void;
 		onToggleFileStar?: (file: FileType) => void;
@@ -61,6 +62,7 @@
 		onPermanentDeleteFolder = () => {},
 		onShareFolder = () => {},
 		onMoveFolder = () => {},
+		onDownloadFolder = () => {},
 		onRenameFile = () => {},
 		onDeleteFile = () => {},
 		onToggleFileStar = () => {},
@@ -306,6 +308,7 @@
 						onPermanentDelete={() => onPermanentDeleteFolder(folder)}
 						onShare={() => onShareFolder(folder)}
 						onMove={() => onMoveFolder(folder, null)}
+						onDownload={() => onDownloadFolder(folder)}
 						onDragStart={() =>
 							handleDragStart({
 								id: folder.id,

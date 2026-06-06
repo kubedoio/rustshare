@@ -1009,6 +1009,35 @@ impl MetadataStore {
         Ok(files)
     }
 
+    /// Find all non-deleted files that belong to any of the given folders.
+    pub async fn find_files_in_folders(
+        &self,
+        folder_ids: &[Uuid],
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<File>> {
+        let files = sqlx::query_as::<_, File>(
+            r#"
+            SELECT
+                id, name, path, size, mime_type, content_hash,
+                owner_id, parent_folder_id, current_version,
+                created_at, modified_at, starred_at, deleted_at, tenant_id
+            FROM files
+            WHERE tenant_id = $1
+              AND owner_id = $2
+              AND deleted_at IS NULL
+              AND parent_folder_id = ANY($3)
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(files)
+    }
+
     pub async fn set_file_starred(&self, id: Uuid, owner_id: Uuid, starred: bool) -> Result<bool> {
         let result = sqlx::query!(
             r#"
@@ -4445,6 +4474,126 @@ mod tests {
         sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
             .bind(user_a.id)
             .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_find_files_in_folders() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let owner = User::new(
+            "filefinder".to_string(),
+            "File Finder".to_string(),
+            "hash".to_string(),
+            "filefinder@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        // Create folder hierarchy: Root > Documents > Work
+        let root = Folder::new_root(owner.id, tenant_id);
+        store.create_folder(&root).await.unwrap();
+
+        let docs = Folder::new_child(
+            "Documents".to_string(),
+            "/Documents".to_string(),
+            root.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&docs).await.unwrap();
+
+        let work = Folder::new_child(
+            "Work".to_string(),
+            "/Documents/Work".to_string(),
+            docs.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&work).await.unwrap();
+
+        // Create files in different folders
+        let file_in_docs = File::new(
+            "report.pdf".to_string(),
+            "/Documents/report.pdf".to_string(),
+            "hash1".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            Some(docs.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_docs).await.unwrap();
+
+        let file_in_work = File::new(
+            "notes.txt".to_string(),
+            "/Documents/Work/notes.txt".to_string(),
+            "hash2".to_string(),
+            512,
+            "text/plain".to_string(),
+            Some(work.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_work).await.unwrap();
+
+        let file_in_root = File::new(
+            "rootfile.txt".to_string(),
+            "/rootfile.txt".to_string(),
+            "hash3".to_string(),
+            256,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_root).await.unwrap();
+
+        // Query files in Documents and Work
+        let folder_ids = vec![docs.id, work.id];
+        let files = store
+            .find_files_in_folders(&folder_ids, owner.id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(files.len(), 2, "Should find 2 files in Documents + Work");
+        assert!(files.iter().any(|f| f.name == "report.pdf"));
+        assert!(files.iter().any(|f| f.name == "notes.txt"));
+
+        // Query files in root only
+        let root_files = store
+            .find_files_in_folders(&[root.id], owner.id, tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(root_files.len(), 1);
+        assert_eq!(root_files[0].name, "rootfile.txt");
+
+        // Query empty folder list
+        let empty = store
+            .find_files_in_folders(&[], owner.id, tenant_id)
+            .await
+            .unwrap();
+        assert!(empty.is_empty());
+
+        // Cleanup
+        sqlx::query("DELETE FROM files WHERE owner_id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();

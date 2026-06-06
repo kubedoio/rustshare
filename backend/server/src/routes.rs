@@ -737,6 +737,10 @@ pub fn folder_routes() -> Router<AppState> {
             "/api/v1/folders/{id}/rename",
             post(crate::handlers::rename_folder),
         )
+        .route(
+            "/api/v1/folders/{id}/download",
+            get(crate::handlers::download_folder),
+        )
         .route("/api/v1/folders/{id}", get(crate::handlers::get_folder))
         .route(
             "/api/v1/folders/{id}",

@@ -439,3 +439,155 @@ async fn direct_upload_updates_existing_nested_file_in_place() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_type, EventType::FileModified);
 }
+
+
+// Permission ops mock that simulates a folder shared with Edit permission
+struct SharedFolderPermissionOps {
+    folder: Folder,
+    share: Share,
+}
+
+impl PermissionResolverOps for SharedFolderPermissionOps {
+    async fn find_user_share(
+        &self,
+        _file_id: Option<Uuid>,
+        folder_id: Option<Uuid>,
+        _recipient_user_id: UserId,
+    ) -> Result<Option<Share>> {
+        if folder_id == Some(self.folder.id) {
+            Ok(Some(self.share.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn find_group_shares(
+        &self,
+        _file_id: Option<Uuid>,
+        _folder_id: Option<Uuid>,
+        _group_ids: &[Uuid],
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_user_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _recipient_user_id: UserId,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_group_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _group_ids: &[Uuid],
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_file_by_id(&self, _id: Uuid) -> Result<Option<File>> {
+        Ok(None)
+    }
+
+    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+        if id == self.folder.id {
+            Ok(Some(self.folder.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+        Ok(Vec::new())
+    }
+}
+
+#[tokio::test]
+async fn upload_to_shared_folder_creates_version_not_duplicate() {
+    let folder_owner = Uuid::new_v4();
+    let uploader = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+
+    let shared_folder = Folder::new_root_with_name("Shared".to_string(), folder_owner, tenant_id);
+
+    let existing_file = File {
+        id: Uuid::new_v4(),
+        name: "note1.md".to_string(),
+        path: format!("{}/note1.md", shared_folder.path),
+        content_hash: "old-hash".to_string(),
+        size: 4,
+        mime_type: "text/markdown".to_string(),
+        parent_folder_id: Some(shared_folder.id),
+        owner_id: folder_owner,
+        current_version: 1,
+        created_at: Utc::now(),
+        modified_at: Utc::now(),
+        starred_at: None,
+        deleted_at: None,
+        tenant_id,
+    };
+
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: None,
+        folder_id: Some(shared_folder.id),
+        share_token: None,
+        permissions: rustshare_core::domain::SharePermissions::Edit,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: Some(uploader),
+        recipient_group_id: None,
+        created_by: folder_owner,
+        created_at: Utc::now(),
+        revoked_at: None,
+        tenant_id,
+    };
+
+    let event_store = Arc::new(MockEventStore::new());
+    let metadata_store = Arc::new(MockMetadataStore::with_folders(
+        Some(existing_file.clone()),
+        vec![shared_folder.clone()],
+    ));
+    let object_store = Arc::new(MockObjectStore::new());
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        SharedFolderPermissionOps {
+            folder: shared_folder.clone(),
+            share,
+        },
+    )));
+    let service = FileService::new(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store,
+        Arc::new(EventBroadcaster::new(16)),
+        permission_resolver,
+    );
+
+    // Uploader (not owner) uploads a file with the same name to the shared folder
+    let uploaded = service
+        .upload_file(
+            uploader,
+            "note1.md".to_string(),
+            Some(shared_folder.id),
+            Bytes::from_static(b"new content"),
+            "text/markdown".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // Should update the existing file, not create a new one
+    assert_eq!(uploaded.id, existing_file.id);
+    assert_eq!(uploaded.current_version, 2);
+    assert_eq!(uploaded.owner_id, folder_owner); // file stays owned by folder owner
+    assert!(metadata_store.created_files.lock().unwrap().is_empty());
+    assert_eq!(metadata_store.updated_files.lock().unwrap().len(), 1);
+    assert_eq!(metadata_store.created_versions.lock().unwrap().len(), 1);
+
+    let events = event_store.events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, EventType::FileModified);
+}

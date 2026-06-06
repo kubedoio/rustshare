@@ -23,6 +23,7 @@ export type ActivityType =
 	| 'folder_deleted'
 	| 'folder_renamed'
 	| 'folder_moved'
+	| 'folder_downloaded'
 	| 'share_created'
 	| 'share_revoked'
 	| 'share_updated'

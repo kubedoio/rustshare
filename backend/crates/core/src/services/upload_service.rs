@@ -166,11 +166,18 @@ pub trait UploadObjectStore: Send + Sync {
 /// Metadata store operations for upload service
 #[async_trait::async_trait]
 pub trait UploadMetadataStore: Send + Sync {
-    /// Find a folder by ID
+    /// Find a folder by ID (owner-filtered)
     async fn find_folder_by_id(
         &self,
         id: Uuid,
         owner_id: UserId,
+    ) -> Result<Option<crate::domain::Folder>, UploadError>;
+
+    /// Find a folder by ID without owner filtering.
+    /// Callers must verify access before using this method.
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: Uuid,
     ) -> Result<Option<crate::domain::Folder>, UploadError>;
 
     /// Find a file by canonical path for an owner
@@ -246,18 +253,12 @@ where
 
         // Validate parent folder if provided
         if let Some(folder_id) = request.folder_id {
-            let folder = self
-                .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+            self.metadata_store
+                .find_folder_by_id_unchecked(folder_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
-
-            if folder.owner_id != user_id {
-                return Err(UploadError::PermissionDenied {
-                    user_id,
-                    session_id: Uuid::nil(),
-                });
-            }
+            // Permission check is the responsibility of the caller (handler layer)
+            // so that shared folder uploads are supported.
         }
 
         // Validate chunk size (min 1MB, max 100MB)
@@ -486,16 +487,18 @@ where
             }
         }
 
-        // Get parent folder path
-        let parent_path = if let Some(folder_id) = session.folder_id {
+        // Get parent folder path and determine file owner
+        let (parent_path, file_owner_id) = if let Some(folder_id) = session.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
-            folder.path.clone()
+            // Files in shared folders are owned by the folder owner so that
+            // deduplication and versioning work within the shared namespace.
+            (folder.path.clone(), folder.owner_id)
         } else {
-            String::new()
+            (String::new(), user_id)
         };
 
         // Construct file path
@@ -513,7 +516,7 @@ where
 
         let file = if let Some(mut existing) = self
             .metadata_store
-            .find_file_by_path(&path, user_id)
+            .find_file_by_path(&path, file_owner_id)
             .await?
         {
             if existing.content_hash == final_hash && existing.size == session.total_size as i64 {
@@ -583,7 +586,7 @@ where
                 session.total_size as i64,
                 session.mime_type.clone(),
                 session.folder_id,
-                user_id,
+                file_owner_id,
                 session.tenant_id,
             );
 
@@ -947,6 +950,13 @@ mod tests {
             &self,
             _id: Uuid,
             _owner_id: UserId,
+        ) -> Result<Option<Folder>, UploadError> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id_unchecked(
+            &self,
+            _id: Uuid,
         ) -> Result<Option<Folder>, UploadError> {
             Ok(None)
         }
