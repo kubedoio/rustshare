@@ -8,12 +8,15 @@ use super::{FolderId, UserId};
 ///
 /// Folders form a tree structure where each folder can have a parent folder.
 /// The root folder has no parent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Folder {
+    #[schema(value_type = Uuid)]
     pub id: FolderId,
     pub name: String,
     pub path: String,
+    #[schema(value_type = Option<Uuid>)]
     pub parent_folder_id: Option<FolderId>,
+    #[schema(value_type = Uuid)]
     pub owner_id: UserId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -22,6 +25,7 @@ pub struct Folder {
     pub tenant_id: Uuid,
     /// Ancestor folder IDs (parent, grandparent, etc.) for efficient permission resolution.
     /// Stored as Option for backward compatibility with folders created before this field existed.
+    #[schema(value_type = Option<Vec<Uuid>>)]
     pub ancestor_ids: Option<Vec<FolderId>>,
 }
 

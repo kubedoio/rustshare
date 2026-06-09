@@ -1,0 +1,6193 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RustShare REST API",
+    "description": "Auto-generated OpenAPI specification for the RustShare file-sharing and sync platform.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "paths": {
+    "/api/v1/admin/integrations/chat/webhooks": {
+      "get": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "GET /api/v1/admin/integrations/chat/webhooks",
+        "description": "List registered chat webhook URLs.\nRequires admin privileges.",
+        "operationId": "list_chat_webhooks",
+        "responses": {
+          "200": {
+            "description": "Registered chat webhooks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "POST /api/v1/admin/integrations/chat/webhooks",
+        "description": "Register a new chat webhook URL for event dispatch.\nRequires admin privileges.",
+        "operationId": "register_chat_webhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook registered"
+          },
+          "400": {
+            "description": "Invalid URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/integrations/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "GET /api/v1/admin/integrations/webhooks",
+        "operationId": "list_webhooks",
+        "responses": {
+          "200": {
+            "description": "List of configured webhooks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "POST /api/v1/admin/integrations/webhooks",
+        "operationId": "create_webhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/integrations/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "DELETE /api/v1/admin/integrations/webhooks/:id",
+        "operationId": "delete_webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Webhook deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "PATCH /api/v1/admin/integrations/webhooks/:id",
+        "operationId": "update_webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/integrations/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "POST /api/v1/admin/integrations/webhooks/:id/test",
+        "description": "Fires a `ping` event to the webhook URL and returns the result.",
+        "operationId": "test_webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Test result",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Webhook returned non-success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/ask": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "POST /api/v1/ai/ask",
+        "description": "Answer a question using RAG with citations.\n\nContract A-01: Only uses accessible documents.\nContract A-02: Citations included.\nContract A-03: No hallucinations.\nContract A-04: Rate limited.",
+        "operationId": "ask_question",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Answer with citations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskQuestionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "AI service not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/search": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "POST /api/v1/ai/search",
+        "description": "Perform permission-filtered semantic search.\n\nContract A-01: Results are filtered by user permissions.\nContract A-04: Rate limited.",
+        "operationId": "semantic_search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/summarize": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "POST /api/v1/ai/summarize",
+        "description": "Generate a summary of a file if the user has access.\n\nContract A-01: Permission checked before summarizing.\nContract A-02: Source citation included.\nContract A-04: Rate limited.",
+        "operationId": "summarize_file",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummarizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "File summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummarizeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "AI service not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/config": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "auth_config",
+        "responses": {
+          "200": {
+            "description": "Authentication configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login handler",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Password login disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Logout successful"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/upload": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Upload a new file.",
+        "description": "POST /api/files/upload\n\nAccepts multipart/form-data with fields:\n- file: the file content\n- name: the file name\n- parent_folder_id: optional parent folder UUID",
+        "operationId": "upload_file",
+        "responses": {
+          "200": {
+            "description": "File uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Get file metadata.",
+        "description": "GET /api/files/{id}",
+        "operationId": "get_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Delete a file.",
+        "description": "DELETE /api/files/{id}",
+        "operationId": "delete_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "File deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/download": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Get file download URL.",
+        "description": "GET /api/files/{id}/download",
+        "operationId": "download_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadUrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders": {
+      "post": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Create a new folder.",
+        "description": "POST /api/folders\n\nRequest body: { \"name\": \"Documents\", \"parent_folder_id\": \"uuid-or-null\" }",
+        "operationId": "create_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Folder created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Folder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders/root/contents": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "List root contents (folders and files with no parent) with share indicators.",
+        "description": "GET /api/folders/root/contents",
+        "operationId": "get_root_contents",
+        "responses": {
+          "200": {
+            "description": "Root folder contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderContentsWithShares"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders/tree": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Get full folder tree (recursive) with share information.",
+        "description": "GET /api/folders/tree\n\nReturns a virtual root folder containing all user's root-level folders as subfolders.",
+        "operationId": "get_folder_tree",
+        "responses": {
+          "200": {
+            "description": "Folder tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderTreeWithShares"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{id}": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Get folder metadata.",
+        "description": "GET /api/folders/{id}",
+        "operationId": "get_folder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Folder metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Folder"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Folder not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/folders/{id}/contents": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "List folder contents (immediate children only) with share indicators.",
+        "description": "GET /api/folders/{id}/contents",
+        "operationId": "get_folder_contents",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Folder contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderContentsWithShares"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Folder not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/chat/events": {
+      "post": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "POST /api/v1/integrations/chat/events",
+        "description": "Webhook receiver for chat events from external chat systems.\nVerifies the event signature and processes the event.",
+        "operationId": "receive_chat_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiveChatEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Event processed"
+          },
+          "401": {
+            "description": "Missing or invalid signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/chat/unfurl": {
+      "post": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "POST /api/v1/integrations/chat/unfurl",
+        "description": "Link unfurl endpoint that accepts a RustShare URL and returns preview metadata.\nRequires authentication to verify the user has permission to view the shared resource.",
+        "operationId": "unfurl_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnfurlLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Unfurled link metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnfurlLinkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Share or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/chat/unfurl/public": {
+      "post": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "POST /api/v1/integrations/chat/unfurl/public",
+        "description": "Public link unfurl endpoint that doesn't require authentication.\nThis is for chat systems that want to preview public shares.",
+        "operationId": "unfurl_link_public",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnfurlLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Unfurled link metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnfurlLinkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Share or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/webhooks/dispatch": {
+      "post": {
+        "tags": [
+          "Chat Integration"
+        ],
+        "summary": "POST /api/v1/integrations/webhooks/dispatch",
+        "description": "Internal endpoint to dispatch events to registered chat webhooks.\nThis is called internally when shares are revoked or files change.",
+        "operationId": "dispatch_webhooks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DispatchWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dispatch results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DispatchWebhookResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notes": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "list_notes",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of results",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NoteSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "create_note",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Note created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateNoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notes/{id}": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "get_note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Note ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Note content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNoteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Note not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "save_note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Note ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveNoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Note saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveNoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Note not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "delete_note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Note ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Note deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Note not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/share/{token}/info": {
+      "get": {
+        "tags": [
+          "Public Shares"
+        ],
+        "summary": "Get share info without authentication",
+        "operationId": "get_share_info",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Share token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareInfoResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Share not found or revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Share expired or revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/share/{token}/session": {
+      "post": {
+        "tags": [
+          "Public Shares"
+        ],
+        "summary": "Create anonymous session for share access",
+        "operationId": "create_session",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Share token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Password required or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Share not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AggregateType": {
+        "type": "string",
+        "description": "Event aggregate type",
+        "enum": [
+          "user",
+          "file",
+          "folder",
+          "share"
+        ]
+      },
+      "AiIndexingPolicy": {
+        "type": "object",
+        "description": "AI indexing policy for a module.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AskQuestionRequest": {
+        "type": "object",
+        "description": "Question answering request.",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The question to answer"
+          }
+        }
+      },
+      "AskQuestionResponse": {
+        "type": "object",
+        "description": "Question answering response.",
+        "required": [
+          "answer",
+          "citations",
+          "confidence"
+        ],
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceCitation"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "AuditPolicy": {
+        "type": "object",
+        "description": "Audit policy for a module.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AuthConfigResponse": {
+        "type": "object",
+        "required": [
+          "password_login_enabled",
+          "oidc_enabled",
+          "oidc_mobile_enabled"
+        ],
+        "properties": {
+          "oidc_enabled": {
+            "type": "boolean"
+          },
+          "oidc_login_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "oidc_mobile_enabled": {
+            "type": "boolean"
+          },
+          "password_login_enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrainstormBoardModifiedPayload": {
+        "type": "object",
+        "required": [
+          "board_id",
+          "title",
+          "modified_by"
+        ],
+        "properties": {
+          "board_id": {
+            "type": "string"
+          },
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateFolderRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateFromTemplateRequest": {
+        "type": "object",
+        "description": "Request to create an object from a template.",
+        "required": [
+          "template_key",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "template_key": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateNoteRequest": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateNoteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "content",
+          "metadata",
+          "current_version",
+          "created_at",
+          "modified_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/NoteMetadata"
+          },
+          "modified_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateSessionRequest": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateVaultRequest": {
+        "type": "object",
+        "description": "Request to create a new vault.",
+        "required": [
+          "name",
+          "adapter",
+          "device_id"
+        ],
+        "properties": {
+          "adapter": {
+            "$ref": "#/components/schemas/VaultAdapter"
+          },
+          "client_vault_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "url",
+          "events"
+        ],
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional HMAC signing secret (plain text; will be encrypted before storage)."
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "CreatedObject": {
+        "type": "object",
+        "description": "Result of creating an object from a template.",
+        "required": [
+          "object_id",
+          "object_type",
+          "path"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "object_type": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "DashboardConfig": {
+        "type": "object",
+        "description": "User's dashboard configuration",
+        "required": [
+          "enabled_modules",
+          "module_order",
+          "sections"
+        ],
+        "properties": {
+          "enabled_modules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "module_order": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sections": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "DecisionModifiedPayload": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "title",
+          "modified_by"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DeleteVaultFileRequest": {
+        "type": "object",
+        "description": "Request to delete a file from a vault.",
+        "required": [
+          "vault_id",
+          "relative_path",
+          "base_server_rev",
+          "device_id"
+        ],
+        "properties": {
+          "base_server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "vault_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DispatchWebhookRequest": {
+        "type": "object",
+        "description": "Request to dispatch an event to registered chat webhooks.",
+        "required": [
+          "event_type",
+          "payload"
+        ],
+        "properties": {
+          "event_type": {
+            "type": "string"
+          },
+          "payload": {}
+        }
+      },
+      "DispatchWebhookResponse": {
+        "type": "object",
+        "description": "Response from dispatching webhooks.",
+        "required": [
+          "dispatched"
+        ],
+        "properties": {
+          "dispatched": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDispatchResult"
+            }
+          }
+        }
+      },
+      "DownloadUrlResponse": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateNoteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "content",
+          "metadata",
+          "current_version",
+          "created_at",
+          "modified_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/NoteMetadata"
+          },
+          "modified_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Standard error response format.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "description": "Event stored in the event store",
+        "required": [
+          "id",
+          "event_type",
+          "aggregate_id",
+          "aggregate_type",
+          "payload",
+          "user_id",
+          "timestamp",
+          "version"
+        ],
+        "properties": {
+          "aggregate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "aggregate_type": {
+            "$ref": "#/components/schemas/AggregateType"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/Value"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "EventType": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "UserCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "UserUpdated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "UserDeleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileUploaded"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileRenamed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileMoved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileDeleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FileRestored"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FolderCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FolderRenamed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FolderMoved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "FolderDeleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ShareCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ShareRevoked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ShareUpdated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ShareReceivedByUser"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "SharePermissionChanged"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ShareRevokedFromUser"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "NotificationCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ConflictDetected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ConflictResolved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ReplicationStateChanged"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "BrainstormBoardModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MeetingNoteModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "DecisionModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "StandupModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "KanbanModified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "NoteModified"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Event types in the system"
+      },
+      "File": {
+        "type": "object",
+        "description": "File metadata for a user's uploaded file.\n\nFiles use content-addressed storage where the actual file content is stored\nin object storage using the content hash as the key.",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "content_hash",
+          "size",
+          "mime_type",
+          "owner_id",
+          "current_version",
+          "created_at",
+          "modified_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "starred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "FileDeletedPayload": {
+        "type": "object",
+        "description": "File deleted event payload",
+        "required": [
+          "file_id",
+          "file_name"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "FileModifiedPayload": {
+        "type": "object",
+        "description": "File modified event payload",
+        "required": [
+          "file_id",
+          "old_version",
+          "new_version",
+          "old_content_hash",
+          "new_content_hash",
+          "old_size",
+          "new_size",
+          "storage_key",
+          "modified_by"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_content_hash": {
+            "type": "string"
+          },
+          "new_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "new_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "old_content_hash": {
+            "type": "string"
+          },
+          "old_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "old_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "storage_key": {
+            "type": "string"
+          }
+        }
+      },
+      "FileRestoredPayload": {
+        "type": "object",
+        "description": "File restored event payload",
+        "required": [
+          "file_id",
+          "old_version",
+          "new_version",
+          "restored_from_version",
+          "content_hash",
+          "size",
+          "restored_by"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "old_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "restored_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "restored_from_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FileUploadResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "size",
+          "mime_type",
+          "current_version",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FileUploadedPayload": {
+        "type": "object",
+        "description": "File uploaded event payload",
+        "required": [
+          "file_id",
+          "name",
+          "path",
+          "size",
+          "content_hash",
+          "storage_key",
+          "mime_type",
+          "owner_id",
+          "actor_type"
+        ],
+        "properties": {
+          "actor_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actor_share_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "actor_share_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "actor_type": {
+            "type": "string"
+          },
+          "actor_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "storage_key": {
+            "type": "string"
+          }
+        }
+      },
+      "FileVersion": {
+        "type": "object",
+        "description": "A version snapshot of a file's content.\n\nEach time a file is modified, a new version is created with the updated content hash.",
+        "required": [
+          "id",
+          "file_id",
+          "version_number",
+          "content_hash",
+          "size",
+          "replication_state",
+          "created_at",
+          "created_by",
+          "tenant_id"
+        ],
+        "properties": {
+          "change_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replication_state": {
+            "$ref": "#/components/schemas/ReplicationState"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_number": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "FileWithShares": {
+        "type": "object",
+        "description": "File with share information for list responses",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "size",
+          "mime_type",
+          "owner_id",
+          "current_version",
+          "created_at",
+          "modified_at",
+          "is_shared",
+          "share_count"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "effective_permission": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_shared": {
+            "type": "boolean"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "share_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "share_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Earliest share expiration date (None if no shares have expiration)"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "starred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Folder": {
+        "type": "object",
+        "description": "A folder that organizes files in a hierarchical structure.\n\nFolders form a tree structure where each folder can have a parent folder.\nThe root folder has no parent.",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "owner_id",
+          "created_at",
+          "updated_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "ancestor_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ancestor folder IDs (parent, grandparent, etc.) for efficient permission resolution.\nStored as Option for backward compatibility with folders created before this field existed."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "starred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FolderContents": {
+        "type": "object",
+        "description": "A flat representation of folder contents.\n\nContains the files and immediate subfolders in a directory,\nwithout recursing into subdirectories.",
+        "required": [
+          "files",
+          "folders"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/File"
+            }
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            }
+          }
+        }
+      },
+      "FolderContentsWithShares": {
+        "type": "object",
+        "description": "Folder contents with share indicators",
+        "required": [
+          "folders",
+          "files"
+        ],
+        "properties": {
+          "current_folder_permission": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileWithShares"
+            }
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderWithShares"
+            }
+          }
+        }
+      },
+      "FolderCreatedPayload": {
+        "type": "object",
+        "description": "Folder created event payload",
+        "required": [
+          "folder_id",
+          "name",
+          "path",
+          "owner_id"
+        ],
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "FolderDeletedPayload": {
+        "type": "object",
+        "description": "Folder deleted event payload",
+        "required": [
+          "folder_id",
+          "name",
+          "path",
+          "deleted_by"
+        ],
+        "properties": {
+          "deleted_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "folder_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "FolderMovedPayload": {
+        "type": "object",
+        "description": "Folder moved event payload",
+        "required": [
+          "folder_id",
+          "old_path",
+          "new_path",
+          "moved_by"
+        ],
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "moved_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "new_path": {
+            "type": "string"
+          },
+          "old_parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "old_path": {
+            "type": "string"
+          }
+        }
+      },
+      "FolderRenamedPayload": {
+        "type": "object",
+        "description": "Folder renamed event payload",
+        "required": [
+          "folder_id",
+          "old_name",
+          "new_name",
+          "old_path",
+          "new_path",
+          "renamed_by"
+        ],
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_name": {
+            "type": "string"
+          },
+          "new_path": {
+            "type": "string"
+          },
+          "old_name": {
+            "type": "string"
+          },
+          "old_path": {
+            "type": "string"
+          },
+          "renamed_by": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "FolderTree": {
+        "type": "object",
+        "description": "A recursive representation of folder structure.\n\nContains a folder and all its subfolders recursively, along with files\nat each level. This provides a complete tree view of the folder hierarchy.",
+        "required": [
+          "folder",
+          "subfolders",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/File"
+            }
+          },
+          "folder": {
+            "$ref": "#/components/schemas/Folder"
+          },
+          "subfolders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderTree"
+            }
+          }
+        }
+      },
+      "FolderTreeNode": {
+        "type": "object",
+        "description": "Folder tree node with share information for sidebar",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "owner_id",
+          "created_at",
+          "updated_at",
+          "tenant_id",
+          "is_shared",
+          "share_count"
+        ],
+        "properties": {
+          "ancestor_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effective_permission": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_shared": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note_bundle_file_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "share_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "share_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FolderTreeWithShares": {
+        "type": "object",
+        "description": "Folder tree response with share indicators",
+        "required": [
+          "folder",
+          "subfolders"
+        ],
+        "properties": {
+          "folder": {
+            "$ref": "#/components/schemas/FolderTreeNode"
+          },
+          "subfolders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderTreeWithShares"
+            }
+          }
+        }
+      },
+      "FolderWithShares": {
+        "type": "object",
+        "description": "Folder with share information for list responses",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "owner_id",
+          "created_at",
+          "updated_at",
+          "size",
+          "is_shared",
+          "share_count"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "effective_permission": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_shared": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note_bundle_file_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "share_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "share_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Earliest share expiration date (None if no shares have expiration)"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total recursive size of all non-deleted files within this folder (in bytes)"
+          },
+          "starred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GetNoteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "content",
+          "metadata",
+          "current_version",
+          "created_at",
+          "modified_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/NoteMetadata"
+          },
+          "modified_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "IncomingChatEvent": {
+        "type": "object",
+        "description": "Incoming chat event from external chat system.",
+        "required": [
+          "event_type",
+          "timestamp",
+          "data"
+        ],
+        "properties": {
+          "data": {},
+          "event_type": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "KanbanModifiedPayload": {
+        "type": "object",
+        "required": [
+          "modified_by"
+        ],
+        "properties": {
+          "board_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "card_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ListNotesQuery": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "description": "Login request",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "description": "Login response",
+        "required": [
+          "token",
+          "user"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "MeetingNoteModifiedPayload": {
+        "type": "object",
+        "required": [
+          "meeting_id",
+          "title",
+          "modified_by"
+        ],
+        "properties": {
+          "meeting_id": {
+            "type": "string"
+          },
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "Module": {
+        "type": "object",
+        "description": "A workspace module configuration.",
+        "required": [
+          "id",
+          "module_key",
+          "display_name",
+          "description",
+          "enabled",
+          "root_path",
+          "renderer",
+          "icon",
+          "schema_version",
+          "permissions",
+          "ai_indexing",
+          "audit",
+          "ui_config",
+          "created_at",
+          "updated_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "ai_indexing": {},
+          "audit": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "module_key": {
+            "type": "string"
+          },
+          "permissions": {},
+          "renderer": {
+            "type": "string"
+          },
+          "root_path": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ui_config": {},
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ModulePermissions": {
+        "type": "object",
+        "description": "Permission settings for a module.",
+        "properties": {
+          "admin_can_configure": {
+            "type": "boolean"
+          },
+          "allow_internal_share": {
+            "type": "boolean"
+          },
+          "allow_public_share": {
+            "type": "boolean"
+          },
+          "workspace_members_can_use": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MoveNoteRequest": {
+        "type": "object",
+        "properties": {
+          "target_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "NoteAttachment": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "name",
+          "mime_type",
+          "size",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "NoteMetadata": {
+        "type": "object",
+        "description": "Note-specific metadata sidecar schema.",
+        "required": [
+          "kind",
+          "title",
+          "visibility",
+          "created_at",
+          "updated_at",
+          "excerpt",
+          "mime_type",
+          "extension"
+        ],
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteAttachment"
+            }
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "public_share_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/NoteVisibility"
+          }
+        }
+      },
+      "NoteModifiedPayload": {
+        "type": "object",
+        "required": [
+          "note_id",
+          "title",
+          "modified_by"
+        ],
+        "properties": {
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "NoteSummary": {
+        "type": "object",
+        "description": "Note summary for listings (includes file id but not full content).",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "metadata",
+          "owner_id",
+          "current_version",
+          "size",
+          "created_at",
+          "modified_at",
+          "attachment_count",
+          "drawing_count",
+          "export_count"
+        ],
+        "properties": {
+          "attachment_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "drawing_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "export_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/NoteMetadata"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "NoteVisibility": {
+        "type": "string",
+        "enum": [
+          "private",
+          "public"
+        ]
+      },
+      "Notification": {
+        "type": "object",
+        "description": "In-app notification for a user.\n\nNotifications are persistent and stored in the database. They complement\nreal-time WebSocket notifications for offline users.",
+        "required": [
+          "id",
+          "user_id",
+          "notification_type",
+          "title",
+          "message",
+          "resource_id",
+          "resource_type",
+          "read",
+          "created_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "action_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional deep link to the resource"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": "string"
+          },
+          "notification_type": {
+            "$ref": "#/components/schemas/NotificationType"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Polymorphic reference to resource (file/folder/share)"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "NotificationCreatedPayload": {
+        "type": "object",
+        "description": "Notification created event payload",
+        "required": [
+          "notification_id",
+          "user_id",
+          "title",
+          "message",
+          "notification_type",
+          "resource_id",
+          "resource_type",
+          "timestamp"
+        ],
+        "properties": {
+          "action_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "notification_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "notification_type": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "title": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "NotificationType": {
+        "type": "string",
+        "description": "Type of notification.",
+        "enum": [
+          "share_received",
+          "permission_changed",
+          "share_revoked"
+        ]
+      },
+      "PublicNoteResponse": {
+        "type": "object",
+        "required": [
+          "title",
+          "content",
+          "excerpt",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ReceiveChatEventRequest": {
+        "type": "object",
+        "description": "Request to receive a chat event from an external system.",
+        "required": [
+          "event"
+        ],
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/IncomingChatEvent"
+          }
+        }
+      },
+      "RecentNotesResponse": {
+        "type": "object",
+        "required": [
+          "notes"
+        ],
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteSummary"
+            }
+          }
+        }
+      },
+      "RegisterWebhookRequest": {
+        "type": "object",
+        "description": "Request to register a new webhook URL.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameNoteRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameVaultFileRequest": {
+        "type": "object",
+        "description": "Request to rename a file within a vault.",
+        "required": [
+          "old_path",
+          "new_path"
+        ],
+        "properties": {
+          "base_server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "new_path": {
+            "type": "string"
+          },
+          "old_path": {
+            "type": "string"
+          },
+          "vault_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ReplicationJob": {
+        "type": "object",
+        "required": [
+          "id",
+          "file_id",
+          "file_version_id",
+          "storage_key",
+          "status",
+          "attempt_count",
+          "next_attempt_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "attempt_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lease_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "leased_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReplicationJobStatus"
+          },
+          "storage_key": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReplicationJobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "syncing",
+          "retrying",
+          "completed",
+          "failed"
+        ]
+      },
+      "ReplicationState": {
+        "type": "string",
+        "enum": [
+          "primary_written",
+          "queued",
+          "syncing",
+          "fully_replicated",
+          "degraded",
+          "failed"
+        ]
+      },
+      "ReplicationStateChangedPayload": {
+        "type": "object",
+        "description": "Replication state changed event payload",
+        "required": [
+          "file_id",
+          "file_version_id",
+          "replication_state",
+          "attempt_count",
+          "updated_at"
+        ],
+        "properties": {
+          "attempt_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "replication_state": {
+            "$ref": "#/components/schemas/ReplicationState"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReplicationTarget": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "destination_type",
+          "endpoint",
+          "is_required",
+          "enabled",
+          "health_status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "auth_config": {},
+          "base_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bucket": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "health_status": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_required": {
+            "type": "boolean"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_healthy_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ResourceType": {
+        "type": "string",
+        "description": "Type of resource referenced by notification.",
+        "enum": [
+          "file",
+          "folder",
+          "share"
+        ]
+      },
+      "SaveNoteRequest": {
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "attachments": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NoteAttachment"
+            }
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content": {
+            "type": "string"
+          }
+        }
+      },
+      "SaveNoteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "current_version",
+          "modified_at",
+          "excerpt"
+        ],
+        "properties": {
+          "current_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "modified_at": {
+            "type": "string"
+          }
+        }
+      },
+      "SemanticSearchRequest": {
+        "type": "object",
+        "description": "Semantic search request.",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default: 10, max: 50)",
+            "minimum": 0
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query"
+          }
+        }
+      },
+      "SemanticSearchResponse": {
+        "type": "object",
+        "description": "Semantic search response.",
+        "required": [
+          "results",
+          "total_found"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SemanticSearchResultItem"
+            }
+          },
+          "total_found": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SemanticSearchResultItem": {
+        "type": "object",
+        "description": "Semantic search result item.",
+        "required": [
+          "file_id",
+          "file_name",
+          "file_path",
+          "relevance_score",
+          "snippet",
+          "mime_type",
+          "owner_id",
+          "can_edit"
+        ],
+        "properties": {
+          "can_edit": {
+            "type": "boolean"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "relevance_score": {
+            "type": "number",
+            "format": "float"
+          },
+          "snippet": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "required": [
+          "session_token",
+          "expires_at",
+          "permissions",
+          "upload_only"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "session_token": {
+            "type": "string"
+          },
+          "upload_only": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Share": {
+        "type": "object",
+        "description": "A share link that allows access to a file or folder.\n\nSupports both public shares (anonymous access via token), user shares\n(authenticated user-to-user sharing), and group shares (access via group membership).",
+        "required": [
+          "id",
+          "permissions",
+          "upload_only",
+          "access_count",
+          "created_by",
+          "created_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "access_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Access count for public shares only"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Expiration time for public shares only"
+          },
+          "file_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "File being shared (None for folder shares)"
+          },
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Folder being shared (None for file shares)"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "password_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Password hash for public shares only"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "recipient_group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Recipient group for group shares (None for public/user shares)"
+          },
+          "recipient_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Recipient user for user shares (None for public/group shares)"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "share_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Token for public shares (None for user shares)"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "upload_only": {
+            "type": "boolean",
+            "description": "Public folder share that allows uploads but not browsing/downloads."
+          }
+        }
+      },
+      "ShareCreatedPayload": {
+        "type": "object",
+        "description": "Share created event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "share_token",
+          "permissions",
+          "password_protected",
+          "created_by"
+        ],
+        "properties": {
+          "created_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "password_protected": {
+            "type": "boolean"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "share_token": {
+            "type": "string"
+          }
+        }
+      },
+      "ShareInfoResponse": {
+        "type": "object",
+        "required": [
+          "resource_id",
+          "resource_type",
+          "name",
+          "permissions",
+          "upload_only",
+          "password_protected"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "file_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "password_protected": {
+            "type": "boolean"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "upload_only": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SharePermissionChangedPayload": {
+        "type": "object",
+        "description": "Share permission changed event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "old_permissions",
+          "new_permissions",
+          "changed_by",
+          "timestamp"
+        ],
+        "properties": {
+          "changed_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "old_permissions": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SharePermissions": {
+        "type": "string",
+        "description": "Permission level for a share link.",
+        "enum": [
+          "View",
+          "Edit",
+          "Admin"
+        ]
+      },
+      "ShareReceivedByUserPayload": {
+        "type": "object",
+        "description": "Share received by user event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "received_by",
+          "shared_by",
+          "timestamp"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "received_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shared_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ShareRecipient": {
+        "type": "object",
+        "description": "Represents a recipient of a share (for API responses).\n\nUsed in GET /api/shares/{id}/recipients endpoint.",
+        "required": [
+          "share_id",
+          "user_id",
+          "email",
+          "permission",
+          "added_at",
+          "added_by"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "added_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ShareRevokedFromUserPayload": {
+        "type": "object",
+        "description": "Share revoked from user event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "revoked_from",
+          "revoked_by",
+          "timestamp"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked_from": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ShareRevokedPayload": {
+        "type": "object",
+        "description": "Share revoked event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "revoked_by"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revoked_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ShareType": {
+        "type": "string",
+        "description": "Type of share (determined by which fields are set)",
+        "enum": [
+          "Public",
+          "User",
+          "Group"
+        ]
+      },
+      "ShareUpdatedPayload": {
+        "type": "object",
+        "description": "Share updated event payload",
+        "required": [
+          "share_id",
+          "file_id",
+          "password_changed",
+          "expires_at_changed",
+          "updated_by"
+        ],
+        "properties": {
+          "expires_at_changed": {
+            "type": "boolean"
+          },
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "password_changed": {
+            "type": "boolean"
+          },
+          "share_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_by": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SharedFolderContentsQuery": {
+        "type": "object",
+        "properties": {
+          "folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SharedFolderContentsResponse": {
+        "type": "object",
+        "required": [
+          "root_folder_id",
+          "current_folder_id",
+          "current_folder_name",
+          "path",
+          "folders",
+          "files"
+        ],
+        "properties": {
+          "current_folder_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "current_folder_name": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/File"
+            }
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "root_folder_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SourceCitation": {
+        "type": "object",
+        "description": "Source citation.",
+        "required": [
+          "file_id",
+          "file_name",
+          "file_path",
+          "relevance_score",
+          "excerpt"
+        ],
+        "properties": {
+          "excerpt": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "relevance_score": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "StandupModifiedPayload": {
+        "type": "object",
+        "required": [
+          "standup_id",
+          "title",
+          "modified_by"
+        ],
+        "properties": {
+          "modified_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "standup_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "SummarizeRequest": {
+        "type": "object",
+        "description": "File summary request.",
+        "required": [
+          "file_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The file ID to summarize"
+          }
+        }
+      },
+      "SummarizeResponse": {
+        "type": "object",
+        "description": "File summary response.",
+        "required": [
+          "file_id",
+          "file_name",
+          "summary",
+          "key_topics",
+          "citation"
+        ],
+        "properties": {
+          "citation": {
+            "$ref": "#/components/schemas/SourceCitation"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "key_topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "Template": {
+        "type": "object",
+        "description": "A template configuration for creating module objects.",
+        "required": [
+          "id",
+          "template_key",
+          "name",
+          "module_key",
+          "version",
+          "description",
+          "ui_config",
+          "folder_structure",
+          "default_files",
+          "metadata_schema",
+          "visibility_policy",
+          "ai_indexing_policy",
+          "audit_logging_policy",
+          "module_config",
+          "created_at",
+          "updated_at",
+          "enabled",
+          "system_template",
+          "tenant_id"
+        ],
+        "properties": {
+          "ai_indexing_policy": {},
+          "audit_logging_policy": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "default_files": {},
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "folder_structure": {},
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata_schema": {},
+          "module_config": {},
+          "module_key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "renderer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "system_template": {
+            "type": "boolean"
+          },
+          "template_key": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ui_config": {},
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string"
+          },
+          "visibility_policy": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplateDefaultFile": {
+        "type": "object",
+        "description": "A default file entry within a template.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contentType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "Theme": {
+        "type": "string",
+        "description": "User theme preference",
+        "enum": [
+          "light",
+          "dark",
+          "system"
+        ]
+      },
+      "UnfurlLinkRequest": {
+        "type": "object",
+        "description": "Request to unfurl a RustShare link.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "UnfurlLinkResponse": {
+        "type": "object",
+        "description": "Response from unfurling a link.",
+        "required": [
+          "title",
+          "resource_type",
+          "resource_id",
+          "share_token",
+          "created_at",
+          "password_protected",
+          "permissions"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password_protected": {
+            "type": "boolean"
+          },
+          "permissions": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "share_token": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "events": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`Some(\"\")` clears the secret; `None` keeps existing; `Some(non_empty)` replaces."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "description": "User account information.\n\nNote: The `username` field is used for login and is distinct from `email`.\nThis allows users to have a stable login identifier separate from their email address.",
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "password_hash",
+          "email",
+          "is_admin",
+          "storage_quota",
+          "created_at",
+          "updated_at",
+          "email_sharing_enabled",
+          "tenant_id",
+          "dashboard_config"
+        ],
+        "properties": {
+          "avatar_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Path to avatar image"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dashboard_config": {
+            "$ref": "#/components/schemas/DashboardConfig",
+            "description": "User's dashboard configuration"
+          },
+          "disabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name shown in UI"
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_sharing_enabled": {
+            "type": "boolean",
+            "description": "Whether email can be shared with other users"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User's first name"
+          },
+          "password_hash": {
+            "type": "string"
+          },
+          "storage_quota": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Storage quota in bytes"
+          },
+          "surname": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User's last name"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tenant this user belongs to"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/Theme",
+            "description": "Theme preference (light/dark/system)"
+          },
+          "trash_retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Trash retention period in days (None = never auto-delete)"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "username": {
+            "type": "string",
+            "description": "Login identifier (enhancement beyond spec)"
+          }
+        }
+      },
+      "UserModulePreference": {
+        "type": "object",
+        "description": "Per-user module preference.",
+        "required": [
+          "user_id",
+          "module_key",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "module_key": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "is_admin",
+          "theme"
+        ],
+        "properties": {
+          "avatar_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "theme": {
+            "type": "string"
+          }
+        }
+      },
+      "UserSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "session_token_hash",
+          "expires_at",
+          "created_at",
+          "last_seen_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ip_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "session_token_hash": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Value": {},
+      "Vault": {
+        "type": "object",
+        "description": "A syncable vault container.",
+        "required": [
+          "id",
+          "tenant_id",
+          "owner_user_id",
+          "name",
+          "adapter",
+          "server_rev",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "adapter": {
+            "$ref": "#/components/schemas/VaultAdapter"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "root_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VaultAdapter": {
+        "type": "string",
+        "description": "Adapter types supported for vault sync.",
+        "enum": [
+          "ObsidianVault"
+        ]
+      },
+      "VaultDevice": {
+        "type": "object",
+        "description": "A device authorized to sync a vault.",
+        "required": [
+          "id",
+          "tenant_id",
+          "user_id",
+          "device_name",
+          "client_type",
+          "created_at",
+          "last_seen_at"
+        ],
+        "properties": {
+          "client_type": {
+            "type": "string"
+          },
+          "client_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_sync_rev": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vault_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "VaultFile": {
+        "type": "object",
+        "description": "Metadata for a file inside a vault.",
+        "required": [
+          "id",
+          "tenant_id",
+          "vault_id",
+          "relative_path",
+          "server_rev",
+          "mtime_server",
+          "deleted",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_writer_device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mtime_client": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "mtime_server": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "vault_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "VaultManifest": {
+        "type": "object",
+        "description": "A manifest representing the current state of a vault.",
+        "required": [
+          "vault_id",
+          "adapter",
+          "server_rev",
+          "generated_at",
+          "files"
+        ],
+        "properties": {
+          "adapter": {
+            "$ref": "#/components/schemas/VaultAdapter"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VaultManifestEntry"
+            }
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "vault_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "VaultManifestEntry": {
+        "type": "object",
+        "description": "An entry in a vault manifest.",
+        "required": [
+          "path",
+          "server_rev",
+          "mtime_server",
+          "deleted"
+        ],
+        "properties": {
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "deleted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "mtime_server": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "path": {
+            "type": "string"
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "VisibilityResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "visibility"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "public_share_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/NoteVisibility"
+          }
+        }
+      },
+      "WebhookDispatchResult": {
+        "type": "object",
+        "description": "Result of a single webhook dispatch.",
+        "required": [
+          "url",
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "WebhookListResponse": {
+        "type": "object",
+        "description": "Response containing registered webhooks.",
+        "required": [
+          "webhooks"
+        ],
+        "properties": {
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "WebhookResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "enabled",
+          "events",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"***\"` when a secret is stored; `null` when none is set."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Admin",
+      "description": "Administration endpoints"
+    },
+    {
+      "name": "Webhooks",
+      "description": "Outbound webhook management"
+    },
+    {
+      "name": "Chat Integration",
+      "description": "RustChat and external chat integration"
+    },
+    {
+      "name": "Files",
+      "description": "File operations"
+    },
+    {
+      "name": "Notes",
+      "description": "Note operations"
+    },
+    {
+      "name": "AI",
+      "description": "AI-powered search and summarization"
+    },
+    {
+      "name": "Auth",
+      "description": "Authentication"
+    },
+    {
+      "name": "Folders",
+      "description": "Folder operations"
+    },
+    {
+      "name": "Public Shares",
+      "description": "Public share access"
+    }
+  ]
+}

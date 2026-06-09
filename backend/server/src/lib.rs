@@ -8,6 +8,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod oidc;
 pub mod oidc_runtime;
+pub mod openapi;
 pub mod replication;
 pub mod replication_handlers;
 pub mod routes;
@@ -17,7 +18,9 @@ pub mod trash_cleanup;
 pub mod web_session;
 
 pub use bootstrap::default_storage_quota_bytes;
-pub use state::{AppAiService, AppState, AppUploadService, AppUserShareService};
+pub use state::{
+    AppAiService, AppChatIntegrationService, AppState, AppUploadService, AppUserShareService,
+};
 
 use axum::Json;
 use serde::Serialize;

@@ -23,7 +23,7 @@ use crate::AppState;
 // ============================================================================
 
 /// Folder with share information for list responses
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct FolderWithShares {
     // Folder fields
     pub id: Uuid,
@@ -48,7 +48,7 @@ pub struct FolderWithShares {
 }
 
 /// Folder contents with share indicators
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderContentsWithShares {
     pub folders: Vec<FolderWithShares>,
     pub files: Vec<crate::handlers::files::FileWithShares>,
@@ -57,7 +57,7 @@ pub struct FolderContentsWithShares {
 }
 
 /// Folder tree node with share information for sidebar
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderTreeNode {
     pub id: Uuid,
     pub name: String,
@@ -77,9 +77,10 @@ pub struct FolderTreeNode {
 }
 
 /// Folder tree response with share indicators
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderTreeWithShares {
     pub folder: FolderTreeNode,
+    #[schema(no_recursion)]
     pub subfolders: Vec<FolderTreeWithShares>,
 }
 
@@ -92,6 +93,17 @@ pub struct FolderTreeWithShares {
 /// POST /api/folders
 ///
 /// Request body: { "name": "Documents", "parent_folder_id": "uuid-or-null" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders",
+    tag = "Folders",
+    request_body = CreateFolderRequest,
+    responses(
+        (status = 201, description = "Folder created", body = Folder),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -105,7 +117,7 @@ pub async fn create_folder(
     Ok((StatusCode::CREATED, Json(folder)))
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateFolderRequest {
     #[validate(length(
         min = 1,
@@ -119,6 +131,17 @@ pub struct CreateFolderRequest {
 /// Get folder metadata.
 ///
 /// GET /api/folders/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}",
+    tag = "Folders",
+    params(("id" = Uuid, Path, description = "Folder ID")),
+    responses(
+        (status = 200, description = "Folder metadata", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Folder not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -153,6 +176,17 @@ pub async fn delete_folder(
 /// List folder contents (immediate children only) with share indicators.
 ///
 /// GET /api/folders/{id}/contents
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/contents",
+    tag = "Folders",
+    params(("id" = Uuid, Path, description = "Folder ID")),
+    responses(
+        (status = 200, description = "Folder contents", body = FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Folder not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -267,6 +301,15 @@ pub async fn get_folder_contents(
 /// List root contents (folders and files with no parent) with share indicators.
 ///
 /// GET /api/folders/root/contents
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/root/contents",
+    tag = "Folders",
+    responses(
+        (status = 200, description = "Root folder contents", body = FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_root_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -471,6 +514,15 @@ async fn build_folder_tree_with_shares(
 /// GET /api/folders/tree
 ///
 /// Returns a virtual root folder containing all user's root-level folders as subfolders.
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/tree",
+    tag = "Folders",
+    responses(
+        (status = 200, description = "Folder tree", body = FolderTreeWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

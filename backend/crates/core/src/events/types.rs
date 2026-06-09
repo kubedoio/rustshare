@@ -9,7 +9,7 @@ use crate::domain::*;
 pub type EventId = Uuid;
 
 /// Event aggregate type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregateType {
     User,
@@ -19,7 +19,7 @@ pub enum AggregateType {
 }
 
 /// Event types in the system
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 #[serde(rename_all = "PascalCase", tag = "type")]
 pub enum EventType {
     // User events
@@ -104,13 +104,15 @@ impl EventType {
 }
 
 /// Event stored in the event store
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Event {
+    #[schema(value_type = Uuid)]
     pub id: EventId,
     pub event_type: EventType,
     pub aggregate_id: Uuid,
     pub aggregate_type: AggregateType,
     pub payload: JsonValue,
+    #[schema(value_type = Uuid)]
     pub user_id: UserId,
     pub timestamp: DateTime<Utc>,
     pub version: i32,
@@ -139,8 +141,9 @@ impl Event {
 }
 
 /// File uploaded event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileUploadedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub name: String,
     pub path: String,
@@ -148,28 +151,36 @@ pub struct FileUploadedPayload {
     pub content_hash: String,
     pub storage_key: String,
     pub mime_type: String,
+    #[schema(value_type = Uuid)]
     pub owner_id: UserId,
+    #[schema(value_type = Option<Uuid>)]
     pub parent_folder_id: Option<FolderId>,
     pub actor_type: String,
+    #[schema(value_type = Option<Uuid>)]
     pub actor_user_id: Option<UserId>,
+    #[schema(value_type = Option<Uuid>)]
     pub actor_share_id: Option<ShareId>,
     pub actor_share_session_id: Option<Uuid>,
     pub actor_display_name: Option<String>,
 }
 
 /// Folder created event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderCreatedPayload {
+    #[schema(value_type = Uuid)]
     pub folder_id: FolderId,
     pub name: String,
     pub path: String,
+    #[schema(value_type = Option<Uuid>)]
     pub parent_folder_id: Option<FolderId>,
+    #[schema(value_type = Uuid)]
     pub owner_id: UserId,
 }
 
 /// File modified event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileModifiedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub old_version: i32,
     pub new_version: i32,
@@ -178,148 +189,188 @@ pub struct FileModifiedPayload {
     pub old_size: i64,
     pub new_size: i64,
     pub storage_key: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
 /// Folder renamed event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderRenamedPayload {
+    #[schema(value_type = Uuid)]
     pub folder_id: FolderId,
     pub old_name: String,
     pub new_name: String,
     pub old_path: String,
     pub new_path: String,
+    #[schema(value_type = Uuid)]
     pub renamed_by: UserId,
 }
 
 /// Folder moved event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderMovedPayload {
+    #[schema(value_type = Uuid)]
     pub folder_id: FolderId,
+    #[schema(value_type = Option<Uuid>)]
     pub old_parent_folder_id: Option<FolderId>,
+    #[schema(value_type = Option<Uuid>)]
     pub new_parent_folder_id: Option<FolderId>,
     pub old_path: String,
     pub new_path: String,
+    #[schema(value_type = Uuid)]
     pub moved_by: UserId,
 }
 
 /// Folder deleted event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderDeletedPayload {
+    #[schema(value_type = Uuid)]
     pub folder_id: FolderId,
     pub name: String,
     pub path: String,
+    #[schema(value_type = Uuid)]
     pub deleted_by: UserId,
 }
 
 /// File deleted event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileDeletedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub file_name: String,
+    #[schema(value_type = Option<Uuid>)]
     pub folder_id: Option<FolderId>,
 }
 
 /// File moved event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileRenamedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub old_name: String,
     pub new_name: String,
     pub old_path: String,
     pub new_path: String,
+    #[schema(value_type = Uuid)]
     pub renamed_by: UserId,
 }
 
 /// File moved event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileMovedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Option<Uuid>)]
     pub old_parent_folder_id: Option<FolderId>,
+    #[schema(value_type = Option<Uuid>)]
     pub new_parent_folder_id: Option<FolderId>,
     pub old_path: String,
     pub new_path: String,
+    #[schema(value_type = Uuid)]
     pub moved_by: UserId,
 }
 
 /// File restored event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileRestoredPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub old_version: i32,
     pub new_version: i32,
     pub restored_from_version: i32,
     pub content_hash: String,
     pub size: i64,
+    #[schema(value_type = Uuid)]
     pub restored_by: UserId,
 }
 
 /// Share created event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareCreatedPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub share_token: String,
     pub permissions: SharePermissions,
     pub password_protected: bool,
     pub expires_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Uuid)]
     pub created_by: UserId,
 }
 
 /// Share revoked event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareRevokedPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Uuid)]
     pub revoked_by: UserId,
 }
 
 /// Share updated event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareUpdatedPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub password_changed: bool,
     pub expires_at_changed: bool,
     pub new_expires_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Uuid)]
     pub updated_by: UserId,
 }
 
 /// Share received by user event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareReceivedByUserPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Uuid)]
     pub received_by: UserId,
+    #[schema(value_type = Uuid)]
     pub shared_by: UserId,
     pub timestamp: DateTime<Utc>,
 }
 
 /// Share permission changed event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SharePermissionChangedPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub old_permissions: SharePermissions,
     pub new_permissions: SharePermissions,
+    #[schema(value_type = Uuid)]
     pub changed_by: UserId,
     pub timestamp: DateTime<Utc>,
 }
 
 /// Share revoked from user event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareRevokedFromUserPayload {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Uuid)]
     pub revoked_from: UserId,
+    #[schema(value_type = Uuid)]
     pub revoked_by: UserId,
     pub timestamp: DateTime<Utc>,
 }
 
 /// Notification created event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NotificationCreatedPayload {
     pub notification_id: Uuid,
+    #[schema(value_type = Uuid)]
     pub user_id: UserId,
     pub title: String,
     pub message: String,
@@ -331,9 +382,11 @@ pub struct NotificationCreatedPayload {
 }
 
 /// Replication state changed event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ReplicationStateChangedPayload {
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Uuid)]
     pub file_version_id: VersionId,
     pub replication_state: ReplicationState,
     pub job_status: Option<String>,
@@ -343,45 +396,51 @@ pub struct ReplicationStateChangedPayload {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrainstormBoardModifiedPayload {
     pub board_id: String,
     pub title: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingNoteModifiedPayload {
     pub meeting_id: String,
     pub title: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DecisionModifiedPayload {
     pub decision_id: String,
     pub title: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupModifiedPayload {
     pub standup_id: String,
     pub title: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanModifiedPayload {
     pub board_id: Option<String>,
     pub card_id: Option<String>,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteModifiedPayload {
     pub note_id: String,
     pub title: String,
+    #[schema(value_type = Uuid)]
     pub modified_by: UserId,
 }
 

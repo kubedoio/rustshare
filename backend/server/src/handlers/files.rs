@@ -43,6 +43,16 @@ fn is_hidden_kanban_file(name: &str) -> bool {
 /// - file: the file content
 /// - name: the file name
 /// - parent_folder_id: optional parent folder UUID
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/upload",
+    tag = "Files",
+    responses(
+        (status = 200, description = "File uploaded", body = FileUploadResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -145,7 +155,7 @@ pub async fn upload_file(
     ))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileUploadResponse {
     pub id: Uuid,
     pub name: String,
@@ -162,6 +172,17 @@ pub struct FileUploadResponse {
 /// Get file metadata.
 ///
 /// GET /api/files/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 200, description = "File metadata", body = File),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -177,6 +198,17 @@ pub async fn get_file(
 /// Get file download URL.
 ///
 /// GET /api/files/{id}/download
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/download",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 200, description = "Download URL", body = DownloadUrlResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -189,7 +221,7 @@ pub async fn download_file(
     Ok(Json(DownloadUrlResponse { url }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DownloadUrlResponse {
     pub url: String,
 }
@@ -282,6 +314,17 @@ pub async fn preview_file(
 /// Delete a file.
 ///
 /// DELETE /api/files/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/files/{id}",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 204, description = "File deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -358,7 +401,7 @@ pub async fn update_file(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileUpdateResponse {
     pub id: Uuid,
     pub current_version: i32,
@@ -373,7 +416,7 @@ pub struct FileUpdateResponse {
 /// Get file version history.
 ///
 /// GET /api/files/{id}/versions
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileVersionResponse {
     pub id: Uuid,
     pub version_number: i32,
@@ -431,7 +474,7 @@ pub async fn restore_file_version(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RestoreVersionRequest {
     pub version: i32,
 }
@@ -696,7 +739,7 @@ pub async fn edit_file(
 // ============================================================================
 
 /// File with share information for list responses
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct FileWithShares {
     // File fields
     pub id: Uuid,
@@ -771,7 +814,7 @@ pub async fn list_files(
     Ok(Json(files))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WorkspaceStarRequest {
     pub starred: bool,
 }

@@ -4,24 +4,25 @@ pub mod admin;
 pub mod ai;
 pub mod auth;
 mod brainstorming;
+pub mod chat_integration;
 pub mod collab;
 mod decisions;
 pub mod device_auth;
 pub mod devices;
 mod extractors;
 pub mod features;
-mod files;
-mod folders;
+pub mod files;
+pub mod folders;
 mod groups;
 pub mod health;
 pub mod invites;
 mod kanban;
 mod meetings;
 mod modules;
-mod notes;
+pub mod notes;
 mod notifications;
 mod profile;
-mod public_shares;
+pub mod public_shares;
 pub mod scim;
 pub mod scim_v2;
 mod shares;
@@ -123,7 +124,7 @@ use rustshare_core::services::{
 use serde::Serialize;
 
 /// Standard error response format.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]

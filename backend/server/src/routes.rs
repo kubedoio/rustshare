@@ -461,6 +461,35 @@ pub fn brainstorming_routes() -> Router<AppState> {
         )
 }
 
+pub fn chat_integration_routes() -> Router<AppState> {
+    use axum::routing::{get, post};
+    Router::new()
+        .route(
+            "/api/v1/integrations/chat/unfurl",
+            post(crate::handlers::chat_integration::unfurl_link),
+        )
+        .route(
+            "/api/v1/integrations/chat/unfurl/public",
+            post(crate::handlers::chat_integration::unfurl_link_public),
+        )
+        .route(
+            "/api/v1/integrations/chat/events",
+            post(crate::handlers::chat_integration::receive_chat_event),
+        )
+        .route(
+            "/api/v1/integrations/webhooks/dispatch",
+            post(crate::handlers::chat_integration::dispatch_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/chat/webhooks",
+            get(crate::handlers::chat_integration::list_chat_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/chat/webhooks",
+            post(crate::handlers::chat_integration::register_chat_webhook),
+        )
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

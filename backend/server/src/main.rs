@@ -37,7 +37,7 @@
 //! - Ensure target group health checks are configured
 //!
 
-use rustshare_server::{bootstrap, middleware, routes};
+use rustshare_server::{bootstrap, middleware, openapi, routes};
 
 pub use rustshare_server::{
     default_storage_quota_bytes, AppAiService, AppState, AppUploadService, AppUserShareService,
@@ -45,12 +45,17 @@ pub use rustshare_server::{
 
 use anyhow::Result;
 use axum::{
-    extract::DefaultBodyLimit, http::StatusCode, response::IntoResponse, routing::any, Json, Router,
+    extract::DefaultBodyLimit,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{any, get},
+    Json, Router,
 };
 use std::path::PathBuf;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use utoipa::OpenApi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -66,6 +71,12 @@ async fn main() -> Result<()> {
     // - unversioned resource aliases were removed in Phase 7 wave 3
     // - remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
     let app = Router::new()
+        // OpenAPI docs (no auth required for discovery)
+        .merge(
+            utoipa_swagger_ui::SwaggerUi::new("/api/docs")
+                .url("/api/docs/openapi.json", openapi::ApiDoc::openapi()),
+        )
+        .route("/api/docs/openapi.json", get(openapi::openapi_json_handler))
         .merge(routes::health_routes())
         .merge(routes::auth_routes())
         .merge(routes::device_auth_routes())
@@ -76,6 +87,7 @@ async fn main() -> Result<()> {
         .merge(routes::note_routes())
         .merge(routes::note_public_routes())
         .merge(routes::replication_routes())
+        .merge(routes::chat_integration_routes())
         .merge(routes::admin_routes())
         .merge(routes::scim_routes())
         .merge(routes::folder_routes())

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// A workspace module configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Module {
     pub id: Uuid,
     #[serde(alias = "key")]
@@ -32,7 +32,7 @@ pub struct Module {
 }
 
 /// Permission settings for a module.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ModulePermissions {
     #[serde(default)]
     pub admin_can_configure: bool,
@@ -45,14 +45,14 @@ pub struct ModulePermissions {
 }
 
 /// AI indexing policy for a module.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AiIndexingPolicy {
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
 /// Audit policy for a module.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuditPolicy {
     #[serde(default = "default_true")]
     pub enabled: bool,

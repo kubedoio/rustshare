@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// A template configuration for creating module objects.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Template {
     pub id: Uuid,
     pub template_key: String,
@@ -29,7 +29,7 @@ pub struct Template {
 }
 
 /// A default file entry within a template.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TemplateDefaultFile {
     pub path: String,
     pub content: Option<String>,
@@ -38,7 +38,7 @@ pub struct TemplateDefaultFile {
 }
 
 /// Request to create an object from a template.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateFromTemplateRequest {
     pub template_key: String,
     pub name: String,
@@ -46,7 +46,7 @@ pub struct CreateFromTemplateRequest {
 }
 
 /// Result of creating an object from a template.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreatedObject {
     pub object_id: Uuid,
     pub object_type: String,

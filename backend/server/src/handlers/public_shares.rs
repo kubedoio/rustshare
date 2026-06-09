@@ -22,13 +22,13 @@ use crate::{handlers::ShareSessionAuth, AppState};
 use super::files::FileUploadResponse;
 use crate::handlers::AppError;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionRequest {
     #[serde(default)]
     pub password: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SessionResponse {
     pub session_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -36,7 +36,7 @@ pub struct SessionResponse {
     pub upload_only: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ShareInfoResponse {
     pub resource_id: Uuid,
     pub resource_type: String,
@@ -49,7 +49,7 @@ pub struct ShareInfoResponse {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SharedFolderContentsResponse {
     pub root_folder_id: Uuid,
     pub current_folder_id: Uuid,
@@ -59,13 +59,25 @@ pub struct SharedFolderContentsResponse {
     pub files: Vec<rustshare_core::domain::File>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SharedFolderContentsQuery {
     #[serde(default)]
     pub folder_id: Option<Uuid>,
 }
 
 /// Create anonymous session for share access
+#[utoipa::path(
+    post,
+    path = "/api/v1/public/share/{token}/session",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Share token")),
+    request_body = CreateSessionRequest,
+    responses(
+        (status = 200, description = "Session created", body = SessionResponse),
+        (status = 401, description = "Password required or invalid", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Share not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_session(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -89,6 +101,17 @@ pub async fn create_session(
 }
 
 /// Get share info without authentication
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/info",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Share token")),
+    responses(
+        (status = 200, description = "Share information", body = ShareInfoResponse),
+        (status = 404, description = "Share not found or revoked", body = crate::handlers::ErrorResponse),
+        (status = 410, description = "Share expired or revoked", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,

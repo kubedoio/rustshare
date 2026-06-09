@@ -15,21 +15,19 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use rustshare_core::services::{
-    ChatEvent, ChatIntegrationError, IncomingChatEvent, UnfurlRequest,
-};
+use rustshare_core::services::{ChatIntegrationError, IncomingChatEvent, UnfurlRequest};
 
-use crate::AppState;
 use crate::handlers::{AuthenticatedUser, ErrorResponse};
+use crate::AppState;
 
 /// Request to unfurl a RustShare link.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlLinkRequest {
     pub url: String,
 }
 
 /// Response from unfurling a link.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UnfurlLinkResponse {
     pub title: String,
     pub description: Option<String>,
@@ -53,12 +51,27 @@ pub struct UnfurlLinkResponse {
 ///
 /// Link unfurl endpoint that accepts a RustShare URL and returns preview metadata.
 /// Requires authentication to verify the user has permission to view the shared resource.
+#[utoipa::path(
+    post,
+    path = "/api/v1/integrations/chat/unfurl",
+    tag = "Chat Integration",
+    request_body = UnfurlLinkRequest,
+    responses(
+        (status = 200, description = "Unfurled link metadata", body = UnfurlLinkResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Permission denied", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Share or file not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn unfurl_link(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Json(req): Json<UnfurlLinkRequest>,
 ) -> Result<Json<UnfurlLinkResponse>, (StatusCode, Json<ErrorResponse>)> {
-    debug!("Unfurl request for URL: {} by user: {}", req.url, auth.user_id);
+    debug!(
+        "Unfurl request for URL: {} by user: {}",
+        req.url, auth.user_id
+    );
 
     let unfurl_req = UnfurlRequest { url: req.url };
 
@@ -90,6 +103,16 @@ pub async fn unfurl_link(
 ///
 /// Public link unfurl endpoint that doesn't require authentication.
 /// This is for chat systems that want to preview public shares.
+#[utoipa::path(
+    post,
+    path = "/api/v1/integrations/chat/unfurl/public",
+    tag = "Chat Integration",
+    request_body = UnfurlLinkRequest,
+    responses(
+        (status = 200, description = "Unfurled link metadata", body = UnfurlLinkResponse),
+        (status = 404, description = "Share or file not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn unfurl_link_public(
     State(state): State<AppState>,
     Json(req): Json<UnfurlLinkRequest>,
@@ -123,7 +146,7 @@ pub async fn unfurl_link_public(
 }
 
 /// Request to receive a chat event from an external system.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ReceiveChatEventRequest {
     pub event: IncomingChatEvent,
 }
@@ -132,6 +155,16 @@ pub struct ReceiveChatEventRequest {
 ///
 /// Webhook receiver for chat events from external chat systems.
 /// Verifies the event signature and processes the event.
+#[utoipa::path(
+    post,
+    path = "/api/v1/integrations/chat/events",
+    tag = "Chat Integration",
+    request_body = ReceiveChatEventRequest,
+    responses(
+        (status = 200, description = "Event processed"),
+        (status = 401, description = "Missing or invalid signature", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn receive_chat_event(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -181,20 +214,20 @@ pub async fn receive_chat_event(
 }
 
 /// Request to dispatch an event to registered chat webhooks.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DispatchWebhookRequest {
     pub event_type: String,
     pub payload: serde_json::Value,
 }
 
 /// Response from dispatching webhooks.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DispatchWebhookResponse {
     pub dispatched: Vec<WebhookDispatchResult>,
 }
 
 /// Result of a single webhook dispatch.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WebhookDispatchResult {
     pub url: String,
     pub success: bool,
@@ -206,8 +239,18 @@ pub struct WebhookDispatchResult {
 ///
 /// Internal endpoint to dispatch events to registered chat webhooks.
 /// This is called internally when shares are revoked or files change.
+#[utoipa::path(
+    post,
+    path = "/api/v1/integrations/webhooks/dispatch",
+    tag = "Chat Integration",
+    request_body = DispatchWebhookRequest,
+    responses(
+        (status = 200, description = "Dispatch results", body = DispatchWebhookResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn dispatch_webhooks(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     _admin: AuthenticatedUser, // Only authenticated users can trigger dispatches
     Json(req): Json<DispatchWebhookRequest>,
 ) -> Result<Json<DispatchWebhookResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -226,7 +269,7 @@ pub async fn dispatch_webhooks(
 }
 
 /// Request to register a new webhook URL.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterWebhookRequest {
     pub url: String,
 }
@@ -235,15 +278,27 @@ pub struct RegisterWebhookRequest {
 ///
 /// Register a new chat webhook URL for event dispatch.
 /// Requires admin privileges.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/integrations/chat/webhooks",
+    tag = "Chat Integration",
+    request_body = RegisterWebhookRequest,
+    responses(
+        (status = 201, description = "Webhook registered"),
+        (status = 400, description = "Invalid URL", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn register_chat_webhook(
-    State(mut state): State<AppState>,
+    State(_state): State<AppState>,
     _admin: AuthenticatedUser, // TODO: Check for admin role
     Json(req): Json<RegisterWebhookRequest>,
 ) -> impl IntoResponse {
     info!("Registering chat webhook: {}", req.url);
 
     // Validate URL
-    if let Err(_) = url::Url::parse(&req.url) {
+    if url::Url::parse(&req.url).is_err() {
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -270,6 +325,16 @@ pub async fn register_chat_webhook(
 ///
 /// List registered chat webhook URLs.
 /// Requires admin privileges.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/integrations/chat/webhooks",
+    tag = "Chat Integration",
+    responses(
+        (status = 200, description = "Registered chat webhooks", body = WebhookListResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_chat_webhooks(
     State(state): State<AppState>,
     _admin: AuthenticatedUser, // TODO: Check for admin role
@@ -285,7 +350,7 @@ pub async fn list_chat_webhooks(
 }
 
 /// Response containing registered webhooks.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WebhookListResponse {
     pub webhooks: Vec<String>,
 }
@@ -293,14 +358,21 @@ pub struct WebhookListResponse {
 /// Map ChatIntegrationError to HTTP response.
 fn map_chat_integration_error(err: ChatIntegrationError) -> (StatusCode, Json<ErrorResponse>) {
     let (status, message) = match err {
-        ChatIntegrationError::ShareNotFound => (StatusCode::NOT_FOUND, "Share not found".to_string()),
-        ChatIntegrationError::FileNotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
-        ChatIntegrationError::FolderNotFound => (StatusCode::NOT_FOUND, "Folder not found".to_string()),
-        ChatIntegrationError::PermissionDenied => (StatusCode::FORBIDDEN, "Permission denied".to_string()),
-        ChatIntegrationError::InvalidWebhookUrl(msg) => (StatusCode::BAD_REQUEST, msg),
-        ChatIntegrationError::SignatureVerificationFailed => {
-            (StatusCode::UNAUTHORIZED, "Signature verification failed".to_string())
+        ChatIntegrationError::ShareNotFound => {
+            (StatusCode::NOT_FOUND, "Share not found".to_string())
         }
+        ChatIntegrationError::FileNotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
+        ChatIntegrationError::FolderNotFound => {
+            (StatusCode::NOT_FOUND, "Folder not found".to_string())
+        }
+        ChatIntegrationError::PermissionDenied => {
+            (StatusCode::FORBIDDEN, "Permission denied".to_string())
+        }
+        ChatIntegrationError::InvalidWebhookUrl(ref msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        ChatIntegrationError::SignatureVerificationFailed => (
+            StatusCode::UNAUTHORIZED,
+            "Signature verification failed".to_string(),
+        ),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
@@ -319,14 +391,21 @@ fn map_chat_integration_error(err: ChatIntegrationError) -> (StatusCode, Json<Er
 /// Map ChatIntegrationError to tuple for use in non-Json responses.
 fn map_chat_integration_error_tuple(err: ChatIntegrationError) -> (StatusCode, ErrorResponse) {
     let (status, message) = match err {
-        ChatIntegrationError::ShareNotFound => (StatusCode::NOT_FOUND, "Share not found".to_string()),
-        ChatIntegrationError::FileNotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
-        ChatIntegrationError::FolderNotFound => (StatusCode::NOT_FOUND, "Folder not found".to_string()),
-        ChatIntegrationError::PermissionDenied => (StatusCode::FORBIDDEN, "Permission denied".to_string()),
-        ChatIntegrationError::InvalidWebhookUrl(msg) => (StatusCode::BAD_REQUEST, msg),
-        ChatIntegrationError::SignatureVerificationFailed => {
-            (StatusCode::UNAUTHORIZED, "Signature verification failed".to_string())
+        ChatIntegrationError::ShareNotFound => {
+            (StatusCode::NOT_FOUND, "Share not found".to_string())
         }
+        ChatIntegrationError::FileNotFound => (StatusCode::NOT_FOUND, "File not found".to_string()),
+        ChatIntegrationError::FolderNotFound => {
+            (StatusCode::NOT_FOUND, "Folder not found".to_string())
+        }
+        ChatIntegrationError::PermissionDenied => {
+            (StatusCode::FORBIDDEN, "Permission denied".to_string())
+        }
+        ChatIntegrationError::InvalidWebhookUrl(ref msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        ChatIntegrationError::SignatureVerificationFailed => (
+            StatusCode::UNAUTHORIZED,
+            "Signature verification failed".to_string(),
+        ),
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),

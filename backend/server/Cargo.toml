@@ -21,6 +21,8 @@ axum = { workspace = true, features = ["multipart", "ws"] }
 axum-extra = { version = "0.12", features = ["typed-header"] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -154,6 +156,10 @@ path = "../tests/module_service_test.rs"
 [[test]]
 name = "vault_sync_http_test"
 path = "../tests/vault_sync_http_test.rs"
+
+[[test]]
+name = "openapi_export_test"
+path = "../tests/openapi_export_test.rs"
 
 [dev-dependencies]
 tokio-tungstenite = "0.29"

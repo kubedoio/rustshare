@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{FileId, UserId, VersionId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplicationState {
     #[default]
@@ -55,9 +55,11 @@ impl FromStr for ReplicationState {
 /// A version snapshot of a file's content.
 ///
 /// Each time a file is modified, a new version is created with the updated content hash.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileVersion {
+    #[schema(value_type = Uuid)]
     pub id: VersionId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
     pub version_number: i32,
     pub content_hash: String,
@@ -65,6 +67,7 @@ pub struct FileVersion {
     pub replication_state: ReplicationState,
     pub change_description: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[schema(value_type = Uuid)]
     pub created_by: UserId,
     pub tenant_id: Uuid,
 }

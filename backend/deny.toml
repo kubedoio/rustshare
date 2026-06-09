@@ -44,4 +44,6 @@ ignore = [
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
     # rsa crate — no patch available yet (Marvin Attack timing sidechannel)
     { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
+    # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
+    { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
 ]

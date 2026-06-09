@@ -12,9 +12,10 @@ use rustshare_core::{
     domain::User,
     events::EventBroadcaster,
     services::{
-        AiService, ContentIndexer, FileService, FolderService, NotificationService,
-        PermissionResolver, ShareService, SimpleEmbeddingGenerator, ThumbnailService,
-        UserShareService, UserShareServiceDeps, VaultSyncService,
+        AiService, ChatIntegrationService, ContentIndexer, FileService, FolderService,
+        HttpWebhookDispatcher, NotificationService, PermissionResolver, ShareService,
+        SimpleEmbeddingGenerator, ThumbnailService, UserShareService, UserShareServiceDeps,
+        VaultSyncService,
     },
 };
 use rustshare_crypto::SecretEncryptionKey;
@@ -51,6 +52,7 @@ struct Services {
     upload_service: Arc<AppUploadService>,
     user_repository: Arc<UserRepository>,
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
+    chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
 }
 
 fn init_tracing() {
@@ -373,6 +375,17 @@ async fn init_services(
         upload_doc_store_path
     );
 
+    let chat_webhook_secret = std::env::var("RUSTSHARE_CHAT_WEBHOOK_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production".to_string());
+    let chat_integration_service = Arc::new(ChatIntegrationService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&event_store),
+        Arc::clone(&broadcaster),
+        chat_webhook_secret,
+        Arc::new(HttpWebhookDispatcher::new()),
+    ));
+    info!("Chat integration service initialized");
+
     Ok(Services {
         file_service,
         folder_service,
@@ -392,6 +405,7 @@ async fn init_services(
         upload_service,
         user_repository,
         vault_sync_service,
+        chat_integration_service,
     })
 }
 
@@ -577,6 +591,7 @@ pub async fn init_app() -> Result<AppState> {
         public_base_url,
         collab_rooms: Arc::new(CollabRooms::new()),
         vault_sync_service: services.vault_sync_service,
+        chat_integration_service: services.chat_integration_service,
     };
 
     Ok(state)

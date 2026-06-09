@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Login request
-#[derive(Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct LoginRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
@@ -33,13 +33,13 @@ pub struct LoginRequest {
 }
 
 /// Login response
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserResponse,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: String,
     pub email: String,
@@ -123,6 +123,19 @@ fn build_login_response(token: String, user: User) -> LoginResponse {
 }
 
 /// Login handler
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = LoginResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Invalid credentials", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Password login disabled", body = crate::handlers::ErrorResponse),
+        (status = 429, description = "Too many requests", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -190,6 +203,15 @@ pub async fn login(
     Ok((response_headers, Json(build_login_response(token, user))).into_response())
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    tag = "Auth",
+    responses(
+        (status = 204, description = "Logout successful"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,

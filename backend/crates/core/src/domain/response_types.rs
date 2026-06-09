@@ -6,7 +6,7 @@ use super::{File, Folder};
 ///
 /// Contains the files and immediate subfolders in a directory,
 /// without recursing into subdirectories.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderContents {
     pub files: Vec<File>,
     pub folders: Vec<Folder>,
@@ -37,9 +37,10 @@ impl Default for FolderContents {
 ///
 /// Contains a folder and all its subfolders recursively, along with files
 /// at each level. This provides a complete tree view of the folder hierarchy.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FolderTree {
     pub folder: Folder,
+    #[schema(no_recursion)]
     pub subfolders: Vec<FolderTree>,
     pub files: Vec<File>,
 }

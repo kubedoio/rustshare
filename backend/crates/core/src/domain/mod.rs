@@ -28,7 +28,7 @@ pub use replication::{
     ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget, ReplicationTargetId,
 };
 pub use response_types::{FolderContents, FolderTree};
-pub use share::{Share, SharePermissions, ShareRecipient};
+pub use share::{Share, SharePermissions, ShareRecipient, ShareType};
 pub use template::{CreateFromTemplateRequest, CreatedObject, Template, TemplateDefaultFile};
 pub use tenant_config::RecipientVisibility;
 pub use thumbnail::{
