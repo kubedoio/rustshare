@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteAttachment {
     pub file_id: Uuid,
     pub name: String,
@@ -24,7 +24,7 @@ pub struct NoteAttachment {
 }
 
 /// Note-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteMetadata {
     pub kind: String,
     pub title: String,
@@ -66,7 +66,7 @@ impl NoteMetadata {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoteVisibility {
     Private,
@@ -109,13 +109,14 @@ pub struct PublicNote {
 }
 
 /// Note summary for listings (includes file id but not full content).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteSummary {
     pub id: Uuid,
     pub name: String,
     pub path: String,
     pub metadata: NoteMetadata,
     pub parent_folder_id: Option<Uuid>,
+    #[schema(value_type = Uuid)]
     pub owner_id: UserId,
     pub current_version: i32,
     pub size: i64,

@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Adapter types supported for vault sync.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
 pub enum VaultAdapter {
     /// Obsidian vault adapter.
@@ -35,7 +37,7 @@ impl std::str::FromStr for VaultAdapter {
 }
 
 /// A syncable vault container.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Vault {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -49,7 +51,7 @@ pub struct Vault {
 }
 
 /// Metadata for a file inside a vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VaultFile {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -69,7 +71,7 @@ pub struct VaultFile {
 }
 
 /// A device authorized to sync a vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct VaultDevice {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -85,7 +87,7 @@ pub struct VaultDevice {
 }
 
 /// Request to create a new vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateVaultRequest {
     pub name: String,
     pub adapter: VaultAdapter,
@@ -107,7 +109,7 @@ pub struct UploadVaultFileRequest {
 }
 
 /// Request to delete a file from a vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DeleteVaultFileRequest {
     pub vault_id: Uuid,
     pub relative_path: String,
@@ -116,7 +118,7 @@ pub struct DeleteVaultFileRequest {
 }
 
 /// Request to rename a file within a vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RenameVaultFileRequest {
     #[serde(default)]
     pub vault_id: Uuid,
@@ -129,7 +131,7 @@ pub struct RenameVaultFileRequest {
 }
 
 /// A manifest representing the current state of a vault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct VaultManifest {
     pub vault_id: Uuid,
     pub adapter: VaultAdapter,
@@ -146,7 +148,7 @@ pub struct VaultManifestResult {
 }
 
 /// An entry in a vault manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct VaultManifestEntry {
     pub path: String,
     pub sha256: Option<String>,

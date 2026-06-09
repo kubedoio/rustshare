@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct OidcLoginState {
     pub state: String,
     pub pkce_verifier: String,

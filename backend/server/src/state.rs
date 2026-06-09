@@ -31,6 +31,13 @@ pub type AppAiService = rustshare_core::services::AiService<
     rustshare_infrastructure::repositories::PermissionResolverRepository,
 >;
 
+/// Type alias for chat integration service
+pub type AppChatIntegrationService = rustshare_core::services::ChatIntegrationService<
+    rustshare_storage::MetadataStore,
+    rustshare_storage::EventStore,
+    rustshare_core::services::HttpWebhookDispatcher,
+>;
+
 // Note: Upload service disabled due to trait mismatch between storage and core crates
 pub type AppUploadService = rustshare_core::services::UploadService<
     rustshare_storage::repos::RustFsUploadSessionRepository,
@@ -187,6 +194,7 @@ pub struct AppState {
     pub collab_rooms: Arc<CollabRooms>,
     pub vault_sync_service:
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
+    pub chat_integration_service: Arc<AppChatIntegrationService>,
 }
 
 impl FromRef<AppState> for DatabaseState {

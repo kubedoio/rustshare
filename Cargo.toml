@@ -98,6 +98,10 @@ nix = { version = "0.31", features = ["process", "signal"] }
 # Time serialization
 humantime-serde = "1.1"
 
+# OpenAPI generation
+utoipa = { version = "5.0", features = ["uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
+
 # Testing
 mockall = "0.14"
 tempfile = "3.10"

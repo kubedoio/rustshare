@@ -5,7 +5,9 @@ use uuid::Uuid;
 use super::UserId;
 
 /// User theme preference
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, Default, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
@@ -39,7 +41,7 @@ impl std::str::FromStr for Theme {
 }
 
 /// User's dashboard configuration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DashboardConfig {
     pub enabled_modules: Vec<String>,
     pub module_order: Vec<String>,
@@ -68,8 +70,9 @@ impl Default for DashboardConfig {
 ///
 /// Note: The `username` field is used for login and is distinct from `email`.
 /// This allows users to have a stable login identifier separate from their email address.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct User {
+    #[schema(value_type = Uuid)]
     pub id: UserId,
     /// Login identifier (enhancement beyond spec)
     pub username: String,
@@ -99,6 +102,7 @@ pub struct User {
     /// Tenant this user belongs to
     pub tenant_id: Uuid,
     /// User's dashboard configuration
+    #[schema(value_type = DashboardConfig)]
     pub dashboard_config: sqlx::types::Json<DashboardConfig>,
 }
 

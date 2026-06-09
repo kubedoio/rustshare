@@ -20,7 +20,7 @@ use crate::AppState;
 // ============================================================================
 
 /// Semantic search request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SemanticSearchRequest {
     /// The search query
     pub query: String,
@@ -34,7 +34,7 @@ fn default_limit() -> usize {
 }
 
 /// Semantic search result item.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SemanticSearchResultItem {
     pub file_id: String,
     pub file_name: String,
@@ -47,21 +47,21 @@ pub struct SemanticSearchResultItem {
 }
 
 /// Semantic search response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SemanticSearchResponse {
     pub results: Vec<SemanticSearchResultItem>,
     pub total_found: usize,
 }
 
 /// File summary request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SummarizeRequest {
     /// The file ID to summarize
     pub file_id: Uuid,
 }
 
 /// File summary response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SummarizeResponse {
     pub file_id: String,
     pub file_name: String,
@@ -71,7 +71,7 @@ pub struct SummarizeResponse {
 }
 
 /// Source citation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SourceCitation {
     pub file_id: String,
     pub file_name: String,
@@ -81,14 +81,14 @@ pub struct SourceCitation {
 }
 
 /// Question answering request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AskQuestionRequest {
     /// The question to answer
     pub question: String,
 }
 
 /// Question answering response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AskQuestionResponse {
     pub answer: String,
     pub citations: Vec<SourceCitation>,
@@ -105,6 +105,18 @@ pub struct AskQuestionResponse {
 ///
 /// Contract A-01: Results are filtered by user permissions.
 /// Contract A-04: Rate limited.
+#[utoipa::path(
+    post,
+    path = "/api/v1/ai/search",
+    tag = "AI",
+    request_body = SemanticSearchRequest,
+    responses(
+        (status = 200, description = "Search results", body = SemanticSearchResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn semantic_search(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -162,6 +174,19 @@ pub async fn semantic_search(
 /// Contract A-01: Permission checked before summarizing.
 /// Contract A-02: Source citation included.
 /// Contract A-04: Rate limited.
+#[utoipa::path(
+    post,
+    path = "/api/v1/ai/summarize",
+    tag = "AI",
+    request_body = SummarizeRequest,
+    responses(
+        (status = 200, description = "File summary", body = SummarizeResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
+        (status = 503, description = "AI service not configured", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn summarize_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -203,6 +228,19 @@ pub async fn summarize_file(
 /// Contract A-02: Citations included.
 /// Contract A-03: No hallucinations.
 /// Contract A-04: Rate limited.
+#[utoipa::path(
+    post,
+    path = "/api/v1/ai/ask",
+    tag = "AI",
+    request_body = AskQuestionRequest,
+    responses(
+        (status = 200, description = "Answer with citations", body = AskQuestionResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
+        (status = 503, description = "AI service not configured", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn ask_question(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

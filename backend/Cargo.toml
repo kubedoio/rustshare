@@ -58,6 +58,10 @@ hmac = "0.13"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 
+# OpenAPI generation
+utoipa = { version = "5.0", features = ["uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
+
 # Testing
 mockall = "0.14"
 validator = { version = "0.20", features = ["derive"] }

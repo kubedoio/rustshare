@@ -4,9 +4,10 @@ use uuid::Uuid;
 
 use super::UserId;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UserSession {
     pub id: uuid::Uuid,
+    #[schema(value_type = Uuid)]
     pub user_id: UserId,
     pub session_token_hash: String,
     pub expires_at: DateTime<Utc>,

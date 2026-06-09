@@ -24,7 +24,7 @@ use crate::{
     AppState,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthConfigResponse {
     pub password_login_enabled: bool,
     pub oidc_enabled: bool,
@@ -81,6 +81,14 @@ pub struct MobileUserResponse {
     pub is_admin: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/config",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Authentication configuration", body = AuthConfigResponse),
+    ),
+)]
 pub async fn auth_config(
     State(state): State<AppState>,
 ) -> Result<Json<AuthConfigResponse>, (StatusCode, String)> {

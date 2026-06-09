@@ -8,8 +8,9 @@ use super::{FileId, VersionId};
 pub type ReplicationJobId = uuid::Uuid;
 pub type ReplicationTargetId = uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ReplicationTarget {
+    #[schema(value_type = Uuid)]
     pub id: ReplicationTargetId,
     pub name: String,
     pub destination_type: String,
@@ -27,7 +28,7 @@ pub struct ReplicationTarget {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplicationJobStatus {
     #[default]
@@ -71,10 +72,13 @@ impl FromStr for ReplicationJobStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ReplicationJob {
+    #[schema(value_type = Uuid)]
     pub id: ReplicationJobId,
+    #[schema(value_type = Uuid)]
     pub file_id: FileId,
+    #[schema(value_type = Uuid)]
     pub file_version_id: VersionId,
     pub storage_key: String,
     pub status: ReplicationJobStatus,
