@@ -76,7 +76,6 @@ async fn main() -> Result<()> {
             utoipa_swagger_ui::SwaggerUi::new("/api/docs")
                 .url("/api/docs/openapi.json", openapi::ApiDoc::openapi()),
         )
-        .route("/api/docs/openapi.json", get(openapi::openapi_json_handler))
         .merge(routes::health_routes())
         .merge(routes::auth_routes())
         .merge(routes::device_auth_routes())
