@@ -1,5 +1,6 @@
 import { ApiClient } from './client';
 import { ApiError } from './types';
+import { getCsrfToken } from './client';
 import type {
 	Vault,
 	VaultManifest,
@@ -58,7 +59,7 @@ export async function uploadVaultFile(
 			'X-RustShare-Base-Server-Rev': String(baseServerRev),
 			'X-RustShare-SHA256': sha256,
 			'X-RustShare-Device-ID': deviceId,
-			'X-Rustshare-Csrf': '1'
+			'X-Rustshare-Csrf': getCsrfToken() || ''
 		},
 		body: content,
 		credentials: 'include'
