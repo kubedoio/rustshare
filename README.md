@@ -6,9 +6,11 @@ RustShare is an open-source artifact and workspace system with a Rust backend an
 
 RustShare is part of the broader **Kubedo.io Company Memory Infrastructure** direction, together with RustChat and future permission-aware Company RAG.
 
-**Status:** Public Preview / Active Development
-**License:** Apache-2.0 core
-**Website:** [rustshare.io](https://rustshare.io)
+| Field | Value |
+|---|---|
+| Status | Public Preview / Active Development |
+| License | Apache-2.0 core |
+| Website | [rustshare.io](https://rustshare.io) |
 
 ## What this is
 
