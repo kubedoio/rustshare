@@ -1018,6 +1018,13 @@ mod tests {
             Ok(())
         }
 
+        async fn put_from_path(&self, key: &str, path: &std::path::Path) -> anyhow::Result<()> {
+            let data = tokio::fs::read(path).await?;
+            let mut blobs = self.blobs.lock().await;
+            blobs.insert(key.to_string(), Bytes::from(data));
+            Ok(())
+        }
+
         async fn exists(&self, key: &str) -> anyhow::Result<bool> {
             let blobs = self.blobs.lock().await;
             Ok(blobs.contains_key(key))

@@ -13,7 +13,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -153,9 +152,12 @@ pub struct CompleteUploadResponse {
 /// Maximum chunk size (100MB — matches the upload service clamp).
 const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
-/// Stream an HTTP body to a temporary file and return its contents as `Bytes`.
+/// Stream an HTTP body to a temporary file and return the temp file plus size.
 /// Enforces a size limit during streaming to prevent OOM.
-async fn stream_body_to_bytes(body: Body, max_size: usize) -> Result<Bytes, AppError> {
+async fn stream_body_to_temp_file(
+    body: Body,
+    max_size: usize,
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
     let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
         .await
         .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
@@ -189,12 +191,11 @@ async fn stream_body_to_bytes(body: Body, max_size: usize) -> Result<Bytes, AppE
             })?;
     }
 
-    let data = tokio::fs::read(temp_file.path()).await.map_err(|e| {
-        tracing::error!("Failed to read temp file: {e}");
-        AppError::internal(format!("Failed to read temp file: {e}"))
-    })?;
+    tokio::io::AsyncWriteExt::flush(&mut async_file)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
 
-    Ok(Bytes::from(data))
+    Ok((temp_file, total_size))
 }
 
 // ============================================================================
@@ -342,8 +343,11 @@ pub async fn upload_chunk(
         }
     };
 
-    // Stream chunk body to temp file with size limit to prevent OOM
-    let chunk_data = stream_body_to_bytes(body, MAX_CHUNK_SIZE).await?;
+    // Stream chunk body to temp file with size limit to prevent OOM. The temp
+    // file is passed to the service using the streaming path so the chunk is
+    // never read back into memory.
+    let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, MAX_CHUNK_SIZE).await?;
+    let chunk_path = chunk_temp.path();
 
     // Extract hash from Content-MD5 header if present
     let provided_hash = headers
@@ -362,10 +366,10 @@ pub async fn upload_chunk(
     };
 
     let response = service
-        .upload_chunk(
+        .upload_chunk_from_path(
             session_id,
             chunk_index,
-            chunk_data,
+            chunk_path,
             provided_hash,
             auth.user_id,
         )

@@ -702,6 +702,10 @@ impl CoreObjectStoreOps for ObjectStore {
         self.put(key, data).await
     }
 
+    async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        self.put_from_path(key, path).await
+    }
+
     async fn exists(&self, key: &str) -> Result<bool> {
         self.exists(key).await
     }

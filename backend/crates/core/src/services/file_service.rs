@@ -11,6 +11,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 
 use crate::domain::{
     File, FileId, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
@@ -165,6 +166,12 @@ pub trait ObjectStoreOps: Send + Sync {
     /// Upload data to object storage.
     async fn put(&self, key: &str, data: Bytes) -> Result<()>;
 
+    /// Upload data to object storage by streaming from a local file path.
+    ///
+    /// This avoids loading the entire object into memory and is the preferred
+    /// path for large uploads that have already been buffered to disk.
+    async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()>;
+
     /// Check if an object exists.
     async fn exists(&self, key: &str) -> Result<bool>;
 
@@ -192,6 +199,17 @@ pub trait ObjectStoreOps: Send + Sync {
     /// # Arguments
     /// * `key` - The object key
     async fn delete(&self, key: &str) -> Result<()>;
+}
+
+/// Source of blob data for an upload.
+///
+/// `Bytes` is used for small in-memory payloads (tests, internal callers).
+/// `Path` is used for large uploads that have been streamed to a temporary
+/// file on disk and must be sent to object storage without being read back
+/// into memory.
+enum UploadSource {
+    Bytes(Bytes),
+    Path(std::path::PathBuf),
 }
 
 use crate::domain::SharePermissions;
@@ -300,6 +318,40 @@ where
         .await
     }
 
+    /// Upload a new file whose contents are stored on disk at `file_path`.
+    ///
+    /// This is the streaming equivalent of [`Self::upload_file`] and is used by
+    /// HTTP handlers for large multipart uploads. The file is hashed and sent
+    /// to object storage without being fully loaded into memory.
+    pub async fn upload_file_from_path(
+        &self,
+        owner_id: UserId,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        file_path: &std::path::Path,
+        mime_type: String,
+        tenant_id: uuid::Uuid,
+    ) -> Result<File, FileError> {
+        let actor = FileUploadActor {
+            actor_type: "user".to_string(),
+            actor_user_id: Some(owner_id),
+            actor_share_id: None,
+            actor_share_session_id: None,
+            actor_display_name: None,
+        };
+
+        self.upload_file_with_actor_from_path(
+            owner_id,
+            actor,
+            name,
+            parent_folder_id,
+            file_path,
+            mime_type,
+            tenant_id,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_file_with_actor(
         &self,
@@ -311,13 +363,71 @@ where
         mime_type: String,
         tenant_id: uuid::Uuid,
     ) -> Result<File, FileError> {
-        // 1. Validate file name
         self.validate_file_name(&name)?;
-
-        // 2. Calculate SHA256 hash of content
         let content_hash = self.calculate_sha256(&content);
+        let size = content.len() as i64;
+        self.upload_file_with_actor_impl(
+            owner_id,
+            actor,
+            name,
+            parent_folder_id,
+            content_hash,
+            size,
+            UploadSource::Bytes(content),
+            mime_type,
+            tenant_id,
+        )
+        .await
+    }
 
-        // 3. Check parent folder exists (if provided) and verify permissions
+    /// Upload a new file whose contents are stored on disk at `file_path`.
+    ///
+    /// The file is hashed and uploaded to object storage using streaming I/O,
+    /// so the full content is never loaded into memory. This is the path used
+    /// by HTTP handlers for large multipart uploads.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upload_file_with_actor_from_path(
+        &self,
+        owner_id: UserId,
+        actor: FileUploadActor,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        file_path: &std::path::Path,
+        mime_type: String,
+        tenant_id: uuid::Uuid,
+    ) -> Result<File, FileError> {
+        self.validate_file_name(&name)?;
+        let (content_hash, size) = self.calculate_sha256_and_size_from_path(file_path).await?;
+        self.upload_file_with_actor_impl(
+            owner_id,
+            actor,
+            name,
+            parent_folder_id,
+            content_hash,
+            size,
+            UploadSource::Path(file_path.to_path_buf()),
+            mime_type,
+            tenant_id,
+        )
+        .await
+    }
+
+    /// Shared implementation for file uploads from either in-memory bytes or a
+    /// temporary file on disk.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_file_with_actor_impl(
+        &self,
+        owner_id: UserId,
+        actor: FileUploadActor,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        content_hash: String,
+        size: i64,
+        source: UploadSource,
+        mime_type: String,
+        tenant_id: uuid::Uuid,
+    ) -> Result<File, FileError> {
+        // 1. Check parent folder exists (if provided) and verify permissions
         let (parent_path, file_owner_id) = if let Some(folder_id) = parent_folder_id {
             // Use unchecked lookup so we can distinguish "folder doesn't exist"
             // from "user lacks permission".
@@ -349,14 +459,14 @@ where
             (String::new(), owner_id)
         };
 
-        // 4. Construct path from parent path + name
+        // 2. Construct path from parent path + name
         let path = if parent_path.is_empty() || parent_path == "/" {
             format!("/{}", name)
         } else {
             format!("{}/{}", parent_path, name)
         };
 
-        // 5. Write to RustFS at "blobs/{hash}" (skip if the blob already exists)
+        // 3. Write to RustFS at "blobs/{hash}" (skip if the blob already exists)
         let storage_key = format!("blobs/{}", content_hash);
         let blob_exists = self
             .object_store
@@ -365,13 +475,22 @@ where
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         if !blob_exists {
-            self.object_store
-                .put(&storage_key, content.clone())
-                .await
-                .map_err(|e| FileError::Storage(e.to_string()))?;
+            match source {
+                UploadSource::Bytes(ref content) => {
+                    self.object_store
+                        .put(&storage_key, content.clone())
+                        .await
+                        .map_err(|e| FileError::Storage(e.to_string()))?;
+                }
+                UploadSource::Path(ref file_path) => {
+                    self.object_store
+                        .put_from_path(&storage_key, file_path)
+                        .await
+                        .map_err(|e| FileError::Storage(e.to_string()))?;
+                }
+            }
         }
 
-        let size = content.len() as i64;
         if let Some(mut existing) = self
             .metadata_store
             .find_file_by_path(&path, file_owner_id)
@@ -453,7 +572,7 @@ where
             return Ok(existing);
         }
 
-        // 6. Create File domain object with version=1
+        // 4. Create File domain object with version=1
         let file = File::new(
             name.clone(),
             path.clone(),
@@ -465,7 +584,7 @@ where
             tenant_id,
         );
 
-        // 7. Emit FileUploaded event to EventStore
+        // 5. Emit FileUploaded event to EventStore
         let payload = FileUploadedPayload {
             file_id: file.id,
             name: name.clone(),
@@ -493,7 +612,7 @@ where
             owner_id,
         );
 
-        // 8. Insert into files and file_versions tables atomically with the event
+        // 6. Insert into files and file_versions tables atomically with the event
         let version = FileVersion::new(
             file.id,
             1,
@@ -538,7 +657,7 @@ where
         self.queue_replication_if_needed(file.id, file_owner_id, &version)
             .await?;
 
-        // 9. Return File
+        // 7. Return File
         Ok(file)
     }
 
@@ -628,6 +747,53 @@ where
         expected_version: i32,
         content: Bytes,
     ) -> Result<File, FileError> {
+        let new_content_hash = self.calculate_sha256(&content);
+        let new_size = content.len() as i64;
+        self.update_file_impl(
+            file_id,
+            user_id,
+            expected_version,
+            new_content_hash,
+            new_size,
+            UploadSource::Bytes(content),
+        )
+        .await
+    }
+
+    /// Update a file's content from a file on disk with optimistic locking.
+    ///
+    /// The file is hashed and sent to object storage using streaming I/O so the
+    /// full content is never loaded into memory.
+    pub async fn update_file_from_path(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        expected_version: i32,
+        file_path: &std::path::Path,
+    ) -> Result<File, FileError> {
+        let (new_content_hash, new_size) =
+            self.calculate_sha256_and_size_from_path(file_path).await?;
+        self.update_file_impl(
+            file_id,
+            user_id,
+            expected_version,
+            new_content_hash,
+            new_size,
+            UploadSource::Path(file_path.to_path_buf()),
+        )
+        .await
+    }
+
+    /// Shared implementation for file updates from either bytes or a file path.
+    async fn update_file_impl(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        expected_version: i32,
+        new_content_hash: String,
+        new_size: i64,
+        source: UploadSource,
+    ) -> Result<File, FileError> {
         // 1. Get current file and verify access
         let mut file = self.get_file(file_id, user_id).await?;
 
@@ -648,8 +814,6 @@ where
         // 3. Calculate new content hash
         let old_content_hash = file.content_hash.clone();
         let old_size = file.size;
-        let new_content_hash = self.calculate_sha256(&content);
-        let new_size = content.len() as i64;
 
         // 4. Write to RustFS (skip if same content - deduplication)
         let storage_key = format!("blobs/{}", new_content_hash);
@@ -660,10 +824,20 @@ where
             .map_err(|e| FileError::Storage(e.to_string()))?;
 
         if !blob_exists {
-            self.object_store
-                .put(&storage_key, content)
-                .await
-                .map_err(|e| FileError::Storage(e.to_string()))?;
+            match source {
+                UploadSource::Bytes(content) => {
+                    self.object_store
+                        .put(&storage_key, content)
+                        .await
+                        .map_err(|e| FileError::Storage(e.to_string()))?;
+                }
+                UploadSource::Path(file_path) => {
+                    self.object_store
+                        .put_from_path(&storage_key, &file_path)
+                        .await
+                        .map_err(|e| FileError::Storage(e.to_string()))?;
+                }
+            }
         }
 
         // 5. Increment version and update file record
@@ -1437,6 +1611,33 @@ where
         hex::encode(result)
     }
 
+    /// Calculate SHA256 hash and size of a file on disk using streaming I/O.
+    async fn calculate_sha256_and_size_from_path(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(String, i64), FileError> {
+        let mut file = tokio::fs::File::open(path).await.map_err(|e| {
+            FileError::Storage(format!("Failed to open temp file for hashing: {e}"))
+        })?;
+
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut total_size: i64 = 0;
+
+        loop {
+            let n = file.read(&mut buffer).await.map_err(|e| {
+                FileError::Storage(format!("Failed to read temp file for hashing: {e}"))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            total_size += n as i64;
+        }
+
+        Ok((hex::encode(hasher.finalize()), total_size))
+    }
+
     async fn queue_replication_if_needed(
         &self,
         file_id: uuid::Uuid,
@@ -1717,6 +1918,15 @@ mod tests {
     impl ObjectStoreOps for MockObjectStore {
         async fn put(&self, key: &str, data: Bytes) -> Result<()> {
             self.objects.lock().unwrap().insert(key.to_string(), data);
+            Ok(())
+        }
+
+        async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+            let data = tokio::fs::read(path).await?;
+            self.objects
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), Bytes::from(data));
             Ok(())
         }
 

@@ -9,7 +9,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
@@ -174,12 +173,12 @@ fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), A
     Ok(())
 }
 
-/// Stream a multipart field to a temporary file and return its contents as `Bytes`.
+/// Stream a multipart field to a temporary file and return the temp file plus size.
 /// Enforces a per-field size limit during streaming to prevent OOM.
-async fn stream_multipart_field_to_bytes(
+async fn stream_multipart_field_to_temp_file(
     field: &mut axum::extract::multipart::Field<'_>,
     max_size: usize,
-) -> Result<Bytes, AppError> {
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
     let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
         .await
         .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
@@ -211,18 +210,26 @@ async fn stream_multipart_field_to_bytes(
             })?;
     }
 
-    let file_data = tokio::fs::read(temp_file.path()).await.map_err(|e| {
-        tracing::error!("Failed to read temp file: {e}");
-        AppError::internal(format!("Failed to read temp file: {e}"))
-    })?;
+    tokio::io::AsyncWriteExt::flush(&mut async_file)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
 
-    Ok(Bytes::from(file_data))
+    Ok((temp_file, total_size))
 }
 
 async fn parse_upload_multipart(
     mut multipart: Multipart,
-) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), AppError> {
-    let mut file_data: Option<Bytes> = None;
+) -> Result<
+    (
+        tempfile::NamedTempFile,
+        String,
+        Option<Uuid>,
+        String,
+        Option<String>,
+    ),
+    AppError,
+> {
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
     let mut uploader_name: Option<String> = None;
@@ -245,8 +252,10 @@ async fn parse_upload_multipart(
                         file_name = Some(name.to_string());
                     }
                 }
-                file_data = Some(
-                    stream_multipart_field_to_bytes(&mut field, MAX_PUBLIC_UPLOAD_SIZE).await?,
+                file_temp = Some(
+                    stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
+                        .await?
+                        .0,
                 );
             }
             "name" => {
@@ -285,7 +294,7 @@ async fn parse_upload_multipart(
         }
     }
 
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
     let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // If mime_type is generic or not provided, guess from file extension
@@ -296,7 +305,7 @@ async fn parse_upload_multipart(
     }
 
     Ok((
-        file_data,
+        file_temp,
         file_name,
         parent_folder_id,
         mime_type,
@@ -664,8 +673,9 @@ pub async fn upload_shared_folder_file(
         return Err(AppError::forbidden("This share does not allow uploads"));
     }
 
-    let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
+    let (file_temp, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
+    let file_path = file_temp.path();
 
     let root_folder = state
         .metadata_store
@@ -705,7 +715,7 @@ pub async fn upload_shared_folder_file(
 
     let file = state
         .file_service
-        .upload_file_with_actor(
+        .upload_file_with_actor_from_path(
             root_folder.owner_id,
             FileUploadActor {
                 actor_type: "public_share_session".to_string(),
@@ -716,7 +726,7 @@ pub async fn upload_shared_folder_file(
             },
             file_name,
             Some(target_folder_id),
-            file_data,
+            file_path,
             mime_type,
             share.tenant_id,
         )

@@ -68,6 +68,23 @@ impl ObjectStore {
         Ok(())
     }
 
+    /// Put object in storage by streaming from a local file.
+    ///
+    /// This avoids loading the file into memory and is used for large uploads
+    /// that have already been buffered to disk.
+    pub async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let body = ByteStream::from_path(path).await?;
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(body)
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
     /// Get object from storage
     pub async fn get(&self, key: &str) -> Result<Bytes> {
         let output = self

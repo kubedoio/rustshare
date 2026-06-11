@@ -34,12 +34,12 @@ fn is_hidden_kanban_file(name: &str) -> bool {
 /// Maximum file size for uploads (2GB).
 const MAX_UPLOAD_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
-/// Stream a multipart field to a temporary file and return its contents as `Bytes`.
+/// Stream a multipart field to a temporary file and return the temp file plus size.
 /// Enforces a per-field size limit during streaming to prevent OOM.
-async fn stream_multipart_field_to_bytes(
+async fn stream_multipart_field_to_temp_file(
     field: &mut axum::extract::multipart::Field<'_>,
     max_size: usize,
-) -> Result<Bytes, AppError> {
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
     let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
         .await
         .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
@@ -71,12 +71,11 @@ async fn stream_multipart_field_to_bytes(
             })?;
     }
 
-    let file_data = tokio::fs::read(temp_file.path()).await.map_err(|e| {
-        tracing::error!("Failed to read temp file: {e}");
-        AppError::internal(format!("Failed to read temp file: {e}"))
-    })?;
+    tokio::io::AsyncWriteExt::flush(&mut async_file)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
 
-    Ok(Bytes::from(file_data))
+    Ok((temp_file, total_size))
 }
 
 // ============================================================================
@@ -106,7 +105,7 @@ pub async fn upload_file(
     auth: AuthenticatedUser,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<FileUploadResponse>), AppError> {
-    let mut file_data: Option<Bytes> = None;
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
 
@@ -119,8 +118,11 @@ pub async fn upload_file(
 
         match field_name.as_str() {
             "file" => {
-                file_data =
-                    Some(stream_multipart_field_to_bytes(&mut field, MAX_UPLOAD_SIZE).await?);
+                file_temp = Some(
+                    stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                        .await?
+                        .0,
+                );
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
@@ -143,7 +145,7 @@ pub async fn upload_file(
     }
 
     // Validate required fields
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
     let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // Validate file name length and content
@@ -175,14 +177,16 @@ pub async fn upload_file(
         .first_or_octet_stream()
         .to_string();
 
-    // Upload file
+    // Upload file using the streaming path so the temp file is never read
+    // back into memory.
+    let file_path = file_temp.path();
     let file = state
         .file_service
-        .upload_file(
+        .upload_file_from_path(
             auth.user_id,
             file_name,
             parent_folder_id,
-            file_data,
+            file_path,
             mime_type,
             auth.tenant_id,
         )
@@ -445,8 +449,8 @@ pub async fn update_file(
         .parse()
         .map_err(|_| AppError::bad_request("Invalid If-Match header: must be an integer"))?;
 
-    // Extract file data from multipart
-    let mut file_data: Option<Bytes> = None;
+    // Extract file data from multipart, streaming to a temp file on disk.
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -454,17 +458,21 @@ pub async fn update_file(
         .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
     {
         if field.name() == Some("file") {
-            file_data = Some(stream_multipart_field_to_bytes(&mut field, MAX_UPLOAD_SIZE).await?);
+            file_temp = Some(
+                stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                    .await?
+                    .0,
+            );
             break;
         }
     }
 
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
 
-    // Update file
+    // Update file using the streaming path.
     let file = state
         .file_service
-        .update_file(file_id, auth.user_id, expected_version, file_data)
+        .update_file_from_path(file_id, auth.user_id, expected_version, file_temp.path())
         .await?;
 
     Ok(Json(FileUpdateResponse {

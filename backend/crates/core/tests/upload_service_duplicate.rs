@@ -103,6 +103,15 @@ impl UploadObjectStore for MockUploadObjectStore {
         unreachable!()
     }
 
+    async fn put_chunk_from_path(
+        &self,
+        _session_id: Uuid,
+        _chunk_index: u32,
+        _path: &std::path::Path,
+    ) -> Result<(), UploadError> {
+        unreachable!()
+    }
+
     async fn get_chunk(
         &self,
         _session_id: Uuid,

@@ -209,6 +209,15 @@ impl ObjectStoreOps for MockObjectStore {
         Ok(())
     }
 
+    async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let data = std::fs::read(path)?;
+        self.puts
+            .lock()
+            .unwrap()
+            .push((key.to_string(), Bytes::from(data)));
+        Ok(())
+    }
+
     async fn exists(&self, _key: &str) -> Result<bool> {
         Ok(false)
     }
