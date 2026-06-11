@@ -1,7 +1,7 @@
 //! HTTP handlers for meeting note operations.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -15,7 +15,7 @@ use crate::services::meeting_service::{MeetingNote, MeetingSummary};
 use crate::AppState;
 use rustshare_core::events::{AggregateType, Event, EventType, MeetingNoteModifiedPayload};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateMeetingRequest {
     pub title: String,
     pub team: String,
@@ -23,6 +23,16 @@ pub struct CreateMeetingRequest {
     pub content: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/meetings",
+    tag = "Meetings",
+    request_body = CreateMeetingRequest,
+    responses(
+        (status = 200, description = "Success", body = MeetingNote),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -61,6 +71,17 @@ pub async fn create_meeting(
     Ok((StatusCode::CREATED, Json(meeting)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/meetings/{id}",
+    tag = "Meetings",
+    params(("meeting_id" = Uuid, Path, description = "Meeting Id")),
+    responses(
+        (status = 200, description = "Success", body = MeetingNote),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -74,13 +95,25 @@ pub async fn get_meeting(
     Ok(Json(meeting))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeetingRequest {
     pub title: Option<String>,
     pub content: Option<String>,
     pub attendees: Option<Vec<String>>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/meetings/{id}",
+    tag = "Meetings",
+    params(("meeting_id" = Uuid, Path, description = "Meeting Id")),
+    request_body = UpdateMeetingRequest,
+    responses(
+        (status = 200, description = "Success", body = MeetingNote),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -120,6 +153,17 @@ pub async fn update_meeting(
     Ok(Json(meeting))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/meetings/{id}",
+    tag = "Meetings",
+    params(("meeting_id" = Uuid, Path, description = "Meeting Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_meeting(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -155,13 +199,23 @@ pub async fn delete_meeting(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/meetings",
+    tag = "Meetings",
+    responses(
+        (status = 200, description = "Success", body = Vec<MeetingSummary>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_meetings(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<MeetingSummary>>, AppError> {
     let meetings = state
         .meeting_service
-        .list_meetings(auth.user_id, auth.tenant_id)
+        .list_meetings(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
 
     Ok(Json(meetings))

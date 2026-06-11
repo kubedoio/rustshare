@@ -27,7 +27,7 @@ categories = ["filesystem", "web-programming"]
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # Web framework

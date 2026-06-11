@@ -8,11 +8,13 @@
 //! - Aborting uploads
 
 use axum::{
-    body::Bytes,
+    body::Body,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
+use bytes::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,7 +30,7 @@ use crate::AppState;
 // ============================================================================
 
 /// Request to create a new upload session
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateUploadSessionRequest {
     /// Target folder ID (None for root)
     pub folder_id: Option<Uuid>,
@@ -50,7 +52,7 @@ fn default_chunk_size() -> u64 {
 }
 
 /// Response for session creation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateUploadSessionResponse {
     /// Session ID
     pub session_id: Uuid,
@@ -63,7 +65,7 @@ pub struct CreateUploadSessionResponse {
 }
 
 /// Response for session status query
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UploadSessionStatusResponse {
     /// Session ID
     pub session_id: Uuid,
@@ -109,7 +111,7 @@ impl From<SessionStatusResponse> for UploadSessionStatusResponse {
 }
 
 /// Response for chunk upload
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UploadChunkResponse {
     /// Session ID
     pub session_id: Uuid,
@@ -136,7 +138,7 @@ impl From<rustshare_core::services::upload_session::ChunkUploadResponse> for Upl
 }
 
 /// Response for session completion
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CompleteUploadResponse {
     /// Session ID
     pub session_id: Uuid,
@@ -146,6 +148,53 @@ pub struct CompleteUploadResponse {
     pub file_name: String,
     /// File size
     pub file_size: u64,
+}
+
+/// Maximum chunk size (100MB — matches the upload service clamp).
+const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
+
+/// Stream an HTTP body to a temporary file and return its contents as `Bytes`.
+/// Enforces a size limit during streaming to prevent OOM.
+async fn stream_body_to_bytes(body: Body, max_size: usize) -> Result<Bytes, AppError> {
+    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+    let mut async_file = tokio::fs::File::from_std(
+        temp_file
+            .reopen()
+            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
+    );
+
+    let mut total_size: usize = 0;
+    let mut stream = body.into_data_stream();
+
+    while let Some(result) = stream.next().await {
+        let chunk = result.map_err(|e| {
+            tracing::error!("Failed to read body: {e}");
+            AppError::internal(format!("Failed to read body: {e}"))
+        })?;
+        total_size += chunk.len();
+        if total_size > max_size {
+            return Err(AppError::payload_too_large(format!(
+                "Chunk size exceeds maximum allowed {max_size} bytes"
+            )));
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write to temp file: {e}");
+                AppError::internal(format!("Failed to write to temp file: {e}"))
+            })?;
+    }
+
+    let data = tokio::fs::read(temp_file.path()).await.map_err(|e| {
+        tracing::error!("Failed to read temp file: {e}");
+        AppError::internal(format!("Failed to read temp file: {e}"))
+    })?;
+
+    Ok(Bytes::from(data))
 }
 
 // ============================================================================
@@ -158,6 +207,16 @@ pub struct CompleteUploadResponse {
 ///
 /// This initiates a resumable upload session for large files.
 /// Returns a session ID that the client uses for subsequent chunk uploads.
+#[utoipa::path(
+    post,
+    path = "/api/v1/uploads/sessions",
+    tag = "Uploads",
+    request_body = CreateUploadSessionRequest,
+    responses(
+        (status = 200, description = "Success", body = CreateUploadSessionResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_upload_session(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -217,6 +276,17 @@ pub async fn create_upload_session(
 /// Returns the current status of an upload session, including which
 /// chunks have been received and which are missing. Clients use this
 /// to resume interrupted uploads.
+#[utoipa::path(
+    get,
+    path = "/api/v1/uploads/sessions/{id}",
+    tag = "Uploads",
+    params(("session_id" = Uuid, Path, description = "Session Id")),
+    responses(
+        (status = 200, description = "Success", body = UploadSessionStatusResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_upload_session_status(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -245,12 +315,23 @@ pub async fn get_upload_session_status(
 ///
 /// Headers:
 /// - Content-MD5: Base64-encoded MD5 hash of the chunk (optional but recommended)
+#[utoipa::path(
+    put,
+    path = "/api/v1/uploads/sessions/{id}/chunks/{index}",
+    tag = "Uploads",
+    params(("session_id" = Uuid, Path, description = "Session Id"), ("chunk_index" = u32, Path, description = "Chunk Index")),
+    responses(
+        (status = 200, description = "Success", body = UploadChunkResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_chunk(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path((session_id, chunk_index)): Path<(Uuid, u32)>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Json<UploadChunkResponse>, AppError> {
     let service = match &state.upload_service {
         Some(s) => s,
@@ -260,6 +341,9 @@ pub async fn upload_chunk(
             ));
         }
     };
+
+    // Stream chunk body to temp file with size limit to prevent OOM
+    let chunk_data = stream_body_to_bytes(body, MAX_CHUNK_SIZE).await?;
 
     // Extract hash from Content-MD5 header if present
     let provided_hash = headers
@@ -278,7 +362,13 @@ pub async fn upload_chunk(
     };
 
     let response = service
-        .upload_chunk(session_id, chunk_index, body, provided_hash, auth.user_id)
+        .upload_chunk(
+            session_id,
+            chunk_index,
+            chunk_data,
+            provided_hash,
+            auth.user_id,
+        )
         .await?;
 
     Ok(Json(response.into()))
@@ -291,6 +381,17 @@ pub async fn upload_chunk(
 /// Finalizes the upload by assembling all chunks into the final file,
 /// verifying the content hash, creating the file metadata, and cleaning
 /// up temporary chunk storage.
+#[utoipa::path(
+    post,
+    path = "/api/v1/uploads/sessions/{id}/complete",
+    tag = "Uploads",
+    params(("session_id" = Uuid, Path, description = "Session Id")),
+    responses(
+        (status = 200, description = "Success", body = CompleteUploadResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn complete_upload(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -323,6 +424,17 @@ pub async fn complete_upload(
 /// DELETE /api/v1/uploads/sessions/{id}
 ///
 /// Cancels an in-progress upload and cleans up temporary storage.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/uploads/sessions/{id}",
+    tag = "Uploads",
+    params(("session_id" = Uuid, Path, description = "Session Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn abort_upload_session(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -348,6 +460,15 @@ pub async fn abort_upload_session(
 ///
 /// Returns all upload sessions for the authenticated user,
 /// useful for resuming previous uploads.
+#[utoipa::path(
+    get,
+    path = "/api/v1/uploads/sessions",
+    tag = "Uploads",
+    responses(
+        (status = 200, description = "Success", body = Vec<UploadSessionStatusResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_upload_sessions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

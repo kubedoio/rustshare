@@ -174,6 +174,51 @@ fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), A
     Ok(())
 }
 
+/// Stream a multipart field to a temporary file and return its contents as `Bytes`.
+/// Enforces a per-field size limit during streaming to prevent OOM.
+async fn stream_multipart_field_to_bytes(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_size: usize,
+) -> Result<Bytes, AppError> {
+    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+    let mut async_file = tokio::fs::File::from_std(
+        temp_file
+            .reopen()
+            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
+    );
+
+    let mut total_size: usize = 0;
+
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        tracing::error!("Failed to read chunk: {e}");
+        AppError::internal(format!("Failed to read chunk: {e}"))
+    })? {
+        total_size += chunk.len();
+        if total_size > max_size {
+            return Err(AppError::payload_too_large(format!(
+                "File size exceeds maximum allowed {max_size} bytes"
+            )));
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write to temp file: {e}");
+                AppError::internal(format!("Failed to write to temp file: {e}"))
+            })?;
+    }
+
+    let file_data = tokio::fs::read(temp_file.path()).await.map_err(|e| {
+        tracing::error!("Failed to read temp file: {e}");
+        AppError::internal(format!("Failed to read temp file: {e}"))
+    })?;
+
+    Ok(Bytes::from(file_data))
+}
+
 async fn parse_upload_multipart(
     mut multipart: Multipart,
 ) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), AppError> {
@@ -183,7 +228,7 @@ async fn parse_upload_multipart(
     let mut uploader_name: Option<String> = None;
     let mut mime_type = "application/octet-stream".to_string();
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
@@ -200,10 +245,9 @@ async fn parse_upload_multipart(
                         file_name = Some(name.to_string());
                     }
                 }
-                file_data =
-                    Some(field.bytes().await.map_err(|e| {
-                        AppError::internal(format!("Failed to read file data: {}", e))
-                    })?);
+                file_data = Some(
+                    stream_multipart_field_to_bytes(&mut field, MAX_PUBLIC_UPLOAD_SIZE).await?,
+                );
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
@@ -261,6 +305,17 @@ async fn parse_upload_multipart(
 }
 
 /// Download shared file (requires session JWT)
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/file",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_shared_file(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -366,6 +421,17 @@ pub async fn download_shared_file(
 }
 
 /// List contents of a shared folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/folder/contents",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_shared_folder_contents(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -429,6 +495,17 @@ pub async fn get_shared_folder_contents(
 }
 
 /// Download a file from a shared folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/folder/files/{file_id}",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token"), ("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_shared_folder_file(
     State(state): State<AppState>,
     Path((token, file_id)): Path<(String, Uuid)>,
@@ -544,6 +621,17 @@ pub async fn download_shared_folder_file(
 const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 /// Upload a file into a shared folder using an authenticated share session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/public/share/{token}/folder/upload",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_shared_folder_file(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -578,14 +666,6 @@ pub async fn upload_shared_folder_file(
 
     let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
-
-    if file_data.len() > MAX_PUBLIC_UPLOAD_SIZE {
-        return Err(AppError::payload_too_large(format!(
-            "File size {} exceeds maximum allowed {} bytes",
-            file_data.len(),
-            MAX_PUBLIC_UPLOAD_SIZE
-        )));
-    }
 
     let root_folder = state
         .metadata_store

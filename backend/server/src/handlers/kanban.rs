@@ -44,29 +44,39 @@ use axum::extract::Multipart;
 // Boards
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
-pub struct ListBoardsQuery {
-    pub limit: Option<usize>,
-}
-
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/boards",
+    tag = "Kanban",
+    responses(
+        (status = 200, description = "Success", body = Vec<KanbanBoardSummary>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_boards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Query(query): Query<ListBoardsQuery>,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<KanbanBoardSummary>>, AppError> {
     require_kanban_enabled(&state, auth.tenant_id).await?;
-    let mut boards = state
+    let boards = state
         .kanban_service
-        .list_boards(auth.user_id, auth.tenant_id)
+        .list_boards(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
-
-    if let Some(limit) = query.limit {
-        boards.truncate(limit);
-    }
 
     Ok(Json(boards))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/boards",
+    tag = "Kanban",
+    request_body = CreateBoardInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanBoard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -81,6 +91,17 @@ pub async fn create_board(
     Ok((StatusCode::CREATED, Json(board)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/boards/{board_id}",
+    tag = "Kanban",
+    params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
+    responses(
+        (status = 200, description = "Success", body = KanbanBoard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -95,6 +116,18 @@ pub async fn get_board(
     Ok(Json(board))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/modules/kanban/boards/{board_id}",
+    tag = "Kanban",
+    params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
+    request_body = UpdateBoardInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanBoard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -110,6 +143,17 @@ pub async fn update_board(
     Ok(Json(board))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/boards/{board_id}/archive",
+    tag = "Kanban",
+    params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn archive_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -128,6 +172,18 @@ pub async fn archive_board(
 // Labels
 // -------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/boards/{board_id}/labels",
+    tag = "Kanban",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    request_body = CreateLabelInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanLabel),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_label(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -143,6 +199,18 @@ pub async fn create_label(
     Ok((StatusCode::CREATED, Json(label)))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+    tag = "Kanban",
+    params(("board_id" = Uuid, Path, description = "Board Id"), ("label_id" = String, Path, description = "Label Id")),
+    request_body = UpdateLabelInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanLabel),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_label(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -158,6 +226,17 @@ pub async fn update_label(
     Ok(Json(label))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+    tag = "Kanban",
+    params(("board_id" = Uuid, Path, description = "Board Id"), ("label_id" = String, Path, description = "Label Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_label(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -172,6 +251,18 @@ pub async fn delete_label(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/labels",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn add_card_label(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -192,6 +283,17 @@ pub async fn add_card_label(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}/labels/{label_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("label_id" = String, Path, description = "Label Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn remove_card_label(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -210,6 +312,15 @@ pub async fn remove_card_label(
 // Assignees
 // -------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/assignable-users",
+    tag = "Kanban",
+    responses(
+        (status = 200, description = "Success", body = Vec<KanbanAssignee>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_assignable_users(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -223,6 +334,18 @@ pub async fn get_assignable_users(
     Ok(Json(users))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/assignees",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn assign_card_member(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -243,6 +366,17 @@ pub async fn assign_card_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}/assignees/{assignee_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("assignee_id" = String, Path, description = "Assignee Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn unassign_card_member(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -261,20 +395,50 @@ pub async fn unassign_card_member(
 // Cards
 // ============================================================================
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/boards/{board_id}/cards",
+    tag = "Kanban",
+    params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
+    responses(
+        (status = 200, description = "Success", body = Vec<KanbanCard>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_cards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(board_id_or_slug): Path<String>,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<KanbanCard>>, AppError> {
     require_kanban_enabled(&state, auth.tenant_id).await?;
     let cards = state
         .kanban_service
-        .list_cards(board_id_or_slug, auth.user_id, auth.tenant_id)
+        .list_cards(
+            board_id_or_slug,
+            auth.user_id,
+            auth.tenant_id,
+            query.limit(),
+            query.offset(),
+        )
         .await?;
 
     Ok(Json(cards))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/boards/{board_id}/cards",
+    tag = "Kanban",
+    params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
+    request_body = CreateCardInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanCard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -290,6 +454,17 @@ pub async fn create_card(
     Ok((StatusCode::CREATED, Json(card)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/cards/{card_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    responses(
+        (status = 200, description = "Success", body = KanbanCard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -304,6 +479,17 @@ pub async fn get_card(
     Ok(Json(card))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/kanban/cards/{card_id}/detail",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    responses(
+        (status = 200, description = "Success", body = KanbanCardDetail),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_card_detail(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -318,6 +504,18 @@ pub async fn get_card_detail(
     Ok(Json(detail))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/modules/kanban/cards/{card_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = UpdateCardInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanCard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -333,6 +531,18 @@ pub async fn update_card(
     Ok(Json(card))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/modules/kanban/cards/{card_id}/description",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = UpdateCardDescriptionInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanCard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_card_description(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -348,11 +558,23 @@ pub async fn update_card_description(
     Ok(Json(card))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateCardDescriptionInput {
     pub content: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/move",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = MoveCardInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanBoard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn move_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -368,6 +590,17 @@ pub async fn move_card(
     Ok(Json(board))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/archive",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    responses(
+        (status = 200, description = "Success", body = KanbanCard),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn archive_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -382,6 +615,17 @@ pub async fn archive_card(
     Ok(Json(card))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_card(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -400,6 +644,17 @@ pub async fn delete_card(
 // Attachments
 // ============================================================================
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/attachments",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    responses(
+        (status = 200, description = "Success", body = KanbanCardAttachment),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn add_card_attachment(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -447,6 +702,17 @@ pub async fn add_card_attachment(
     Ok((StatusCode::CREATED, Json(attachment)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}/attachments/{attachment_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("attachment_id" = Uuid, Path, description = "Attachment Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_card_attachment(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -465,21 +731,33 @@ pub async fn delete_card_attachment(
 // Checklists
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddChecklistInput {
     pub title: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddChecklistItemInput {
     pub text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ToggleChecklistItemInput {
     pub done: bool,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/checklists",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id")),
+    request_body = AddChecklistInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanChecklistGroup),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_checklist(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -495,6 +773,18 @@ pub async fn create_checklist(
     Ok((StatusCode::CREATED, Json(group)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id")),
+    request_body = AddChecklistItemInput,
+    responses(
+        (status = 200, description = "Success", body = KanbanChecklistItem),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_checklist_item(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -516,6 +806,18 @@ pub async fn create_checklist_item(
     Ok((StatusCode::CREATED, Json(item)))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id"), ("item_id" = String, Path, description = "Item Id")),
+    request_body = ToggleChecklistItemInput,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn toggle_checklist_item(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -538,6 +840,17 @@ pub async fn toggle_checklist_item(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id"), ("item_id" = String, Path, description = "Item Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_checklist_item(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -552,6 +865,17 @@ pub async fn delete_checklist_item(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}",
+    tag = "Kanban",
+    params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_checklist(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

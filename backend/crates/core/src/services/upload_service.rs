@@ -1003,11 +1003,26 @@ mod tests {
     }
 
     impl EventStoreOps for MockEventStore {
+        type Tx = ();
+
         async fn append(
             &self,
             event: &Event,
             _broadcaster: &EventBroadcaster,
         ) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+
+        async fn begin_transaction(&self) -> anyhow::Result<Self::Tx> {
+            Ok(())
+        }
+
+        async fn commit_transaction(&self, _tx: Self::Tx) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }

@@ -17,7 +17,7 @@ sync-protocol = { path = "../../crates/sync-protocol" }
 platform = { path = "../../crates/platform" }
 
 # Using workspace dependencies where possible
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }

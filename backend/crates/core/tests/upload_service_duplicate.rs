@@ -233,7 +233,22 @@ impl MockEventStore {
 }
 
 impl FileEventStoreOps for MockEventStore {
+    type Tx = ();
+
     async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+        self.events.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+
+    async fn begin_transaction(&self) -> Result<Self::Tx> {
+        Ok(())
+    }
+
+    async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
+        Ok(())
+    }
+
+    async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> Result<()> {
         self.events.lock().unwrap().push(event.clone());
         Ok(())
     }

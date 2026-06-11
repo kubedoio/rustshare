@@ -19,7 +19,7 @@ fn utc_now() -> DateTime<Utc> {
 }
 
 /// Decision-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DecisionMetadata {
     #[serde(alias = "type")]
     pub kind: String,
@@ -53,7 +53,7 @@ impl DecisionMetadata {
 }
 
 /// Unified decision payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Decision {
     pub id: Uuid,
     pub name: String,
@@ -61,20 +61,20 @@ pub struct Decision {
     pub content: String,
     pub metadata: DecisionMetadata,
     pub parent_folder_id: Option<Uuid>,
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
 
 /// Decision summary for listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DecisionSummary {
     pub id: Uuid,
     pub name: String,
     pub path: String,
     pub metadata: DecisionMetadata,
     pub parent_folder_id: Option<Uuid>,
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub modified_at: DateTime<Utc>,
 }
 
@@ -226,6 +226,8 @@ impl DecisionService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<DecisionSummary>, DecisionError> {
         // Find all markdown files in the /Decisions subtree
         let files = self
@@ -255,7 +257,14 @@ impl DecisionService {
         }
 
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
-        Ok(summaries)
+
+        let paginated: Vec<DecisionSummary> = summaries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Create a new decision.

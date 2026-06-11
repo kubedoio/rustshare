@@ -18,7 +18,7 @@ use crate::state::DatabaseState;
 // ---------------------------------------------------------------------------
 
 /// Single device response item.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeviceListResponse {
     pub id: String,
     pub device_name: String,
@@ -27,7 +27,7 @@ pub struct DeviceListResponse {
 }
 
 /// Response for listing devices.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListDevicesResponse {
     pub devices: Vec<DeviceListResponse>,
 }
@@ -62,6 +62,15 @@ impl From<DeviceRow> for DeviceListResponse {
 /// GET /api/v1/user/devices
 ///
 /// Returns a list of active (non-revoked) device tokens for the calling user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/user/devices",
+    tag = "Devices",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_devices(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -88,6 +97,15 @@ pub async fn list_devices(
 /// Revokes a device token (sets revoked_at = NOW()).
 /// Users can only revoke their own devices.
 /// Returns 404 if the device doesn't belong to the user.
+#[utoipa::path(
+    delete,
+    path = "/api/vault-sync/v1/devices/{device_id}",
+    tag = "Devices",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn revoke_device(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,

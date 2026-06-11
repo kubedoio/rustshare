@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 /// Health of an individual system component.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ComponentHealth {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ impl ComponentHealth {
 ///
 /// Distinct from the lightweight liveness probe (`/health`), this endpoint
 /// checks every runtime dependency required for the server to serve traffic.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ReadinessResponse {
     pub status: String,
     pub components: HashMap<String, ComponentHealth>,
@@ -62,6 +62,15 @@ pub struct ReadinessResponse {
 /// - `event_delivery`  – event store DB + in-memory broadcaster health
 /// - `auth_session`    – JWT signing/verification + session table accessibility
 /// - `ai`              – AI service presence (optional; does not fail readiness)
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success", body = ReadinessResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn readiness_check(
     State(state): State<AppState>,
 ) -> (StatusCode, Json<ReadinessResponse>) {
@@ -75,7 +84,10 @@ pub async fn readiness_check(
         .await
     {
         Ok(_) => ComponentHealth::healthy(),
-        Err(e) => ComponentHealth::unhealthy(format!("database connectivity failed: {e}")),
+        Err(e) => {
+            tracing::error!(error = %e, "Readiness probe: database connectivity failed");
+            ComponentHealth::unhealthy("database connectivity failed")
+        }
     };
     components.insert("database".to_string(), db_health);
 
@@ -84,7 +96,10 @@ pub async fn readiness_check(
     // ------------------------------------------------------------------
     let storage_health = match state.object_store.health_check().await {
         Ok(_) => ComponentHealth::healthy(),
-        Err(e) => ComponentHealth::unhealthy(format!("object storage check failed: {e}")),
+        Err(e) => {
+            tracing::error!(error = %e, "Readiness probe: object storage check failed");
+            ComponentHealth::unhealthy("object storage check failed")
+        }
     };
     components.insert("object_storage".to_string(), storage_health);
 
@@ -148,13 +163,15 @@ async fn check_auth_health(state: &AppState) -> ComponentHealth {
     }
 
     // Verify the session table is queryable.
-    let session_db_ok = sqlx::query("SELECT COUNT(*) FROM user_sessions LIMIT 1")
+    match sqlx::query("SELECT COUNT(*) FROM user_sessions LIMIT 1")
         .fetch_one(state.metadata_store.pool())
         .await
-        .is_ok();
-
-    if !session_db_ok {
-        return ComponentHealth::unhealthy("session table query failed");
+    {
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!(error = %e, "Readiness probe: session table query failed");
+            return ComponentHealth::unhealthy("session table query failed");
+        }
     }
 
     ComponentHealth::healthy()

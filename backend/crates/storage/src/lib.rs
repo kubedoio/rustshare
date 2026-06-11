@@ -34,6 +34,8 @@ use rustshare_core::services::{
 
 // EventStore implements both File and Folder event store traits
 impl FileEventStoreOps for EventStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn append(
         &self,
         event: &rustshare_core::events::Event,
@@ -41,15 +43,51 @@ impl FileEventStoreOps for EventStore {
     ) -> Result<()> {
         self.append(event, broadcaster).await
     }
+
+    async fn begin_transaction(&self) -> Result<Self::Tx> {
+        self.begin_transaction().await
+    }
+
+    async fn commit_transaction(&self, tx: Self::Tx) -> Result<()> {
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn append_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        event: &rustshare_core::events::Event,
+    ) -> Result<()> {
+        self.append_in_tx(tx, event).await
+    }
 }
 
 impl FolderEventStoreOps for EventStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn append(
         &self,
         event: &rustshare_core::events::Event,
         broadcaster: &rustshare_core::events::EventBroadcaster,
     ) -> Result<()> {
         self.append(event, broadcaster).await
+    }
+
+    async fn begin_transaction(&self) -> Result<Self::Tx> {
+        self.begin_transaction().await
+    }
+
+    async fn commit_transaction(&self, tx: Self::Tx) -> Result<()> {
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn append_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        event: &rustshare_core::events::Event,
+    ) -> Result<()> {
+        self.append_in_tx(tx, event).await
     }
 }
 
@@ -65,8 +103,18 @@ impl ShareEventStoreOps for EventStore {
 
 // MetadataStore implements both File and Folder metadata store traits
 impl FileMetadataStoreOps for MetadataStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<()> {
         self.create_file(file).await
+    }
+
+    async fn create_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        file: &rustshare_core::domain::File,
+    ) -> Result<()> {
+        self.create_file_in_tx(tx, file).await
     }
 
     async fn find_file_by_path(
@@ -82,6 +130,14 @@ impl FileMetadataStoreOps for MetadataStore {
         version: &rustshare_core::domain::FileVersion,
     ) -> Result<()> {
         self.create_file_version(version).await
+    }
+
+    async fn create_file_version_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        version: &rustshare_core::domain::FileVersion,
+    ) -> Result<()> {
+        self.create_file_version_in_tx(tx, version).await
     }
 
     async fn find_folder_by_id(
@@ -118,8 +174,25 @@ impl FileMetadataStoreOps for MetadataStore {
         self.update_file(file).await
     }
 
+    async fn update_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        file: &rustshare_core::domain::File,
+    ) -> Result<()> {
+        self.update_file_in_tx(tx, file).await
+    }
+
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()> {
         self.delete_file(id, owner_id).await
+    }
+
+    async fn delete_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<()> {
+        self.delete_file_in_tx(tx, id, owner_id).await
     }
 
     async fn list_file_versions(
@@ -161,8 +234,18 @@ impl FileMetadataStoreOps for MetadataStore {
 }
 
 impl FolderMetadataStoreOps for MetadataStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn create_folder(&self, folder: &rustshare_core::domain::Folder) -> Result<()> {
         self.create_folder(folder).await
+    }
+
+    async fn create_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        folder: &rustshare_core::domain::Folder,
+    ) -> Result<()> {
+        self.create_folder_in_tx(tx, folder).await
     }
 
     async fn find_folder_by_id(
@@ -184,8 +267,25 @@ impl FolderMetadataStoreOps for MetadataStore {
         self.update_folder(folder).await
     }
 
+    async fn update_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        folder: &rustshare_core::domain::Folder,
+    ) -> Result<()> {
+        self.update_folder_in_tx(tx, folder).await
+    }
+
     async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()> {
         self.delete_folder(id, owner_id).await
+    }
+
+    async fn delete_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<()> {
+        self.delete_folder_in_tx(tx, id, owner_id).await
     }
 
     async fn list_folders(

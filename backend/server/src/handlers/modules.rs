@@ -18,12 +18,12 @@ use crate::{
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EnabledModulesResponse {
     pub modules: Vec<Module>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ModuleDetailResponse {
     pub module: Module,
 }
@@ -32,6 +32,15 @@ pub struct ModuleDetailResponse {
 // Handlers
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_enabled_modules(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
@@ -44,6 +53,15 @@ pub async fn list_enabled_modules(
     Ok(Json(EnabledModulesResponse { modules }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/modules/{key}",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_module(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
@@ -70,11 +88,20 @@ pub async fn get_module(
     Ok(Json(ModuleDetailResponse { module }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ModuleSummaryResponse {
     pub summary: crate::services::module_service::ModuleSummary,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/{key}/summary",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_module_summary(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,
@@ -88,6 +115,15 @@ pub async fn get_module_summary(
     Ok(Json(ModuleSummaryResponse { summary }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/from-template",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_from_template(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     State(state): State<AppState>,

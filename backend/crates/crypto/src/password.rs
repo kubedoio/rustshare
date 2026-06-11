@@ -15,6 +15,10 @@ pub enum PasswordError {
     InvalidPassword,
 }
 
+/// A valid Argon2id hash of the string `"dummy"`, used for constant-time
+/// credential validation to prevent user enumeration via timing attacks.
+pub const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$B2bkssRGDZyYAFKZZN8tmg$fSTXrWC8C6rlmnN/V2b+9+29LTVwbf4qZAL9CQvnSjw";
+
 /// Password hasher using Argon2id
 pub struct PasswordHasher;
 

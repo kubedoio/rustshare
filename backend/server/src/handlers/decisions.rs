@@ -1,7 +1,7 @@
 //! HTTP handlers for decision operations.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -14,13 +14,23 @@ use crate::services::decision_service::DecisionSummary;
 use crate::AppState;
 use rustshare_core::events::{AggregateType, DecisionModifiedPayload, Event, EventType};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateDecisionRequest {
     pub title: String,
     pub category: String,
     pub content: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/decisions",
+    tag = "Decisions",
+    request_body = CreateDecisionRequest,
+    responses(
+        (status = 200, description = "Success", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -64,6 +74,17 @@ pub async fn create_decision(
     Ok((StatusCode::CREATED, Json(decision)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/decisions/{id}",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    responses(
+        (status = 200, description = "Success", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -77,13 +98,25 @@ pub async fn get_decision(
     Ok(Json(decision))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateDecisionRequest {
     pub title: Option<String>,
     pub content: Option<String>,
     pub status: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/decisions/{id}",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    request_body = UpdateDecisionRequest,
+    responses(
+        (status = 200, description = "Success", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -123,11 +156,23 @@ pub async fn update_decision(
     Ok(Json(decision))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameDecisionRequest {
     pub title: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/decisions/{id}/rename",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    request_body = RenameDecisionRequest,
+    responses(
+        (status = 200, description = "Success", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -160,6 +205,17 @@ pub async fn rename_decision(
     Ok(Json(decision))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/decisions/{id}",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_decision(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -195,13 +251,23 @@ pub async fn delete_decision(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/decisions",
+    tag = "Decisions",
+    responses(
+        (status = 200, description = "Success", body = Vec<DecisionSummary>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_decisions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<DecisionSummary>>, AppError> {
     let decisions = state
         .decision_service
-        .list_decisions(auth.user_id, auth.tenant_id)
+        .list_decisions(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
 
     Ok(Json(decisions))

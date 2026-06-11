@@ -251,7 +251,7 @@ async fn contract_decision_does_not_appear_in_notes_list() {
 
     // List notes — should NOT contain the decision
     let notes = note_service
-        .list_notes(user.id, tenant_id, Some(50))
+        .list_notes(user.id, tenant_id, 50, 0)
         .await
         .unwrap();
 
@@ -396,7 +396,7 @@ async fn contract_list_decisions_only_returns_decisions() {
 
     // List decisions
     let decisions = decision_service
-        .list_decisions(user.id, tenant_id)
+        .list_decisions(user.id, tenant_id, 1000, 0)
         .await
         .unwrap();
 
@@ -543,7 +543,10 @@ async fn contract_cross_tenant_list_decisions_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_decisions(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_decisions(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|d| d.metadata.title == "Secret"),
         "Cross-tenant list_decisions should not leak decisions"

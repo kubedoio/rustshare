@@ -4,13 +4,16 @@
 
 pub mod adapters;
 pub mod bootstrap;
+pub mod config;
 pub mod handlers;
+pub mod metrics;
 pub mod middleware;
 pub mod oidc;
 pub mod oidc_runtime;
 pub mod openapi;
 pub mod replication;
 pub mod replication_handlers;
+pub mod retention;
 pub mod routes;
 pub mod services;
 pub mod state;

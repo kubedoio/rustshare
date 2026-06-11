@@ -48,8 +48,20 @@ struct ReplicationEventContext {
 /// This trait abstracts the event store to allow for testing without database dependencies.
 #[allow(async_fn_in_trait)]
 pub trait EventStoreOps: Send + Sync {
+    /// Transaction handle type.
+    type Tx: Send;
+
     /// Append an event to the event store.
     async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()>;
+
+    /// Begin a new database transaction.
+    async fn begin_transaction(&self) -> Result<Self::Tx>;
+
+    /// Commit a database transaction.
+    async fn commit_transaction(&self, tx: Self::Tx) -> Result<()>;
+
+    /// Append an event to the event store inside an existing transaction.
+    async fn append_in_tx(&self, tx: &mut Self::Tx, event: &Event) -> Result<()>;
 }
 
 /// Trait for metadata store operations needed by FileService.
@@ -57,14 +69,27 @@ pub trait EventStoreOps: Send + Sync {
 /// This trait abstracts the metadata store to allow for testing without database dependencies.
 #[allow(async_fn_in_trait)]
 pub trait MetadataStoreOps: Send + Sync {
+    /// Transaction handle type.
+    type Tx: Send;
+
     /// Create a file in the metadata store.
     async fn create_file(&self, file: &File) -> Result<()>;
+
+    /// Create a file in the metadata store inside a transaction.
+    async fn create_file_in_tx(&self, tx: &mut Self::Tx, file: &File) -> Result<()>;
 
     /// Find a file by canonical path for a specific owner.
     async fn find_file_by_path(&self, path: &str, owner_id: uuid::Uuid) -> Result<Option<File>>;
 
     /// Create a file version in the metadata store.
     async fn create_file_version(&self, version: &FileVersion) -> Result<()>;
+
+    /// Create a file version in the metadata store inside a transaction.
+    async fn create_file_version_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        version: &FileVersion,
+    ) -> Result<()>;
 
     /// Find a folder by ID.
     async fn find_folder_by_id(
@@ -89,8 +114,19 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Update a file in the metadata store.
     async fn update_file(&self, file: &File) -> Result<()>;
 
+    /// Update a file in the metadata store inside a transaction.
+    async fn update_file_in_tx(&self, tx: &mut Self::Tx, file: &File) -> Result<()>;
+
     /// Delete a file from the metadata store.
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()>;
+
+    /// Delete a file from the metadata store inside a transaction.
+    async fn delete_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> Result<()>;
 
     /// List all versions of a file, ordered by version number descending.
     async fn list_file_versions(
@@ -166,7 +202,7 @@ use crate::services::{PermissionResolver, PermissionResolverOps};
 pub struct FileService<E, M, O, P>
 where
     E: EventStoreOps,
-    M: MetadataStoreOps,
+    M: MetadataStoreOps<Tx = E::Tx>,
     O: ObjectStoreOps,
     P: PermissionResolverOps,
 {
@@ -180,7 +216,7 @@ where
 impl<E, M, O, P> FileService<E, M, O, P>
 where
     E: EventStoreOps,
-    M: MetadataStoreOps,
+    M: MetadataStoreOps<Tx = E::Tx>,
     O: ObjectStoreOps,
     P: PermissionResolverOps,
 {
@@ -357,11 +393,6 @@ where
             existing.current_version += 1;
             existing.modified_at = chrono::Utc::now();
 
-            self.metadata_store
-                .update_file(&existing)
-                .await
-                .map_err(|e| FileError::Database(e.to_string()))?;
-
             let version = FileVersion::new(
                 existing.id,
                 existing.current_version,
@@ -371,14 +402,6 @@ where
                 Some("Uploaded new content".to_string()),
                 tenant_id,
             );
-
-            self.metadata_store
-                .create_file_version(&version)
-                .await
-                .map_err(|e| FileError::Database(e.to_string()))?;
-
-            self.queue_replication_if_needed(existing.id, file_owner_id, &version)
-                .await?;
 
             let payload = FileModifiedPayload {
                 file_id: existing.id,
@@ -402,10 +425,30 @@ where
                 owner_id,
             );
 
+            let mut tx =
+                self.event_store.begin_transaction().await.map_err(|e| {
+                    FileError::Storage(format!("Failed to begin transaction: {}", e))
+                })?;
             self.event_store
-                .append(&event, &self.broadcaster)
+                .append_in_tx(&mut tx, &event)
                 .await
                 .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+            self.metadata_store
+                .update_file_in_tx(&mut tx, &existing)
+                .await
+                .map_err(|e| FileError::Database(e.to_string()))?;
+            self.metadata_store
+                .create_file_version_in_tx(&mut tx, &version)
+                .await
+                .map_err(|e| FileError::Database(e.to_string()))?;
+            self.event_store
+                .commit_transaction(tx)
+                .await
+                .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+            self.broadcaster.publish(event);
+
+            self.queue_replication_if_needed(existing.id, file_owner_id, &version)
+                .await?;
 
             return Ok(existing);
         }
@@ -450,18 +493,7 @@ where
             owner_id,
         );
 
-        self.event_store
-            .append(&event, &self.broadcaster)
-            .await
-            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
-
-        // 8. Insert into files and file_versions tables
-        self.metadata_store
-            .create_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
-        // Create version 1 entry
+        // 8. Insert into files and file_versions tables atomically with the event
         let version = FileVersion::new(
             file.id,
             1,
@@ -480,10 +512,28 @@ where
             tenant_id,
         );
 
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
+        self.event_store
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
         self.metadata_store
-            .create_file_version(&version)
+            .create_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.metadata_store
+            .create_file_version_in_tx(&mut tx, &version)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         self.queue_replication_if_needed(file.id, file_owner_id, &version)
             .await?;
@@ -623,11 +673,6 @@ where
         file.size = new_size;
         file.modified_at = chrono::Utc::now();
 
-        self.metadata_store
-            .update_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
         // 6. Create FileVersion snapshot
         let version = FileVersion::new(
             file.id,
@@ -639,15 +684,7 @@ where
             file.tenant_id,
         );
 
-        self.metadata_store
-            .create_file_version(&version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
-
-        // 7. Emit FileModified event
+        // 7. Emit FileModified event atomically with projection updates
         let payload = FileModifiedPayload {
             file_id: file.id,
             old_version,
@@ -670,10 +707,31 @@ where
             user_id,
         );
 
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+        self.metadata_store
+            .update_file_in_tx(&mut tx, &file)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.metadata_store
+            .create_file_version_in_tx(&mut tx, &version)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
+
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
 
         // 8. Return updated file
         Ok(file)
@@ -769,11 +827,6 @@ where
         file.size = old_file_version.size;
         file.modified_at = chrono::Utc::now();
 
-        self.metadata_store
-            .update_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
         // 5. Create FileVersion snapshot
         let version = FileVersion::new(
             file.id,
@@ -785,15 +838,7 @@ where
             file.tenant_id,
         );
 
-        self.metadata_store
-            .create_file_version(&version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
-
-        // 6. Emit FileRestored event
+        // 6. Emit FileRestored event atomically with projection updates
         let payload = FileRestoredPayload {
             file_id: file.id,
             old_version,
@@ -814,10 +859,31 @@ where
             user_id,
         );
 
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+        self.metadata_store
+            .update_file_in_tx(&mut tx, &file)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.metadata_store
+            .create_file_version_in_tx(&mut tx, &version)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
+
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
 
         // 7. Return updated file
         // Note: content is already in RustFS, we just needed to read it to verify it exists
@@ -874,12 +940,6 @@ where
         file.parent_folder_id = target_folder_id;
         file.path = new_path.clone();
 
-        // 5. Persist updated file
-        self.metadata_store
-            .update_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
         // 6. Create FileMoved event
         let payload = FileMovedPayload {
             file_id,
@@ -902,11 +962,25 @@ where
             version: file.current_version,
         };
 
-        // 7. Append event to event store
+        // 7. Persist updated file and append event atomically
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+        self.metadata_store
+            .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         Ok(file)
     }
@@ -954,11 +1028,6 @@ where
         file.path = new_path.clone();
         file.modified_at = chrono::Utc::now();
 
-        self.metadata_store
-            .update_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
         let payload = FileRenamedPayload {
             file_id,
             old_name,
@@ -980,10 +1049,24 @@ where
             version: file.current_version,
         };
 
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+        self.metadata_store
+            .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         Ok(file)
     }
@@ -1028,17 +1111,25 @@ where
             version: file.current_version,
         };
 
-        // 3. Append event to event store
+        // 3. Append event to event store and delete file atomically
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
-        // 4. Delete file from metadata store (CASCADE will handle file_versions)
+            .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
         self.metadata_store
-            .delete_file(file_id, user_id)
+            .delete_file_in_tx(&mut tx, file_id, user_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         // Note: We don't delete from RustFS (blob storage) because of deduplication
         // The same content hash might be used by other files or versions
@@ -1130,11 +1221,6 @@ where
         file.size = new_size;
         file.modified_at = chrono::Utc::now();
 
-        self.metadata_store
-            .update_file(&file)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
         // 7. Create FileVersion snapshot
         let version = FileVersion::new(
             file.id,
@@ -1152,15 +1238,7 @@ where
             file.tenant_id,
         );
 
-        self.metadata_store
-            .create_file_version(&version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
-
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
-
-        // 8. Emit FileModified event
+        // 8. Emit FileModified event atomically with projection updates
         let payload = FileModifiedPayload {
             file_id: file.id,
             old_version,
@@ -1183,10 +1261,31 @@ where
             user_id,
         );
 
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to begin transaction: {}", e)))?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
+        self.metadata_store
+            .update_file_in_tx(&mut tx, &file)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.metadata_store
+            .create_file_version_in_tx(&mut tx, &version)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
+
+        self.queue_replication_if_needed(file.id, user_id, &version)
+            .await?;
 
         // 9. Return updated file
         Ok(file)

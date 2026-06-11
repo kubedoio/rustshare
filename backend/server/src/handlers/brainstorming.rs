@@ -2,7 +2,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -20,7 +20,7 @@ use rustshare_core::events::{AggregateType, BrainstormBoardModifiedPayload, Even
 // List Boards
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListBoardsResponse {
     pub boards: Vec<BrainstormBoard>,
 }
@@ -45,14 +45,24 @@ async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Res
     Ok(())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/brainstorming/boards",
+    tag = "Brainstorming",
+    responses(
+        (status = 200, description = "Success", body = ListBoardsResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_brainstorm_boards(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<ListBoardsResponse>, AppError> {
     require_brainstorming_enabled(&state, auth.tenant_id).await?;
     let boards = state
         .brainstorming_service
-        .list_boards(auth.user_id, auth.tenant_id)
+        .list_boards(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
 
     Ok(Json(ListBoardsResponse { boards }))
@@ -62,13 +72,13 @@ pub async fn list_brainstorm_boards(
 // Create Board
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateBoardRequest {
     pub title: String,
     pub template_key: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateBoardResponse {
     pub id: String,
     pub title: String,
@@ -79,6 +89,16 @@ pub struct CreateBoardResponse {
     pub updated_at: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/modules/brainstorming/boards",
+    tag = "Brainstorming",
+    request_body = CreateBoardRequest,
+    responses(
+        (status = 200, description = "Success", body = CreateBoardResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -169,7 +189,7 @@ pub async fn create_brainstorm_board(
 // Get Board
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GetBoardResponse {
     pub id: String,
     pub title: String,
@@ -182,6 +202,17 @@ pub struct GetBoardResponse {
     pub updated_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/brainstorming/boards/{board_id}",
+    tag = "Brainstorming",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    responses(
+        (status = 200, description = "Success", body = GetBoardResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -210,11 +241,22 @@ pub async fn get_brainstorm_board(
 // Get Board Source
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GetBoardSourceResponse {
     pub source: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/modules/brainstorming/boards/{board_id}/source",
+    tag = "Brainstorming",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    responses(
+        (status = 200, description = "Success", body = GetBoardSourceResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_brainstorm_board_source(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -239,11 +281,23 @@ pub async fn get_brainstorm_board_source(
 // Save Board Source
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SaveBoardSourceRequest {
     pub source: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/modules/brainstorming/boards/{board_id}/source",
+    tag = "Brainstorming",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    request_body = SaveBoardSourceRequest,
+    responses(
+        (status = 200, description = "Success", body = GetBoardResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn save_brainstorm_board_source(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -297,6 +351,17 @@ pub async fn save_brainstorm_board_source(
 // Update Board Preview
 // ============================================================================
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/modules/brainstorming/boards/{board_id}/preview",
+    tag = "Brainstorming",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    responses(
+        (status = 200, description = "Success", body = GetBoardResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_brainstorm_board_preview(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -344,6 +409,17 @@ pub async fn update_brainstorm_board_preview(
 // Delete Board
 // ============================================================================
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/modules/brainstorming/boards/{board_id}",
+    tag = "Brainstorming",
+    params(("board_id" = Uuid, Path, description = "Board Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_brainstorm_board(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

@@ -31,7 +31,7 @@ use super::folders::{
 // ============================================================================
 
 /// Request to create a file share with a specific user.
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateFileShareRequest {
     /// Email of the recipient user.
     #[validate(email(message = "Invalid recipient email address"))]
@@ -41,7 +41,7 @@ pub struct CreateFileShareRequest {
 }
 
 /// Request to create a folder share with a specific user.
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateFolderShareRequest {
     /// Email of the recipient user.
     #[validate(email(message = "Invalid recipient email address"))]
@@ -51,7 +51,7 @@ pub struct CreateFolderShareRequest {
 }
 
 /// Response for a created or updated share.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserShareResponse {
     pub share_id: Uuid,
     pub resource_id: Uuid,
@@ -62,7 +62,7 @@ pub struct UserShareResponse {
 }
 
 /// Response for a received share.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ReceivedShareResponse {
     pub share_id: Uuid,
     pub resource_id: Uuid,
@@ -77,7 +77,7 @@ pub struct ReceivedShareResponse {
 }
 
 /// Response for a share recipient.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ShareRecipientResponse {
     pub share_id: Uuid,
     pub user_id: Uuid,
@@ -88,13 +88,13 @@ pub struct ShareRecipientResponse {
 }
 
 /// Request to update a recipient's permission.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePermissionRequest {
     pub permission: SharePermissions,
 }
 
 /// Query parameters for listing received shares.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListReceivedSharesQuery {
     #[serde(default = "default_limit")]
     pub limit: i64,
@@ -116,6 +116,17 @@ fn default_limit() -> i64 {
 ///
 /// Creates a user-specific share (not a public share link).
 /// If a share already exists for this recipient, updates the permission level.
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/share",
+    tag = "Admin",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_file_share(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
@@ -150,6 +161,17 @@ pub async fn create_file_share(
 ///
 /// Creates a user-specific share (not a public share link).
 /// If a share already exists for this recipient, updates the permission level.
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/share",
+    tag = "Admin",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_folder_share(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
@@ -187,6 +209,15 @@ pub async fn create_folder_share(
 /// GET /api/shares/received?limit=50&offset=0
 ///
 /// Returns paginated list of files and folders shared with the user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/shares/received",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_received_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -277,6 +308,17 @@ pub async fn list_received_shares(
 ///
 /// Requires Admin permission on the file.
 /// Returns list of users who have access to the file and their permission levels.
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/recipients",
+    tag = "Admin",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_file_recipients(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
@@ -312,6 +354,17 @@ pub async fn list_file_recipients(
 ///
 /// Requires Admin permission on the folder.
 /// Returns list of users who have access to the folder and their permission levels.
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/recipients",
+    tag = "Admin",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_folder_recipients(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
@@ -347,6 +400,18 @@ pub async fn list_folder_recipients(
 ///
 /// Requires Admin permission on the shared resource.
 /// Updates the permission level for the specified share.
+#[utoipa::path(
+    put,
+    path = "/api/v1/shares/{id}/permission",
+    tag = "Admin",
+    params(("share_id" = Uuid, Path, description = "Share Id")),
+    request_body = UpdatePermissionRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_recipient_permission(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
@@ -389,6 +454,17 @@ pub async fn update_recipient_permission(
 ///
 /// Requires Admin permission on the shared resource.
 /// Revokes the share and removes the recipient's access.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/shares/{id}/recipient",
+    tag = "Admin",
+    params(("share_id" = Uuid, Path, description = "Share Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn remove_recipient(
     State(state): State<AppState>,
     Path(share_id): Path<Uuid>,
@@ -412,6 +488,17 @@ pub async fn remove_recipient(
 ///
 /// Returns the contents (subfolders and files) of a folder that has been shared
 /// with the authenticated user via user-to-user sharing (not public links).
+#[utoipa::path(
+    get,
+    path = "/api/v1/shares/folders/{id}/contents",
+    tag = "Admin",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success", body = FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_user_shared_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -523,6 +610,17 @@ pub async fn get_user_shared_folder_contents(
 /// Get recursive tree structure for a shared folder.
 ///
 /// GET /api/shares/folders/{id}/tree
+#[utoipa::path(
+    get,
+    path = "/api/v1/shares/folders/{id}/tree",
+    tag = "Admin",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success", body = FolderTreeWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_user_shared_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

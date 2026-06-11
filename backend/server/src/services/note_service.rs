@@ -83,7 +83,7 @@ impl NoteVisibility {
 }
 
 /// Unified note payload returned to clients.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Note {
     pub id: Uuid,
     pub name: String,
@@ -91,14 +91,14 @@ pub struct Note {
     pub content: String,
     pub metadata: NoteMetadata,
     pub parent_folder_id: Option<Uuid>,
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
 
 /// Public note view (no internal identifiers).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PublicNote {
     pub title: String,
     pub content: String,
@@ -117,7 +117,7 @@ pub struct NoteSummary {
     pub metadata: NoteMetadata,
     pub parent_folder_id: Option<Uuid>,
     #[schema(value_type = Uuid)]
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub current_version: i32,
     pub size: i64,
     pub created_at: DateTime<Utc>,
@@ -1360,7 +1360,8 @@ impl NoteService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
-        limit: Option<usize>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<NoteSummary>, NoteError> {
         // Load all markdown files but filter to Notes paths only
         let files = self
@@ -1444,11 +1445,13 @@ impl NoteService {
 
         notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
 
-        if let Some(limit) = limit {
-            notes.truncate(limit);
-        }
+        let paginated: Vec<NoteSummary> = notes
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
 
-        Ok(notes)
+        Ok(paginated)
     }
 
     /// List notes for a user, optionally filtered to a specific folder path prefix.
@@ -1457,7 +1460,8 @@ impl NoteService {
         user_id: UserId,
         tenant_id: Uuid,
         path_prefix: Option<&str>,
-        limit: Option<usize>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<NoteSummary>, NoteError> {
         // Find all markdown files owned by the user
         let files = self
@@ -1540,11 +1544,13 @@ impl NoteService {
         // Sort by updated_at desc
         notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
 
-        if let Some(limit) = limit {
-            notes.truncate(limit);
-        }
+        let paginated: Vec<NoteSummary> = notes
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
 
-        Ok(notes)
+        Ok(paginated)
     }
 
     /// Toggle note visibility between private and public.

@@ -13,7 +13,7 @@ use crate::{
 
 use super::log_admin_action;
 
-#[derive(sqlx::FromRow, Serialize)]
+#[derive(sqlx::FromRow, Serialize, utoipa::ToSchema)]
 pub struct WorkflowResponse {
     pub id: String,
     pub key: String,
@@ -29,7 +29,7 @@ pub struct WorkflowResponse {
     pub updated_by: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateWorkflowRequest {
     pub subject: Option<String>,
     pub body: Option<String>,
@@ -38,6 +38,15 @@ pub struct UpdateWorkflowRequest {
     pub status: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/workflows",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_workflows(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -55,6 +64,15 @@ pub async fn list_workflows(
     Ok(Json(rows.into_iter().map(WorkflowResponse::from).collect()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/workflows/{id}",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_workflow(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -75,6 +93,15 @@ pub async fn get_workflow(
     Ok(Json(WorkflowResponse::from(row)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/workflows/{id}",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_workflow(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -119,6 +146,15 @@ pub async fn update_workflow(
     Ok(Json(WorkflowResponse::from(row)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/workflows/{id}/enable",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn enable_workflow(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -188,6 +224,15 @@ pub async fn enable_workflow(
     Ok(Json(WorkflowResponse::from(row)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/workflows/{id}/disable",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn disable_workflow(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,

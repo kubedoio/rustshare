@@ -23,7 +23,7 @@ fn utc_now() -> DateTime<Utc> {
 }
 
 /// Standup-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupMetadata {
     #[serde(alias = "type")]
     pub kind: String,
@@ -51,20 +51,20 @@ impl StandupMetadata {
 }
 
 /// Unified standup record payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupRecord {
     pub id: Uuid,     // Folder ID
     pub name: String, // Folder name
     pub path: String,
     pub content: String,           // From index.md
     pub metadata: StandupMetadata, // From .rustshare.json
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Standup summary for listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupSummary {
     pub id: Uuid,
     pub name: String,
@@ -226,6 +226,8 @@ impl StandupService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<StandupSummary>, StandupError> {
         let folders = self
             .metadata_store
@@ -254,7 +256,14 @@ impl StandupService {
         }
 
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
-        Ok(summaries)
+
+        let paginated: Vec<StandupSummary> = summaries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Create a new standup record.

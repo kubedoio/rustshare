@@ -25,7 +25,7 @@ async fn test_list_brainstorm_boards_empty() {
     );
 
     let boards = service
-        .list_boards(user.id, tenant_id)
+        .list_boards(user.id, tenant_id, 1000, 0)
         .await
         .expect("list_boards should succeed");
     assert!(boards.is_empty());
@@ -91,7 +91,7 @@ async fn test_create_and_get_brainstorm_board() {
 
     // List boards
     let boards = service
-        .list_boards(user.id, tenant_id)
+        .list_boards(user.id, tenant_id, 1000, 0)
         .await
         .expect("list boards");
     assert_eq!(boards.len(), 1);
@@ -309,7 +309,7 @@ async fn test_delete_board() {
 
     // Verify it's gone
     let boards = service
-        .list_boards(user.id, tenant_id)
+        .list_boards(user.id, tenant_id, 1000, 0)
         .await
         .expect("list boards");
     assert!(boards.is_empty());
@@ -637,7 +637,10 @@ async fn contract_cross_tenant_list_brainstorm_boards_does_not_leak() {
     )
     .await;
 
-    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_boards(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|b| b.title == "Secret Board"),
         "Cross-tenant list_boards should not leak boards"
@@ -712,6 +715,9 @@ async fn contract_same_tenant_unauthorized_get_brainstorm_board_denied() {
     cleanup_user(&ctx.pool, user_other.id).await;
     cleanup_tenant(&ctx.pool, tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
 async fn contract_same_tenant_unauthorized_get_board_source_denied() {
     let ctx = setup_test_env().await;
     let tenant_id = setup_test_tenant(&ctx.pool).await;

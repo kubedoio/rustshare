@@ -14,7 +14,7 @@ use rustshare_core::domain::SharePermissions;
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateShareRequest {
     pub permissions: SharePermissions,
     #[serde(default)]
@@ -25,7 +25,7 @@ pub struct CreateShareRequest {
     pub upload_only: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ShareResponse {
     pub id: Uuid,
     pub resource_id: Uuid,
@@ -38,6 +38,18 @@ pub struct ShareResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{file_id}/shares",
+    tag = "Shares",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = CreateShareRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_public_file_share(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
@@ -93,6 +105,18 @@ pub async fn create_public_file_share(
         .into_response())
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{folder_id}/shares",
+    tag = "Shares",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = CreateShareRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_public_folder_share(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
@@ -145,6 +169,17 @@ pub async fn create_public_folder_share(
         .into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{file_id}/shares",
+    tag = "Shares",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_public_file_shares(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
@@ -180,6 +215,17 @@ pub async fn list_public_file_shares(
     Ok(Json(response).into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{folder_id}/shares",
+    tag = "Shares",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_public_folder_shares(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
@@ -215,7 +261,7 @@ pub async fn list_public_folder_shares(
     Ok(Json(response).into_response())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct OwnedShareResponse {
     pub id: uuid::Uuid,
     pub resource_id: uuid::Uuid,
@@ -231,12 +277,12 @@ pub struct OwnedShareResponse {
     pub recipient_group_id: Option<uuid::Uuid>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ShareAccessLogQuery {
     pub limit: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ShareAccessLogResponse {
     pub accessed_at: chrono::DateTime<chrono::Utc>,
     pub action: String,
@@ -249,13 +295,23 @@ pub struct ShareAccessLogResponse {
     pub share_session_subject: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/shares",
+    tag = "Shares",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_user_shares(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<OwnedShareResponse>>, AppError> {
     let shares = state
         .metadata_store
-        .get_user_all_shares(user_id)
+        .get_user_all_shares(user_id, query.limit(), query.offset())
         .await
         .map_err(|error| {
             tracing::error!("Failed to list shares: {error}");
@@ -287,6 +343,17 @@ pub async fn list_user_shares(
     Ok(Json(response))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/shares/{id}",
+    tag = "Shares",
+    params(("share_id" = uuid::Uuid, Path, description = "Share Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn revoke_share(
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
@@ -297,6 +364,17 @@ pub async fn revoke_share(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/shares/{id}/access-log",
+    tag = "Shares",
+    params(("share_id" = uuid::Uuid, Path, description = "Share Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_share_access_log(
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,

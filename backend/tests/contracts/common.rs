@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Common helpers for contract tests
 //!
 //! Provides utilities for setting up test tenants, users, files, folders, and shares.
@@ -47,6 +49,55 @@ pub struct TestContext {
     pub metadata_store: Arc<MetadataStore>,
     pub object_store: Arc<ObjectStore>,
     pub broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
+    pub tenant_id: Uuid,
+}
+
+impl TestContext {
+    /// Cleanup all data associated with this context's tenant.
+    pub async fn cleanup(&self) {
+        cleanup_tenant(&self.pool, self.tenant_id).await;
+    }
+
+    /// Create a test user in this context's tenant.
+    pub async fn create_test_user(&self, username: &str) -> User {
+        create_test_user(&self.metadata_store, username, self.tenant_id).await
+    }
+
+    /// Create a test folder in this context's tenant.
+    pub async fn create_test_folder(
+        &self,
+        owner_id: Uuid,
+        name: &str,
+        parent_id: Option<Uuid>,
+    ) -> Folder {
+        create_test_folder(
+            &self.folder_service(),
+            owner_id,
+            self.tenant_id,
+            name,
+            parent_id,
+        )
+        .await
+    }
+
+    /// Create a test file in this context's tenant.
+    pub async fn create_test_file(
+        &self,
+        owner_id: Uuid,
+        folder_id: Option<Uuid>,
+        name: &str,
+        content: &[u8],
+    ) -> File {
+        create_test_file(
+            &self.file_service(),
+            owner_id,
+            self.tenant_id,
+            folder_id,
+            name,
+            content,
+        )
+        .await
+    }
 }
 
 impl TestContext {
@@ -146,12 +197,15 @@ pub async fn setup_test_env() -> TestContext {
             .expect("Failed to create object store"),
     );
 
+    let tenant_id = setup_test_tenant(&pool).await;
+
     TestContext {
         pool,
         event_store,
         metadata_store,
         object_store,
         broadcaster,
+        tenant_id,
     }
 }
 
@@ -314,6 +368,7 @@ pub async fn create_test_share<J: JwtOps>(
 }
 
 /// Create a test folder share
+#[allow(clippy::too_many_arguments)]
 pub async fn create_test_folder_share<J: JwtOps>(
     share_service: &ShareService<EventStore, MetadataStore, J, MockNotificationRepo>,
     folder_id: Uuid,
@@ -409,17 +464,22 @@ pub async fn remove_user_from_group(pool: &PgPool, group_id: Uuid, user_id: Uuid
 
 /// Cleanup a tenant and all its data
 pub async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
-    // Delete all users in the tenant (this will cascade)
-    sqlx::query("DELETE FROM users WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
-
-    // Delete the tenant
-    sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
+    // Order matters for foreign key constraints.
+    let queries = [
+        "DELETE FROM vault_files WHERE tenant_id = $1",
+        "DELETE FROM vault_devices WHERE tenant_id = $1",
+        "DELETE FROM vaults WHERE tenant_id = $1",
+        "DELETE FROM file_thumbnails WHERE tenant_id = $1",
+        "DELETE FROM file_versions WHERE tenant_id = $1",
+        "DELETE FROM shares WHERE tenant_id = $1",
+        "DELETE FROM files WHERE tenant_id = $1",
+        "DELETE FROM folders WHERE tenant_id = $1",
+        "DELETE FROM user_groups WHERE tenant_id = $1",
+        "DELETE FROM notifications WHERE tenant_id = $1",
+        "DELETE FROM users WHERE tenant_id = $1",
+        "DELETE FROM tenants WHERE id = $1",
+    ];
+    for sql in &queries {
+        sqlx::query(sql).bind(tenant_id).execute(pool).await.ok();
+    }
 }

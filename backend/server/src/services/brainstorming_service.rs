@@ -88,7 +88,7 @@ impl From<serde_json::Error> for BrainstormError {
 // Public types
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrainstormBoard {
     pub id: String,
     pub title: String,
@@ -121,7 +121,7 @@ pub(crate) struct BoardMetadata {
     pub schema_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateBoardInput {
     pub title: String,
     pub template_key: String,
@@ -183,6 +183,8 @@ impl BrainstormingService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<BrainstormBoard>, BrainstormError> {
         let root = match self.find_brainstorming_root(user_id, tenant_id).await? {
             Some(r) => r,
@@ -203,7 +205,14 @@ impl BrainstormingService {
         }
 
         boards.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
-        Ok(boards)
+
+        let paginated: Vec<BrainstormBoard> = boards
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     pub async fn get_board(
@@ -800,6 +809,16 @@ impl BrainstormingService {
 // Utilities
 // ============================================================================
 
+fn slugify(title: &str) -> String {
+    title
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
+        .replace("--", "-")
+        .replace("--", "-")
+        .trim_matches('-')
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -817,14 +836,4 @@ mod tests {
             BrainstormError::PermissionDenied
         ));
     }
-}
-
-fn slugify(title: &str) -> String {
-    title
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
-        .replace("--", "-")
-        .replace("--", "-")
-        .trim_matches('-')
-        .to_string()
 }
