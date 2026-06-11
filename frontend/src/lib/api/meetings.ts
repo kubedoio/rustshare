@@ -30,8 +30,9 @@ export interface MeetingSummary {
 }
 
 export const meetingsApi = {
-	list: async () => {
-		return apiClient.get<MeetingSummary[]>('/meetings');
+	list: async (limit?: number) => {
+		const query = `?per_page=${limit ?? 100}`;
+		return apiClient.get<MeetingSummary[]>(`/meetings${query}`);
 	},
 
 	get: async (id: string) => {

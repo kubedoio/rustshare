@@ -93,6 +93,7 @@ generate_password() {
 SECRET_SPECS=(
 	"JWT_SECRET|secret|32|change-this-secret-in-production|dev-secret-change-in-production|ci-pilot-secret"
 	"RUSTSHARE_SECRET_ENCRYPTION_KEY|secret|32|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	"RUSTSHARE_CHAT_WEBHOOK_SECRET|secret|32|change-me-in-production"
 	"POSTGRES_PASSWORD|password|16|changeme"
 	"RUSTFS_ROOT_USER|password|4|rustfsadmin"
 	"RUSTFS_ROOT_PASSWORD|password|16|rustfsadmin"

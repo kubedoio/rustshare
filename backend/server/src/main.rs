@@ -143,13 +143,13 @@ async fn main() -> Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown_signal(state.shutdown_tx.clone()))
     .await?;
 
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(shutdown_tx: tokio::sync::broadcast::Sender<()>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -173,6 +173,7 @@ async fn shutdown_signal() {
     }
 
     info!("Shutdown signal received, starting graceful shutdown");
+    let _ = shutdown_tx.send(());
 }
 
 fn frontend_service() -> ServeDir<ServeFile> {

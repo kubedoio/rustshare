@@ -92,7 +92,7 @@ export async function duplicateNote(noteId: string): Promise<CreateNoteResponse>
 }
 
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {
-	const query = limit !== undefined ? `?limit=${limit}` : '';
+	const query = `?per_page=${limit ?? 100}`;
 	return apiClient.get<NoteSummary[]>(`/notes${query}`);
 }
 

@@ -29,8 +29,9 @@ export interface StandupSummary {
 }
 
 export const standupsApi = {
-	list: async () => {
-		return apiClient.get<StandupSummary[]>('/standups');
+	list: async (limit?: number) => {
+		const query = `?per_page=${limit ?? 100}`;
+		return apiClient.get<StandupSummary[]>(`/standups${query}`);
 	},
 
 	get: async (id: string) => {

@@ -19,7 +19,7 @@ import {
 } from '$lib/kanban/cardMarkdown';
 
 export async function listKanbanBoards(limit?: number): Promise<KanbanBoardSummary[]> {
-	const params = limit !== undefined ? `?limit=${limit}` : '';
+	const params = `?per_page=${limit ?? 100}`;
 	return apiClient.get<KanbanBoardSummary[]>(`/modules/kanban/boards${params}`);
 }
 
@@ -42,8 +42,9 @@ export async function archiveKanbanBoard(boardId: string): Promise<void> {
 	await apiClient.post(`/modules/kanban/boards/${boardId}/archive`, {});
 }
 
-export async function listKanbanCards(boardId: string): Promise<KanbanCard[]> {
-	return apiClient.get<KanbanCard[]>(`/modules/kanban/boards/${boardId}/cards`);
+export async function listKanbanCards(boardId: string, limit?: number): Promise<KanbanCard[]> {
+	const params = `?per_page=${limit ?? 100}`;
+	return apiClient.get<KanbanCard[]>(`/modules/kanban/boards/${boardId}/cards${params}`);
 }
 
 export async function createKanbanCard(

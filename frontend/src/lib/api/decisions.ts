@@ -30,8 +30,9 @@ export interface DecisionSummary {
 }
 
 export const decisionsApi = {
-	list: async () => {
-		return apiClient.get<DecisionSummary[]>('/decisions');
+	list: async (limit?: number) => {
+		const query = `?per_page=${limit ?? 100}`;
+		return apiClient.get<DecisionSummary[]>(`/decisions${query}`);
 	},
 
 	get: async (id: string) => {
