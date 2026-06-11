@@ -149,8 +149,21 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     env:
       SQLX_OFFLINE: true
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
@@ -158,8 +171,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres
+      - name: Run migrations
+        run: cd backend && sqlx migrate run
       - name: Generate coverage
         # Use --lib to avoid integration tests that require PostgreSQL + S3 services.
+        # The timing-attack test needs the local Postgres service started above.
         run: cargo llvm-cov --all-features --workspace --lib --lcov --output-path lcov.info
         working-directory: ./backend
       - name: Upload coverage to Codecov
