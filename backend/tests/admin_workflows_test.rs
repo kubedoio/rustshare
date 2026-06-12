@@ -11,6 +11,7 @@ async fn test_pool() -> sqlx::PgPool {
         .expect("DB connect failed")
 }
 
+#[allow(dead_code)]
 async fn create_test_admin(pool: &sqlx::PgPool, suffix: &str) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(

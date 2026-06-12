@@ -15,19 +15,19 @@ use crate::handlers::{AppError, AuthenticatedSession, AuthenticatedUser};
 use crate::AppState;
 
 /// Request to update user theme preference.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateThemeRequest {
     pub theme: Theme,
 }
 
 /// Response for successful theme update.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpdateThemeResponse {
     pub theme: Theme,
 }
 
 /// Request to update the authenticated user's password.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePasswordRequest {
     pub current_password: String,
     pub new_password: String,
@@ -35,12 +35,12 @@ pub struct UpdatePasswordRequest {
 }
 
 /// Response for successful password update.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpdatePasswordResponse {
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserSessionResponse {
     pub id: String,
     pub created_at: String,
@@ -51,7 +51,7 @@ pub struct UserSessionResponse {
     pub is_current: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserSecurityEventResponse {
     pub id: String,
     pub event_type: String,
@@ -82,6 +82,15 @@ pub struct UserSecurityEventResponse {
 /// - 400 Bad Request: Invalid theme value
 /// - 401 Unauthorized: Missing or invalid token
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    patch,
+    path = "/api/v1/me/theme",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_user_theme(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -106,6 +115,15 @@ pub async fn update_user_theme(
 }
 
 /// Update the authenticated user's password.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/me/password",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_user_password(
     State(state): State<AppState>,
     AuthenticatedSession {
@@ -210,6 +228,15 @@ pub async fn update_user_password(
 }
 
 /// List active browser sessions for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/me/sessions",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_user_sessions(
     State(state): State<AppState>,
     AuthenticatedSession {
@@ -242,6 +269,15 @@ pub async fn list_user_sessions(
 }
 
 /// Revoke a browser session owned by the authenticated user.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/me/sessions/{id}",
+    tag = "Users",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_user_session(
     State(state): State<AppState>,
     AuthenticatedSession {
@@ -319,6 +355,15 @@ pub async fn delete_user_session(
 }
 
 /// List recent security events for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/me/security-events",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_user_security_events(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -364,7 +409,7 @@ pub async fn list_user_security_events(
 /// - 401 Unauthorized: Missing or invalid token
 /// - 404 Not Found: User not found
 /// - 500 Internal Server Error: Database error
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserProfile {
     pub id: String,
     pub username: String,
@@ -378,6 +423,15 @@ pub struct UserProfile {
     pub updated_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/me",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_user_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -409,7 +463,7 @@ pub async fn get_user_profile(
 }
 
 /// Response for successful avatar upload.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UploadAvatarResponse {
     pub avatar_path: String,
 }
@@ -436,6 +490,15 @@ const AVATAR_SIZE: u32 = 256;
 /// - 400 Bad Request: Invalid image or too large
 /// - 401 Unauthorized: Missing or invalid token
 /// - 500 Internal Server Error: Processing or storage error
+#[utoipa::path(
+    post,
+    path = "/api/v1/users/me/avatar",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_avatar(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -533,6 +596,15 @@ pub async fn upload_avatar(
 /// - 204 No Content: Avatar deleted successfully
 /// - 401 Unauthorized: Missing or invalid token
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    delete,
+    path = "/api/v1/users/me/avatar",
+    tag = "Users",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_avatar(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -577,6 +649,17 @@ pub async fn delete_avatar(
 /// - 200 OK: Returns avatar image (image/webp)
 /// - 404 Not Found: User has no avatar
 /// - 500 Internal Server Error: Storage error
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{id}/avatar",
+    tag = "Users",
+    params(("user_id" = uuid::Uuid, Path, description = "User Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_avatar(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,
@@ -623,18 +706,27 @@ pub async fn get_avatar(
 // User Module Preferences
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserModulePreferenceResponse {
     pub module_key: String,
     pub enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateModulePreferenceRequest {
     pub enabled: bool,
 }
 
 /// List the authenticated user's module preferences.
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/me/modules",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_user_module_preferences(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -661,6 +753,15 @@ pub async fn list_user_module_preferences(
 }
 
 /// Update a module preference for the authenticated user.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/users/me/modules/{key}",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_user_module_preference(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -686,6 +787,15 @@ pub async fn update_user_module_preference(
 }
 
 /// Get the authenticated user's dashboard configuration.
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/me/dashboard-config",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_dashboard_config(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -701,6 +811,15 @@ pub async fn get_dashboard_config(
 }
 
 /// Update the authenticated user's dashboard configuration.
+#[utoipa::path(
+    put,
+    path = "/api/v1/users/me/dashboard-config",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_dashboard_config(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,

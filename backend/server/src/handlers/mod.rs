@@ -3,38 +3,38 @@
 pub mod admin;
 pub mod ai;
 pub mod auth;
-mod brainstorming;
+pub mod brainstorming;
 pub mod chat_integration;
 pub mod collab;
-mod decisions;
+pub mod decisions;
 pub mod device_auth;
 pub mod devices;
-mod extractors;
+pub mod extractors;
 pub mod features;
 pub mod files;
 pub mod folders;
-mod groups;
+pub mod groups;
 pub mod health;
 pub mod invites;
-mod kanban;
-mod meetings;
-mod modules;
+pub mod kanban;
+pub mod meetings;
+pub mod modules;
 pub mod notes;
-mod notifications;
-mod profile;
+pub mod notifications;
+pub mod profile;
 pub mod public_shares;
 pub mod scim;
 pub mod scim_v2;
-mod shares;
-mod standups;
-mod sync;
-mod trash;
+pub mod shares;
+pub mod standups;
+pub mod sync;
+pub mod trash;
 pub mod upload;
-mod user_shares;
-mod users;
-mod validated_json;
+pub mod user_shares;
+pub mod users;
+pub mod validated_json;
 pub mod vault_sync;
-mod workspace_surface;
+pub mod workspace_surface;
 pub mod ws_auth;
 
 pub use brainstorming::{
@@ -118,6 +118,34 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Deserialize;
+
+/// Standard pagination query parameters.
+#[derive(Deserialize, Debug, Clone, utoipa::ToSchema)]
+pub struct PaginationQuery {
+    #[serde(default = "default_page")]
+    pub page: u32,
+    #[serde(default = "default_per_page")]
+    pub per_page: u32,
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_per_page() -> u32 {
+    50
+}
+
+impl PaginationQuery {
+    pub fn limit(&self) -> i64 {
+        self.per_page.clamp(1, 100) as i64
+    }
+
+    pub fn offset(&self) -> i64 {
+        ((self.page.saturating_sub(1)) as i64) * self.limit()
+    }
+}
 use rustshare_core::services::{
     AiError, FileError, FolderError, NotificationError, ShareError, UploadError, VaultSyncError,
 };

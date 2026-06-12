@@ -38,7 +38,7 @@ fn create_share_service(
 #[ignore] // Requires database and S3
 async fn test_anonymous_can_upload_via_upload_only_link() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "upload_owner", tenant_id).await;
@@ -83,8 +83,7 @@ async fn test_anonymous_can_upload_via_upload_only_link() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-02: Anonymous user cannot list existing files via upload-only link
@@ -92,7 +91,7 @@ async fn test_anonymous_can_upload_via_upload_only_link() {
 #[ignore] // Requires database and S3
 async fn test_anonymous_cannot_list_files_via_upload_only() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "upload_owner2", tenant_id).await;
@@ -144,8 +143,7 @@ async fn test_anonymous_cannot_list_files_via_upload_only() {
     assert!(folder_info.is_some(), "Folder info should be available");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-03: Upload-only with password still requires password
@@ -153,7 +151,7 @@ async fn test_anonymous_cannot_list_files_via_upload_only() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_with_password_requires_password() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "password_upload_owner", tenant_id).await;
@@ -214,8 +212,7 @@ async fn test_upload_only_with_password_requires_password() {
     assert!(session.upload_only, "Session should still be upload-only");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-04: Upload-only link expires correctly
@@ -223,7 +220,7 @@ async fn test_upload_only_with_password_requires_password() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_link_expires() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "expiring_upload_owner", tenant_id).await;
@@ -267,8 +264,7 @@ async fn test_upload_only_link_expires() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-05: Upload-only link can be revoked
@@ -276,7 +272,7 @@ async fn test_upload_only_link_expires() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_link_can_be_revoked() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "revocable_upload_owner", tenant_id).await;
@@ -333,8 +329,7 @@ async fn test_upload_only_link_can_be_revoked() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-06: Upload-only link has correct permissions
@@ -342,7 +337,7 @@ async fn test_upload_only_link_can_be_revoked() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "perm_upload_owner", tenant_id).await;
@@ -382,8 +377,7 @@ async fn test_upload_only_permissions() {
     assert!(session.upload_only, "Session should be upload-only");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-07: Upload-only share revocation blocks new sessions
@@ -391,7 +385,7 @@ async fn test_upload_only_permissions() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_revoke_blocks_new_sessions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "upload_revoke_owner", tenant_id).await;
 
@@ -450,8 +444,7 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
         "Revoked upload-only share should block new sessions"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-08: Upload-only session cannot list folder contents
@@ -464,7 +457,7 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
 #[ignore] // Requires database and S3; service does not enforce upload-only boundary
 async fn test_upload_only_session_cannot_list_folder_contents() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "upload_boundary_owner", tenant_id).await;
 
@@ -525,8 +518,7 @@ async fn test_upload_only_session_cannot_list_folder_contents() {
         "Upload-only share should not allow listing folder contents"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03-09: Upload-only session token is invalid after revoke
@@ -538,7 +530,7 @@ async fn test_upload_only_session_cannot_list_folder_contents() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_already_issued_session_rejected_after_revoke() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "upload_session_owner", tenant_id).await;
 
@@ -585,6 +577,5 @@ async fn test_upload_only_already_issued_session_rejected_after_revoke() {
         "Revoked upload-only share must reject new sessions"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

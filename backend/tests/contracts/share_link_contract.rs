@@ -47,11 +47,11 @@ fn create_share_service(
 #[ignore] // Requires database and S3
 async fn test_internal_share_grants_access_to_recipient() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner and recipient users
     let owner = create_test_user(&ctx.metadata_store, "share_owner", tenant_id).await;
-    let recipient = create_test_user(&ctx.metadata_store, "share_recipient", tenant_id).await;
+    let _recipient = create_test_user(&ctx.metadata_store, "share_recipient", tenant_id).await;
 
     // Create file service and a file
     let file_service = ctx.file_service();
@@ -66,7 +66,7 @@ async fn test_internal_share_grants_access_to_recipient() {
     .await;
 
     // Create share service
-    let share_service = create_share_service(&ctx);
+    let _share_service = create_share_service(&ctx);
 
     // Create internal share (user-to-user) - Note: This uses user_shares table conceptually
     // For now, we test that the owner can share and recipient gets access
@@ -80,9 +80,7 @@ async fn test_internal_share_grants_access_to_recipient() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, recipient.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-02: Public read link allows anonymous access
@@ -90,7 +88,7 @@ async fn test_internal_share_grants_access_to_recipient() {
 #[ignore] // Requires database and S3
 async fn test_public_read_link_allows_anonymous_access() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "public_share_owner", tenant_id).await;
@@ -145,8 +143,7 @@ async fn test_public_read_link_allows_anonymous_access() {
     assert!(!session.upload_only, "Read share should not be upload-only");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-03: Upload-only link allows upload but not browse
@@ -154,7 +151,7 @@ async fn test_public_read_link_allows_anonymous_access() {
 #[ignore] // Requires database and S3
 async fn test_upload_only_link_allows_upload_but_not_browse() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "upload_share_owner", tenant_id).await;
@@ -194,8 +191,7 @@ async fn test_upload_only_link_allows_upload_but_not_browse() {
     assert!(session.upload_only, "Session should indicate upload-only");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-04: Expired share denies access
@@ -203,7 +199,7 @@ async fn test_upload_only_link_allows_upload_but_not_browse() {
 #[ignore] // Requires database and S3
 async fn test_expired_share_denies_access() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "expired_share_owner", tenant_id).await;
@@ -251,8 +247,7 @@ async fn test_expired_share_denies_access() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-05: Revoked share denies access
@@ -260,7 +255,7 @@ async fn test_expired_share_denies_access() {
 #[ignore] // Requires database and S3
 async fn test_revoked_share_denies_access() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "revoked_share_owner", tenant_id).await;
@@ -317,8 +312,7 @@ async fn test_revoked_share_denies_access() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-06: Password-protected share requires password
@@ -326,7 +320,7 @@ async fn test_revoked_share_denies_access() {
 #[ignore] // Requires database and S3
 async fn test_password_protected_share_requires_password() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "protected_share_owner", tenant_id).await;
@@ -391,8 +385,7 @@ async fn test_password_protected_share_requires_password() {
     assert!(session.is_ok(), "Correct password should allow access");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-07: Non-owner cannot revoke share
@@ -400,7 +393,7 @@ async fn test_password_protected_share_requires_password() {
 #[ignore] // Requires database and S3
 async fn test_non_owner_cannot_revoke_share() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner and another user
     let owner = create_test_user(&ctx.metadata_store, "share_owner", tenant_id).await;
@@ -445,9 +438,7 @@ async fn test_non_owner_cannot_revoke_share() {
     assert!(result.is_ok(), "Owner should be able to revoke their share");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, other_user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-08: Share access is logged
@@ -455,7 +446,7 @@ async fn test_non_owner_cannot_revoke_share() {
 #[ignore] // Requires database and S3
 async fn test_share_access_increments_count() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "count_share_owner", tenant_id).await;
@@ -493,7 +484,7 @@ async fn test_share_access_increments_count() {
     let token = share.share_token.unwrap();
 
     // Access share multiple times
-    for i in 1..=3 {
+    for _i in 1..=3 {
         let _session = share_service
             .validate_and_create_session(&token, None)
             .await
@@ -504,8 +495,7 @@ async fn test_share_access_increments_count() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-09: Already-issued public share session token is rejected after revoke
@@ -523,7 +513,7 @@ async fn test_share_access_increments_count() {
 #[ignore] // Requires database and S3
 async fn test_public_share_already_issued_session_rejected_after_revoke() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "session_owner", tenant_id).await;
 
@@ -594,8 +584,7 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
     // Handlers that accept ShareSessionAuth MUST re-check revoked_at against the DB
     // to ensure already-issued tokens are rejected. This is a security contract gap.
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-10: Share revocation emits a durable ShareRevoked event
@@ -603,7 +592,7 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
 #[ignore] // Requires database and S3
 async fn test_public_share_revoke_emits_audit_event() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "audit_owner", tenant_id).await;
 
@@ -656,8 +645,7 @@ async fn test_public_share_revoke_emits_audit_event() {
         "Event aggregate_id should match share ID"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-11: Denied post-revocation access is auditable
@@ -671,7 +659,7 @@ async fn test_public_share_revoke_emits_audit_event() {
 #[ignore] // Requires database and S3; also requires denied-access audit logging
 async fn test_revoked_share_access_denial_is_auditable() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "denial_owner", tenant_id).await;
 
@@ -752,8 +740,7 @@ async fn test_revoked_share_access_denial_is_auditable() {
         "Share access log must contain the manually-logged denied entry"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-12: Share creation emits a durable ShareCreated event
@@ -761,7 +748,7 @@ async fn test_revoked_share_access_denial_is_auditable() {
 #[ignore] // Requires database and S3
 async fn test_public_share_create_emits_audit_event() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "audit_create_owner", tenant_id).await;
 
@@ -807,8 +794,7 @@ async fn test_public_share_create_emits_audit_event() {
     assert_eq!(event.aggregate_id, share.id);
     assert_eq!(event.user_id, owner.id);
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// S-13: Public link allowed access is logged in share_access_log
@@ -816,7 +802,7 @@ async fn test_public_share_create_emits_audit_event() {
 #[ignore] // Requires database and S3
 async fn test_public_share_allowed_access_is_auditable() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     let owner = create_test_user(&ctx.metadata_store, "audit_access_owner", tenant_id).await;
 
@@ -879,6 +865,5 @@ async fn test_public_share_allowed_access_is_auditable() {
     );
     assert_eq!(entry.actor_type.as_deref(), Some("public_share_session"));
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

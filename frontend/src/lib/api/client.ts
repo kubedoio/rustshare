@@ -1,6 +1,21 @@
 import { ApiError } from './types';
 
 const CSRF_HEADER_NAME = 'X-Rustshare-Csrf';
+const CSRF_COOKIE_NAME = 'rustshare_csrf_token';
+
+/**
+ * Read the double-submit CSRF token from the cookie set by the server during login/OIDC.
+ * Returns undefined when running outside a browser or if the cookie is absent.
+ */
+export function getCsrfToken(): string | undefined {
+	if (typeof document === 'undefined') {
+		return undefined;
+	}
+	const match = document.cookie.match(
+		new RegExp('(?:^|; )' + encodeURIComponent(CSRF_COOKIE_NAME) + '=([^;]*)')
+	);
+	return match ? decodeURIComponent(match[1]) : undefined;
+}
 
 export class ApiClient {
 	constructor(private baseURL: string) {}
@@ -55,7 +70,10 @@ export class ApiClient {
 
 		// Add CSRF header if needed
 		if (requiresCsrfHeader(method) && !headers[CSRF_HEADER_NAME]) {
-			headers[CSRF_HEADER_NAME] = '1';
+			const csrfToken = getCsrfToken();
+			if (csrfToken) {
+				headers[CSRF_HEADER_NAME] = csrfToken;
+			}
 		}
 
 		// Add Authorization header if token exists in sessionStorage

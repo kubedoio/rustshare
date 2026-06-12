@@ -22,8 +22,17 @@ impl EventStore {
         &self.pool
     }
 
-    /// Append a new event to the event store
-    pub async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()> {
+    /// Begin a new database transaction.
+    pub async fn begin_transaction(&self) -> Result<sqlx::Transaction<'static, sqlx::Postgres>> {
+        Ok(self.pool.begin().await?)
+    }
+
+    /// Append a new event to the event store inside an existing transaction.
+    pub async fn append_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        event: &Event,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO events (event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
@@ -38,8 +47,17 @@ impl EventStore {
             event.timestamp,
             event.version
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
+
+        Ok(())
+    }
+
+    /// Append a new event to the event store
+    pub async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()> {
+        let mut tx = self.begin_transaction().await?;
+        self.append_in_tx(&mut tx, event).await?;
+        tx.commit().await?;
 
         broadcaster.publish(event.clone());
 

@@ -36,17 +36,27 @@ jobs:
       - name: Build pilot backend image
         run: docker build -f docker/backend.Dockerfile -t rustshare-backend:pilot .
 
+      - name: Generate pilot secrets
+        id: pilot-secrets
+        run: |
+          JWT_SECRET=$(openssl rand -base64 32 | tr -d '\n')
+          ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
+          echo "jwt_secret=${JWT_SECRET}" >> "$GITHUB_OUTPUT"
+          echo "encryption_key=${ENCRYPTION_KEY}" >> "$GITHUB_OUTPUT"
+
       - name: Validate pilot compose profile
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml config >/tmp/pilot-compose.yaml
 
       - name: Boot pilot stack
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
-          # CI secrets must be configured in repository Settings > Secrets and variables > Actions
-          JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
-          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+          # Prefer repository secrets when configured; otherwise use per-run generated values.
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
           # Pilot smoke test credentials — ephemeral values generated per-run
           POSTGRES_PASSWORD: pilot-db-${{ github.run_id }}-${{ github.run_attempt }}
           DATABASE_URL: postgres://rustshare:pilot-db-${{ github.run_id }}-${{ github.run_attempt }}@postgres:5432/rustshare
@@ -54,6 +64,7 @@ jobs:
           RUSTFS_ROOT_PASSWORD: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_ACCESS_KEY_ID: pilot-rustfs-${{ github.run_id }}
           AWS_SECRET_ACCESS_KEY: pilot-rustfs-${{ github.run_id }}-${{ github.run_attempt }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: pilot-chat-webhook-${{ github.run_id }}-${{ github.run_attempt }}
           RUSTSHARE_ADMIN_PASSWORD: pilot-admin-${{ github.run_id }}-${{ github.run_attempt }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
@@ -73,6 +84,7 @@ jobs:
         if: failure()
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs --tail=200
@@ -81,6 +93,7 @@ jobs:
         if: always()
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml down -v
 
   publish-pilot-image:

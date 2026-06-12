@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 //! Contract Tests for RustShare
 //!
 //! This module contains the mandatory executable test suites as defined in the contract document.

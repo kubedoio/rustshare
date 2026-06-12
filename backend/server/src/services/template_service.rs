@@ -91,7 +91,7 @@ impl From<serde_json::Error> for TemplateError {
 }
 
 /// Request to create a new template.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct CreateTemplateRequest {
     pub template_key: String,
     pub name: String,
@@ -107,7 +107,7 @@ pub struct CreateTemplateRequest {
 }
 
 /// Request to update a template.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct UpdateTemplateRequest {
     pub name: Option<String>,
     pub description: Option<String>,

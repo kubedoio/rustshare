@@ -358,7 +358,10 @@ async fn contract_list_boards_returns_created_boards() {
         .await
         .unwrap();
 
-    let boards = service.list_boards(user.id, tenant_id).await.unwrap();
+    let boards = service
+        .list_boards(user.id, tenant_id, 1000, 0)
+        .await
+        .unwrap();
     assert_eq!(boards.len(), 2);
     assert!(boards.iter().any(|b| b.title == "Alpha"));
     assert!(boards.iter().any(|b| b.title == "Beta"));
@@ -877,7 +880,10 @@ async fn contract_disabling_module_does_not_delete_data() {
     let board_id = board.id.clone();
 
     // Simulate disable by checking data still exists when fetched directly
-    let boards_after = service.list_boards(user.id, tenant_id).await.unwrap();
+    let boards_after = service
+        .list_boards(user.id, tenant_id, 1000, 0)
+        .await
+        .unwrap();
     assert!(boards_after.iter().any(|b| b.id == board_id));
 
     cleanup_user(&pool, user.id).await;
@@ -1040,7 +1046,10 @@ async fn contract_cross_tenant_list_boards_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_boards(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|b| b.title == "Secret"),
         "Cross-tenant list_boards should not leak boards"
@@ -1082,6 +1091,9 @@ async fn contract_same_tenant_unauthorized_get_board_denied() {
     cleanup_user(&pool, user_owner.id).await;
     cleanup_user(&pool, user_other.id).await;
 }
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
 async fn contract_same_tenant_unauthorized_get_card_detail_denied() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -1727,7 +1739,10 @@ async fn contract_same_tenant_unauthorized_list_boards_does_not_leak() {
         .await
         .unwrap();
 
-    let list_other = service.list_boards(user_other.id, tenant_id).await.unwrap();
+    let list_other = service
+        .list_boards(user_other.id, tenant_id, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_other.iter().any(|b| b.title == "Private"),
         "Same-tenant unauthorized list_boards should not leak boards"

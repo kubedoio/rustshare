@@ -26,7 +26,22 @@ impl MockEventStore {
 }
 
 impl FileEventStoreOps for MockEventStore {
+    type Tx = ();
+
     async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+        self.events.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+
+    async fn begin_transaction(&self) -> Result<Self::Tx> {
+        Ok(())
+    }
+
+    async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
+        Ok(())
+    }
+
+    async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> Result<()> {
         self.events.lock().unwrap().push(event.clone());
         Ok(())
     }
@@ -57,7 +72,14 @@ impl MockMetadataStore {
 }
 
 impl FileMetadataStoreOps for MockMetadataStore {
+    type Tx = ();
+
     async fn create_file(&self, file: &File) -> Result<()> {
+        self.created_files.lock().unwrap().push(file.clone());
+        Ok(())
+    }
+
+    async fn create_file_in_tx(&self, _tx: &mut Self::Tx, file: &File) -> Result<()> {
         self.created_files.lock().unwrap().push(file.clone());
         Ok(())
     }
@@ -67,6 +89,15 @@ impl FileMetadataStoreOps for MockMetadataStore {
     }
 
     async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+        self.created_versions.lock().unwrap().push(version.clone());
+        Ok(())
+    }
+
+    async fn create_file_version_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        version: &FileVersion,
+    ) -> Result<()> {
         self.created_versions.lock().unwrap().push(version.clone());
         Ok(())
     }
@@ -107,7 +138,22 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(())
     }
 
+    async fn update_file_in_tx(&self, _tx: &mut Self::Tx, file: &File) -> Result<()> {
+        self.updated_files.lock().unwrap().push(file.clone());
+        *self.existing_file.lock().unwrap() = Some(file.clone());
+        Ok(())
+    }
+
     async fn delete_file(&self, _id: Uuid, _owner_id: Uuid) -> Result<()> {
+        unreachable!()
+    }
+
+    async fn delete_file_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        _id: Uuid,
+        _owner_id: Uuid,
+    ) -> Result<()> {
         unreachable!()
     }
 
@@ -160,6 +206,15 @@ impl MockObjectStore {
 impl ObjectStoreOps for MockObjectStore {
     async fn put(&self, key: &str, data: Bytes) -> Result<()> {
         self.puts.lock().unwrap().push((key.to_string(), data));
+        Ok(())
+    }
+
+    async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let data = std::fs::read(path)?;
+        self.puts
+            .lock()
+            .unwrap()
+            .push((key.to_string(), Bytes::from(data)));
         Ok(())
     }
 

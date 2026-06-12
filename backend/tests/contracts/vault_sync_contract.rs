@@ -10,61 +10,10 @@ use rustshare_core::domain::{
     VaultAdapter, VaultDevice,
 };
 use rustshare_core::services::{ObjectStoreOps, VaultStore, VaultSyncService};
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
-use std::sync::Arc;
 use uuid::Uuid;
 
-async fn setup_test_env() -> (
-    PgPool,
-    Arc<EventStore>,
-    Arc<MetadataStore>,
-    Arc<ObjectStore>,
-) {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    let pool = PgPool::connect(&database_url)
-        .await
-        .expect("DB connect failed");
-    let event_store = Arc::new(EventStore::new(pool.clone()));
-    let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
-    let object_store = Arc::new(
-        ObjectStore::new(
-            std::env::var("RUSTFS_ENDPOINT")
-                .unwrap_or_else(|_| "http://localhost:9000".to_string()),
-            std::env::var("RUSTFS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
-            std::env::var("RUSTFS_BUCKET").unwrap_or_else(|_| "rustshare-data".to_string()),
-        )
-        .await
-        .expect("S3 connect failed"),
-    );
-    (pool, event_store, metadata_store, object_store)
-}
-
-async fn create_test_user(
-    metadata_store: &MetadataStore,
-    username: &str,
-    tenant_id: Uuid,
-) -> rustshare_core::domain::User {
-    let unique = format!("{}-{}", username, Uuid::new_v4());
-    let user = rustshare_core::domain::User::new(
-        unique.clone(),
-        format!("{} Display", unique),
-        "test_password_hash".to_string(),
-        format!("{}@test.local", unique),
-        false,
-        10_737_418_240, // 10GB
-        tenant_id,
-    );
-
-    metadata_store
-        .create_user(&user)
-        .await
-        .expect("Failed to create test user");
-
-    user
-}
+use super::common::*;
 
 async fn create_test_device<S, O>(
     service: &VaultSyncService<S, O>,
@@ -95,50 +44,15 @@ where
     device
 }
 
-async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
-    sqlx::query(
-        "DELETE FROM vault_files WHERE tenant_id IN (SELECT tenant_id FROM users WHERE id = $1)",
-    )
-    .bind(user_id)
-    .execute(pool)
-    .await
-    .ok();
-    sqlx::query("DELETE FROM vaults WHERE owner_user_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM vault_devices WHERE user_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM files WHERE owner_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM folders WHERE owner_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .ok();
-}
-
 /// VS-01: Create and retrieve a vault
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_create_and_get_vault() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "vault_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "vault_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let vault = service
         .create_vault(
             CreateVaultRequest {
@@ -165,18 +79,18 @@ async fn test_create_and_get_vault() {
     assert_eq!(retrieved.name, "Test Vault");
     assert_eq!(retrieved.server_rev, 0);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-02: Upload a file and download it back
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_upload_and_download_file() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "upload_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "upload_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -222,18 +136,18 @@ async fn test_upload_and_download_file() {
         .expect("Failed to download file");
     assert_eq!(downloaded, content);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-03: Concurrent upload conflict detection
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_upload_conflict() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "conflict_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "conflict_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -298,18 +212,18 @@ async fn test_upload_conflict() {
         "Expected conflict error for stale base_server_rev"
     );
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-03b: Upload a new file with base_server_rev == 1 succeeds
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_upload_new_file_with_base_rev_one() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "base_rev_one_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "base_rev_one_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -349,18 +263,18 @@ async fn test_upload_new_file_with_base_rev_one() {
     assert_eq!(file.relative_path, "notes/base_rev_one.md");
     assert_eq!(file.server_rev, 1);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-04: Tombstone a file and verify manifest
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_tombstone_and_manifest() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "tombstone_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "tombstone_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -426,18 +340,18 @@ async fn test_tombstone_and_manifest() {
         .expect("File should appear in manifest");
     assert!(entry.deleted);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-05: Rename a file within a vault
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_rename_file() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "rename_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "rename_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -511,18 +425,18 @@ async fn test_rename_file() {
         .unwrap();
     assert_eq!(new_content, content);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-06: Manifest includes all files with correct revisions
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_manifest_includes_all_files() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "manifest_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "manifest_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let device = create_test_device(&service, user.id, tenant_id).await;
     let vault = service
         .create_vault(
@@ -600,18 +514,18 @@ async fn test_manifest_includes_all_files() {
         .expect("two.md should be in manifest");
     assert_eq!(entry_two.server_rev, 2);
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }
 
 /// VS-07: Device registration, retrieval, and revocation
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_device_registration() {
-    let (pool, _event_store, metadata_store, object_store) = setup_test_env().await;
-    let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "device_user", tenant_id).await;
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let user = create_test_user(&ctx.metadata_store, "device_user", tenant_id).await;
 
-    let service = VaultSyncService::new(metadata_store.clone(), object_store.clone());
+    let service = VaultSyncService::new(ctx.metadata_store.clone(), ctx.object_store.clone());
     let vault = service
         .create_vault(
             CreateVaultRequest {
@@ -647,7 +561,8 @@ async fn test_device_registration() {
     assert_eq!(registered.device_name, "Test Device");
 
     // Verify device can be retrieved from store
-    let retrieved = metadata_store
+    let retrieved = ctx
+        .metadata_store
         .get_vault_device(&registered.id.to_string(), tenant_id)
         .await
         .expect("Failed to get device")
@@ -662,7 +577,8 @@ async fn test_device_registration() {
         .expect("Failed to revoke device");
 
     // Verify device is revoked
-    let after_revoke = metadata_store
+    let after_revoke = ctx
+        .metadata_store
         .get_vault_device(&registered.id.to_string(), tenant_id)
         .await
         .expect("Failed to get device after revoke")
@@ -672,5 +588,5 @@ async fn test_device_registration() {
         "Device should be revoked"
     );
 
-    cleanup_user(&pool, user.id).await;
+    ctx.cleanup().await;
 }

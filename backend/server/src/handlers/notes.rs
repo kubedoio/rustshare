@@ -214,6 +214,18 @@ pub struct RenameNoteRequest {
     pub title: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/notes/{id}/rename",
+    tag = "Notes",
+    params(("note_id" = Uuid, Path, description = "Note Id")),
+    request_body = RenameNoteRequest,
+    responses(
+        (status = 200, description = "Success", body = GetNoteResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_note(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -254,6 +266,18 @@ pub struct MoveNoteRequest {
     pub target_folder_id: Option<Uuid>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/notes/{id}/move",
+    tag = "Notes",
+    params(("note_id" = Uuid, Path, description = "Note Id")),
+    request_body = MoveNoteRequest,
+    responses(
+        (status = 200, description = "Success", body = GetNoteResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn move_note(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -317,18 +341,10 @@ pub async fn delete_note(
 // List Notes
 // ============================================================================
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ListNotesQuery {
-    pub limit: Option<usize>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/v1/notes",
     tag = "Notes",
-    params(
-        ("limit" = Option<usize>, Query, description = "Maximum number of results"),
-    ),
     responses(
         (status = 200, description = "List of notes", body = Vec<NoteSummary>),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -337,11 +353,11 @@ pub struct ListNotesQuery {
 pub async fn list_notes(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Query(query): Query<ListNotesQuery>,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<NoteSummary>>, AppError> {
     let notes = state
         .note_service
-        .list_notes(auth.user_id, auth.tenant_id, query.limit)
+        .list_notes(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
 
     Ok(Json(notes))
@@ -361,6 +377,15 @@ pub struct RecentNotesResponse {
     pub notes: Vec<NoteSummary>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/notes/recent",
+    tag = "Notes",
+    responses(
+        (status = 200, description = "Success", body = RecentNotesResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_recent_notes(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -370,12 +395,12 @@ pub async fn list_recent_notes(
         let prefix = format!("/{}/", folder_name);
         state
             .note_service
-            .list_notes_filtered(auth.user_id, auth.tenant_id, Some(&prefix), Some(8))
+            .list_notes_filtered(auth.user_id, auth.tenant_id, Some(&prefix), 8, 0)
             .await
     } else {
         state
             .note_service
-            .list_notes(auth.user_id, auth.tenant_id, Some(8))
+            .list_notes(auth.user_id, auth.tenant_id, 8, 0)
             .await
     }?;
 
@@ -394,6 +419,17 @@ pub struct VisibilityResponse {
     pub public_url: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/notes/{id}/visibility",
+    tag = "Notes",
+    params(("note_id" = Uuid, Path, description = "Note Id")),
+    responses(
+        (status = 200, description = "Success", body = VisibilityResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn toggle_visibility(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -435,6 +471,17 @@ pub struct DuplicateNoteResponse {
     pub modified_at: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/notes/{id}/duplicate",
+    tag = "Notes",
+    params(("id" = Uuid, Path, description = "Id")),
+    responses(
+        (status = 200, description = "Success", body = DuplicateNoteResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn duplicate_note(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -474,6 +521,17 @@ pub struct PublicNoteResponse {
     pub updated_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/notes/{share_id}",
+    tag = "Notes",
+    params(("share_id" = String, Path, description = "Share Id")),
+    responses(
+        (status = 200, description = "Success", body = PublicNoteResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_public_note(
     State(state): State<AppState>,
     Path(share_id): Path<String>,

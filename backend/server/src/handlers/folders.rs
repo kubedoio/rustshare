@@ -157,6 +157,17 @@ pub async fn get_folder(
 /// Delete a folder and its contents.
 ///
 /// DELETE /api/folders/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/folders/{id}",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -567,11 +578,23 @@ pub async fn get_folder_tree(
     Ok(Json(tree))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WorkspaceStarRequest {
     pub starred: bool,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/folders/{id}/star",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = WorkspaceStarRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn toggle_folder_star(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -594,6 +617,17 @@ pub async fn toggle_folder_star(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/restore-from-trash",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn restore_folder_from_trash(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -622,6 +656,17 @@ pub async fn restore_folder_from_trash(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/folders/{id}/permanent",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn permanently_delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -652,6 +697,18 @@ pub async fn permanently_delete_folder(
 /// POST /api/folders/{id}/move
 ///
 /// Request body: { "target_parent_id": "uuid-or-null" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/move",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = MoveFolderRequest,
+    responses(
+        (status = 200, description = "Success", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn move_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -666,7 +723,7 @@ pub async fn move_folder(
     Ok(Json(folder))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MoveFolderRequest {
     pub target_parent_id: Option<Uuid>,
 }
@@ -676,6 +733,18 @@ pub struct MoveFolderRequest {
 /// POST /api/folders/{id}/rename
 ///
 /// Request body: { "new_name": "New Documents" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/rename",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = RenameFolderRequest,
+    responses(
+        (status = 200, description = "Success", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -690,7 +759,7 @@ pub async fn rename_folder(
     Ok(Json(folder))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameFolderRequest {
     pub new_name: String,
 }
@@ -736,6 +805,17 @@ fn sanitize_zip_path(path: &str) -> Option<String> {
 /// Download a folder and all its contents as a zip archive.
 ///
 /// GET /api/v1/folders/{id}/download
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/download",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

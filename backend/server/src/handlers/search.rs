@@ -15,7 +15,7 @@ use super::{AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 /// Search query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SearchQuery {
     /// Search query string
     pub q: String,
@@ -24,7 +24,7 @@ pub struct SearchQuery {
 }
 
 /// Search result response item
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchResultResponse {
     /// Resource ID
     pub id: Uuid,
@@ -41,7 +41,7 @@ pub struct SearchResultResponse {
 }
 
 /// Search response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchResponse {
     /// Search results
     pub results: Vec<SearchResultResponse>,

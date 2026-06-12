@@ -4,7 +4,7 @@
 //! and share resources with groups they belong to.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -21,7 +21,7 @@ use crate::{
 // ============================================================================
 
 /// Response for a group member.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupMemberResponse {
     pub user_id: String,
     pub username: String,
@@ -30,7 +30,7 @@ pub struct GroupMemberResponse {
 }
 
 /// Response for a group.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserGroupResponse {
     pub id: String,
     pub name: String,
@@ -40,7 +40,7 @@ pub struct UserGroupResponse {
 }
 
 /// Response for a group with members.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserGroupDetailResponse {
     pub id: String,
     pub name: String,
@@ -50,27 +50,27 @@ pub struct UserGroupDetailResponse {
 }
 
 /// Request to create a group share for a file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateFileGroupShareRequest {
     pub group_id: Uuid,
     pub permission: String, // "View", "Edit", or "Admin"
 }
 
 /// Request to create a group share for a folder.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateFolderGroupShareRequest {
     pub group_id: Uuid,
     pub permission: String, // "View", "Edit", or "Admin"
 }
 
 /// Request to update a group share permission.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateGroupShareRequest {
     pub permission: String,
 }
 
 /// Response for a created group share.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupShareResponse {
     pub share_id: String,
     pub resource_id: String,
@@ -109,9 +109,19 @@ struct MemberRow {
 /// GET /api/v1/groups/my
 ///
 /// List all groups that the authenticated user is a member of.
+#[utoipa::path(
+    get,
+    path = "/api/v1/groups/my",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success", body = Vec<UserGroupResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_my_groups(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<UserGroupResponse>>, AppError> {
     let rows = sqlx::query_as::<_, GroupRow>(
         r#"
@@ -127,9 +137,12 @@ pub async fn list_my_groups(
         WHERE m.user_id = $1
         GROUP BY g.id
         ORDER BY g.name ASC
+        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(auth.user_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -150,6 +163,17 @@ pub async fn list_my_groups(
 /// GET /api/v1/groups/my/:id
 ///
 /// Get details of a specific group the user is a member of, including members.
+#[utoipa::path(
+    get,
+    path = "/api/v1/groups/my/{id}",
+    tag = "Groups",
+    params(("group_id" = Uuid, Path, description = "Group Id")),
+    responses(
+        (status = 200, description = "Success", body = UserGroupDetailResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_my_group(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -211,6 +235,18 @@ pub async fn get_my_group(
 /// POST /api/v1/files/:id/share/group
 ///
 /// Share a file with a group the user belongs to.
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/share/group",
+    tag = "Groups",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = CreateFileGroupShareRequest,
+    responses(
+        (status = 200, description = "Success", body = GroupShareResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_file_group_share(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -299,6 +335,18 @@ pub async fn create_file_group_share(
 /// POST /api/v1/folders/:id/share/group
 ///
 /// Share a folder with a group the user belongs to.
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/share/group",
+    tag = "Groups",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = CreateFolderGroupShareRequest,
+    responses(
+        (status = 200, description = "Success", body = GroupShareResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_folder_group_share(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -387,6 +435,17 @@ pub async fn create_folder_group_share(
 /// DELETE /api/v1/shares/:id/group
 ///
 /// Revoke a group share.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/shares/{id}/group",
+    tag = "Groups",
+    params(("share_id" = Uuid, Path, description = "Share Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn revoke_group_share(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -417,6 +476,18 @@ pub async fn revoke_group_share(
 /// PUT /api/v1/shares/:id/group/permission
 ///
 /// Update a group share's permission.
+#[utoipa::path(
+    put,
+    path = "/api/v1/shares/{id}/group/permission",
+    tag = "Groups",
+    params(("share_id" = Uuid, Path, description = "Share Id")),
+    request_body = UpdateGroupShareRequest,
+    responses(
+        (status = 200, description = "Success", body = GroupShareResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_group_share_permission(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -487,6 +558,17 @@ pub async fn update_group_share_permission(
 /// GET /api/v1/files/:id/share/groups
 ///
 /// List all group shares for a file.
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/share/groups",
+    tag = "Groups",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success", body = Vec<GroupShareResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_file_group_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -560,6 +642,17 @@ pub async fn list_file_group_shares(
 /// GET /api/v1/folders/:id/share/groups
 ///
 /// List all group shares for a folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/share/groups",
+    tag = "Groups",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success", body = Vec<GroupShareResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_folder_group_shares(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

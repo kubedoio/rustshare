@@ -275,7 +275,7 @@ async fn test_create_group_share_success() {
 #[ignore] // Requires database
 async fn test_non_member_cannot_share_with_group() {
     let pool = test_pool().await;
-    let mut f = setup_group_share_fixture(&pool).await;
+    let f = setup_group_share_fixture(&pool).await;
     let share_service = create_test_share_service(pool.clone());
 
     // Remove member from group so they are no longer a member

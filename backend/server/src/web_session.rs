@@ -1,10 +1,12 @@
 use axum::http::{header, HeaderMap};
+use rand::Rng;
 use rustshare_auth::{generate_web_session_token, hash_web_session_token, WEB_SESSION_COOKIE_NAME};
 use rustshare_core::domain::UserSession;
 
 use crate::AppState;
 
 pub const WEB_CSRF_HEADER_NAME: &str = "X-Rustshare-Csrf";
+pub const WEB_CSRF_COOKIE_NAME: &str = "rustshare_csrf_token";
 
 pub fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
@@ -57,7 +59,7 @@ pub async fn create_user_session(
     tenant_id: uuid::Uuid,
     user_agent: Option<String>,
     ip_address: Option<String>,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let session_token = generate_web_session_token();
     let session = UserSession::new(
         user_id,
@@ -74,9 +76,19 @@ pub async fn create_user_session(
         .await
         .map_err(|error| error.to_string())?;
 
-    Ok(session_token)
+    let csrf_token = generate_csrf_token();
+
+    Ok((session_token, csrf_token))
 }
 
+/// Build the session cookie.
+///
+/// `SameSite=Lax` is used instead of `Strict` so that users following a link
+/// from an external site (e.g. a shared link in an email or chat) still arrive
+/// logged in. The cookie is still sent on safe top-level navigations, but is
+/// withheld from cross-site POST/iframe requests, which blocks the common CSRF
+/// vector. Mutating requests are further protected by the double-submit CSRF
+/// cookie/header pair.
 pub fn build_session_cookie(session_token: &str) -> String {
     let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -105,6 +117,45 @@ pub fn build_expired_session_cookie() -> String {
     cookie
 }
 
+pub fn generate_csrf_token() -> String {
+    let mut csrf_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut csrf_bytes);
+    hex::encode(csrf_bytes)
+}
+
+/// Build the double-submit CSRF cookie.
+///
+/// `SameSite=Lax` is sufficient here because the attacker scenario we care
+/// about is a cross-site POST/iframe submission, and Lax cookies are not sent
+/// with those requests. Using `Strict` would break legitimate top-level
+/// navigations from external links (e.g. opening a shared RustShare link)
+/// because the browser would not send the CSRF cookie on the initial GET,
+/// causing the first mutating request after navigation to fail.
+pub fn build_csrf_cookie(csrf_token: &str) -> String {
+    let mut cookie = format!(
+        "{}={}; Path=/; SameSite=Lax; Max-Age={}",
+        WEB_CSRF_COOKIE_NAME,
+        csrf_token,
+        session_ttl_seconds()
+    );
+
+    if session_cookie_secure() {
+        cookie.push_str("; Secure");
+    }
+
+    cookie
+}
+
+pub fn build_expired_csrf_cookie() -> String {
+    let mut cookie = format!("{}=; Path=/; SameSite=Lax; Max-Age=0", WEB_CSRF_COOKIE_NAME);
+
+    if session_cookie_secure() {
+        cookie.push_str("; Secure");
+    }
+
+    cookie
+}
+
 fn session_ttl_seconds() -> i64 {
     std::env::var("WEB_SESSION_TTL_SECONDS")
         .ok()
@@ -113,8 +164,11 @@ fn session_ttl_seconds() -> i64 {
 }
 
 fn session_cookie_secure() -> bool {
+    // Production default is `true` (cookies only sent over HTTPS).
+    // Developers running on `http://localhost` must explicitly set
+    // `SESSION_COOKIE_SECURE=false`.
     std::env::var("SESSION_COOKIE_SECURE")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(false)
+        .unwrap_or(true)
 }

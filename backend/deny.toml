@@ -13,9 +13,6 @@ allow = [
     "BSD-3-Clause",
     "BSD-2-Clause",
     "ISC",
-    "Unicode-DFS-2016",
-    "MPL-2.0",
-    "OpenSSL",
     "Zlib",
     "Unicode-3.0",
     "0BSD",
@@ -47,3 +44,141 @@ ignore = [
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
     { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
 ]
+
+[bans]
+# Transitive AWS SDK + OIDC dependency duplicates that cannot be unified without upstream releases.
+[[bans.skip]]
+name = "base64"
+reason = "openidconnect pulls in base64 0.21 while the rest of the workspace uses 0.22"
+
+[[bans.skip]]
+name = "block-buffer"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "const-oid"
+reason = "elliptic-curve 0.12 vs 0.13 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "cpufeatures"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "crypto-common"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "darling"
+reason = "validator_derive uses darling 0.20 while serde_with_macros uses darling 0.23"
+
+[[bans.skip]]
+name = "darling_core"
+reason = "validator_derive uses darling 0.20 while serde_with_macros uses darling 0.23"
+
+[[bans.skip]]
+name = "darling_macro"
+reason = "validator_derive uses darling 0.20 while serde_with_macros uses darling 0.23"
+
+[[bans.skip]]
+name = "digest"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "foldhash"
+reason = "hashbrown version split between AWS SDK and other deps"
+
+[[bans.skip]]
+name = "getrandom"
+reason = "rand/getrandom version split between AWS SDK and other deps"
+
+[[bans.skip]]
+name = "h2"
+reason = "hyper 0.14 vs 1.x split via AWS SDK (smithy-http-client) and other deps"
+
+[[bans.skip]]
+name = "hashbrown"
+reason = "hashbrown version split between AWS SDK, indexmap, and other deps"
+
+[[bans.skip]]
+name = "hmac"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and OIDC transitive deps"
+
+[[bans.skip]]
+name = "http"
+reason = "http 0.2 vs 1.x split via AWS SDK and other deps"
+
+[[bans.skip]]
+name = "http-body"
+reason = "http-body 0.4 vs 1.x split via AWS SDK and other deps"
+
+[[bans.skip]]
+name = "hyper"
+reason = "hyper 0.14 vs 1.x split via AWS SDK (smithy-http-client) and other deps"
+
+[[bans.skip]]
+name = "hyper-rustls"
+reason = "hyper-rustls 0.24 vs 0.27 split via AWS SDK (smithy-http-client) and reqwest"
+
+[[bans.skip]]
+name = "md-5"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and sqlx transitive deps"
+
+[[bans.skip]]
+name = "rand"
+reason = "rand version split via AWS SDK (aws-smithy-checksums) and other deps"
+
+[[bans.skip]]
+name = "rand_chacha"
+reason = "rand version split via AWS SDK (aws-smithy-checksums) and other deps"
+
+[[bans.skip]]
+name = "rand_core"
+reason = "rand version split via AWS SDK (aws-smithy-checksums) and other deps"
+
+[[bans.skip]]
+name = "rustls"
+reason = "rustls 0.21 vs 0.23 split via AWS SDK (smithy-http-client) and reqwest/hyper-rustls"
+
+[[bans.skip]]
+name = "rustls-webpki"
+reason = "rustls-webpki 0.101 vs 0.103 split via AWS SDK (smithy-http-client) and reqwest/hyper-rustls"
+
+[[bans.skip]]
+name = "sha1"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and other deps"
+
+[[bans.skip]]
+name = "sha2"
+reason = "digest 0.10 vs 0.11 split via AWS SDK and other deps"
+
+[[bans.skip]]
+name = "socket2"
+reason = "socket2 0.5 vs 0.6 split via AWS SDK (hyper 0.14) and other deps"
+
+[[bans.skip]]
+name = "spin"
+reason = "spin added as a transitive dep of updated AWS SDK crates"
+
+[[bans.skip]]
+name = "thiserror"
+reason = "thiserror 1.x vs 2.x split via serde_with and workspace"
+
+[[bans.skip]]
+name = "thiserror-impl"
+reason = "thiserror 1.x vs 2.x split via serde_with and workspace"
+
+[[bans.skip]]
+name = "tokio-rustls"
+reason = "tokio-rustls 0.24 vs 0.26 split via AWS SDK (smithy-http-client) and reqwest/hyper-rustls"
+
+[[bans.skip]]
+name = "untrusted"
+reason = "ring version split via AWS SDK (rustls 0.21) and other deps"
+
+[[bans.skip]]
+name = "webpki-roots"
+reason = "webpki-roots version split via rustls 0.21 vs 0.23"
+
+[[bans.skip]]
+name = "zip"
+reason = "zip 2.x vs 3.x split via rustshare-server direct dep and utoipa-swagger-ui build dep"

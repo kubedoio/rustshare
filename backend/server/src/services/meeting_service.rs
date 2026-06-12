@@ -22,7 +22,7 @@ fn utc_now() -> DateTime<Utc> {
 }
 
 /// Meeting-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingMetadata {
     #[serde(alias = "type")]
     pub kind: String,
@@ -56,20 +56,20 @@ impl MeetingMetadata {
 }
 
 /// Unified meeting note payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingNote {
     pub id: Uuid,     // Folder ID
     pub name: String, // Folder name
     pub path: String,
     pub content: String,           // From index.md
     pub metadata: MeetingMetadata, // From .rustshare.json
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Meeting summary for listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingSummary {
     pub id: Uuid,
     pub name: String,
@@ -251,6 +251,8 @@ impl MeetingService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<MeetingSummary>, MeetingError> {
         // Meetings are folders that contain .rustshare.json with kind="meeting"
         // This is expensive to scan everything.
@@ -282,7 +284,14 @@ impl MeetingService {
         }
 
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
-        Ok(summaries)
+
+        let paginated: Vec<MeetingSummary> = summaries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Create a new meeting note.

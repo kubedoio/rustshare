@@ -24,6 +24,7 @@ pub(crate) enum VaultFileStoreError {
 }
 
 /// Metadata store for querying projection tables
+#[derive(Clone)]
 pub struct MetadataStore {
     pool: PgPool,
 }
@@ -695,6 +696,8 @@ impl MetadataStore {
     /// Record a failed login attempt for an IP address.
     /// If failed_count reaches max_login_attempts, blocks the IP for login_block_duration_minutes.
     pub async fn record_login_failure(&self, ip_address: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
         let config = sqlx::query!(
             r#"
             SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes
@@ -702,11 +705,12 @@ impl MetadataStore {
             WHERE id = 1
             "#,
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
 
         let enabled = config.login_protection_enabled;
         if !enabled {
+            tx.commit().await?;
             return Ok(());
         }
 
@@ -718,7 +722,7 @@ impl MetadataStore {
             "SELECT blocked_until FROM login_attempts WHERE ip_address = $1",
             ip_address
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
         if let Some(row) = existing {
@@ -730,7 +734,7 @@ impl MetadataStore {
                         "UPDATE login_attempts SET failed_count = 0, blocked_until = NULL WHERE ip_address = $1",
                         ip_address
                     )
-                    .execute(&self.pool)
+                    .execute(&mut *tx)
                     .await?;
                 }
             }
@@ -747,7 +751,7 @@ impl MetadataStore {
             "#,
             ip_address
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
 
         let failed_count = row.failed_count;
@@ -763,10 +767,11 @@ impl MetadataStore {
                 ip_address,
                 block_until
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
@@ -835,8 +840,12 @@ impl MetadataStore {
         })
     }
 
-    /// Create a new file in the projection table
-    pub async fn create_file(&self, file: &File) -> Result<()> {
+    /// Create a new file in the projection table inside a transaction.
+    pub async fn create_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        file: &File,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id, starred_at, deleted_at)
@@ -856,9 +865,17 @@ impl MetadataStore {
             file.modified_at,
             file.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new file in the projection table
+    pub async fn create_file(&self, file: &File) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -907,8 +924,12 @@ impl MetadataStore {
         Ok(file)
     }
 
-    /// Update a file in the projection table
-    pub async fn update_file(&self, file: &File) -> Result<()> {
+    /// Update a file in the projection table inside a transaction.
+    pub async fn update_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        file: &File,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE files
@@ -929,14 +950,27 @@ impl MetadataStore {
             file.tenant_id,
             file.owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
     }
 
-    /// Delete a file from the projection table
-    pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+    /// Update a file in the projection table
+    pub async fn update_file(&self, file: &File) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete a file from the projection table inside a transaction.
+    pub async fn delete_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE files
@@ -946,9 +980,17 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Delete a file from the projection table
+    pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.delete_file_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1138,8 +1180,12 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Create a new file version in the projection table
-    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+    /// Create a new file version in the projection table inside a transaction.
+    pub async fn create_file_version_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        version: &FileVersion,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO file_versions (
@@ -1176,9 +1222,17 @@ impl MetadataStore {
             version.change_description.as_deref(),
             version.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new file version in the projection table
+    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_file_version_in_tx(&mut tx, version).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1597,8 +1651,12 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Create a new folder in the projection table
-    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
+    /// Create a new folder in the projection table inside a transaction.
+    pub async fn create_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        folder: &Folder,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id, starred_at, deleted_at)
@@ -1613,9 +1671,17 @@ impl MetadataStore {
             folder.updated_at,
             folder.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new folder in the projection table
+    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1678,8 +1744,12 @@ impl MetadataStore {
         Ok(folder)
     }
 
-    /// Update a folder in the projection table
-    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
+    /// Update a folder in the projection table inside a transaction.
+    pub async fn update_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        folder: &Folder,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE folders
@@ -1694,14 +1764,27 @@ impl MetadataStore {
             folder.tenant_id,
             folder.owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
     }
 
-    /// Delete a folder from the projection table
-    pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+    /// Update a folder in the projection table
+    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete a folder from the projection table inside a transaction.
+    pub async fn delete_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE folders
@@ -1711,7 +1794,7 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         sqlx::query!(
@@ -1723,9 +1806,17 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Delete a folder from the projection table
+    pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.delete_folder_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -2111,6 +2202,104 @@ impl MetadataStore {
         Ok(file_result.rows_affected() + folder_result.rows_affected())
     }
 
+    /// Delete audit logs (admin_actions) older than the given number of days.
+    pub async fn clean_audit_logs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM admin_actions WHERE performed_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete expired browser sessions older than the given number of days.
+    pub async fn clean_expired_sessions_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM user_sessions WHERE expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete expired shares older than the given number of days.
+    pub async fn clean_expired_shares_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete old file versions older than the given number of days,
+    /// keeping at least 3 versions per file.
+    pub async fn clean_old_file_versions(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM file_versions
+            WHERE id IN (
+                SELECT fv.id
+                FROM file_versions fv
+                JOIN files f ON f.id = fv.file_id
+                WHERE fv.created_at < NOW() - INTERVAL '1 day' * $1
+                AND fv.version_number <= f.current_version - 3
+            )
+            "#,
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete replication attempt history older than the given number of days.
+    pub async fn clean_replication_history_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM replication_attempts WHERE completed_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete OIDC login states older than the given number of days.
+    pub async fn clean_oidc_states_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM oidc_login_states WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete device pair requests older than the given number of days.
+    pub async fn clean_device_pairs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM device_pair_requests WHERE expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete webhook delivery logs older than the given number of days.
+    pub async fn clean_webhook_logs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM webhook_logs WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Find all descendant folders of a given folder using recursive CTE
     ///
     /// Returns all folders in the subtree rooted at the specified folder,
@@ -2406,7 +2595,12 @@ impl MetadataStore {
     }
 
     /// Get all active shares created by a specific user (public, user, and group shares).
-    pub async fn get_user_all_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
+    pub async fn get_user_all_shares(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<OwnedPublicShare>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -2437,8 +2631,11 @@ impl MetadataStore {
             WHERE s.created_by = $1
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
+            LIMIT $2 OFFSET $3
             "#,
-            user_id
+            user_id,
+            limit,
+            offset
         )
         .fetch_all(&self.pool)
         .await?;
@@ -4595,6 +4792,68 @@ mod tests {
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(owner.id)
             .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_record_login_failure_concurrent() {
+        let (store, pool) = setup_metadata_store().await;
+        let ip = "192.168.1.1";
+
+        // Ensure login protection is enabled and max attempts is high enough
+        // so the concurrent tasks don't trigger a block before reaching 10.
+        store
+            .update_security_config(Some(true), Some(100), None)
+            .await
+            .unwrap();
+
+        // Clean up any existing attempts for this IP
+        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Spawn 10 concurrent tasks, each recording a login failure
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let store = store.clone();
+            let ip = ip.to_string();
+            handles.push(tokio::spawn(async move {
+                store.record_login_failure(&ip).await.unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify the final failed_count is exactly 10
+        let row = sqlx::query!(
+            "SELECT failed_count FROM login_attempts WHERE ip_address = $1",
+            ip
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            row.failed_count, 10,
+            "Concurrent login failures should sum to exactly 10"
+        );
+
+        // Clean up
+        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Restore default security config
+        store
+            .update_security_config(Some(true), Some(5), Some(15))
             .await
             .unwrap();
     }

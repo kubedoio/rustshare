@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::adapters;
@@ -195,6 +195,8 @@ pub struct AppState {
     pub vault_sync_service:
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub chat_integration_service: Arc<AppChatIntegrationService>,
+    pub shutdown_tx: broadcast::Sender<()>,
+    pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }
 
 impl FromRef<AppState> for DatabaseState {

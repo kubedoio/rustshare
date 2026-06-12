@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM file_versions\n            WHERE id IN (\n                SELECT fv.id\n                FROM file_versions fv\n                JOIN files f ON f.id = fv.file_id\n                WHERE fv.created_at < NOW() - INTERVAL '1 day' * $1\n                AND fv.version_number <= f.current_version - 3\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c6a51bb24c68765cf8780055758fe206e6312c1593bf0d8def9e99f24a37d19c"
+}

@@ -192,7 +192,7 @@ fn make_share(
 #[ignore] // Requires database and S3
 async fn test_search_returns_own_files() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "search_user", tenant_id).await;
@@ -201,7 +201,7 @@ async fn test_search_returns_own_files() {
     let file_service = ctx.file_service();
 
     // Create files with distinct names
-    let file1 = create_test_file(
+    let _file1 = create_test_file(
         &file_service,
         user.id,
         tenant_id,
@@ -211,7 +211,7 @@ async fn test_search_returns_own_files() {
     )
     .await;
 
-    let file2 = create_test_file(
+    let _file2 = create_test_file(
         &file_service,
         user.id,
         tenant_id,
@@ -244,8 +244,7 @@ async fn test_search_returns_own_files() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-02-01: Search excludes files user cannot access
@@ -253,7 +252,7 @@ async fn test_search_returns_own_files() {
 #[ignore] // Requires database and S3
 async fn test_search_excludes_other_users_files() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create two users
     let user_a = create_test_user(&ctx.metadata_store, "search_user_a", tenant_id).await;
@@ -322,9 +321,7 @@ async fn test_search_excludes_other_users_files() {
     assert_eq!(files_b[0].owner_id, user_b.id);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-02-02: Search across tenants is isolated
@@ -334,7 +331,7 @@ async fn test_search_is_tenant_isolated() {
     let ctx = setup_test_env().await;
 
     // Setup two tenants
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
 
     // Create users in each tenant
@@ -396,10 +393,8 @@ async fn test_search_is_tenant_isolated() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// Q-03-01: Deleted files do not appear in search
@@ -407,7 +402,7 @@ async fn test_search_is_tenant_isolated() {
 #[ignore] // Requires database and S3
 async fn test_deleted_files_not_in_search() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "delete_search_user", tenant_id).await;
@@ -463,8 +458,7 @@ async fn test_deleted_files_not_in_search() {
     assert_eq!(files_after[0].name, "keep_me.txt");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-01-02: Search in folders returns folder contents
@@ -472,7 +466,7 @@ async fn test_deleted_files_not_in_search() {
 #[ignore] // Requires database and S3
 async fn test_search_in_folders() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "folder_search_user", tenant_id).await;
@@ -537,8 +531,7 @@ async fn test_search_in_folders() {
     assert_eq!(personal_files[0].name, "personal_doc.txt");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-02-03: Search respects folder permissions
@@ -546,7 +539,7 @@ async fn test_search_in_folders() {
 #[ignore] // Requires database and S3
 async fn test_search_respects_folder_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create users
     let owner = create_test_user(&ctx.metadata_store, "folder_owner", tenant_id).await;
@@ -587,9 +580,7 @@ async fn test_search_respects_folder_permissions() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-02-04: Search excludes revoked shares
@@ -597,7 +588,7 @@ async fn test_search_respects_folder_permissions() {
 #[ignore] // Requires database and S3
 async fn test_search_excludes_revoked_shares() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create users
     let owner = create_test_user(&ctx.metadata_store, "revoke_owner", tenant_id).await;
@@ -656,9 +647,7 @@ async fn test_search_excludes_revoked_shares() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, recipient.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-02-05: Search excludes expired shares
@@ -666,7 +655,7 @@ async fn test_search_excludes_revoked_shares() {
 #[ignore] // Requires database and S3
 async fn test_search_excludes_expired_shares() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create users
     let owner = create_test_user(&ctx.metadata_store, "expire_owner", tenant_id).await;
@@ -710,9 +699,7 @@ async fn test_search_excludes_expired_shares() {
     assert!(access.is_err(), "Search should exclude expired shares");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, recipient.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Q-07: Search excludes hidden metadata and module sidecars

@@ -28,7 +28,7 @@ use crate::AppState;
 
 /// Query parameters for SCIM list operations.
 #[allow(dead_code)]
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
 pub struct ListQuery {
     /// SCIM filter expression
     pub filter: Option<String>,

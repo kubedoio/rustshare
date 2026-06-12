@@ -1,4 +1,4 @@
-import { apiClient } from './client';
+import { apiClient, getCsrfToken } from './client';
 import type { Theme } from '$lib/stores/theme';
 
 export interface UserProfile {
@@ -170,7 +170,7 @@ export async function uploadAvatar(file: File): Promise<{ avatar_path: string }>
 
 	const headers: Record<string, string> = {
 		'Content-Type': file.type,
-		'X-Rustshare-Csrf': '1'
+		'X-Rustshare-Csrf': getCsrfToken() || ''
 	};
 
 	if (token) {
