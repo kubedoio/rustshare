@@ -81,6 +81,14 @@ pub async fn create_user_session(
     Ok((session_token, csrf_token))
 }
 
+/// Build the session cookie.
+///
+/// `SameSite=Lax` is used instead of `Strict` so that users following a link
+/// from an external site (e.g. a shared link in an email or chat) still arrive
+/// logged in. The cookie is still sent on safe top-level navigations, but is
+/// withheld from cross-site POST/iframe requests, which blocks the common CSRF
+/// vector. Mutating requests are further protected by the double-submit CSRF
+/// cookie/header pair.
 pub fn build_session_cookie(session_token: &str) -> String {
     let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -115,6 +123,14 @@ pub fn generate_csrf_token() -> String {
     hex::encode(csrf_bytes)
 }
 
+/// Build the double-submit CSRF cookie.
+///
+/// `SameSite=Lax` is sufficient here because the attacker scenario we care
+/// about is a cross-site POST/iframe submission, and Lax cookies are not sent
+/// with those requests. Using `Strict` would break legitimate top-level
+/// navigations from external links (e.g. opening a shared RustShare link)
+/// because the browser would not send the CSRF cookie on the initial GET,
+/// causing the first mutating request after navigation to fail.
 pub fn build_csrf_cookie(csrf_token: &str) -> String {
     let mut cookie = format!(
         "{}={}; Path=/; SameSite=Lax; Max-Age={}",

@@ -71,7 +71,8 @@ async fn main() -> Result<()> {
     // - unversioned resource aliases were removed in Phase 7 wave 3
     // - remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
     let app = Router::new()
-        // Prometheus metrics endpoint (no auth required)
+        // Prometheus metrics endpoint. If METRICS_API_TOKEN is set, the scraper
+        // must provide it as an Authorization header; otherwise it remains open.
         .route("/metrics", get(metrics::metrics_handler))
         // OpenAPI docs (no auth required for discovery)
         .merge(

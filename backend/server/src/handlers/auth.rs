@@ -355,12 +355,12 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use std::time::{Duration, Instant};
 
-    const TEST_DATABASE_URL: &str =
-        "postgres://rustshare:1f7b27220d83a11de6bca8b63c0ca491a3001c0c73471eda@localhost:5432/rustshare";
-
     async fn test_db_pool() -> sqlx::PgPool {
-        let database_url =
-            std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
+        // Load a local .env file if present, then require DATABASE_URL to be set.
+        // Avoids checking hardcoded credentials into source control.
+        dotenvy::dotenv().ok();
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for tests (or via a .env file)");
 
         PgPoolOptions::new()
             .max_connections(1)
