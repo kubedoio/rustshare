@@ -258,5 +258,4 @@ mod tests {
             .unwrap();
         assert!(!requires_csrf_check(&request));
     }
-
 }
