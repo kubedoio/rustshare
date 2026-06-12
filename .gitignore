@@ -63,3 +63,12 @@ device_id
 
 # Antigravity CLI
 .antigravitycli/
+
+# Codex / agent workspace metadata
+.codex/
+
+# Local handover / preview artifacts
+rustshare_public_preview_handover/
+
+# Root-level accidental lock files
+/package-lock.json

@@ -35,7 +35,7 @@ bytes.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "3", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
 envy = "0.4"
@@ -56,11 +56,12 @@ image = { version = "0.25", default-features = false, features = ["webp", "png",
 mime_guess = "2.0"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 slug = "0.1.6"
-regex = "1.11"
+regex = "1.12"
 serde_yaml = "0.9"
 validator = { workspace = true }
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
+yrs = { version = "0.27", features = ["sync"] }
 
 [[test]]
 name = "admin_require_admin_test"
