@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.5.1] - 2026-06-12
+
+### Fixed
+
+- Aligned `Cargo.lock` and `backend/Cargo.lock` with the `0.5.0` workspace version. The `v0.5.0` tag shipped with internal crates still listed as `0.1.0` in the lockfiles; this hotfix regenerates both lockfiles and bumps `backend/Cargo.toml` `workspace.package.version` to `0.5.0` for consistency.
+
 ## [0.5.0] - 2026-06-12
 
 ### Added
