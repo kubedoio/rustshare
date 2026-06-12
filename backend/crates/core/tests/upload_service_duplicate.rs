@@ -103,6 +103,15 @@ impl UploadObjectStore for MockUploadObjectStore {
         unreachable!()
     }
 
+    async fn put_chunk_from_path(
+        &self,
+        _session_id: Uuid,
+        _chunk_index: u32,
+        _path: &std::path::Path,
+    ) -> Result<(), UploadError> {
+        unreachable!()
+    }
+
     async fn get_chunk(
         &self,
         _session_id: Uuid,
@@ -233,7 +242,22 @@ impl MockEventStore {
 }
 
 impl FileEventStoreOps for MockEventStore {
+    type Tx = ();
+
     async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+        self.events.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+
+    async fn begin_transaction(&self) -> Result<Self::Tx> {
+        Ok(())
+    }
+
+    async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
+        Ok(())
+    }
+
+    async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> Result<()> {
         self.events.lock().unwrap().push(event.clone());
         Ok(())
     }

@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::handlers::extractors::AuthenticatedUser;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSurfaceLayout {
     pub r#type: String,
@@ -12,7 +12,7 @@ pub struct WorkspaceSurfaceLayout {
     pub compact_overview: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WorkspaceSurfaceSection {
     pub key: String,
     pub r#type: String,
@@ -22,7 +22,7 @@ pub struct WorkspaceSurfaceSection {
     pub renderer: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WorkspaceSurfaceDefinition {
     pub id: String,
     pub key: String,
@@ -33,11 +33,20 @@ pub struct WorkspaceSurfaceDefinition {
     pub sections: Vec<WorkspaceSurfaceSection>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WorkspaceSurfaceResponse {
     pub surface: WorkspaceSurfaceDefinition,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/workspace-surface",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success", body = WorkspaceSurfaceResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_workspace_surface(_user: AuthenticatedUser) -> Json<WorkspaceSurfaceResponse> {
     Json(WorkspaceSurfaceResponse {
         surface: WorkspaceSurfaceDefinition {

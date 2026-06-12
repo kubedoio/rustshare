@@ -88,14 +88,14 @@ impl From<serde_json::Error> for KanbanError {
 // Public types
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanLabel {
     pub id: String,
     pub name: String,
     pub color: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanAssignee {
     pub id: String,
     pub display_name: String,
@@ -103,27 +103,27 @@ pub struct KanbanAssignee {
     pub avatar_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanChecklist {
     pub done: usize,
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanChecklistItem {
     pub id: String,
     pub text: String,
     pub done: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanChecklistGroup {
     pub id: String,
     pub title: String,
     pub items: Vec<KanbanChecklistItem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanSettings {
     pub show_description_on_cards: bool,
     pub description_preview_lines: usize,
@@ -134,7 +134,7 @@ pub struct KanbanSettings {
     pub show_checklist_badge: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanBoardSummary {
     pub id: String,
     pub title: String,
@@ -147,7 +147,7 @@ pub struct KanbanBoardSummary {
     pub archived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanBoard {
     pub id: String,
     pub title: String,
@@ -161,7 +161,7 @@ pub struct KanbanBoard {
     pub archived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanColumn {
     pub id: String,
     pub title: String,
@@ -172,7 +172,7 @@ pub struct KanbanColumn {
     pub cards: Vec<KanbanCard>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanCard {
     pub id: String,
     pub title: String,
@@ -196,7 +196,7 @@ pub struct KanbanCard {
     pub schema_version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanCardAttachment {
     pub id: String,
     pub name: String,
@@ -208,7 +208,7 @@ pub struct KanbanCardAttachment {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanCardDetail {
     #[serde(flatten)]
     pub summary: KanbanCard,
@@ -217,24 +217,24 @@ pub struct KanbanCardDetail {
     pub activity: Vec<KanbanEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateBoardInput {
     pub title: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateLabelInput {
     pub name: String,
     pub color: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateLabelInput {
     pub name: Option<String>,
     pub color: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateBoardInput {
     pub title: Option<String>,
     pub labels: Option<Vec<KanbanLabel>>,
@@ -242,7 +242,7 @@ pub struct UpdateBoardInput {
     pub archived: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateCardInput {
     pub title: String,
     pub column_id: Option<String>,
@@ -253,7 +253,7 @@ pub struct CreateCardInput {
     pub due_date: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateCardInput {
     pub title: Option<String>,
     pub content: Option<String>,
@@ -266,7 +266,7 @@ pub struct UpdateCardInput {
     pub activity: Option<Vec<KanbanEvent>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MoveCardInput {
     pub board_id: String,
     pub target_column_id: String,
@@ -350,7 +350,7 @@ pub(crate) struct CardMetadata {
     pub activity: Option<Vec<KanbanEvent>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KanbanEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
@@ -773,6 +773,8 @@ impl KanbanService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<KanbanBoardSummary>, KanbanError> {
         let root = match self.find_kanban_root(user_id, tenant_id).await? {
             Some(r) => r,
@@ -824,7 +826,14 @@ impl KanbanService {
         }
 
         boards.sort_by_key(|a| a.title.to_lowercase());
-        Ok(boards)
+
+        let paginated: Vec<KanbanBoardSummary> = boards
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     async fn unique_board_folder_name(
@@ -1362,13 +1371,22 @@ impl KanbanService {
         board_id_or_slug: String,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<KanbanCard>, KanbanError> {
         let board = self.get_board(board_id_or_slug, user_id, tenant_id).await?;
         let mut cards = Vec::new();
         for col in board.columns {
             cards.extend(col.cards);
         }
-        Ok(cards)
+
+        let paginated: Vec<KanbanCard> = cards
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     pub async fn create_card(

@@ -349,7 +349,10 @@ async fn contract_cross_tenant_list_meetings_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_meetings(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_meetings(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|m| m.metadata.title == "Secret"),
         "Cross-tenant list_meetings should not leak meetings"

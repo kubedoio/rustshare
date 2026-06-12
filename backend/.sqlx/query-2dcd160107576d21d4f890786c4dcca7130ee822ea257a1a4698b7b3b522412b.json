@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                s.id,\n                s.file_id,\n                s.folder_id,\n                s.share_token,\n                s.recipient_user_id,\n                s.recipient_group_id,\n                s.created_by,\n                s.permissions,\n                s.password_hash,\n                s.expires_at,\n                s.upload_only,\n                s.access_count,\n                s.created_at,\n                s.revoked_at,\n                s.tenant_id,\n                COALESCE(s.file_id, s.folder_id) AS \"resource_id!\",\n                CASE\n                    WHEN s.file_id IS NOT NULL THEN 'file'\n                    ELSE 'folder'\n                END AS \"resource_type!\",\n                COALESCE(f.name, fo.name) AS \"resource_name!\"\n            FROM shares s\n            LEFT JOIN files f ON f.id = s.file_id\n            LEFT JOIN folders fo ON fo.id = s.folder_id\n            WHERE s.created_by = $1\n              AND s.revoked_at IS NULL\n            ORDER BY s.created_at DESC\n            ",
+  "query": "\n            SELECT\n                s.id,\n                s.file_id,\n                s.folder_id,\n                s.share_token,\n                s.recipient_user_id,\n                s.recipient_group_id,\n                s.created_by,\n                s.permissions,\n                s.password_hash,\n                s.expires_at,\n                s.upload_only,\n                s.access_count,\n                s.created_at,\n                s.revoked_at,\n                s.tenant_id,\n                COALESCE(s.file_id, s.folder_id) AS \"resource_id!\",\n                CASE\n                    WHEN s.file_id IS NOT NULL THEN 'file'\n                    ELSE 'folder'\n                END AS \"resource_type!\",\n                COALESCE(f.name, fo.name) AS \"resource_name!\"\n            FROM shares s\n            LEFT JOIN files f ON f.id = s.file_id\n            LEFT JOIN folders fo ON fo.id = s.folder_id\n            WHERE s.created_by = $1\n              AND s.revoked_at IS NULL\n            ORDER BY s.created_at DESC\n            LIMIT $2 OFFSET $3\n            ",
   "describe": {
     "columns": [
       {
@@ -96,7 +96,9 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Uuid",
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
@@ -120,5 +122,5 @@
       null
     ]
   },
-  "hash": "df39a2de63c7f9b2a77b3d68c57d88151b372beae3db9b0e8c5369e45952c3f1"
+  "hash": "2dcd160107576d21d4f890786c4dcca7130ee822ea257a1a4698b7b3b522412b"
 }

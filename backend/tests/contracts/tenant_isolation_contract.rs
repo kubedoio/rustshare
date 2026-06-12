@@ -13,7 +13,7 @@ async fn test_user_cannot_access_file_from_other_tenant() {
     let ctx = setup_test_env().await;
 
     // Setup two tenants
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
 
     // Create users in each tenant
@@ -44,10 +44,8 @@ async fn test_user_cannot_access_file_from_other_tenant() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// G-01-02: Cross-tenant share link is denied
@@ -57,7 +55,7 @@ async fn test_cross_tenant_share_link_is_denied() {
     let ctx = setup_test_env().await;
 
     // Setup two tenants
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
 
     // Create users in each tenant
@@ -82,9 +80,8 @@ async fn test_cross_tenant_share_link_is_denied() {
     assert_eq!(folder.tenant_id, tenant_a);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// G-01-03: Search results don't leak across tenants
@@ -94,7 +91,7 @@ async fn test_search_results_do_not_leak_across_tenants() {
     let ctx = setup_test_env().await;
 
     // Setup two tenants
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
 
     // Create users in each tenant
@@ -164,10 +161,8 @@ async fn test_search_results_do_not_leak_across_tenants() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// G-01-04: Folder access is tenant-isolated
@@ -177,7 +172,7 @@ async fn test_folder_access_is_tenant_isolated() {
     let ctx = setup_test_env().await;
 
     // Setup two tenants
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
 
     // Create users in each tenant
@@ -200,10 +195,8 @@ async fn test_folder_access_is_tenant_isolated() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// G-01-05: User data queries are scoped to tenant
@@ -213,7 +206,7 @@ async fn test_user_queries_are_tenant_scoped() {
     let ctx = setup_test_env().await;
 
     // Setup tenant
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
 
     // Create multiple users in the same tenant
     let user_a1 = create_test_user(&ctx.metadata_store, "user_a1", tenant_a).await;
@@ -255,7 +248,5 @@ async fn test_user_queries_are_tenant_scoped() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a1.id).await;
-    cleanup_user(&ctx.pool, user_a2.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
+    ctx.cleanup().await;
 }

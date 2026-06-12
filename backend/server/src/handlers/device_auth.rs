@@ -39,7 +39,7 @@ const POLL_RATE_LIMIT_SECONDS: u64 = 5;
 const DEVICE_APPROVAL_PATH: &str = "/device/approve";
 
 /// Response for QR info endpoint
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceQrInfoResponse {
     pub instance_url: String,
     pub device_pairing_path: String,
@@ -89,6 +89,15 @@ impl DeviceApprovalLookup {
 
 /// GET /api/v1/auth/device/qr-info
 /// Returns information needed for QR code generation on the device pairing page
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/device/qr-info",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success", body = DeviceQrInfoResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_qr_info(headers: HeaderMap) -> Result<Json<DeviceQrInfoResponse>, AppError> {
     let instance_url = build_instance_url(&headers);
 
@@ -98,7 +107,7 @@ pub async fn device_qr_info(headers: HeaderMap) -> Result<Json<DeviceQrInfoRespo
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DevicePollRequest {
     pub device_code: String,
 }
@@ -116,20 +125,20 @@ pub enum DevicePollResponse {
 }
 
 /// Request body for device approval
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DeviceApproveRequest {
     pub user_code: Option<String>,
     pub device_code: Option<String>,
 }
 
 /// Response for device approval
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceApproveResponse {
     pub device_name: String,
 }
 
 /// Response for device request
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceRequestResponse {
     pub user_code: String,
     pub device_code: String,
@@ -140,6 +149,15 @@ pub struct DeviceRequestResponse {
 
 /// POST /api/v1/auth/device/approve
 /// Approves a device pair request using either a user_code or device_code
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/approve",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_approve(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -316,6 +334,15 @@ fn hash_token(raw: &str) -> String {
 
 /// POST /api/v1/auth/device/request
 /// Generates a new device pair request with user_code and device_code
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/request",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success", body = DeviceRequestResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_request(
     State(state): State<crate::state::AppState>,
     headers: HeaderMap,
@@ -353,6 +380,16 @@ pub async fn device_request(
 
 /// POST /api/v1/auth/device/poll
 /// Polls for approval status and issues token when approved
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/poll",
+    tag = "Auth",
+    request_body = DevicePollRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_poll(
     State(db): State<DatabaseState>,
     State(config): State<AppConfigState>,
@@ -489,7 +526,9 @@ async fn device_poll_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgPoolOptions;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tokio::sync::Mutex as AsyncMutex;
 
     const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
@@ -755,7 +794,10 @@ mod tests {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
-        sqlx::PgPool::connect(&database_url)
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(60))
+            .connect(&database_url)
             .await
             .expect("Failed to connect to test database")
     }

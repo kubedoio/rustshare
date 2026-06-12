@@ -27,7 +27,7 @@ use crate::AppState;
 // ============================================================================
 
 /// Query parameters for listing notifications.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListNotificationsQuery {
     /// Maximum number of notifications to return.
     #[serde(default = "default_limit")]
@@ -45,7 +45,7 @@ fn default_limit() -> i64 {
 }
 
 /// Response for a notification.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct NotificationResponse {
     pub id: Uuid,
     pub notification_type: String,
@@ -76,14 +76,14 @@ impl From<Notification> for NotificationResponse {
 }
 
 /// Response for listing notifications with metadata.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListNotificationsResponse {
     pub notifications: Vec<NotificationResponse>,
     pub total: usize,
 }
 
 /// Response for unread notification count.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UnreadNotificationCountResponse {
     pub count: i64,
 }
@@ -93,11 +93,8 @@ pub struct UnreadNotificationCountResponse {
 // ============================================================================
 
 /// Query parameters for the activity feed.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListActivityQuery {
-    /// Maximum number of activity items to return.
-    #[serde(default = "default_limit")]
-    pub limit: i64,
     /// Cursor: return events before this timestamp.
     #[serde(default)]
     pub before_timestamp: Option<DateTime<Utc>>,
@@ -107,7 +104,7 @@ pub struct ListActivityQuery {
 }
 
 /// A single activity feed item.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActivityItemResponse {
     pub id: Uuid,
     pub action: String,
@@ -120,14 +117,14 @@ pub struct ActivityItemResponse {
 }
 
 /// Response for the activity feed endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListActivityResponse {
     pub items: Vec<ActivityItemResponse>,
     pub next_cursor: Option<ActivityCursor>,
 }
 
 /// Cursor for paginating the activity feed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActivityCursor {
     pub before_timestamp: String,
     pub before_id: Uuid,
@@ -143,6 +140,15 @@ pub struct ActivityCursor {
 ///
 /// Returns paginated list of notifications sorted by created_at descending.
 /// Supports filtering by unread status.
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications",
+    tag = "Notifications",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_notifications(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -173,6 +179,15 @@ pub async fn list_notifications(
 /// Count unread notifications for the authenticated user.
 ///
 /// GET /api/notifications/unread-count
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/unread-count",
+    tag = "Notifications",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn count_unread_notifications(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -195,6 +210,17 @@ pub async fn count_unread_notifications(
 ///
 /// Requires ownership of the notification.
 /// Returns the updated notification with read=true.
+#[utoipa::path(
+    put,
+    path = "/api/v1/notifications/{id}/read",
+    tag = "Notifications",
+    params(("notification_id" = Uuid, Path, description = "Notification Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn mark_notification_read(
     State(state): State<AppState>,
     Path(notification_id): Path<Uuid>,
@@ -220,6 +246,17 @@ pub async fn mark_notification_read(
 ///
 /// Requires ownership of the notification.
 /// Returns 204 No Content on success.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/notifications/{id}",
+    tag = "Notifications",
+    params(("notification_id" = Uuid, Path, description = "Notification Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_notification(
     State(state): State<AppState>,
     Path(notification_id): Path<Uuid>,
@@ -244,13 +281,22 @@ pub async fn delete_notification(
 /// Queries the event store for recent file/module/share mutations,
 /// filters out resources the user cannot currently access, and returns
 /// a paginated activity feed.
+#[utoipa::path(
+    get,
+    path = "/api/v1/activity",
+    tag = "Notifications",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_activity(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Query(query): Query<ListActivityQuery>,
+    Query(pagination): Query<crate::handlers::PaginationQuery>,
 ) -> Result<axum::response::Response, AppError> {
-    // Clamp limit to a reasonable range.
-    let limit = query.limit.clamp(1, 200);
+    let limit = pagination.limit();
 
     // Fetch recent mutation events for this tenant.
     let events = state
@@ -523,9 +569,41 @@ mod tests {
         let query: Result<ListActivityQuery, _> = serde_json::from_value(json);
         assert!(query.is_ok());
         let query = query.unwrap();
-        assert_eq!(query.limit, 50);
         assert!(query.before_timestamp.is_none());
         assert!(query.before_id.is_none());
+    }
+
+    #[test]
+    fn test_pagination_query_defaults() {
+        let json = serde_json::json!({});
+        let query: Result<crate::handlers::PaginationQuery, _> = serde_json::from_value(json);
+        assert!(query.is_ok());
+        let query = query.unwrap();
+        assert_eq!(query.page, 1);
+        assert_eq!(query.per_page, 50);
+        assert_eq!(query.limit(), 50);
+        assert_eq!(query.offset(), 0);
+    }
+
+    #[test]
+    fn test_pagination_query_custom() {
+        let json = serde_json::json!({"page": 2, "per_page": 25});
+        let query: Result<crate::handlers::PaginationQuery, _> = serde_json::from_value(json);
+        assert!(query.is_ok());
+        let query = query.unwrap();
+        assert_eq!(query.page, 2);
+        assert_eq!(query.per_page, 25);
+        assert_eq!(query.limit(), 25);
+        assert_eq!(query.offset(), 25);
+    }
+
+    #[test]
+    fn test_pagination_query_clamps_per_page() {
+        let json = serde_json::json!({"per_page": 200});
+        let query: Result<crate::handlers::PaginationQuery, _> = serde_json::from_value(json);
+        assert!(query.is_ok());
+        let query = query.unwrap();
+        assert_eq!(query.limit(), 100);
     }
 
     #[test]

@@ -21,7 +21,7 @@ use rustshare_core::services::FileError;
 #[ignore] // Requires database and S3
 async fn test_document_get_maps_to_file_get() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let file_service = ctx.file_service();
 
@@ -48,8 +48,7 @@ async fn test_document_get_maps_to_file_get() {
             || retrieved.mime_type == "application/octet-stream"
     );
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -61,7 +60,7 @@ async fn test_document_get_maps_to_file_get() {
 #[ignore] // Requires database and S3
 async fn test_document_save_maps_to_file_update_with_optimistic_locking() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let file_service = ctx.file_service();
 
@@ -88,8 +87,7 @@ async fn test_document_save_maps_to_file_update_with_optimistic_locking() {
 
     assert_eq!(updated.current_version, 2, "Version should bump after save");
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Saving with a stale baseRevision returns a version conflict.
@@ -97,7 +95,7 @@ async fn test_document_save_maps_to_file_update_with_optimistic_locking() {
 #[ignore] // Requires database and S3
 async fn test_document_save_stale_revision_returns_conflict() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let file_service = ctx.file_service();
 
@@ -127,8 +125,7 @@ async fn test_document_save_stale_revision_returns_conflict() {
         "Stale baseRevision should produce VersionConflict"
     );
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -140,7 +137,7 @@ async fn test_document_save_stale_revision_returns_conflict() {
 #[ignore] // Requires database and S3
 async fn test_note_save_maps_to_note_service_save() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_note_user", tenant_id).await;
     let note_service = ctx.note_service();
 
@@ -177,8 +174,7 @@ async fn test_note_save_maps_to_note_service_save() {
         "Note version should increment or stay same after save"
     );
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -190,7 +186,7 @@ async fn test_note_save_maps_to_note_service_save() {
 #[ignore] // Requires database and S3
 async fn test_attachment_upload_maps_to_file_upload_in_folder() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let folder_service = ctx.folder_service();
     let file_service = ctx.file_service();
@@ -239,8 +235,7 @@ async fn test_attachment_upload_maps_to_file_upload_in_folder() {
     assert_eq!(files_in_folder.len(), 1);
     assert_eq!(files_in_folder[0].id, attachment.id);
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -254,7 +249,7 @@ async fn test_attachment_upload_maps_to_file_upload_in_folder() {
 #[ignore] // Requires database and S3
 async fn test_attachment_list_excludes_hidden_files_at_handler_level() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let folder_service = ctx.folder_service();
     let file_service = ctx.file_service();
@@ -338,8 +333,7 @@ async fn test_attachment_list_excludes_hidden_files_at_handler_level() {
     // This test documents that contract; a handler-level integration test would
     // verify the HTTP response contains only "diagram.png".
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -351,7 +345,7 @@ async fn test_attachment_list_excludes_hidden_files_at_handler_level() {
 #[ignore] // Requires database and S3
 async fn test_attachment_delete_maps_to_file_delete() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "editor_user", tenant_id).await;
     let folder_service = ctx.folder_service();
     let file_service = ctx.file_service();
@@ -398,8 +392,7 @@ async fn test_attachment_delete_maps_to_file_delete() {
         "Deleted attachment should not be found"
     );
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -411,7 +404,7 @@ async fn test_attachment_delete_maps_to_file_delete() {
 #[ignore] // Requires database and S3
 async fn test_attachment_upload_denied_without_permission() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let owner = create_test_user(&ctx.metadata_store, "owner", tenant_id).await;
     let intruder = create_test_user(&ctx.metadata_store, "intruder", tenant_id).await;
     let folder_service = ctx.folder_service();
@@ -451,9 +444,7 @@ async fn test_attachment_upload_denied_without_permission() {
         "Upload without permission should be denied"
     );
 
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, intruder.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================

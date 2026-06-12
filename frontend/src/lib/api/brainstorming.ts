@@ -39,9 +39,24 @@ export interface SaveBoardSourceRequest {
 	source: string;
 }
 
+const MAX_PAGE_SIZE = 100;
+
 export async function listBrainstormBoards(): Promise<BrainstormBoard[]> {
-	const response = await apiClient.get<ListBoardsResponse>('/modules/brainstorming/boards');
-	return response.boards;
+	const boards: BrainstormBoard[] = [];
+	let page = 1;
+
+	while (true) {
+		const response = await apiClient.get<ListBoardsResponse>(
+			`/modules/brainstorming/boards?page=${page}&per_page=${MAX_PAGE_SIZE}`
+		);
+		boards.push(...response.boards);
+
+		if (response.boards.length < MAX_PAGE_SIZE) {
+			return boards;
+		}
+
+		page += 1;
+	}
 }
 
 export async function createBrainstormBoard(

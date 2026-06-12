@@ -22,7 +22,7 @@ use crate::{
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListUsersQuery {
     pub search: Option<String>,
     pub status: Option<String>, // "active" | "disabled" | None (all)
@@ -30,7 +30,7 @@ pub struct ListUsersQuery {
     pub per_page: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AdminUserResponse {
     pub id: String,
     pub username: String,
@@ -43,7 +43,7 @@ pub struct AdminUserResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AdminUserDetailResponse {
     #[serde(flatten)]
     pub user: AdminUserResponse,
@@ -64,7 +64,7 @@ fn validate_username(username: &str) -> Result<(), validator::ValidationError> {
     }
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateUserRequest {
     #[validate(length(
         min = 1,
@@ -91,7 +91,7 @@ pub struct CreateUserRequest {
     pub storage_quota_bytes: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateUserRequest {
     pub display_name: Option<String>,
     pub email: Option<String>,
@@ -100,7 +100,7 @@ pub struct UpdateUserRequest {
     pub password: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PaginatedUsers {
     pub users: Vec<AdminUserResponse>,
     pub total: i64,
@@ -146,6 +146,15 @@ impl From<UserRow> for AdminUserResponse {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/users
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_admin_users(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,
@@ -302,6 +311,15 @@ pub async fn list_admin_users(
 }
 
 /// POST /api/v1/admin/users
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/users",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -386,6 +404,15 @@ pub async fn create_admin_user(
 }
 
 /// GET /api/v1/admin/users/:id
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users/{id}",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_admin_user(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -420,6 +447,15 @@ pub async fn get_admin_user(
 }
 
 /// PATCH /api/v1/admin/users/:id
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/users/{id}",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -537,6 +573,15 @@ pub async fn update_admin_user(
 }
 
 /// POST /api/v1/admin/users/:id/disable
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/users/{id}/disable",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn disable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -582,6 +627,15 @@ pub async fn disable_admin_user(
 }
 
 /// POST /api/v1/admin/users/:id/enable
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/users/{id}/enable",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn enable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -606,6 +660,15 @@ pub async fn enable_admin_user(
 }
 
 /// DELETE /api/v1/admin/users/:id
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/users/{id}",
+    tag = "Users",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -645,8 +708,15 @@ pub async fn delete_admin_user(
     // Spawn background blob cleanup
     let object_store = std::sync::Arc::clone(&state.object_store);
     tokio::spawn(async move {
+        let mut failed_keys = Vec::new();
         for key in storage_keys {
-            let _ = object_store.delete(&key).await;
+            if let Err(e) = object_store.delete(&key).await {
+                tracing::error!(error = %e, key = %key, "Failed to delete object storage key during user deletion cleanup");
+                failed_keys.push(key);
+            }
+        }
+        if !failed_keys.is_empty() {
+            tracing::error!(failed_count = failed_keys.len(), keys = ?failed_keys, "Blob cleanup completed with failures");
         }
     });
 

@@ -25,8 +25,20 @@ use crate::services::{PermissionResolver, PermissionResolverOps};
 /// This trait abstracts the event store to allow for testing without database dependencies.
 #[allow(async_fn_in_trait)]
 pub trait EventStoreOps: Send + Sync {
+    /// Transaction handle type.
+    type Tx: Send;
+
     /// Append an event to the event store.
     async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> Result<()>;
+
+    /// Begin a new database transaction.
+    async fn begin_transaction(&self) -> Result<Self::Tx>;
+
+    /// Commit a database transaction.
+    async fn commit_transaction(&self, tx: Self::Tx) -> Result<()>;
+
+    /// Append an event to the event store inside an existing transaction.
+    async fn append_in_tx(&self, tx: &mut Self::Tx, event: &Event) -> Result<()>;
 }
 
 /// Trait for metadata store operations needed by FolderService.
@@ -34,8 +46,14 @@ pub trait EventStoreOps: Send + Sync {
 /// This trait abstracts the metadata store to allow for testing without database dependencies.
 #[allow(async_fn_in_trait)]
 pub trait MetadataStoreOps: Send + Sync {
+    /// Transaction handle type.
+    type Tx: Send;
+
     /// Create a folder in the metadata store.
     async fn create_folder(&self, folder: &Folder) -> Result<()>;
+
+    /// Create a folder in the metadata store inside a transaction.
+    async fn create_folder_in_tx(&self, tx: &mut Self::Tx, folder: &Folder) -> Result<()>;
 
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: FolderId, owner_id: UserId) -> Result<Option<Folder>>;
@@ -48,8 +66,19 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Update a folder in the metadata store.
     async fn update_folder(&self, folder: &Folder) -> Result<()>;
 
+    /// Update a folder in the metadata store inside a transaction.
+    async fn update_folder_in_tx(&self, tx: &mut Self::Tx, folder: &Folder) -> Result<()>;
+
     /// Delete a folder from the metadata store.
     async fn delete_folder(&self, id: FolderId, owner_id: UserId) -> Result<()>;
+
+    /// Delete a folder from the metadata store inside a transaction.
+    async fn delete_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: FolderId,
+        owner_id: UserId,
+    ) -> Result<()>;
 
     /// List folders with optional parent filter.
     async fn list_folders(
@@ -93,7 +122,7 @@ pub trait MetadataStoreOps: Send + Sync {
 pub struct FolderService<E, M, P>
 where
     E: EventStoreOps,
-    M: MetadataStoreOps,
+    M: MetadataStoreOps<Tx = E::Tx>,
     P: PermissionResolverOps,
 {
     event_store: Arc<E>,
@@ -105,7 +134,7 @@ where
 impl<E, M, P> FolderService<E, M, P>
 where
     E: EventStoreOps,
-    M: MetadataStoreOps,
+    M: MetadataStoreOps<Tx = E::Tx>,
     P: PermissionResolverOps,
 {
     /// Create a new FolderService instance.
@@ -206,13 +235,20 @@ where
             owner_id,
         );
 
+        // Insert into metadata store atomically with the event
+        let mut tx =
+            self.event_store.begin_transaction().await.map_err(|e| {
+                FolderError::Database(format!("Failed to begin transaction: {}", e))
+            })?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
-
-        // Insert into metadata store
-        if let Err(e) = self.metadata_store.create_folder(&folder).await {
+        if let Err(e) = self
+            .metadata_store
+            .create_folder_in_tx(&mut tx, &folder)
+            .await
+        {
             if let Some(sqlx::Error::Database(ref db_err)) = e.downcast_ref::<sqlx::Error>() {
                 if db_err.constraint() == Some("idx_folders_unique_name") {
                     return Err(FolderError::DuplicateName {
@@ -223,6 +259,11 @@ where
             }
             return Err(FolderError::Database(e.to_string()));
         }
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FolderError::Database(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         Ok(folder)
     }
@@ -466,23 +507,13 @@ where
         folder.path = new_path.clone();
         folder.updated_at = chrono::Utc::now();
 
-        // Update descendants' paths and ancestor_ids
-        self.update_descendant_paths_and_ancestors(
-            folder_id,
-            &old_path,
-            &new_path,
-            folder.ancestor_ids.clone(),
-            user_id,
-        )
-        .await?;
-
         // Emit FolderRenamed event
         let payload = FolderRenamedPayload {
             folder_id,
             old_name,
             new_name,
-            old_path,
-            new_path,
+            old_path: old_path.clone(),
+            new_path: new_path.clone(),
             renamed_by: user_id,
         };
 
@@ -494,16 +525,33 @@ where
             user_id,
         );
 
+        // Update descendants' paths and ancestor_ids, append event, and update folder atomically
+        let mut tx =
+            self.event_store.begin_transaction().await.map_err(|e| {
+                FolderError::Database(format!("Failed to begin transaction: {}", e))
+            })?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
-
-        // Update in metadata store
+        self.update_descendant_paths_and_ancestors_in_tx(
+            &mut tx,
+            folder_id,
+            &old_path,
+            &new_path,
+            folder.ancestor_ids.clone(),
+            user_id,
+        )
+        .await?;
         self.metadata_store
-            .update_folder(&folder)
+            .update_folder_in_tx(&mut tx, &folder)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FolderError::Database(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         Ok(folder)
     }
@@ -581,23 +629,13 @@ where
         };
         folder.ancestor_ids = new_ancestor_ids;
 
-        // Update descendants' paths
-        self.update_descendant_paths_and_ancestors(
-            folder_id,
-            &old_path,
-            &new_path,
-            folder.ancestor_ids.clone(),
-            user_id,
-        )
-        .await?;
-
         // Emit FolderMoved event
         let payload = FolderMovedPayload {
             folder_id,
             old_parent_folder_id: old_parent_id,
             new_parent_folder_id: new_parent_id,
-            old_path,
-            new_path,
+            old_path: old_path.clone(),
+            new_path: new_path.clone(),
             moved_by: user_id,
         };
 
@@ -609,16 +647,33 @@ where
             user_id,
         );
 
+        // Update descendants' paths, append event, and update folder atomically
+        let mut tx =
+            self.event_store.begin_transaction().await.map_err(|e| {
+                FolderError::Database(format!("Failed to begin transaction: {}", e))
+            })?;
         self.event_store
-            .append(&event, &self.broadcaster)
+            .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
-
-        // Update in metadata store
+        self.update_descendant_paths_and_ancestors_in_tx(
+            &mut tx,
+            folder_id,
+            &old_path,
+            &new_path,
+            folder.ancestor_ids.clone(),
+            user_id,
+        )
+        .await?;
         self.metadata_store
-            .update_folder(&folder)
+            .update_folder_in_tx(&mut tx, &folder)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|e| FolderError::Database(format!("Failed to commit transaction: {}", e)))?;
+        self.broadcaster.publish(event);
 
         Ok(folder)
     }
@@ -669,30 +724,33 @@ where
                 user_id,
             );
 
+            // Delete from metadata store atomically with the event
+            let mut tx = self.event_store.begin_transaction().await.map_err(|e| {
+                FolderError::Database(format!("Failed to begin transaction: {}", e))
+            })?;
             self.event_store
-                .append(&event, &self.broadcaster)
+                .append_in_tx(&mut tx, &event)
                 .await
                 .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
-
-            // Delete from metadata store
             self.metadata_store
-                .delete_folder(descendant.id, user_id)
+                .delete_folder_in_tx(&mut tx, descendant.id, user_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?;
+            self.event_store.commit_transaction(tx).await.map_err(|e| {
+                FolderError::Database(format!("Failed to commit transaction: {}", e))
+            })?;
+            self.broadcaster.publish(event);
         }
 
         Ok(())
     }
 
-    /// Helper method to update paths of all descendant folders.
+    /// Helper method to update paths of all descendant folders inside a transaction.
     ///
     /// Used when renaming or moving a folder to ensure all descendant paths remain consistent.
-    /// Helper method to update paths and ancestor_ids of all descendant folders.
-    ///
-    /// Used when moving a folder to ensure all descendant paths and ancestor_ids remain consistent.
-    /// This updates the ancestor_ids by replacing the old folder_id prefix with the new ancestor chain.
-    async fn update_descendant_paths_and_ancestors(
+    async fn update_descendant_paths_and_ancestors_in_tx(
         &self,
+        tx: &mut M::Tx,
         folder_id: FolderId,
         old_path: &str,
         new_path: &str,
@@ -744,7 +802,7 @@ where
             if needs_update {
                 descendant.updated_at = chrono::Utc::now();
                 self.metadata_store
-                    .update_folder(&descendant)
+                    .update_folder_in_tx(tx, &descendant)
                     .await
                     .map_err(|e| FolderError::Database(e.to_string()))?;
             }
@@ -802,7 +860,22 @@ mod tests {
     }
 
     impl EventStoreOps for MockEventStore {
+        type Tx = ();
+
         async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+
+        async fn begin_transaction(&self) -> Result<Self::Tx> {
+            Ok(())
+        }
+
+        async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
+            Ok(())
+        }
+
+        async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
@@ -824,7 +897,17 @@ mod tests {
     }
 
     impl MetadataStoreOps for MockMetadataStore {
+        type Tx = ();
+
         async fn create_folder(&self, folder: &Folder) -> Result<()> {
+            self.folders
+                .lock()
+                .unwrap()
+                .insert(folder.id, folder.clone());
+            Ok(())
+        }
+
+        async fn create_folder_in_tx(&self, _tx: &mut Self::Tx, folder: &Folder) -> Result<()> {
             self.folders
                 .lock()
                 .unwrap()
@@ -852,7 +935,25 @@ mod tests {
             Ok(())
         }
 
+        async fn update_folder_in_tx(&self, _tx: &mut Self::Tx, folder: &Folder) -> Result<()> {
+            self.folders
+                .lock()
+                .unwrap()
+                .insert(folder.id, folder.clone());
+            Ok(())
+        }
+
         async fn delete_folder(&self, id: FolderId, _owner_id: UserId) -> Result<()> {
+            self.folders.lock().unwrap().remove(&id);
+            Ok(())
+        }
+
+        async fn delete_folder_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            id: FolderId,
+            _owner_id: UserId,
+        ) -> Result<()> {
             self.folders.lock().unwrap().remove(&id);
             Ok(())
         }

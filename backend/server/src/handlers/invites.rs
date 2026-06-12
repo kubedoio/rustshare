@@ -13,19 +13,28 @@ use crate::{
     AppState,
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateInviteRequest {
     pub recipient_email: String,
     pub origin: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreateInviteResponse {
     pub token: String,
     pub invite_link: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/invites",
+    tag = "Invites",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_invite(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -111,7 +120,7 @@ pub async fn create_invite(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct InviteDetailResponse {
     pub sender_name: String,
     pub recipient_email: String,
@@ -122,6 +131,17 @@ pub struct InviteDetailResponse {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/invites/{token}",
+    tag = "Invites",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success", body = InviteDetailResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -166,7 +186,7 @@ pub async fn get_invite(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AcceptInviteRequest {
     pub display_name: String,
     pub email: String,
@@ -174,7 +194,7 @@ pub struct AcceptInviteRequest {
     pub terms_accepted: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct AcceptInviteResponse {
     pub id: String,
     pub email: String,
@@ -182,6 +202,18 @@ pub struct AcceptInviteResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/invites/{token}/accept",
+    tag = "Invites",
+    params(("token" = String, Path, description = "Token")),
+    request_body = AcceptInviteRequest,
+    responses(
+        (status = 200, description = "Success", body = AcceptInviteResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn accept_invite(
     State(state): State<AppState>,
     Path(token): Path<String>,

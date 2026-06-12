@@ -203,7 +203,7 @@ pub struct ModuleService {
     metadata_store: Arc<MetadataStore>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct ModuleSummary {
     pub module_key: String,
     pub mode: String,
@@ -212,7 +212,7 @@ pub struct ModuleSummary {
     pub extra: Option<serde_json::Value>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct SummaryItem {
     pub id: String,
     pub name: String,
@@ -1623,7 +1623,7 @@ mod tests {
         );
         assert_eq!(page.get("renderer").unwrap().as_str().unwrap(), "notes");
         assert_eq!(page.get("layout").unwrap().as_str().unwrap(), "list-grid");
-        assert_eq!(page.get("enabled").unwrap().as_bool().unwrap(), true);
+        assert!(page.get("enabled").unwrap().as_bool().unwrap());
 
         let dashboard = ui_obj.get("dashboard").unwrap().as_object().unwrap();
         let widget = dashboard.get("widget").unwrap().as_object().unwrap();

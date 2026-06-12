@@ -126,7 +126,7 @@ fn create_note_service(
     object_store: Arc<ObjectStore>,
     pool: &PgPool,
 ) -> Arc<NoteService> {
-    let broadcaster = Arc::new(EventBroadcaster::new(100));
+    let _broadcaster = Arc::new(EventBroadcaster::new(100));
     let file_service = Arc::new(create_file_service(
         event_store.clone(),
         metadata_store.clone(),
@@ -440,10 +440,7 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
         .await
         .unwrap();
 
-    let recent = service
-        .list_notes(user.id, tenant_id, Some(10))
-        .await
-        .unwrap();
+    let recent = service.list_notes(user.id, tenant_id, 10, 0).await.unwrap();
     assert_eq!(recent[0].id, note_a.id);
     assert!(recent.iter().any(|n| n.id == note_b.id));
 
@@ -536,7 +533,7 @@ async fn contract_anonymous_request_to_private_note_returns_not_found() {
     let user = create_test_user(&metadata_store, "note_contract_user_10", tenant_id).await;
     let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
-    let note = service
+    let _note = service
         .create_note(user.id, tenant_id, Some("Private".to_string()), None, None)
         .await
         .unwrap();
@@ -805,10 +802,7 @@ async fn contract_list_notes_includes_bundle_counts() {
         .await
         .unwrap();
 
-    let notes = service
-        .list_notes(user.id, tenant_id, Some(10))
-        .await
-        .unwrap();
+    let notes = service.list_notes(user.id, tenant_id, 10, 0).await.unwrap();
 
     let found = notes
         .iter()
@@ -910,10 +904,7 @@ async fn contract_standalone_md_still_works() {
         .unwrap();
 
     // list_notes should include it with zero counts
-    let notes = service
-        .list_notes(user.id, tenant_id, Some(10))
-        .await
-        .unwrap();
+    let notes = service.list_notes(user.id, tenant_id, 10, 0).await.unwrap();
     let found = notes
         .iter()
         .find(|n| n.id == standalone.id)
@@ -977,7 +968,7 @@ async fn contract_recent_activity_shows_bundle_title() {
         .await
         .unwrap();
 
-    let note = service
+    let _note = service
         .create_note(
             user.id,
             tenant_id,
@@ -999,12 +990,12 @@ async fn contract_recent_activity_shows_bundle_title() {
         .map(|i| i.name.as_str())
         .collect();
     assert!(
-        names.iter().any(|n| *n == "Activity Test Note"),
+        names.contains(&"Activity Test Note"),
         "recent items should show bundle title, got: {:?}",
         names
     );
     assert!(
-        !names.iter().any(|n| *n == "note.md"),
+        !names.contains(&"note.md"),
         "recent items should not show raw note.md name, got: {:?}",
         names
     );
@@ -1046,7 +1037,7 @@ async fn contract_custom_workspace_and_folder_paths() {
     assert!(note.path.starts_with("/CustomWorkspace/CustomNotes/"));
 
     let listed = customized_service
-        .list_notes(user.id, tenant_id, None)
+        .list_notes(user.id, tenant_id, 1000, 0)
         .await
         .unwrap();
 
@@ -1186,7 +1177,7 @@ async fn contract_cross_tenant_list_notes_does_not_leak() {
         .unwrap();
 
     let list_b = service
-        .list_notes(user_b.id, tenant_b, Some(10))
+        .list_notes(user_b.id, tenant_b, 10, 0)
         .await
         .unwrap();
     assert!(
@@ -1390,7 +1381,7 @@ async fn contract_same_tenant_unauthorized_list_notes_does_not_leak() {
         .unwrap();
 
     let list_other = service
-        .list_notes(user_other.id, tenant_id, Some(10))
+        .list_notes(user_other.id, tenant_id, 10, 0)
         .await
         .unwrap();
     assert!(
@@ -1665,10 +1656,7 @@ async fn contract_note_bundle_count_excludes_hidden_files() {
     );
     metadata_store.create_file(&hidden_file).await.unwrap();
 
-    let notes = service
-        .list_notes(user.id, tenant_id, Some(10))
-        .await
-        .unwrap();
+    let notes = service.list_notes(user.id, tenant_id, 10, 0).await.unwrap();
     let found = notes.iter().find(|n| n.id == note.id).unwrap();
 
     assert_eq!(

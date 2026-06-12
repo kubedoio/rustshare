@@ -571,8 +571,6 @@ impl SocketClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
     #[test]
     fn test_rpc_request_creation() {
         let req = RpcRequest::new("test_method", Some(serde_json::json!({"key": "value"})));

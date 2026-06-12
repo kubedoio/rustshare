@@ -27,7 +27,7 @@ categories = ["filesystem", "web-programming"]
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # Web framework
@@ -57,6 +57,15 @@ hex = "0.4"
 # S3 client
 aws-sdk-s3 = "1.17"
 aws-config = "1.1"
+# Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
+# aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
+aws-smithy-types = "=1.4.9"
+time = "=0.3.47"
+# Pinned to keep the root workspace (desktop/sync-engine crates) buildable;
+# cargo update otherwise resolves an older turso_core that does not handle
+# newer turso_parser enum variants.
+turso_core = "=0.6.1"
+
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls-tls"], default-features = false }
@@ -67,7 +76,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 bytes = "1.5"
 glob = "0.3"
 url = "2.5"

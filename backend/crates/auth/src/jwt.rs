@@ -25,21 +25,33 @@ pub struct Claims {
     pub exp: i64,    // Expiration time
     pub iat: i64,    // Issued at
     pub iss: String, // Issuer
+    pub aud: String, // Audience
 }
 
 /// JWT token manager
 pub struct JwtManager {
     secret: String,
+    issuer: String,
+    audience: String,
+    expiry_hours: i64,
 }
 
 impl JwtManager {
-    /// Create a new JWT manager with the given secret.
+    /// Create a new JWT manager with the given secret, issuer, audience, and expiry.
     ///
-    /// The secret can be any type that converts into a String,
+    /// The parameters can be any type that converts into a String,
     /// such as `&str` or `String`.
-    pub fn new(secret: impl Into<String>) -> Self {
+    pub fn new(
+        secret: impl Into<String>,
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        expiry_hours: i64,
+    ) -> Self {
         Self {
             secret: secret.into(),
+            issuer: issuer.into(),
+            audience: audience.into(),
+            expiry_hours,
         }
     }
 
@@ -54,7 +66,7 @@ impl JwtManager {
         tenant_id: Uuid,
     ) -> Result<String, JwtError> {
         let now = Utc::now();
-        let expiration = now + Duration::hours(24);
+        let expiration = now + Duration::hours(self.expiry_hours);
         let email = email.as_ref();
 
         let claims = Claims {
@@ -63,7 +75,8 @@ impl JwtManager {
             tenant_id,
             exp: expiration.timestamp(),
             iat: now.timestamp(),
-            iss: "rustshare".to_string(),
+            iss: self.issuer.clone(),
+            aud: self.audience.clone(),
         };
 
         encode(
@@ -76,7 +89,9 @@ impl JwtManager {
 
     /// Validate and decode a JWT token
     pub fn validate(&self, token: &str) -> Result<Claims, JwtError> {
-        let validation = Validation::default();
+        let mut validation = Validation::default();
+        validation.set_issuer(&[&self.issuer]);
+        validation.set_audience(&[&self.audience]);
 
         let token_data = decode::<Claims>(
             token,
@@ -118,7 +133,7 @@ mod tests {
     #[test]
     fn test_generate_and_validate_token() {
         let secret = "test_secret_key_at_least_32_chars_long_for_security";
-        let manager = JwtManager::new(secret.to_string());
+        let manager = JwtManager::new(secret.to_string(), "rustshare", "rustshare-api", 24);
 
         let user_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -131,14 +146,48 @@ mod tests {
         assert_eq!(claims.email, email);
         assert_eq!(claims.tenant_id, tenant_id);
         assert_eq!(claims.iss, "rustshare");
+        assert_eq!(claims.aud, "rustshare-api");
     }
 
     #[test]
     fn test_invalid_token_fails_validation() {
         let secret = "test_secret_key_at_least_32_chars_long_for_security";
-        let manager = JwtManager::new(secret.to_string());
+        let manager = JwtManager::new(secret.to_string(), "rustshare", "rustshare-api", 24);
 
         let result = manager.validate("invalid.token.here");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_issuer_fails() {
+        let secret = "test_secret_key_at_least_32_chars_long_for_security";
+        let manager = JwtManager::new(secret.to_string(), "rustshare", "rustshare-api", 24);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let email = "test@example.com";
+
+        let token = manager.generate(user_id, email, tenant_id).unwrap();
+
+        let wrong_manager =
+            JwtManager::new(secret.to_string(), "wrong-issuer", "rustshare-api", 24);
+        let result = wrong_manager.validate(&token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_audience_fails() {
+        let secret = "test_secret_key_at_least_32_chars_long_for_security";
+        let manager = JwtManager::new(secret.to_string(), "rustshare", "rustshare-api", 24);
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let email = "test@example.com";
+
+        let token = manager.generate(user_id, email, tenant_id).unwrap();
+
+        let wrong_manager = JwtManager::new(secret.to_string(), "rustshare", "wrong-audience", 24);
+        let result = wrong_manager.validate(&token);
         assert!(result.is_err());
     }
 
@@ -147,7 +196,7 @@ mod tests {
         use crate::session::ShareSessionClaims;
         use rustshare_core::domain::SharePermissions;
 
-        let manager = JwtManager::new("test_secret".to_string());
+        let manager = JwtManager::new("test_secret".to_string(), "rustshare", "rustshare-api", 24);
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
 

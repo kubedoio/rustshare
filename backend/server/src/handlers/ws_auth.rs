@@ -25,7 +25,7 @@ pub enum ClientIdentity {
 }
 
 /// Query parameters for WebSocket authentication.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WsAuthQuery {
     pub token: Option<String>,
 }

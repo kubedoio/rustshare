@@ -2,16 +2,49 @@ import { apiClient } from './client';
 import type { File, FileVersion } from './types';
 import type { FolderContents } from './folders';
 
+const MAX_PAGE_SIZE = 100;
+
 export async function listAllFiles(): Promise<File[]> {
-	return apiClient.get<File[]>('/files');
+	const files: File[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<File[]>(`/files?page=${page}&per_page=${MAX_PAGE_SIZE}`);
+		files.push(...batch);
+
+		if (batch.length < MAX_PAGE_SIZE) {
+			return files;
+		}
+
+		page += 1;
+	}
 }
 
 export async function getStarredContents(): Promise<FolderContents> {
-	return apiClient.get<FolderContents>('/files/starred');
+	return getPagedFolderContents('/files/starred');
 }
 
 export async function getDeletedContents(): Promise<FolderContents> {
-	return apiClient.get<FolderContents>('/files/deleted');
+	return getPagedFolderContents('/files/deleted');
+}
+
+async function getPagedFolderContents(endpoint: string): Promise<FolderContents> {
+	const contents: FolderContents = { folders: [], files: [] };
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<FolderContents>(
+			`${endpoint}?page=${page}&per_page=${MAX_PAGE_SIZE}`
+		);
+		contents.folders.push(...batch.folders);
+		contents.files.push(...batch.files);
+
+		if (batch.folders.length < MAX_PAGE_SIZE && batch.files.length < MAX_PAGE_SIZE) {
+			return contents;
+		}
+
+		page += 1;
+	}
 }
 
 export type UploadProgressCallback = (progress: number) => void;

@@ -759,6 +759,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn with_failure() -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),

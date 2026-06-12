@@ -15,7 +15,7 @@ use crate::common::*;
 #[ignore] // Requires database and S3
 async fn test_metadata_blob_consistency() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "storage_user", tenant_id).await;
@@ -71,8 +71,7 @@ async fn test_metadata_blob_consistency() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// ST-02: Orphaned metadata is detectable (conceptual)
@@ -80,7 +79,7 @@ async fn test_metadata_blob_consistency() {
 #[ignore] // Requires database and S3
 async fn test_orphaned_metadata_detection() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "orphan_user", tenant_id).await;
@@ -119,8 +118,7 @@ async fn test_orphaned_metadata_detection() {
     assert!(blob_exists, "Blob should exist");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// ST-03: Missing blobs are detectable (conceptual)
@@ -128,7 +126,7 @@ async fn test_orphaned_metadata_detection() {
 #[ignore] // Requires database and S3
 async fn test_missing_blob_detection() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "missing_blob_user", tenant_id).await;
@@ -158,8 +156,7 @@ async fn test_missing_blob_detection() {
     assert!(blob_exists, "Blob should exist after file creation");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// ST-04: Content hash verification
@@ -167,7 +164,7 @@ async fn test_missing_blob_detection() {
 #[ignore] // Requires database and S3
 async fn test_content_hash_verification() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "hash_user", tenant_id).await;
@@ -206,8 +203,7 @@ async fn test_content_hash_verification() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// ST-05: Storage usage tracking (conceptual)
@@ -215,7 +211,7 @@ async fn test_content_hash_verification() {
 #[ignore] // Requires database and S3
 async fn test_storage_usage_tracking() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "usage_user", tenant_id).await;
@@ -251,8 +247,7 @@ async fn test_storage_usage_tracking() {
     assert_eq!(file2.size, content2.len() as i64);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// ST-06: Deduplication verification
@@ -260,7 +255,7 @@ async fn test_storage_usage_tracking() {
 #[ignore] // Requires database and S3
 async fn test_deduplication() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "dedup_user", tenant_id).await;
@@ -308,8 +303,7 @@ async fn test_deduplication() {
     assert_ne!(file1.id, file2.id, "Files should have different IDs");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Additional: Storage key format verification
@@ -317,7 +311,7 @@ async fn test_deduplication() {
 #[ignore] // Requires database and S3
 async fn test_storage_key_format() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "key_format_user", tenant_id).await;
@@ -350,8 +344,7 @@ async fn test_storage_key_format() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Additional: Blob download URL generation
@@ -359,7 +352,7 @@ async fn test_storage_key_format() {
 #[ignore] // Requires database and S3
 async fn test_blob_download_url() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "download_url_user", tenant_id).await;
@@ -392,6 +385,5 @@ async fn test_blob_download_url() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

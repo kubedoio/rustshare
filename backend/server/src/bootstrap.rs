@@ -1,7 +1,9 @@
+use crate::config::AppConfig;
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
+use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
 use crate::state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
 use anyhow::Result;
@@ -28,6 +30,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -55,17 +58,42 @@ struct Services {
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
 }
 
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,rustshare=debug".to_string()),
-        )
-        .init();
+fn init_tracing(log_format: &str) {
+    let env_filter =
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info,rustshare=debug".to_string());
+
+    match log_format {
+        "json" => {
+            tracing_subscriber::fmt()
+                .json()
+                .flatten_event(true)
+                .with_current_span(true)
+                .with_span_list(false)
+                .with_env_filter(env_filter)
+                .init();
+        }
+        _ => {
+            tracing_subscriber::fmt()
+                .pretty()
+                .with_env_filter(env_filter)
+                .init();
+        }
+    }
 }
 
-async fn init_database() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")?;
+async fn init_database(config: &AppConfig) -> Result<PgPool> {
+    let max_connections = config.db_pool_max_connections;
+    let min_connections = config.db_pool_min_connections;
+    let acquire_timeout_secs = config.db_pool_acquire_timeout_secs;
+    let idle_timeout_secs = config.db_pool_idle_timeout_secs;
+    let max_lifetime_secs = config.db_pool_max_lifetime_secs;
+
     let db_pool = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(min_connections)
+        .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
+        .idle_timeout(Some(Duration::from_secs(idle_timeout_secs)))
+        .max_lifetime(Some(Duration::from_secs(max_lifetime_secs)))
         .before_acquire(|conn, _meta| {
             Box::pin(async move {
                 // Set a default restrictive user context.
@@ -76,8 +104,16 @@ async fn init_database() -> Result<PgPool> {
                 Ok(true)
             })
         })
-        .connect(&database_url)
+        .connect(&config.database_url)
         .await?;
+    info!(
+        max_connections,
+        min_connections,
+        acquire_timeout_secs,
+        idle_timeout_secs,
+        max_lifetime_secs,
+        "Database connection pool configured"
+    );
     info!("Connected to database");
     sqlx::migrate!("../migrations").run(&db_pool).await?;
     info!("Database migrations applied");
@@ -85,11 +121,12 @@ async fn init_database() -> Result<PgPool> {
 }
 
 async fn init_stores(
+    config: &AppConfig,
     db_pool: PgPool,
 ) -> Result<(Arc<MetadataStore>, Arc<EventStore>, Arc<ObjectStore>)> {
-    let rustfs_endpoint = std::env::var("RUSTFS_ENDPOINT")?;
-    let rustfs_region = std::env::var("RUSTFS_REGION")?;
-    let rustfs_bucket = std::env::var("RUSTFS_BUCKET")?;
+    let rustfs_endpoint = config.rustfs_endpoint.clone();
+    let rustfs_region = config.rustfs_region.clone();
+    let rustfs_bucket = config.rustfs_bucket.clone();
 
     let (metadata_store, event_store, object_store) = tokio::join!(
         async { Arc::new(MetadataStore::new(db_pool.clone())) },
@@ -105,29 +142,17 @@ async fn init_stores(
     Ok((metadata_store, event_store, object_store?))
 }
 
-async fn init_jwt_manager() -> Result<Arc<JwtManager>> {
-    let jwt_secret = std::env::var("JWT_SECRET")?;
-    if jwt_secret.len() < 32 {
-        return Err(anyhow::anyhow!(
-            "JWT_SECRET must be at least 32 characters long. Generate one with: openssl rand -base64 32"
-        ));
-    }
-    if jwt_secret == "dev-secret-change-in-production"
-        || jwt_secret == "dev-secret-key-change-in-production-12345"
-        || jwt_secret == "ci-pilot-secret"
-    {
-        return Err(anyhow::anyhow!(
-            "JWT_SECRET is using a known weak default value. Generate a strong secret with: openssl rand -base64 32"
-        ));
-    }
-    Ok(Arc::new(JwtManager::new(jwt_secret)))
+async fn init_jwt_manager(config: &AppConfig) -> Result<Arc<JwtManager>> {
+    Ok(Arc::new(JwtManager::new(
+        config.jwt_secret.clone(),
+        config.jwt_issuer.clone(),
+        config.jwt_audience.clone(),
+        config.jwt_expiry_hours,
+    )))
 }
 
-async fn init_broadcaster() -> Result<Arc<EventBroadcaster>> {
-    let capacity = std::env::var("BROADCAST_CAPACITY")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+async fn init_broadcaster(config: &AppConfig) -> Result<Arc<EventBroadcaster>> {
+    let capacity = config.broadcast_capacity;
     let broadcaster = Arc::new(EventBroadcaster::new(capacity));
     info!("EventBroadcaster initialized with capacity {}", capacity);
     Ok(broadcaster)
@@ -175,6 +200,7 @@ async fn init_services(
     file_repository: Arc<FileRepository>,
     folder_repository: Arc<FolderRepository>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    config: &AppConfig,
 ) -> Result<Services> {
     let vault_sync_service = Arc::new(VaultSyncService::new(
         Arc::clone(&metadata_store),
@@ -313,10 +339,7 @@ async fn init_services(
         broadcaster: Arc::clone(&broadcaster),
     }));
 
-    let ai_service_enabled = std::env::var("RUSTSHARE_AI_ENABLED")
-        .ok()
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(true);
+    let ai_service_enabled = config.ai_enabled;
 
     let ai_service: Option<Arc<AppAiService>> = if ai_service_enabled {
         let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
@@ -375,8 +398,7 @@ async fn init_services(
         upload_doc_store_path
     );
 
-    let chat_webhook_secret = std::env::var("RUSTSHARE_CHAT_WEBHOOK_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production".to_string());
+    let chat_webhook_secret = config.rustshare_chat_webhook_secret.clone();
     let chat_integration_service = Arc::new(ChatIntegrationService::new(
         Arc::clone(&metadata_store),
         Arc::clone(&event_store),
@@ -412,17 +434,29 @@ async fn init_services(
 pub async fn init_app() -> Result<AppState> {
     dotenvy::dotenv().ok();
 
-    init_tracing();
+    let config = match AppConfig::from_env() {
+        Ok(c) => c,
+        Err(errors) => {
+            eprintln!("\n❌ Configuration errors — server cannot start:\n");
+            for error in &errors {
+                eprintln!("  ✗ {}", error);
+            }
+            eprintln!();
+            return Err(anyhow::anyhow!("Configuration invalid"));
+        }
+    };
+
+    init_tracing(&config.log_format);
 
     info!("Starting RustShare server");
 
-    let db_pool = init_database().await?;
+    let db_pool = init_database(&config).await?;
 
-    let (metadata_store, event_store, object_store) = init_stores(db_pool.clone()).await?;
+    let (metadata_store, event_store, object_store) = init_stores(&config, db_pool.clone()).await?;
 
-    let jwt_manager = init_jwt_manager().await?;
+    let jwt_manager = init_jwt_manager(&config).await?;
 
-    let broadcaster = init_broadcaster().await?;
+    let broadcaster = init_broadcaster(&config).await?;
 
     let (
         notification_repository,
@@ -446,6 +480,7 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&file_repository),
         Arc::clone(&folder_repository),
         Arc::clone(&permission_resolver),
+        &config,
     )
     .await?;
 
@@ -457,6 +492,11 @@ pub async fn init_app() -> Result<AppState> {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(uuid::Uuid::nil);
 
+    let prometheus_handle = crate::metrics::init_metrics();
+    info!("Prometheus metrics recorder installed");
+
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+
     let replication_worker_config = ReplicationWorkerConfig::from_env();
     spawn_replication_worker(
         Arc::clone(&metadata_store),
@@ -464,27 +504,40 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
         replication_worker_config,
+        shutdown_tx.subscribe(),
     );
 
     let trash_cleanup_config = TrashCleanupConfig::from_env();
-    spawn_trash_cleanup_worker(Arc::clone(&metadata_store), trash_cleanup_config);
+    spawn_trash_cleanup_worker(
+        Arc::clone(&metadata_store),
+        trash_cleanup_config,
+        shutdown_tx.subscribe(),
+    );
+
+    let retention_config = RetentionConfig::from_env();
+    spawn_retention_cleanup_worker(
+        Arc::clone(&metadata_store),
+        retention_config,
+        shutdown_tx.subscribe(),
+    );
 
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
 
-        let admin_password = match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
-            Ok(pwd) => pwd,
-            Err(_) => {
-                const CHARSET: &[u8] =
-                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-                let mut rng = rand::rng();
-                let password: String = (0..32)
-                    .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
-                    .collect();
-                password
-            }
-        };
+        let (admin_password, is_user_provided_password) =
+            match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
+                Ok(pwd) => (pwd, true),
+                Err(_) => {
+                    const CHARSET: &[u8] =
+                        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                    let mut rng = rand::rng();
+                    let password: String = (0..32)
+                        .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
+                        .collect();
+                    (password, false)
+                }
+            };
 
         let password_hash = PasswordHasher::hash(&admin_password)?;
         let admin_user = User::new(
@@ -493,7 +546,7 @@ pub async fn init_app() -> Result<AppState> {
             password_hash,
             admin_email.clone(),
             true,
-            default_storage_quota_bytes(),
+            config.default_storage_quota_bytes,
             default_tenant_id,
         );
 
@@ -509,13 +562,27 @@ pub async fn init_app() -> Result<AppState> {
             );
         }
 
-        info!("╔══════════════════════════════════════════════════════════════════╗");
-        info!("║  BOOTSTRAP ADMIN PASSWORD                                        ║");
-        info!("╠══════════════════════════════════════════════════════════════════╣");
-        info!("║  Email:    {:<53} ║", admin_email);
-        info!("║  Password: {:<53} ║", admin_password);
-        info!("╚══════════════════════════════════════════════════════════════════╝");
-        info!("Log in and change this password immediately. It will not be shown again.");
+        if is_user_provided_password {
+            info!("Bootstrap admin user created with user-provided password.");
+        } else {
+            let password_file = config.bootstrap_password_file.clone();
+
+            {
+                use std::io::Write;
+                let mut file = std::fs::File::create(&password_file)?;
+                file.write_all(admin_password.as_bytes())?;
+            }
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = std::fs::metadata(&password_file)?.permissions();
+                permissions.set_mode(0o600);
+                std::fs::set_permissions(&password_file, permissions)?;
+            }
+
+            info!(path = %password_file, "Bootstrap admin password written to secure file. Change immediately.");
+        }
     }
 
     ensure_optional_seed_user(
@@ -555,8 +622,19 @@ pub async fn init_app() -> Result<AppState> {
         info!("Seeded initial OIDC config from environment bootstrap values");
     }
 
-    let public_base_url = std::env::var("RUSTSHARE_PUBLIC_URL")
-        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+    let public_base_url = config.public_url.clone();
+
+    let pool_clone = db_pool.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            let idle = pool_clone.num_idle() as f64;
+            let total = pool_clone.size() as f64;
+            metrics::gauge!("db_pool_idle_connections").set(idle);
+            metrics::gauge!("db_pool_active_connections").set(total - idle);
+        }
+    });
 
     let state = AppState {
         db_pool,
@@ -592,6 +670,8 @@ pub async fn init_app() -> Result<AppState> {
         collab_rooms: Arc::new(CollabRooms::new()),
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
+        shutdown_tx,
+        prometheus_handle,
     };
 
     Ok(state)

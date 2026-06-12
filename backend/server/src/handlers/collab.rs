@@ -122,7 +122,7 @@ impl CollabRoom {
 // ---------------------------------------------------------------------------
 
 /// Query parameters for collab WebSocket connection.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 pub struct CollabQuery {
     /// Note / document ID to collaborate on.
     pub doc_id: String,

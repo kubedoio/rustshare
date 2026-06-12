@@ -12,7 +12,7 @@ use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 /// Summary of the current user's trash bin contents.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TrashSummaryResponse {
     pub file_count: i64,
     pub folder_count: i64,
@@ -31,6 +31,15 @@ pub struct TrashSummaryResponse {
 /// - 200 OK: Returns trash summary
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    get,
+    path = "/api/v1/trash/summary",
+    tag = "Trash",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_trash_summary(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -68,6 +77,15 @@ pub async fn get_trash_summary(
 /// - 204 No Content: Trash emptied successfully
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    delete,
+    path = "/api/v1/trash/empty",
+    tag = "Trash",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn empty_trash(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

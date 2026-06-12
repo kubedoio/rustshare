@@ -59,6 +59,9 @@ async fn setup_test_env() -> AppState {
 
     let jwt_manager = Arc::new(rustshare_auth::JwtManager::new(
         "test_secret_key_at_least_32_chars_long_for_security".to_string(),
+        "rustshare",
+        "rustshare-api",
+        24,
     ));
 
     let permission_resolver =
@@ -203,7 +206,7 @@ async fn setup_test_env() -> AppState {
         metadata_store.clone(),
         event_store.clone(),
         broadcaster.clone(),
-        "test-secret".to_string(),
+        "test-secret",
         Arc::new(rustshare_core::services::HttpWebhookDispatcher::new()),
     ));
 
@@ -243,6 +246,8 @@ async fn setup_test_env() -> AppState {
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),
+        shutdown_tx: tokio::sync::broadcast::channel(1).0,
+        prometheus_handle: rustshare_server::metrics::init_metrics(),
     }
 }
 

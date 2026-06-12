@@ -75,6 +75,7 @@ fn create_file_service(
     )
 }
 
+#[allow(dead_code)]
 fn create_folder_service(
     event_store: Arc<EventStore>,
     metadata_store: Arc<MetadataStore>,
@@ -421,15 +422,6 @@ async fn test_file_upload_with_parent_folder() {
     // Create test user
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "fileops_folder_user", tenant_id).await;
-
-    // Create a parent folder
-    let parent_folder = rustshare_core::domain::Folder::new_child(
-        "Documents".to_string(),
-        "/Documents".to_string(),
-        Uuid::new_v4(), // Dummy parent
-        user.id,
-        tenant_id,
-    );
 
     // Need to create a root folder first
     let root_folder = rustshare_core::domain::Folder::new_root(user.id, tenant_id);

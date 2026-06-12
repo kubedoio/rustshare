@@ -339,7 +339,10 @@ async fn contract_cross_tenant_list_standups_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_standups(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_standups(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|s| s.metadata.title == "Secret"),
         "Cross-tenant list_standups should not leak standups"

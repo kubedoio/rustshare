@@ -11,14 +11,13 @@ use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::brainstorming_service::{BrainstormError, BrainstormingService};
 use rustshare_server::services::decision_service::{DecisionError, DecisionService};
 use rustshare_server::services::kanban_service::{
-    CreateBoardInput, CreateCardInput, KanbanError, KanbanService, MoveCardInput,
+    CreateBoardInput, CreateCardInput, KanbanError, KanbanService,
 };
 use rustshare_server::services::meeting_service::{MeetingError, MeetingService};
 use rustshare_server::services::note_service::{NoteError, NoteService};
 use rustshare_server::services::standup_service::{StandupError, StandupService};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use std::sync::Arc;
-use uuid::Uuid;
 
 fn create_file_service(
     event_store: Arc<EventStore>,
@@ -218,7 +217,7 @@ fn create_brainstorming_service(
 #[ignore = "Requires database and S3"]
 async fn contract_notes_cross_tenant_get_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "note_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "note_ct_b", tenant_b).await;
@@ -247,17 +246,15 @@ async fn contract_notes_cross_tenant_get_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_notes_cross_tenant_save_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "note_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "note_ct_b2", tenant_b).await;
@@ -295,17 +292,15 @@ async fn contract_notes_cross_tenant_save_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_notes_cross_tenant_delete_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "note_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "note_ct_b3", tenant_b).await;
@@ -334,17 +329,15 @@ async fn contract_notes_cross_tenant_delete_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_notes_cross_tenant_list_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "note_ct_a4", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "note_ct_b4", tenant_b).await;
@@ -367,7 +360,7 @@ async fn contract_notes_cross_tenant_list_does_not_leak() {
         .unwrap();
 
     let list_b = service
-        .list_notes(user_b.id, tenant_b, Some(10))
+        .list_notes(user_b.id, tenant_b, 10, 0)
         .await
         .unwrap();
     assert!(
@@ -375,17 +368,15 @@ async fn contract_notes_cross_tenant_list_does_not_leak() {
         "Cross-tenant list_notes should not leak notes"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_notes_same_tenant_unauthorized_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "note_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "note_other", tenant_id).await;
     let service = create_note_service(
@@ -413,16 +404,14 @@ async fn contract_notes_same_tenant_unauthorized_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_notes_shared_resource_only_through_intended_path() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user = create_test_user(&ctx.metadata_store, "note_share_user", tenant_id).await;
     let service = create_note_service(
         ctx.event_store.clone(),
@@ -468,8 +457,7 @@ async fn contract_notes_shared_resource_only_through_intended_path() {
     let result = service.get_public_note(&share_id).await;
     assert!(result.is_err(), "Revoked public note should deny access");
 
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -480,7 +468,7 @@ async fn contract_notes_shared_resource_only_through_intended_path() {
 #[ignore = "Requires database and S3"]
 async fn contract_decisions_cross_tenant_get_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "decision_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "decision_ct_b", tenant_b).await;
@@ -509,17 +497,15 @@ async fn contract_decisions_cross_tenant_get_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_decisions_cross_tenant_update_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "decision_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "decision_ct_b2", tenant_b).await;
@@ -557,17 +543,15 @@ async fn contract_decisions_cross_tenant_update_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_decisions_cross_tenant_rename_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "decision_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "decision_ct_b3", tenant_b).await;
@@ -598,17 +582,15 @@ async fn contract_decisions_cross_tenant_rename_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_decisions_cross_tenant_list_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "decision_ct_a4", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "decision_ct_b4", tenant_b).await;
@@ -630,23 +612,24 @@ async fn contract_decisions_cross_tenant_list_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_decisions(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_decisions(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|d| d.metadata.title == "Secret"),
         "Cross-tenant list_decisions should not leak decisions"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_decisions_same_tenant_unauthorized_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "decision_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "decision_other", tenant_id).await;
     let service = create_decision_service(
@@ -676,9 +659,7 @@ async fn contract_decisions_same_tenant_unauthorized_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -689,7 +670,7 @@ async fn contract_decisions_same_tenant_unauthorized_denied() {
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_cross_tenant_get_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "kanban_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "kanban_ct_b", tenant_b).await;
@@ -720,17 +701,15 @@ async fn contract_kanban_cross_tenant_get_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_cross_tenant_update_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "kanban_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "kanban_ct_b2", tenant_b).await;
@@ -771,17 +750,15 @@ async fn contract_kanban_cross_tenant_update_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_cross_tenant_delete_card_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "kanban_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "kanban_ct_b3", tenant_b).await;
@@ -834,17 +811,15 @@ async fn contract_kanban_cross_tenant_delete_card_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_cross_tenant_list_boards_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "kanban_ct_a4", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "kanban_ct_b4", tenant_b).await;
@@ -866,23 +841,24 @@ async fn contract_kanban_cross_tenant_list_boards_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_boards(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|b| b.title == "Secret"),
         "Cross-tenant list_boards should not leak boards"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_same_tenant_unauthorized_get_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "kanban_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "kanban_other", tenant_id).await;
     let service = create_kanban_service(
@@ -912,16 +888,14 @@ async fn contract_kanban_same_tenant_unauthorized_get_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "kanban_owner2", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "kanban_other2", tenant_id).await;
     let service = create_kanban_service(
@@ -973,9 +947,7 @@ async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -986,7 +958,7 @@ async fn contract_kanban_same_tenant_unauthorized_get_card_detail_denied() {
 #[ignore = "Requires database and S3"]
 async fn contract_brainstorming_cross_tenant_get_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "bs_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "bs_ct_b", tenant_b).await;
@@ -1039,17 +1011,15 @@ async fn contract_brainstorming_cross_tenant_get_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_brainstorming_cross_tenant_save_source_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "bs_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "bs_ct_b2", tenant_b).await;
@@ -1107,17 +1077,15 @@ async fn contract_brainstorming_cross_tenant_save_source_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_brainstorming_cross_tenant_delete_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "bs_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "bs_ct_b3", tenant_b).await;
@@ -1170,17 +1138,15 @@ async fn contract_brainstorming_cross_tenant_delete_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_brainstorming_cross_tenant_list_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "bs_ct_a4", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "bs_ct_b4", tenant_b).await;
@@ -1224,23 +1190,24 @@ async fn contract_brainstorming_cross_tenant_list_does_not_leak() {
     )
     .await;
 
-    let list_b = service.list_boards(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_boards(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|b| b.title == "Secret"),
         "Cross-tenant list_boards should not leak boards"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_brainstorming_same_tenant_unauthorized_get_board_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "bs_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "bs_other", tenant_id).await;
     let service = create_brainstorming_service(
@@ -1292,9 +1259,7 @@ async fn contract_brainstorming_same_tenant_unauthorized_get_board_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -1305,7 +1270,7 @@ async fn contract_brainstorming_same_tenant_unauthorized_get_board_denied() {
 #[ignore = "Requires database and S3"]
 async fn contract_meetings_cross_tenant_get_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "meeting_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "meeting_ct_b", tenant_b).await;
@@ -1335,17 +1300,15 @@ async fn contract_meetings_cross_tenant_get_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_meetings_cross_tenant_update_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "meeting_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "meeting_ct_b2", tenant_b).await;
@@ -1384,17 +1347,15 @@ async fn contract_meetings_cross_tenant_update_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_meetings_cross_tenant_list_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "meeting_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "meeting_ct_b3", tenant_b).await;
@@ -1417,23 +1378,24 @@ async fn contract_meetings_cross_tenant_list_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_meetings(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_meetings(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|m| m.metadata.title == "Secret"),
         "Cross-tenant list_meetings should not leak meetings"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_meetings_same_tenant_unauthorized_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "meeting_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "meeting_other", tenant_id).await;
     let service = create_meeting_service(
@@ -1464,9 +1426,7 @@ async fn contract_meetings_same_tenant_unauthorized_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 // ============================================================================
@@ -1477,7 +1437,7 @@ async fn contract_meetings_same_tenant_unauthorized_denied() {
 #[ignore = "Requires database and S3"]
 async fn contract_standups_cross_tenant_get_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "standup_ct_a", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "standup_ct_b", tenant_b).await;
@@ -1506,17 +1466,15 @@ async fn contract_standups_cross_tenant_get_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_standups_cross_tenant_update_denied() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "standup_ct_a2", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "standup_ct_b2", tenant_b).await;
@@ -1553,17 +1511,15 @@ async fn contract_standups_cross_tenant_update_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_standups_cross_tenant_list_does_not_leak() {
     let ctx = setup_test_env().await;
-    let tenant_a = setup_test_tenant(&ctx.pool).await;
+    let tenant_a = ctx.tenant_id;
     let tenant_b = setup_test_tenant(&ctx.pool).await;
     let user_a = create_test_user(&ctx.metadata_store, "standup_ct_a3", tenant_a).await;
     let user_b = create_test_user(&ctx.metadata_store, "standup_ct_b3", tenant_b).await;
@@ -1585,23 +1541,24 @@ async fn contract_standups_cross_tenant_list_does_not_leak() {
         .await
         .unwrap();
 
-    let list_b = service.list_standups(user_b.id, tenant_b).await.unwrap();
+    let list_b = service
+        .list_standups(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
     assert!(
         !list_b.iter().any(|s| s.metadata.title == "Secret"),
         "Cross-tenant list_standups should not leak standups"
     );
 
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "Requires database and S3"]
 async fn contract_standups_same_tenant_unauthorized_denied() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
     let user_owner = create_test_user(&ctx.metadata_store, "standup_owner", tenant_id).await;
     let user_other = create_test_user(&ctx.metadata_store, "standup_other", tenant_id).await;
     let service = create_standup_service(
@@ -1631,7 +1588,5 @@ async fn contract_standups_same_tenant_unauthorized_denied() {
         result
     );
 
-    cleanup_user(&ctx.pool, user_owner.id).await;
-    cleanup_user(&ctx.pool, user_other.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

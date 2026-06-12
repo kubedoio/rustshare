@@ -44,7 +44,7 @@ struct OidcConfigRow {
 // OIDC — request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OidcConfigResponse {
     pub id: String,
     pub enabled: bool,
@@ -82,7 +82,7 @@ impl From<OidcConfigRow> for OidcConfigResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateOidcConfigRequest {
     pub enabled: Option<bool>,
     pub provider_name: Option<String>,
@@ -121,7 +121,7 @@ struct SmtpConfigRow {
 // SMTP — request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SmtpConfigResponse {
     pub id: String,
     pub enabled: bool,
@@ -155,7 +155,7 @@ impl From<SmtpConfigRow> for SmtpConfigResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSmtpConfigRequest {
     pub enabled: Option<bool>,
     pub host: Option<String>,
@@ -174,6 +174,15 @@ pub struct UpdateSmtpConfigRequest {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/config/oidc
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/config/oidc",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -195,6 +204,15 @@ pub async fn get_oidc_config(
 }
 
 /// PUT /api/v1/admin/config/oidc
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/config/oidc",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_oidc_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -303,6 +321,15 @@ pub async fn update_oidc_config(
 }
 
 /// POST /api/v1/admin/config/oidc/test
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/config/oidc/test",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn test_oidc_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -364,6 +391,15 @@ pub async fn test_oidc_config(
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/config/smtp
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/config/smtp",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_smtp_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -384,6 +420,15 @@ pub async fn get_smtp_config(
 }
 
 /// PUT /api/v1/admin/config/smtp
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/config/smtp",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_smtp_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -471,6 +516,15 @@ pub async fn update_smtp_config(
 /// POST /api/v1/admin/config/smtp/test
 ///
 /// No SMTP library is available; always returns a "not_implemented" stub.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/config/smtp/test",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn test_smtp_config(
     AdminUser { .. }: AdminUser,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -487,7 +541,7 @@ pub async fn test_smtp_config(
 // Security config — request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SecurityConfigResponse {
     pub login_protection_enabled: bool,
     pub max_login_attempts: i32,
@@ -495,7 +549,7 @@ pub struct SecurityConfigResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSecurityConfigRequest {
     pub login_protection_enabled: Option<bool>,
     pub max_login_attempts: Option<i32>,
@@ -507,6 +561,15 @@ pub struct UpdateSecurityConfigRequest {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/config/security
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/config/security",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_security_config(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -530,6 +593,15 @@ pub async fn get_security_config(
 }
 
 /// PUT /api/v1/admin/config/security
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/config/security",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_security_config(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,

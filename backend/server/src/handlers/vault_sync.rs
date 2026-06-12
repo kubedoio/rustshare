@@ -31,7 +31,7 @@ use rustshare_core::domain::{
 // ============================================================================
 
 /// Request to register a new vault sync device.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateVaultDeviceRequest {
     pub device_name: String,
     pub client_type: String,
@@ -40,13 +40,13 @@ pub struct CreateVaultDeviceRequest {
 }
 
 /// Response for listing vaults.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListVaultsResponse {
     pub vaults: Vec<Vault>,
 }
 
 /// Response for a successful vault file upload.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct VaultFileUploadResponse {
     pub id: Uuid,
     pub vault_id: Uuid,
@@ -108,6 +108,16 @@ fn extract_header_uuid(headers: &HeaderMap, name: &str) -> Result<Uuid, AppError
 /// Create a new vault.
 ///
 /// POST /api/vault-sync/v1/vaults
+#[utoipa::path(
+    post,
+    path = "/api/vault-sync/v1/vaults",
+    tag = "Vault Sync",
+    request_body = CreateVaultRequest,
+    responses(
+        (status = 200, description = "Success", body = Vault),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_vault(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -123,6 +133,15 @@ pub async fn create_vault(
 /// List vaults for the authenticated user.
 ///
 /// GET /api/vault-sync/v1/vaults
+#[utoipa::path(
+    get,
+    path = "/api/vault-sync/v1/vaults",
+    tag = "Vault Sync",
+    responses(
+        (status = 200, description = "Success", body = ListVaultsResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_vaults(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -137,6 +156,17 @@ pub async fn list_vaults(
 /// Get a vault by ID.
 ///
 /// GET /api/vault-sync/v1/vaults/:vault_id
+#[utoipa::path(
+    get,
+    path = "/api/vault-sync/v1/vaults/{vault_id}",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id")),
+    responses(
+        (status = 200, description = "Success", body = Vault),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_vault(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -152,6 +182,17 @@ pub async fn get_vault(
 /// Get the manifest for a vault.
 ///
 /// GET /api/vault-sync/v1/vaults/:vault_id/manifest
+#[utoipa::path(
+    get,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/manifest",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_manifest(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -178,6 +219,17 @@ pub async fn get_manifest(
 /// Download a file from a vault.
 ///
 /// GET /api/vault-sync/v1/vaults/:vault_id/files/:path
+#[utoipa::path(
+    get,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id"), ("path" = String, Path, description = "Path")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -208,6 +260,17 @@ pub async fn download_file(
 /// Upload a file into a vault.
 ///
 /// PUT /api/vault-sync/v1/vaults/:vault_id/files/:path
+#[utoipa::path(
+    put,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id"), ("path" = String, Path, description = "Path")),
+    responses(
+        (status = 200, description = "Success", body = VaultFileUploadResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -257,6 +320,17 @@ pub async fn upload_file(
 /// Delete (tombstone) a file in a vault.
 ///
 /// DELETE /api/vault-sync/v1/vaults/:vault_id/files/:path
+#[utoipa::path(
+    delete,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id"), ("path" = String, Path, description = "Path")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -283,6 +357,17 @@ pub async fn delete_file(
 /// Rename a file within a vault.
 ///
 /// POST /api/vault-sync/v1/vaults/:vault_id/rename
+#[utoipa::path(
+    post,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/rename",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id")),
+    responses(
+        (status = 200, description = "Success", body = VaultFileUploadResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -308,6 +393,16 @@ pub async fn rename_file(
 /// Register a device for vault sync.
 ///
 /// POST /api/vault-sync/v1/devices/register
+#[utoipa::path(
+    post,
+    path = "/api/vault-sync/v1/devices/register",
+    tag = "Vault Sync",
+    request_body = CreateVaultDeviceRequest,
+    responses(
+        (status = 200, description = "Success", body = VaultDevice),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn register_device(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -348,6 +443,17 @@ pub async fn register_device(
 /// Revoke a vault sync device.
 ///
 /// DELETE /api/vault-sync/v1/devices/{device_id}
+#[utoipa::path(
+    delete,
+    path = "/api/vault-sync/v1/devices/{device_id}",
+    tag = "Vault Sync",
+    params(("device_id" = Uuid, Path, description = "Device Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn revoke_device(
     State(state): State<AppState>,
     auth: AuthenticatedUser,

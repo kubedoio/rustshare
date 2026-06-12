@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '1 day' * $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c77900a5588a3b1c15af4abb568f28a5122be77543cce602a8b75336d753d570"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM device_pair_requests WHERE expires_at < NOW() - INTERVAL '1 day' * $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cfc81bcec7311a0dec7377b64c0d8f57697b28c3ba6d20d872ce9523ac51de7f"
+}

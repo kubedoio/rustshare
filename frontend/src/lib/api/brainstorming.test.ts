@@ -42,12 +42,28 @@ describe('brainstorming API', () => {
 		updated_at: '2026-04-30T12:00:00Z'
 	};
 
-	it('lists brainstorming boards', async () => {
-		vi.mocked(apiClient.get).mockResolvedValue({ boards: [mockBoard] });
+	it('fetches all brainstorming board pages before returning aggregate lists', async () => {
+		const firstPage = Array.from({ length: 100 }, (_, index) => ({
+			...mockBoard,
+			id: `board-${index}`,
+			title: `Board ${index}`
+		}));
+		const secondPage = [{ ...mockBoard, id: 'board-100', title: 'Board 100' }];
+
+		vi.mocked(apiClient.get)
+			.mockResolvedValueOnce({ boards: firstPage })
+			.mockResolvedValueOnce({ boards: secondPage });
 
 		const result = await listBrainstormBoards();
-		expect(result).toEqual([mockBoard]);
-		expect(apiClient.get).toHaveBeenCalledWith('/modules/brainstorming/boards');
+		expect(result).toHaveLength(101);
+		expect(apiClient.get).toHaveBeenNthCalledWith(
+			1,
+			'/modules/brainstorming/boards?page=1&per_page=100'
+		);
+		expect(apiClient.get).toHaveBeenNthCalledWith(
+			2,
+			'/modules/brainstorming/boards?page=2&per_page=100'
+		);
 	});
 
 	it('creates a brainstorming board', async () => {

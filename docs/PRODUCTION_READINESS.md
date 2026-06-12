@@ -80,7 +80,7 @@ Current confidence by area:
 - [x] Backup and restore runbook exists
 - [x] Restore drill checklist exists
 - [ ] A real restore drill against an actual backup artifact should still be performed and recorded
-- [ ] RPO/RTO targets should be formally defined before launch
+- [x] RPO/RTO targets formally defined in backup-restore runbook (< 24h RPO, < 2h RTO)
 
 ## Observability Checklist
 
@@ -89,9 +89,9 @@ Current confidence by area:
 - [x] Replication summary endpoint exists
 - [x] Replication target-health endpoint exists
 - [x] CLI replication health helper exists
-- [ ] Centralized metrics and dashboards are still partial
-- [ ] Centralized alerting is still partial
-- [ ] Error tracking / incident paging is not yet documented as complete
+- [x] Alerting thresholds and Prometheus rules documented
+- [x] Error tracking / incident paging documented with PagerDuty/OpsGenie examples
+- [ ] Centralized metrics dashboards are still partial (Grafana setup required)
 
 ### Operational Readiness Endpoints
 
@@ -156,14 +156,11 @@ Use `/health/ready` for Kubernetes readiness probes or load-balancer membership 
 
 Reference planning docs:
 
-- [OIDC Production Validation Checklist](docs/2026-03-21-oidc-production-validation-checklist.md)
-- [Alerting And Incident Thresholds](docs/2026-03-21-alerting-and-incident-thresholds.md)
-- [Post-Restore Expected Outcomes](docs/2026-03-21-post-restore-expected-outcomes.md)
-- [Compatibility Removal Plan](docs/2026-03-21-compatibility-removal-plan.md)
-- [Phase 6 Environment Sign-Off Spec](docs/2026-03-21-phase-6-environment-signoff-spec.md)
-- [Launch Gate: Web-First Pilot](docs/2026-03-21-launch-gate-web-first-pilot.md)
-- [Phase 6 Execution Report](docs/2026-03-21-phase-6-execution-report.md)
-- [Web-First Pilot Gate Decision](docs/2026-03-21-web-first-pilot-gate-decision.md)
+- [OIDC Production Validation Checklist](2026-03-21-oidc-production-validation-checklist.md)
+- [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md)
+- [Backup and Restore Runbook](2026-03-20-backup-restore-runbook.md)
+- [Backup and Restore Guide](backup-restore.md)
+- [Deployment Guide](DEPLOYMENT.md)
 
 ## Deployment Checklist
 

@@ -37,7 +37,7 @@
 //! - Ensure target group health checks are configured
 //!
 
-use rustshare_server::{bootstrap, middleware, openapi, routes};
+use rustshare_server::{bootstrap, metrics, middleware, openapi, routes};
 
 pub use rustshare_server::{
     default_storage_quota_bytes, AppAiService, AppState, AppUploadService, AppUserShareService,
@@ -71,6 +71,9 @@ async fn main() -> Result<()> {
     // - unversioned resource aliases were removed in Phase 7 wave 3
     // - remaining unversioned `/api/...` routes are limited to narrower compatibility or internal/operator surfaces
     let app = Router::new()
+        // Prometheus metrics endpoint. If METRICS_API_TOKEN is set, the scraper
+        // must provide it as an Authorization header; otherwise it remains open.
+        .route("/metrics", get(metrics::metrics_handler))
         // OpenAPI docs (no auth required for discovery)
         .merge(
             utoipa_swagger_ui::SwaggerUi::new("/api/docs")
@@ -113,6 +116,13 @@ async fn main() -> Result<()> {
         // This must be applied BEFORE other middleware layers
         .layer(DefaultBodyLimit::max(2048 * 1024 * 1024))
         .layer(axum::middleware::from_fn(middleware::csrf_middleware))
+        // Refresh the CSRF cookie for sessions that pre-date the double-submit cookie.
+        // This layer sits outside csrf_middleware so it can attach Set-Cookie to the
+        // response (e.g., the bootstrap GET /me) even when the inner middleware would
+        // otherwise reject a mutating request for missing the CSRF header.
+        .layer(axum::middleware::from_fn(
+            middleware::csrf_cookie_refresh_middleware,
+        ))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -120,9 +130,12 @@ async fn main() -> Result<()> {
         ))
         // Tracing
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(middleware::metrics_middleware))
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
         ))
+        // Request-scoped tracing with correlation IDs (outermost layer)
+        .layer(axum::middleware::from_fn(middleware::trace_middleware))
         // All non-API requests are served by the compiled SPA bundle.
         .fallback_service(frontend_service());
 
@@ -138,9 +151,37 @@ async fn main() -> Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal(state.shutdown_tx.clone()))
     .await?;
 
     Ok(())
+}
+
+async fn shutdown_signal(shutdown_tx: tokio::sync::broadcast::Sender<()>) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    info!("Shutdown signal received, starting graceful shutdown");
+    let _ = shutdown_tx.send(());
 }
 
 fn frontend_service() -> ServeDir<ServeFile> {

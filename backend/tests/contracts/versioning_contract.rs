@@ -13,7 +13,7 @@ use crate::common::*;
 #[ignore] // Requires database and S3
 async fn test_file_create_creates_exactly_one_version() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "version_user", tenant_id).await;
@@ -50,8 +50,7 @@ async fn test_file_create_creates_exactly_one_version() {
     assert_eq!(versions[0].version_number, 1);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-02: File replace creates new version, keeps old
@@ -59,7 +58,7 @@ async fn test_file_create_creates_exactly_one_version() {
 #[ignore] // Requires database and S3
 async fn test_file_replace_creates_new_version_keeps_old() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "update_user", tenant_id).await;
@@ -130,8 +129,7 @@ async fn test_file_replace_creates_new_version_keeps_old() {
     assert_eq!(versions[2].content_hash, v1_hash);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-03: File restore returns correct version
@@ -139,7 +137,7 @@ async fn test_file_replace_creates_new_version_keeps_old() {
 #[ignore] // Requires database and S3
 async fn test_file_restore_returns_correct_version() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "restore_user", tenant_id).await;
@@ -211,8 +209,7 @@ async fn test_file_restore_returns_correct_version() {
     assert_eq!(versions[0].version_number, 4);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-04: Version history is immutable
@@ -220,7 +217,7 @@ async fn test_file_restore_returns_correct_version() {
 #[ignore] // Requires database and S3
 async fn test_version_history_is_immutable() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "immutable_user", tenant_id).await;
@@ -299,8 +296,7 @@ async fn test_version_history_is_immutable() {
     assert_eq!(v1_still.content_hash, v1_hash, "v1 should be immutable");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Additional: Concurrent updates with optimistic locking
@@ -308,7 +304,7 @@ async fn test_version_history_is_immutable() {
 #[ignore] // Requires database and S3
 async fn test_concurrent_update_optimistic_locking() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "concurrent_user", tenant_id).await;
@@ -346,8 +342,7 @@ async fn test_concurrent_update_optimistic_locking() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Additional: Version ordering is maintained
@@ -355,7 +350,7 @@ async fn test_concurrent_update_optimistic_locking() {
 #[ignore] // Requires database and S3
 async fn test_version_ordering_is_sequential() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "ordering_user", tenant_id).await;
@@ -409,6 +404,5 @@ async fn test_version_ordering_is_sequential() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

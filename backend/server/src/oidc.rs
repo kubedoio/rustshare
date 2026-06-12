@@ -20,7 +20,7 @@ use crate::{
         load_oidc_runtime_settings, load_provider_metadata, oidc_http_client,
         MobileOidcRuntimeConfig,
     },
-    web_session::{build_session_cookie, create_user_session},
+    web_session::{build_csrf_cookie, build_session_cookie, create_user_session},
     AppState,
 };
 
@@ -441,7 +441,7 @@ pub async fn oidc_callback(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
     let ip_address = middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-    let session_token = create_user_session(
+    let (session_token, csrf_token) = create_user_session(
         &state,
         user.id,
         user.tenant_id,
@@ -473,6 +473,15 @@ pub async fn oidc_callback(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to serialize session cookie: {error}"),
+            )
+        })?,
+    );
+    response_headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&build_csrf_cookie(&csrf_token)).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to serialize CSRF cookie: {error}"),
             )
         })?,
     );

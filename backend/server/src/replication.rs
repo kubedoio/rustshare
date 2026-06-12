@@ -74,6 +74,7 @@ pub fn spawn_replication_worker(
     event_store: Arc<EventStore>,
     broadcaster: Arc<EventBroadcaster>,
     config: ReplicationWorkerConfig,
+    mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
     if !config.enabled {
         info!("Replication worker disabled");
@@ -89,19 +90,25 @@ pub fn spawn_replication_worker(
         );
 
         loop {
-            if let Err(error) = tick_replication_worker(
-                &metadata_store,
-                &object_store,
-                &event_store,
-                &broadcaster,
-                &config,
-            )
-            .await
-            {
-                error!(error = %error, "Replication worker tick failed");
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    info!("Replication worker shutting down");
+                    break;
+                }
+                _ = tokio::time::sleep(config.poll_interval) => {
+                    if let Err(error) = tick_replication_worker(
+                        &metadata_store,
+                        &object_store,
+                        &event_store,
+                        &broadcaster,
+                        &config,
+                    )
+                    .await
+                    {
+                        error!(error = %error, "Replication worker tick failed");
+                    }
+                }
             }
-
-            tokio::time::sleep(config.poll_interval).await;
         }
     });
 }

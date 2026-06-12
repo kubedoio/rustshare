@@ -21,24 +21,24 @@ use crate::{
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateGroupRequest {
     pub name: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateGroupRequest {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddMemberRequest {
     pub user_id: Uuid,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupResponse {
     pub id: String,
     pub name: String,
@@ -49,7 +49,7 @@ pub struct GroupResponse {
     pub member_count: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupDetailResponse {
     pub id: String,
     pub name: String,
@@ -60,7 +60,7 @@ pub struct GroupDetailResponse {
     pub members: Vec<GroupMemberResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GroupMemberResponse {
     pub user_id: String,
     pub username: String,
@@ -106,6 +106,15 @@ struct MemberRow {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/groups
+#[utoipa::path(
+    get,
+    path = "/scim/v2/Groups",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_groups(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -147,6 +156,15 @@ pub async fn list_groups(
 }
 
 /// POST /api/v1/admin/groups
+#[utoipa::path(
+    post,
+    path = "/scim/v2/Groups",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -205,6 +223,15 @@ pub async fn create_group(
 }
 
 /// GET /api/v1/admin/groups/:id
+#[utoipa::path(
+    get,
+    path = "/scim/v2/Groups/{id}",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_group(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -254,6 +281,15 @@ pub async fn get_group(
 }
 
 /// PATCH /api/v1/admin/groups/:id
+#[utoipa::path(
+    put,
+    path = "/scim/v2/Groups/{id}",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -334,6 +370,15 @@ pub async fn update_group(
 }
 
 /// DELETE /api/v1/admin/groups/:id
+#[utoipa::path(
+    delete,
+    path = "/scim/v2/Groups/{id}",
+    tag = "Groups",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -371,6 +416,15 @@ pub async fn delete_group(
 }
 
 /// POST /api/v1/admin/groups/:id/members
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/groups/{id}/members",
+    tag = "Groups",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn add_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -435,6 +489,15 @@ pub async fn add_member(
 }
 
 /// DELETE /api/v1/admin/groups/:id/members/:user_id
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/groups/{id}/members/{user_id}",
+    tag = "Groups",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn remove_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
