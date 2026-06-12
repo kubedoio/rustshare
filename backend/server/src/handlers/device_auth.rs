@@ -651,15 +651,13 @@ mod tests {
 
     #[tokio::test]
     async fn device_qr_info_uses_env_var_fallback_when_no_host_header() {
-        {
-            let _lock = ENV_VAR_MUTEX.lock().unwrap();
+        let _lock = ENV_VAR_MUTEX.lock().unwrap();
 
-            // Set the environment variable
-            std::env::set_var(
-                "RUSTSHARE_PUBLIC_URL",
-                "http://env-fallback.example.com:8080",
-            );
-        }
+        // Set the environment variable
+        std::env::set_var(
+            "RUSTSHARE_PUBLIC_URL",
+            "http://env-fallback.example.com:8080",
+        );
 
         let headers = HeaderMap::new();
         let result = device_qr_info(headers).await;
@@ -677,12 +675,10 @@ mod tests {
 
     #[tokio::test]
     async fn device_qr_info_uses_localhost_fallback_when_no_host_or_env_var() {
-        {
-            let _lock = ENV_VAR_MUTEX.lock().unwrap();
+        let _lock = ENV_VAR_MUTEX.lock().unwrap();
 
-            // Ensure env var is not set
-            std::env::remove_var("RUSTSHARE_PUBLIC_URL");
-        }
+        // Ensure env var is not set
+        std::env::remove_var("RUSTSHARE_PUBLIC_URL");
 
         let headers = HeaderMap::new();
         let result = device_qr_info(headers).await;

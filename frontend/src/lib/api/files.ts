@@ -2,19 +2,64 @@ import { apiClient } from './client';
 import type { File, FileVersion } from './types';
 import type { FolderContents } from './folders';
 
+const AGGREGATE_PAGE_SIZE = 100;
+
 export async function listAllFiles(): Promise<File[]> {
-	return apiClient.get<File[]>('/files');
+	return fetchAllPages<File>('/files');
 }
 
 export async function getStarredContents(): Promise<FolderContents> {
-	return apiClient.get<FolderContents>('/files/starred');
+	return fetchAllFolderContentsPages('/files/starred');
 }
 
 export async function getDeletedContents(): Promise<FolderContents> {
-	return apiClient.get<FolderContents>('/files/deleted');
+	return fetchAllFolderContentsPages('/files/deleted');
 }
 
 export type UploadProgressCallback = (progress: number) => void;
+
+async function fetchAllPages<T>(endpoint: string): Promise<T[]> {
+	const items: T[] = [];
+	let page = 1;
+
+	while (true) {
+		const pageItems = await apiClient.get<T[]>(
+			`${endpoint}?page=${page}&per_page=${AGGREGATE_PAGE_SIZE}`
+		);
+		items.push(...pageItems);
+
+		if (pageItems.length < AGGREGATE_PAGE_SIZE) {
+			return items;
+		}
+
+		page += 1;
+	}
+}
+
+async function fetchAllFolderContentsPages(endpoint: string): Promise<FolderContents> {
+	const contents: FolderContents = {
+		folders: [],
+		files: []
+	};
+	let page = 1;
+
+	while (true) {
+		const pageContents = await apiClient.get<FolderContents>(
+			`${endpoint}?page=${page}&per_page=${AGGREGATE_PAGE_SIZE}`
+		);
+		contents.folders.push(...pageContents.folders);
+		contents.files.push(...pageContents.files);
+
+		if (
+			pageContents.folders.length < AGGREGATE_PAGE_SIZE &&
+			pageContents.files.length < AGGREGATE_PAGE_SIZE
+		) {
+			return contents;
+		}
+
+		page += 1;
+	}
+}
 
 /**
  * Uploads a file to the server.
