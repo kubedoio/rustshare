@@ -19,18 +19,33 @@ jobs:
   check-backend-dependencies:
     name: Check Backend Dependencies
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      SQLX_OFFLINE: true
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Cache cargo-outdated
         uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-outdated
           key: ${{ runner.os }}-cargo-outdated
-      
+
       - name: Install cargo-outdated
         run: |
           if ! command -v cargo-outdated &> /dev/null; then
@@ -38,16 +53,16 @@ jobs:
             # between cargo-outdated's transitive deps and the latest registry.
             cargo install cargo-outdated --locked
           fi
-      
+
       - name: Check for outdated dependencies
         working-directory: ./backend
         run: |
           echo "## Outdated Dependencies" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # Check for outdated dependencies
           OUTPUT=$(cargo outdated -R --format compact 2>&1 || true)
-          
+
           if echo "$OUTPUT" | grep -q "All dependencies are up to date"; then
             echo "✅ All dependencies are up to date!" >> $GITHUB_STEP_SUMMARY
           else
@@ -55,7 +70,7 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            
+
             # Show detailed view
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Detailed Report" >> $GITHUB_STEP_SUMMARY
@@ -64,7 +79,14 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
         continue-on-error: true
-      
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres
+
+      - name: Run migrations
+        working-directory: ./backend
+        run: sqlx migrate run
+
       - name: Verify build with latest dependencies
         working-directory: ./backend
         run: |
