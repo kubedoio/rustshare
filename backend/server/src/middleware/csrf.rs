@@ -14,6 +14,7 @@ use crate::web_session::{
 
 const PUBLIC_SHARE_PREFIX: &str = "/api/public/share/";
 const PUBLIC_SHARE_V1_PREFIX: &str = "/api/v1/public/share/";
+const LOGIN_PATH: &str = "/api/v1/auth/login";
 
 pub async fn csrf_middleware(request: Request, next: Next) -> Response {
     if !requires_csrf_check(&request) {
@@ -89,6 +90,14 @@ fn requires_csrf_check(request: &Request) -> bool {
     }
 
     if path.starts_with(PUBLIC_SHARE_PREFIX) || path.starts_with(PUBLIC_SHARE_V1_PREFIX) {
+        return false;
+    }
+
+    // The login endpoint must remain reachable even when a browser holds a
+    // stale session cookie but no CSRF cookie, otherwise users cannot re-login
+    // after the CSRF cookie is cleared or before the new double-submit cookie
+    // has been issued.
+    if path == LOGIN_PATH {
         return false;
     }
 
@@ -239,4 +248,15 @@ mod tests {
             .unwrap();
         assert!(!requires_csrf_check(&request));
     }
+
+    #[test]
+    fn test_requires_csrf_check_skips_login() {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .body(Body::empty())
+            .unwrap();
+        assert!(!requires_csrf_check(&request));
+    }
+
 }
