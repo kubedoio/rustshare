@@ -2,64 +2,52 @@ import { apiClient } from './client';
 import type { File, FileVersion } from './types';
 import type { FolderContents } from './folders';
 
-const AGGREGATE_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 100;
 
 export async function listAllFiles(): Promise<File[]> {
-	return fetchAllPages<File>('/files');
-}
-
-export async function getStarredContents(): Promise<FolderContents> {
-	return fetchAllFolderContentsPages('/files/starred');
-}
-
-export async function getDeletedContents(): Promise<FolderContents> {
-	return fetchAllFolderContentsPages('/files/deleted');
-}
-
-export type UploadProgressCallback = (progress: number) => void;
-
-async function fetchAllPages<T>(endpoint: string): Promise<T[]> {
-	const items: T[] = [];
+	const files: File[] = [];
 	let page = 1;
 
 	while (true) {
-		const pageItems = await apiClient.get<T[]>(
-			`${endpoint}?page=${page}&per_page=${AGGREGATE_PAGE_SIZE}`
-		);
-		items.push(...pageItems);
+		const batch = await apiClient.get<File[]>(`/files?page=${page}&per_page=${MAX_PAGE_SIZE}`);
+		files.push(...batch);
 
-		if (pageItems.length < AGGREGATE_PAGE_SIZE) {
-			return items;
+		if (batch.length < MAX_PAGE_SIZE) {
+			return files;
 		}
 
 		page += 1;
 	}
 }
 
-async function fetchAllFolderContentsPages(endpoint: string): Promise<FolderContents> {
-	const contents: FolderContents = {
-		folders: [],
-		files: []
-	};
+export async function getStarredContents(): Promise<FolderContents> {
+	return getPagedFolderContents('/files/starred');
+}
+
+export async function getDeletedContents(): Promise<FolderContents> {
+	return getPagedFolderContents('/files/deleted');
+}
+
+async function getPagedFolderContents(endpoint: string): Promise<FolderContents> {
+	const contents: FolderContents = { folders: [], files: [] };
 	let page = 1;
 
 	while (true) {
-		const pageContents = await apiClient.get<FolderContents>(
-			`${endpoint}?page=${page}&per_page=${AGGREGATE_PAGE_SIZE}`
+		const batch = await apiClient.get<FolderContents>(
+			`${endpoint}?page=${page}&per_page=${MAX_PAGE_SIZE}`
 		);
-		contents.folders.push(...pageContents.folders);
-		contents.files.push(...pageContents.files);
+		contents.folders.push(...batch.folders);
+		contents.files.push(...batch.files);
 
-		if (
-			pageContents.folders.length < AGGREGATE_PAGE_SIZE &&
-			pageContents.files.length < AGGREGATE_PAGE_SIZE
-		) {
+		if (batch.folders.length < MAX_PAGE_SIZE && batch.files.length < MAX_PAGE_SIZE) {
 			return contents;
 		}
 
 		page += 1;
 	}
 }
+
+export type UploadProgressCallback = (progress: number) => void;
 
 /**
  * Uploads a file to the server.

@@ -352,7 +352,8 @@ pub async fn ensure_optional_seed_user(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::{Duration, Instant};
 
     const TEST_DATABASE_URL: &str =
         "postgres://rustshare:1f7b27220d83a11de6bca8b63c0ca491a3001c0c73471eda@localhost:5432/rustshare";
@@ -360,7 +361,11 @@ mod tests {
     async fn test_db_pool() -> sqlx::PgPool {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
-        sqlx::PgPool::connect(&database_url)
+
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(60))
+            .connect(&database_url)
             .await
             .expect("Failed to connect to test database")
     }

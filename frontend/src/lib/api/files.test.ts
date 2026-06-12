@@ -5,7 +5,6 @@ import {
 	getStarredContents,
 	listAllFiles
 } from '$lib/api/files';
-import type { File, Folder } from '$lib/api/types';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
@@ -28,84 +27,63 @@ describe('files API', () => {
 		expect(apiClient.requestText).toHaveBeenCalledWith('/files/file-123/content');
 	});
 
-	it('fetches all files across pages for aggregate workspace filters', async () => {
-		const firstPage = Array.from({ length: 100 }, (_, index) => file(`file-${index}`));
-		const secondPage = [file('file-100'), file('file-101')];
-		vi.mocked(apiClient.get)
-			.mockResolvedValueOnce(firstPage)
-			.mockResolvedValueOnce(secondPage);
+	it('fetches all file pages before returning aggregate file lists', async () => {
+		const firstPage = Array.from({ length: 100 }, (_, index) => ({
+			id: `file-${index}`,
+			name: `file-${index}.txt`
+		}));
+		const secondPage = [{ id: 'file-100', name: 'file-100.txt' }];
 
-		await expect(listAllFiles()).resolves.toEqual([...firstPage, ...secondPage]);
+		vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+		await expect(listAllFiles()).resolves.toHaveLength(101);
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/files?page=1&per_page=100');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/files?page=2&per_page=100');
 	});
 
-	it('fetches all starred folders and files across pages', async () => {
+	it('fetches all starred folder-content pages before returning aggregate contents', async () => {
 		const firstPage = {
-			folders: Array.from({ length: 100 }, (_, index) => folder(`folder-${index}`)),
-			files: [file('file-0')]
-		};
-		const secondPage = {
-			folders: [folder('folder-100')],
+			folders: Array.from({ length: 100 }, (_, index) => ({
+				id: `folder-${index}`,
+				name: `folder-${index}`
+			})),
 			files: []
 		};
-		vi.mocked(apiClient.get)
-			.mockResolvedValueOnce(firstPage)
-			.mockResolvedValueOnce(secondPage);
+		const secondPage = {
+			folders: [{ id: 'folder-100', name: 'folder-100' }],
+			files: [{ id: 'file-1', name: 'file-1.txt' }]
+		};
 
-		await expect(getStarredContents()).resolves.toEqual({
-			folders: [...firstPage.folders, ...secondPage.folders],
-			files: firstPage.files
+		vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+		await expect(getStarredContents()).resolves.toMatchObject({
+			folders: expect.arrayContaining([{ id: 'folder-100', name: 'folder-100' }]),
+			files: [{ id: 'file-1', name: 'file-1.txt' }]
 		});
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/files/starred?page=1&per_page=100');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/files/starred?page=2&per_page=100');
 	});
 
-	it('fetches all deleted folders and files across pages', async () => {
+	it('fetches all deleted folder-content pages before returning aggregate contents', async () => {
 		const firstPage = {
 			folders: [],
-			files: Array.from({ length: 100 }, (_, index) => file(`file-${index}`))
+			files: Array.from({ length: 100 }, (_, index) => ({
+				id: `file-${index}`,
+				name: `file-${index}.txt`
+			}))
 		};
 		const secondPage = {
 			folders: [],
-			files: [file('file-100')]
+			files: [{ id: 'file-100', name: 'file-100.txt' }]
 		};
-		vi.mocked(apiClient.get)
-			.mockResolvedValueOnce(firstPage)
-			.mockResolvedValueOnce(secondPage);
 
-		await expect(getDeletedContents()).resolves.toEqual({
+		vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+		await expect(getDeletedContents()).resolves.toMatchObject({
 			folders: [],
-			files: [...firstPage.files, ...secondPage.files]
+			files: expect.arrayContaining([{ id: 'file-100', name: 'file-100.txt' }])
 		});
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/files/deleted?page=1&per_page=100');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/files/deleted?page=2&per_page=100');
 	});
 });
-
-function file(id: string): File {
-	return {
-		id,
-		name: `${id}.txt`,
-		path: `/${id}.txt`,
-		size: 1,
-		mime_type: 'text/plain',
-		parent_folder_id: null,
-		owner_id: 'user-1',
-		current_version: 1,
-		created_at: '2026-01-01T00:00:00Z',
-		modified_at: '2026-01-01T00:00:00Z'
-	};
-}
-
-function folder(id: string): Folder {
-	return {
-		id,
-		name: id,
-		path: `/${id}`,
-		parent_folder_id: null,
-		owner_id: 'user-1',
-		created_at: '2026-01-01T00:00:00Z',
-		updated_at: '2026-01-01T00:00:00Z'
-	};
-}

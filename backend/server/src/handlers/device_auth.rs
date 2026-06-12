@@ -526,7 +526,9 @@ async fn device_poll_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgPoolOptions;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tokio::sync::Mutex as AsyncMutex;
 
     const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
@@ -792,7 +794,10 @@ mod tests {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
-        sqlx::PgPool::connect(&database_url)
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(60))
+            .connect(&database_url)
             .await
             .expect("Failed to connect to test database")
     }
