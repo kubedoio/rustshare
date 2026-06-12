@@ -18,9 +18,30 @@ import {
 	parseCardMarkdown
 } from '$lib/kanban/cardMarkdown';
 
+const MAX_PAGE_SIZE = 100;
+
 export async function listKanbanBoards(limit?: number): Promise<KanbanBoardSummary[]> {
-	const params = `?per_page=${limit ?? 100}`;
-	return apiClient.get<KanbanBoardSummary[]>(`/modules/kanban/boards${params}`);
+	// When no limit is requested, preserve the original unbounded behaviour by
+	// walking all pages. A requested limit returns a single slice.
+	if (limit === undefined) {
+		const boards: KanbanBoardSummary[] = [];
+		let page = 1;
+
+		while (true) {
+			const batch = await apiClient.get<KanbanBoardSummary[]>(
+				`/modules/kanban/boards?page=${page}&per_page=${MAX_PAGE_SIZE}`
+			);
+			boards.push(...batch);
+
+			if (batch.length < MAX_PAGE_SIZE) {
+				return boards;
+			}
+
+			page += 1;
+		}
+	}
+
+	return apiClient.get<KanbanBoardSummary[]>(`/modules/kanban/boards?per_page=${limit}`);
 }
 
 export async function createKanbanBoard(title: string): Promise<KanbanBoard> {
