@@ -42,6 +42,9 @@ rand = "0.10"
 # S3 client
 aws-sdk-s3 = "1.17"
 aws-config = "1.1"
+# Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
+# aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
+aws-smithy-types = "=1.4.9"
 
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }

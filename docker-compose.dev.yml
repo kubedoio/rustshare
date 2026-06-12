@@ -43,6 +43,8 @@ services:
       RUSTSHARE_RATE_LIMIT_SHARE_UPLOAD_PER_MINUTE: 20
       RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE: 120
       RUST_LOG: info,rustshare=debug
+      # Dev/HTTP deployment: cookies must work over plain HTTP on localhost.
+      SESSION_COOKIE_SECURE: false
     depends_on:
       postgres:
         condition: service_healthy

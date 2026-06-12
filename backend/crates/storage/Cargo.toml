@@ -18,6 +18,7 @@ thiserror.workspace = true
 tracing.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
+aws-smithy-types.workspace = true
 bytes = "1.5"
 md5 = "0.8"
 async-trait = "0.1"

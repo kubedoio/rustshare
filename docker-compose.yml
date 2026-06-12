@@ -98,6 +98,9 @@ services:
       RUSTSHARE_METADATA_CACHE: ${RUSTSHARE_METADATA_CACHE:-true}
       SERVER_HOST: 0.0.0.0
       FRONTEND_DIST_DIR: /app/frontend-build
+      # Default to false for the HTTP base compose path; production overrides
+      # can explicitly set this to true when served over HTTPS.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     depends_on:
       postgres:
         condition: service_healthy
