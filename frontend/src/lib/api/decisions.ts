@@ -29,10 +29,34 @@ export interface DecisionSummary {
 	modified_at: string;
 }
 
+async function fetchAllDecisionPages(): Promise<DecisionSummary[]> {
+	const PAGE_SIZE = 100;
+	const decisions: DecisionSummary[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<DecisionSummary[]>(
+			`/decisions?page=${page}&per_page=${PAGE_SIZE}`
+		);
+		decisions.push(...batch);
+
+		if (batch.length < PAGE_SIZE) {
+			return decisions;
+		}
+
+		page += 1;
+	}
+}
+
 export const decisionsApi = {
 	list: async (limit?: number) => {
-		const query = `?per_page=${limit ?? 100}`;
-		return apiClient.get<DecisionSummary[]>(`/decisions${query}`);
+		// Preserve the original unbounded behaviour for callers that do not pass
+		// a limit by walking all pages. Callers that pass a limit only want a
+		// single slice.
+		if (limit === undefined) {
+			return fetchAllDecisionPages();
+		}
+		return apiClient.get<DecisionSummary[]>(`/decisions?per_page=${limit}`);
 	},
 
 	get: async (id: string) => {

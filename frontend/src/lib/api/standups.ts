@@ -28,10 +28,34 @@ export interface StandupSummary {
 	modified_at: string;
 }
 
+async function fetchAllStandupPages(): Promise<StandupSummary[]> {
+	const PAGE_SIZE = 100;
+	const standups: StandupSummary[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<StandupSummary[]>(
+			`/standups?page=${page}&per_page=${PAGE_SIZE}`
+		);
+		standups.push(...batch);
+
+		if (batch.length < PAGE_SIZE) {
+			return standups;
+		}
+
+		page += 1;
+	}
+}
+
 export const standupsApi = {
 	list: async (limit?: number) => {
-		const query = `?per_page=${limit ?? 100}`;
-		return apiClient.get<StandupSummary[]>(`/standups${query}`);
+		// Preserve the original unbounded behaviour for callers that do not pass
+		// a limit by walking all pages. Callers that pass a limit only want a
+		// single slice.
+		if (limit === undefined) {
+			return fetchAllStandupPages();
+		}
+		return apiClient.get<StandupSummary[]>(`/standups?per_page=${limit}`);
 	},
 
 	get: async (id: string) => {

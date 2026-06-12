@@ -29,10 +29,34 @@ export interface MeetingSummary {
 	modified_at: string;
 }
 
+async function fetchAllMeetingPages(): Promise<MeetingSummary[]> {
+	const PAGE_SIZE = 100;
+	const meetings: MeetingSummary[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<MeetingSummary[]>(
+			`/meetings?page=${page}&per_page=${PAGE_SIZE}`
+		);
+		meetings.push(...batch);
+
+		if (batch.length < PAGE_SIZE) {
+			return meetings;
+		}
+
+		page += 1;
+	}
+}
+
 export const meetingsApi = {
 	list: async (limit?: number) => {
-		const query = `?per_page=${limit ?? 100}`;
-		return apiClient.get<MeetingSummary[]>(`/meetings${query}`);
+		// Preserve the original unbounded behaviour for callers that do not pass
+		// a limit by walking all pages. Callers that pass a limit only want a
+		// single slice.
+		if (limit === undefined) {
+			return fetchAllMeetingPages();
+		}
+		return apiClient.get<MeetingSummary[]>(`/meetings?per_page=${limit}`);
 	},
 
 	get: async (id: string) => {
