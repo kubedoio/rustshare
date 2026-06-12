@@ -45,6 +45,9 @@ aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
 aws-smithy-types = "=1.4.9"
+# Pinned because time 0.3.37+ added a From impl that conflicts with
+# aws-smithy-types 1.4.9's CanDisable<T> blanket impl.
+time = "=0.3.36"
 
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
