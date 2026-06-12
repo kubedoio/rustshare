@@ -9,6 +9,7 @@ RustShare is part of the broader **Kubedo.io Company Memory Infrastructure** dir
 | Field | Value |
 |---|---|
 | Status | Public Preview / Active Development |
+| Latest Release | [v0.5.0](https://github.com/kubedoio/rustshare/releases/tag/v0.5.0) |
 | License | Apache-2.0 core |
 | Website | [rustshare.io](https://rustshare.io) |
 

@@ -25,6 +25,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.5.0] - 2026-06-12
+
+### Added
+
+- Added automatic OpenAPI specification generation (`/api-docs/openapi.json`) and Swagger UI integration via utoipa.
+- Added optional bearer-token authentication for the Prometheus `/metrics` endpoint (`METRICS_API_TOKEN`).
+- Added pagination support for file, folder, share, and module list endpoints.
+- Added retention cleanup support and admin replication summary endpoints.
+- Added OpenAPI annotation tooling (`backend/scripts/add_openapi_annotations.py`).
+
+### Changed
+
+- Redesigned the workspace overview dashboard to be backend-driven by enabled module metadata.
+- Bumped Rust and npm dependencies via Dependabot rollup.
+- Hardened CI pipelines: added PostgreSQL service to dependency checks, pinned `aws-smithy-types` and `time` for build compatibility, and enforced DCO sign-off.
+
+### Removed
+
+- Removed stale root files and directories: `CLAUDE.md`, `convert_files.py`, `quick-fix.sh`, `test-deployment.sh`, root `package-lock.json`, and the `rustshare_public_preview_handover/` directory.
+
+### Fixed
+
+- Fixed unbounded list views in the frontend by walking paginated endpoints for decisions, standups, meetings, shares, kanban boards, and brainstorming boards.
+- Fixed CSRF lockout when a browser holds a stale session cookie but no CSRF cookie by exempting `POST /api/v1/auth/login` from CSRF checks.
+- Fixed hardcoded database credentials in test code; tests now require `DATABASE_URL` or a local `.env` file.
+- Fixed overlapping `/openapi.json` route.
+
+### Security
+
+- Removed hardcoded credentials from scripts and test helpers.
+- Restricted access to the Prometheus `/metrics` endpoint with an optional bearer token.
+- Improved dependency auditing with `cargo-deny` and `cargo-audit` configurations.
+
 ## [0.4.0] - 2026-06-05
 
 ### Added
