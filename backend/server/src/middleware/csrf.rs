@@ -1,13 +1,16 @@
 use axum::{
     extract::Request,
-    http::{Method, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
 use constant_time_eq::constant_time_eq;
 
-use crate::web_session::{extract_cookie_value, WEB_CSRF_COOKIE_NAME, WEB_CSRF_HEADER_NAME};
+use crate::web_session::{
+    build_csrf_cookie, extract_cookie_value, generate_csrf_token, WEB_CSRF_COOKIE_NAME,
+    WEB_CSRF_HEADER_NAME,
+};
 
 const PUBLIC_SHARE_PREFIX: &str = "/api/public/share/";
 const PUBLIC_SHARE_V1_PREFIX: &str = "/api/v1/public/share/";
@@ -40,6 +43,32 @@ pub async fn csrf_middleware(request: Request, next: Next) -> Response {
     }
 
     next.run(request).await
+}
+
+/// Refresh middleware: if a request presents a session cookie but no CSRF
+/// cookie, mint a fresh CSRF cookie and attach it to the response.
+///
+/// This provides a smooth migration for sessions created before the double-
+/// submit CSRF cookie was introduced. The next mutating request from the
+/// browser will then include both the session and CSRF cookies.
+pub async fn csrf_cookie_refresh_middleware(request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let has_session_cookie =
+        extract_cookie_value(headers, rustshare_auth::WEB_SESSION_COOKIE_NAME).is_some();
+    let has_csrf_cookie = extract_cookie_value(headers, WEB_CSRF_COOKIE_NAME).is_some();
+    let needs_refresh = has_session_cookie && !has_csrf_cookie;
+
+    let mut response = next.run(request).await;
+
+    if needs_refresh {
+        let csrf_token = generate_csrf_token();
+        let cookie = build_csrf_cookie(&csrf_token);
+        if let Ok(value) = cookie.parse() {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
+
+    response
 }
 
 fn forbidden_response() -> Response {

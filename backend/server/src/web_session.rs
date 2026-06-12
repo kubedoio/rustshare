@@ -76,9 +76,7 @@ pub async fn create_user_session(
         .await
         .map_err(|error| error.to_string())?;
 
-    let mut csrf_bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut csrf_bytes);
-    let csrf_token = hex::encode(csrf_bytes);
+    let csrf_token = generate_csrf_token();
 
     Ok((session_token, csrf_token))
 }
@@ -109,6 +107,12 @@ pub fn build_expired_session_cookie() -> String {
     }
 
     cookie
+}
+
+pub fn generate_csrf_token() -> String {
+    let mut csrf_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut csrf_bytes);
+    hex::encode(csrf_bytes)
 }
 
 pub fn build_csrf_cookie(csrf_token: &str) -> String {

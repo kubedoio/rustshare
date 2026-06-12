@@ -115,6 +115,13 @@ async fn main() -> Result<()> {
         // This must be applied BEFORE other middleware layers
         .layer(DefaultBodyLimit::max(2048 * 1024 * 1024))
         .layer(axum::middleware::from_fn(middleware::csrf_middleware))
+        // Refresh the CSRF cookie for sessions that pre-date the double-submit cookie.
+        // This layer sits outside csrf_middleware so it can attach Set-Cookie to the
+        // response (e.g., the bootstrap GET /me) even when the inner middleware would
+        // otherwise reject a mutating request for missing the CSRF header.
+        .layer(axum::middleware::from_fn(
+            middleware::csrf_cookie_refresh_middleware,
+        ))
         // Apply rate limiting middleware after state is set
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
