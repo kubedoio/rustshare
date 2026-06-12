@@ -117,11 +117,27 @@ export async function listFolderShares(folderId: string): Promise<Share[]> {
 	return apiClient.get<Share[]>(`/folders/${folderId}/shares`);
 }
 
+const MAX_PAGE_SIZE = 100;
+
 /**
- * List all shares owned by the current user
+ * List all shares owned by the current user.
+ * Pages through the backend until every owned share is returned, preserving
+ * the previous unpaginated behaviour for the existing shares UI.
  */
 export async function listAllUserShares(): Promise<Share[]> {
-	return apiClient.get<Share[]>('/shares');
+	const shares: Share[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<Share[]>(`/shares?page=${page}&per_page=${MAX_PAGE_SIZE}`);
+		shares.push(...batch);
+
+		if (batch.length < MAX_PAGE_SIZE) {
+			return shares;
+		}
+
+		page += 1;
+	}
 }
 
 /**
