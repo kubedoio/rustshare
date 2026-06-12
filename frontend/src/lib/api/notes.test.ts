@@ -33,9 +33,7 @@ describe('notes API', () => {
 		}));
 		const secondPage = [{ id: 'note-100', name: 'note-100.md' }];
 
-		vi.mocked(apiClient.get)
-			.mockResolvedValueOnce(firstPage)
-			.mockResolvedValueOnce(secondPage);
+		vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
 
 		await expect(listNotes()).resolves.toHaveLength(101);
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/notes?page=1&per_page=100');

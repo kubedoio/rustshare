@@ -106,9 +106,7 @@ async function fetchAllNotePages(): Promise<NoteSummary[]> {
 	let page = 1;
 
 	while (true) {
-		const batch = await apiClient.get<NoteSummary[]>(
-			`/notes?page=${page}&per_page=${PAGE_SIZE}`
-		);
+		const batch = await apiClient.get<NoteSummary[]>(`/notes?page=${page}&per_page=${PAGE_SIZE}`);
 		notes.push(...batch);
 
 		if (batch.length < PAGE_SIZE) {
