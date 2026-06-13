@@ -290,6 +290,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write
     steps:
       - name: Download binary artifacts
         uses: actions/download-artifact@v8
