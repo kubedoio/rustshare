@@ -313,6 +313,7 @@ jobs:
           format: spdx-json
           output-file: sbom-x86_64.spdx.json
           upload-artifact: true
+          upload-release-assets: false
           artifact-name: sbom-x86_64
 
       - name: Generate SBOM for aarch64 binary
@@ -322,6 +323,7 @@ jobs:
           format: spdx-json
           output-file: sbom-aarch64.spdx.json
           upload-artifact: true
+          upload-release-assets: false
           artifact-name: sbom-aarch64
 
       - name: Generate SBOM for Docker image
@@ -331,6 +333,7 @@ jobs:
           format: spdx-json
           output-file: sbom-docker.spdx.json
           upload-artifact: true
+          upload-release-assets: false
           artifact-name: sbom-docker
 
   attest-artifacts:
