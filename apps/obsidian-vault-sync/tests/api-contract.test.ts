@@ -238,6 +238,37 @@ describe('API contract verification', () => {
       );
     });
 
+    it('builds device pairing request URL under /api/v1', async () => {
+      fetchMock.mockResolvedValue(
+        createMockResponse({
+          status: 200,
+          jsonData: {
+            user_code: 'ABCD1234',
+            device_code: 'device-code',
+            expires_in: 600,
+            verification_uri: 'https://api.rustshare.test/device',
+            verification_uri_complete: 'https://api.rustshare.test/device?code=ABCD1234',
+          },
+        })
+      );
+
+      await api.requestDevicePairing();
+
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.rustshare.test/api/v1/auth/device/request');
+    });
+
+    it('builds device pairing poll URL under /api/v1', async () => {
+      fetchMock.mockResolvedValue(
+        createMockResponse({ status: 200, jsonData: { status: 'pending' } })
+      );
+
+      await api.pollDevicePairing('device-code');
+
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.rustshare.test/api/v1/auth/device/poll');
+    });
+
     it('URL-encodes vault IDs and file paths', async () => {
       fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
 
