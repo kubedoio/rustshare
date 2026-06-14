@@ -95,3 +95,7 @@ export class Notice {}
 export class App {}
 export class PluginSettingTab {}
 export class Setting {}
+
+import { vi } from 'vitest';
+
+export const requestUrl = vi.fn();
