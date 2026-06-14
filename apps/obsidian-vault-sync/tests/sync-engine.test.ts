@@ -42,7 +42,7 @@ class MockAPI {
   renames: Array<{ oldPath: string; newPath: string }> = [];
   manifest: VaultManifest = {
     vault_id: 'test-vault',
-    adapter: 'obsidian_vault',
+    adapter: 'ObsidianVault',
     server_rev: 0,
     generated_at: new Date().toISOString(),
     files: [],

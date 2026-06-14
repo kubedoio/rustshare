@@ -229,7 +229,7 @@ describe('API contract verification', () => {
       (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
         createMockUrlResponse({
           status: 200,
-          jsonData: { vault_id: 'v1', adapter: 'obsidian_vault', server_rev: 1, generated_at: new Date().toISOString(), files: [] },
+          jsonData: { vault_id: 'v1', adapter: 'ObsidianVault', server_rev: 1, generated_at: new Date().toISOString(), files: [] },
         })
       );
 

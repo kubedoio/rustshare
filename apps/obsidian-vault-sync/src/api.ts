@@ -6,7 +6,7 @@ import { requestUrl, RequestUrlResponse } from 'obsidian';
 export interface Vault {
   id: string;
   name: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   root_path?: string;
   server_rev: number;
   created_at: string;
@@ -15,7 +15,7 @@ export interface Vault {
 
 export interface VaultManifest {
   vault_id: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   server_rev: number;
   generated_at: string;
   files: VaultManifestEntry[];
@@ -34,7 +34,7 @@ export interface VaultManifestEntry {
 
 export interface CreateVaultRequest {
   name: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   client_vault_id?: string;
   device_id: string;
 }
