@@ -217,13 +217,21 @@ impl SyncWorker {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
+        // Use the server-supplied content hash when available; otherwise fall
+        // back to the local hash so the next sync can converge.
+        let remote_hash = complete_result
+            .content_hash
+            .as_deref()
+            .filter(|h| !h.is_empty())
+            .unwrap_or(&local.hash);
+
         // Update file state as synced
         self.update_file_state_as_synced(
             file_state_id,
             remote_root,
             relative_path,
             local,
-            &complete_result.content_hash,
+            remote_hash,
             complete_result.file_id,
         )
         .await?;
@@ -296,8 +304,10 @@ impl SyncWorker {
             .with_context(|| format!("Failed to flush temp file: {}", temp_path.display()))?;
         drop(temp_file);
 
-        // Verify hash
-        if !self.verify_hash(&temp_path, expected_hash).await? {
+        // Verify hash only when the server supplies a real content hash.
+        // Some server responses only include a version token; in that case we
+        // trust the downloaded bytes and compute the local hash afterwards.
+        if looks_like_content_hash(expected_hash) && !self.verify_hash(&temp_path, expected_hash).await? {
             tokio::fs::remove_file(&temp_path).await.ok();
             return Err(anyhow::anyhow!(
                 "Hash verification failed for downloaded file: expected {}, file: {}",
@@ -321,8 +331,16 @@ impl SyncWorker {
         filetime::set_file_mtime(local_dest, remote_mtime)
             .with_context(|| format!("Failed to set modified time for {}", local_dest.display()))?;
 
+        // Compute the actual local content hash so the database stores a real
+        // SHA-256 even when the server only provided a version token.
+        let local_hash = tokio::task::spawn_blocking({
+            let path = local_dest.to_path_buf();
+            move || file_ops::calculate_hash(&path)
+        })
+        .await??;
+
         // Update file state
-        self.update_file_state_after_download(root_id, relative_path, remote, expected_hash)
+        self.update_file_state_after_download(root_id, relative_path, remote, &local_hash)
             .await?;
 
         info!(
@@ -542,6 +560,12 @@ impl SyncWorker {
 
         Ok(computed_hash == expected_hash)
     }
+}
+
+/// Returns true if the supplied hash looks like a SHA-256 content hash rather
+/// than a synthetic change token such as a version number.
+fn looks_like_content_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

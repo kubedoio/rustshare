@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 const SMTP_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000002";
 
+/// SMTP config tests mutate a single pre-seeded row, so they must run
+/// serially to avoid reading state written by a concurrent test.
+static SMTP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -88,12 +92,17 @@ async fn reset_smtp_config(pool: &sqlx::PgPool) {
 #[tokio::test]
 #[ignore]
 async fn test_smtp_config_update_stores_encrypted_password() {
+    let _guard = SMTP_TEST_LOCK.lock().await;
+
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let actor_id = create_test_admin(&pool, suffix).await;
     let key = test_encryption_key();
     let smtp_id: Uuid = SMTP_CONFIG_ID.parse().unwrap();
     let plaintext_password = "smtp-plaintext-password-123";
+
+    // Start from a known empty state in case a previous run left data behind.
+    reset_smtp_config(&pool).await;
 
     let password_enc = encrypt_secret(plaintext_password, &key).expect("encrypt SMTP password");
 
@@ -169,10 +178,14 @@ async fn test_smtp_config_update_stores_encrypted_password() {
 #[tokio::test]
 #[ignore]
 async fn test_smtp_config_update_changes_updated_at() {
+    let _guard = SMTP_TEST_LOCK.lock().await;
+
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let actor_id = create_test_admin(&pool, suffix).await;
     let smtp_id: Uuid = SMTP_CONFIG_ID.parse().unwrap();
+
+    reset_smtp_config(&pool).await;
 
     // First update — set a timestamp we can compare against
     sqlx::query(

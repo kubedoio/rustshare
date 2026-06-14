@@ -469,11 +469,8 @@ impl SyncManager {
 
         let mut result = std::collections::HashMap::new();
         for state in &file_states {
-            let hash = state
-                .remote_hash
-                .clone()
-                .or_else(|| state.local_hash.clone())
-                .unwrap_or_default();
+            let local_hash = state.local_hash.clone().unwrap_or_default();
+            let remote_hash = state.remote_hash.clone().unwrap_or_default();
             let modified_at = state
                 .remote_modified_at
                 .or(state.local_modified_at)
@@ -482,7 +479,8 @@ impl SyncManager {
             result.insert(
                 state.relative_path.clone(),
                 DbFileState {
-                    hash,
+                    local_hash,
+                    remote_hash,
                     modified_at,
                     _remote_id: state.remote_file_id,
                     is_directory: state.is_directory.unwrap_or(false),
@@ -523,7 +521,7 @@ impl SyncManager {
             Ok(files) => files,
             Err(e) => {
                 tracing::warn!(
-                    "Failed to fetch remote files for {}: {}. Treating remote file state as empty.",
+                    "Failed to fetch remote files for {}: {:#}. Treating remote file state as empty.",
                     root.remote_path,
                     e
                 );
@@ -551,10 +549,15 @@ impl SyncManager {
                     .map(|dt| dt.timestamp() as u64)
                     .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u64);
 
+                let remote_hash = file
+                    .content_hash
+                    .clone()
+                    .unwrap_or_else(|| file.current_version.to_string());
+
                 files.push(RemoteFileInfo {
                     id: file.id,
                     relative_path,
-                    hash: file.content_hash,
+                    hash: remote_hash,
                     size: file.size,
                     modified_at,
                 });
@@ -563,13 +566,15 @@ impl SyncManager {
 
         let mut absolute_folder_ids = HashMap::new();
         let mut dirs = Vec::new();
-        if let Ok(tree) = self.client.get_folder_tree().await {
-            collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids);
-        } else {
-            tracing::warn!(
-                "Failed to fetch remote folder tree for {}. Treating remote folder state as empty.",
-                root.remote_path
-            );
+        match self.client.get_folder_tree().await {
+            Ok(tree) => collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids),
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to fetch remote folder tree for {}: {:#}. Treating remote folder state as empty.",
+                    root.remote_path,
+                    e
+                );
+            }
         }
 
         Ok(RemoteState {

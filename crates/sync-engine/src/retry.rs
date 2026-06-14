@@ -236,11 +236,15 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
 /// ```rust
 /// use sync_engine::retry::{RetryConfig, with_retry};
 ///
+/// # fn main() {
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let config = RetryConfig::default();
 /// let result = with_retry(&config, "upload file", || async {
 ///     // Your async operation here
 ///     Ok::<_, sync_domain::SyncError>(())
 /// }).await;
+/// # });
+/// # }
 /// ```
 pub async fn with_retry<F, Fut, T, E>(
     config: &RetryConfig,

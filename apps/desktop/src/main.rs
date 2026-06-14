@@ -36,9 +36,9 @@ struct Cli {
     #[arg(short, long, default_value = "rustshare.db")]
     db_name: String,
 
-    /// Server URL
-    #[arg(short, long, default_value = "http://localhost:8080")]
-    server: String,
+    /// Server URL (defaults to the value in config.toml, or http://localhost:8080)
+    #[arg(short, long)]
+    server: Option<String>,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -295,9 +295,12 @@ fn daemon_run_args(cli: &Cli) -> Vec<OsString> {
         cli.workspace.as_os_str().to_owned(),
         OsString::from("--db-name"),
         OsString::from(&cli.db_name),
-        OsString::from("--server"),
-        OsString::from(&cli.server),
     ];
+
+    if let Some(server) = &cli.server {
+        args.push(OsString::from("--server"));
+        args.push(OsString::from(server));
+    }
 
     if cli.verbose {
         args.push(OsString::from("--verbose"));
@@ -326,7 +329,9 @@ async fn async_main(cli: Cli) -> Result<()> {
     };
     std::fs::create_dir_all(&workspace)?;
 
-    let server = normalize_server_url(&server);
+    let config = Config::load()?;
+    let server = server.as_deref().unwrap_or(&config.server_url);
+    let server = normalize_server_url(server);
 
     // Initialize logging
     let log_level = if verbose { Level::DEBUG } else { Level::INFO };
@@ -426,7 +431,8 @@ async fn async_main(cli: Cli) -> Result<()> {
 
                 // Also add to config.toml for persistence
                 let mut config = Config::load()?;
-                config.add_sync_folder(root_id, resolved_local_path)?;
+                config.add_sync_folder(root_id, resolved_local_path);
+                config.save()?;
 
                 println!("✓ Registered sync root {}", root_id);
             }
@@ -654,7 +660,10 @@ async fn async_main(cli: Cli) -> Result<()> {
 
                 // Remove from config.toml
                 let mut config = Config::load()?;
-                let config_removed = config.remove_sync_folder(root_id)?;
+                let config_removed = config.remove_sync_folder(root_id);
+                if config_removed {
+                    config.save()?;
+                }
 
                 // Success if removed from either source
                 if db_removed || config_removed {
@@ -689,7 +698,11 @@ async fn async_main(cli: Cli) -> Result<()> {
 
                 // Update config.toml
                 let mut config = Config::load()?;
-                let updated = config.update_sync_folder(root_id, updates)?;
+                let updated = config.update_sync_folder(root_id, updates);
+
+                if updated {
+                    config.save()?;
+                }
 
                 if let Some(local_path) = resolved_local_path {
                     let db_arc = core.manager.database();
@@ -714,7 +727,10 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
             SyncAction::Enable { root_id } => {
                 let mut config = Config::load()?;
-                let updated = config.set_folder_enabled(root_id, true)?;
+                let updated = config.set_folder_enabled(root_id, true);
+                if updated {
+                    config.save()?;
+                }
 
                 if updated {
                     println!("✓ Enabled sync root {}", root_id);
@@ -726,7 +742,10 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
             SyncAction::Disable { root_id } => {
                 let mut config = Config::load()?;
-                let updated = config.set_folder_enabled(root_id, false)?;
+                let updated = config.set_folder_enabled(root_id, false);
+                if updated {
+                    config.save()?;
+                }
 
                 if updated {
                     println!("✓ Disabled sync root {}", root_id);
