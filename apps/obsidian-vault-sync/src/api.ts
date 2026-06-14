@@ -106,6 +106,10 @@ export class RustShareAPI {
     return `${this.baseUrl.replace(/\/$/, '')}/api/vault-sync/v1${endpoint}`;
   }
 
+  private buildAuthUrl(endpoint: string): string {
+    return `${this.baseUrl.replace(/\/$/, '')}/api/v1${endpoint}`;
+  }
+
   private encodePath(path: string): string {
     return path.replace(/\/+/g, '/').split('/').map(encodeURIComponent).join('/');
   }
@@ -138,8 +142,8 @@ export class RustShareAPI {
     });
   }
 
-  private async request<T>(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T>;
-  private async request(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<unknown> {
+  private async request<T>(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<T>;
+  private async request(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<unknown> {
     const headers: Record<string, string> = {};
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
@@ -153,7 +157,8 @@ export class RustShareAPI {
       headers['Content-Type'] = 'application/json';
     }
 
-    const response = await this.fetchWithTimeout(this.buildUrl(endpoint), {
+    const url = urlBuilder ? urlBuilder(endpoint) : this.buildUrl(endpoint);
+    const response = await this.fetchWithTimeout(url, {
       method,
       headers,
       body: body instanceof ArrayBuffer ? body : body !== undefined ? JSON.stringify(body) : undefined,
@@ -211,11 +216,11 @@ export class RustShareAPI {
 
   // Device pairing methods
   async requestDevicePairing(): Promise<DeviceRequestResponse> {
-    return this.request<DeviceRequestResponse>('POST', '/auth/device/request');
+    return this.request<DeviceRequestResponse>('POST', '/auth/device/request', undefined, undefined, this.buildAuthUrl.bind(this));
   }
 
   async pollDevicePairing(deviceCode: string): Promise<DevicePollResponse> {
-    return this.request<DevicePollResponse>('POST', '/auth/device/poll', { device_code: deviceCode });
+    return this.request<DevicePollResponse>('POST', '/auth/device/poll', { device_code: deviceCode }, undefined, this.buildAuthUrl.bind(this));
   }
 
   // Vault methods

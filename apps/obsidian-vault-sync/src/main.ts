@@ -150,11 +150,20 @@ export default class RustShareVaultSyncPlugin extends Plugin {
   private async connectVault(): Promise<void> {
     // Validate URL
     if (!this.settings.rustshareUrl) {
-      new Notice('Please enter your RustShare URL in settings first.');
+      new Notice('Please enter your RustShare URL in settings first.', 10000);
       return;
     }
 
-    const api = new RustShareAPI(this.settings.rustshareUrl, ''); // no token yet
+    let api: RustShareAPI;
+    try {
+      api = new RustShareAPI(this.settings.rustshareUrl, ''); // no token yet
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      console.error('RustShare Vault Sync: invalid URL', e);
+      new Notice(`Invalid RustShare URL: ${message}`, 10000);
+      this.statusBar.updateStatus('error', 'Invalid URL');
+      return;
+    }
 
     try {
       this.statusBar.updateStatus('syncing', 'Requesting device pairing...');
@@ -253,9 +262,11 @@ export default class RustShareVaultSyncPlugin extends Plugin {
       }
 
       this.statusBar.updateStatus('connected');
-    } catch (e) {
-      this.statusBar.updateStatus('error', `Connect failed: ${e}`);
-      new Notice(`Failed to connect: ${e}`);
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      console.error('RustShare Vault Sync: connect failed', e);
+      this.statusBar.updateStatus('error', `Connect failed: ${message}`);
+      new Notice(`Failed to connect: ${message}`, 10000);
     }
   }
 
