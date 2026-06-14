@@ -285,7 +285,7 @@ export default class RustShareVaultSyncPlugin extends Plugin {
     if (!vaultId) {
       const vault = await authedApi.createVault({
         name: this.app.vault.getName(),
-        adapter: 'obsidian_vault',
+        adapter: 'ObsidianVault',
         client_vault_id: undefined,
         device_id: this.settings.deviceId,
       });
