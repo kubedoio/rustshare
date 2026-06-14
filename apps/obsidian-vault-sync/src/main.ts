@@ -10,7 +10,7 @@ import { SyncEngine } from './sync';
 import { SyncState, createEmptySyncState, migrateSyncState, pruneTombstones } from './state';
 import { SyncQueue, SyncOperation } from './sync-queue';
 import { syncLog } from './sync-log';
-import { generateDeviceId, detectCloudSyncFolder, shouldIgnorePath } from './utils';
+import { generateDeviceId, detectCloudSyncFolder, shouldIgnorePath, isValidUuid } from './utils';
 
 export default class RustShareVaultSyncPlugin extends Plugin {
   declare settings: RustShareVaultSyncSettings;
@@ -240,6 +240,14 @@ export default class RustShareVaultSyncPlugin extends Plugin {
 
       // Create or use existing vault
       let vaultId = this.settings.vaultId;
+      if (vaultId && !isValidUuid(vaultId)) {
+        console.warn('RustShare Vault Sync: ignoring invalid stored vaultId:', vaultId);
+        new Notice(
+          `Stored Vault ID "${vaultId}" is not a valid UUID. A new vault will be created.`,
+          10000
+        );
+        vaultId = '';
+      }
       if (!vaultId) {
         const vault = await authedApi.createVault({
           name: this.app.vault.getName(),

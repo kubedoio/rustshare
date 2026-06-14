@@ -5,6 +5,7 @@ import {
   formatConflictFileName,
   shouldIgnorePath,
   detectCloudSyncFolder,
+  isValidUuid,
 } from '../src/utils';
 
 describe('sha256ArrayBuffer', () => {
@@ -107,5 +108,19 @@ describe('detectCloudSyncFolder', () => {
   it('returns null for non-cloud paths', () => {
     expect(detectCloudSyncFolder('/home/user/vault')).toBeNull();
     expect(detectCloudSyncFolder('C:/Users/me/Documents/Vault')).toBeNull();
+  });
+});
+
+describe('isValidUuid', () => {
+  it('accepts canonical UUIDs', () => {
+    expect(isValidUuid('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+    expect(isValidUuid('00000000-0000-0000-0000-000000000000')).toBe(true);
+  });
+
+  it('rejects arbitrary strings', () => {
+    expect(isValidUuid('obsidian')).toBe(false);
+    expect(isValidUuid('')).toBe(false);
+    expect(isValidUuid('550e8400-e29b-41d4-a716-44665544000')).toBe(false);
+    expect(isValidUuid('550e8400e29b41d4a716446655440000')).toBe(false);
   });
 });
