@@ -174,28 +174,21 @@ export default class RustShareVaultSyncPlugin extends Plugin {
       console.log('RustShare Vault Sync: pairing requested', pairing);
 
       // Step 2: Show pairing code to user
-      let verificationUrl = pairing.verification_uri_complete || pairing.verification_uri;
-      // The backend may return http:// behind a reverse proxy; normalize to the
-      // scheme the user configured so the approval page opens correctly.
-      if (this.settings.rustshareUrl.startsWith('https:') && verificationUrl.startsWith('http:')) {
-        verificationUrl = verificationUrl.replace(/^http:/, 'https:');
-      }
+      const baseUrl = this.settings.rustshareUrl.replace(/\/$/, '');
+      const manualApprovalUrl = `${baseUrl}/device`;
       const formattedCode = `${pairing.user_code.slice(0, 4)}-${pairing.user_code.slice(4)}`;
 
-      new Notice(
-        `Pairing code: ${formattedCode}. Opening approval page...`,
-        10000
-      );
-
+      // Copy the code to the clipboard so the user can paste it on the web page.
       try {
-        window.open(verificationUrl, '_blank');
-      } catch (openErr) {
-        console.warn('RustShare Vault Sync: could not open approval URL automatically', openErr);
-        new Notice(
-          `Open this URL to approve: ${verificationUrl}`,
-          30000
-        );
+        await navigator.clipboard.writeText(formattedCode);
+      } catch (clipErr) {
+        console.warn('RustShare Vault Sync: could not copy pairing code', clipErr);
       }
+
+      new Notice(
+        `Pairing code: ${formattedCode} (copied). Go to ${manualApprovalUrl} on an already authenticated device and enter the code.`,
+        30000
+      );
 
       this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${formattedCode})...`);
 
