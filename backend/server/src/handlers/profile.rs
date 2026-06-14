@@ -13,7 +13,7 @@ use crate::handlers::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 /// Response for GET /api/v1/users/me/profile
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProfileResponse {
     pub id: String,
     pub username: String,
@@ -30,7 +30,7 @@ pub struct ProfileResponse {
 }
 
 /// Request for PATCH /api/v1/users/me/profile
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateProfileRequest {
     pub name: Option<String>,
     pub surname: Option<String>,
@@ -40,7 +40,7 @@ pub struct UpdateProfileRequest {
 }
 
 /// Response for successful profile update
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UpdateProfileResponse {
     pub id: String,
     pub username: String,
@@ -57,7 +57,7 @@ pub struct UpdateProfileResponse {
 }
 
 /// Request for PATCH /api/v1/users/me/trash-retention
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateTrashRetentionRequest {
     pub days: Option<i32>,
 }
@@ -106,6 +106,15 @@ fn validate_update_request(req: &UpdateProfileRequest) -> Result<(), Vec<String>
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 404 Not Found: User not found
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/me/profile",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -163,6 +172,15 @@ pub async fn get_profile(
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 404 Not Found: User not found
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    patch,
+    path = "/api/v1/users/me/profile",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_profile(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -274,6 +292,15 @@ pub async fn update_profile(
 /// - 400 Bad Request: Invalid days value
 /// - 401 Unauthorized: Missing or invalid authentication
 /// - 500 Internal Server Error: Database error
+#[utoipa::path(
+    patch,
+    path = "/api/v1/users/me/trash-retention",
+    tag = "Users",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_trash_retention(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,

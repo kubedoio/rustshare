@@ -2,10 +2,15 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
+use bytes::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use rustshare_core::domain::Folder;
@@ -18,7 +23,7 @@ use crate::AppState;
 // ============================================================================
 
 /// Folder with share information for list responses
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct FolderWithShares {
     // Folder fields
     pub id: Uuid,
@@ -43,7 +48,7 @@ pub struct FolderWithShares {
 }
 
 /// Folder contents with share indicators
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderContentsWithShares {
     pub folders: Vec<FolderWithShares>,
     pub files: Vec<crate::handlers::files::FileWithShares>,
@@ -52,7 +57,7 @@ pub struct FolderContentsWithShares {
 }
 
 /// Folder tree node with share information for sidebar
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderTreeNode {
     pub id: Uuid,
     pub name: String,
@@ -72,9 +77,10 @@ pub struct FolderTreeNode {
 }
 
 /// Folder tree response with share indicators
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FolderTreeWithShares {
     pub folder: FolderTreeNode,
+    #[schema(no_recursion)]
     pub subfolders: Vec<FolderTreeWithShares>,
 }
 
@@ -87,6 +93,17 @@ pub struct FolderTreeWithShares {
 /// POST /api/folders
 ///
 /// Request body: { "name": "Documents", "parent_folder_id": "uuid-or-null" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders",
+    tag = "Folders",
+    request_body = CreateFolderRequest,
+    responses(
+        (status = 201, description = "Folder created", body = Folder),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -100,7 +117,7 @@ pub async fn create_folder(
     Ok((StatusCode::CREATED, Json(folder)))
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateFolderRequest {
     #[validate(length(
         min = 1,
@@ -114,6 +131,17 @@ pub struct CreateFolderRequest {
 /// Get folder metadata.
 ///
 /// GET /api/folders/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}",
+    tag = "Folders",
+    params(("id" = Uuid, Path, description = "Folder ID")),
+    responses(
+        (status = 200, description = "Folder metadata", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Folder not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -129,6 +157,17 @@ pub async fn get_folder(
 /// Delete a folder and its contents.
 ///
 /// DELETE /api/folders/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/folders/{id}",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -148,6 +187,17 @@ pub async fn delete_folder(
 /// List folder contents (immediate children only) with share indicators.
 ///
 /// GET /api/folders/{id}/contents
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/contents",
+    tag = "Folders",
+    params(("id" = Uuid, Path, description = "Folder ID")),
+    responses(
+        (status = 200, description = "Folder contents", body = FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Folder not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -262,6 +312,15 @@ pub async fn get_folder_contents(
 /// List root contents (folders and files with no parent) with share indicators.
 ///
 /// GET /api/folders/root/contents
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/root/contents",
+    tag = "Folders",
+    responses(
+        (status = 200, description = "Root folder contents", body = FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_root_contents(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -466,6 +525,15 @@ async fn build_folder_tree_with_shares(
 /// GET /api/folders/tree
 ///
 /// Returns a virtual root folder containing all user's root-level folders as subfolders.
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/tree",
+    tag = "Folders",
+    responses(
+        (status = 200, description = "Folder tree", body = FolderTreeWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_folder_tree(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -510,11 +578,23 @@ pub async fn get_folder_tree(
     Ok(Json(tree))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WorkspaceStarRequest {
     pub starred: bool,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/folders/{id}/star",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = WorkspaceStarRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn toggle_folder_star(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -537,6 +617,17 @@ pub async fn toggle_folder_star(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/restore-from-trash",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn restore_folder_from_trash(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -565,6 +656,17 @@ pub async fn restore_folder_from_trash(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/folders/{id}/permanent",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn permanently_delete_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -595,6 +697,18 @@ pub async fn permanently_delete_folder(
 /// POST /api/folders/{id}/move
 ///
 /// Request body: { "target_parent_id": "uuid-or-null" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/move",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = MoveFolderRequest,
+    responses(
+        (status = 200, description = "Success", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn move_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -609,7 +723,7 @@ pub async fn move_folder(
     Ok(Json(folder))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MoveFolderRequest {
     pub target_parent_id: Option<Uuid>,
 }
@@ -619,6 +733,18 @@ pub struct MoveFolderRequest {
 /// POST /api/folders/{id}/rename
 ///
 /// Request body: { "new_name": "New Documents" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/folders/{id}/rename",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    request_body = RenameFolderRequest,
+    responses(
+        (status = 200, description = "Success", body = Folder),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_folder(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -633,7 +759,226 @@ pub async fn rename_folder(
     Ok(Json(folder))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameFolderRequest {
     pub new_name: String,
+}
+
+// ============================================================================
+// Folder Download as Zip
+// ============================================================================
+
+const MAX_ZIP_SIZE_BYTES: i64 = 1024 * 1024 * 1024; // 1 GB
+
+/// Hidden kanban metadata files that should be excluded from zip downloads.
+fn is_hidden_kanban_file(name: &str) -> bool {
+    matches!(
+        name,
+        ".rustshare-board.json"
+            | ".rustshare-column.json"
+            | ".rustshare-card.json"
+            | "events.jsonl"
+            | "index.md"
+            | "__primary__.md"
+    ) || name.ends_with(".editor.json")
+}
+
+/// Sanitize a path for use in a zip archive, preventing zip-slip attacks.
+fn sanitize_zip_path(path: &str) -> Option<String> {
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        if component.is_empty() {
+            continue;
+        }
+        if component == ".." {
+            return None;
+        }
+        components.push(component);
+    }
+    if components.is_empty() {
+        None
+    } else {
+        Some(components.join("/"))
+    }
+}
+
+/// Download a folder and all its contents as a zip archive.
+///
+/// GET /api/v1/folders/{id}/download
+#[utoipa::path(
+    get,
+    path = "/api/v1/folders/{id}/download",
+    tag = "Folders",
+    params(("folder_id" = Uuid, Path, description = "Folder Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn download_folder(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(folder_id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    // 1. Verify folder exists and user has access
+    let folder = state
+        .folder_service
+        .get_folder(folder_id, auth.user_id)
+        .await?;
+
+    // 2. Collect all descendant folders (includes the root folder)
+    let all_folders = state
+        .metadata_store
+        .find_descendant_folders(folder_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list folders: {e}")))?;
+
+    let folder_ids: Vec<Uuid> = all_folders.iter().map(|f| f.id).collect();
+
+    // 3. Collect all files in those folders
+    let mut files = state
+        .metadata_store
+        .find_files_in_folders(&folder_ids, folder.owner_id, auth.tenant_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list files: {e}")))?;
+
+    // Filter out hidden kanban files
+    files.retain(|f| !is_hidden_kanban_file(&f.name));
+
+    // 4. Size limit check
+    let total_size: i64 = files.iter().map(|f| f.size).sum();
+    if total_size > MAX_ZIP_SIZE_BYTES {
+        return Err(AppError::bad_request(format!(
+            "Folder exceeds {}GB download limit",
+            MAX_ZIP_SIZE_BYTES / (1024 * 1024 * 1024)
+        )));
+    }
+
+    // 5. Pre-fetch file contents before entering spawn_blocking
+    let folder_name = folder.name.clone();
+    let folder_path = folder.path.clone();
+    let mut file_contents: Vec<(String, Bytes)> = Vec::new();
+
+    for file in &files {
+        let relative_path = file
+            .path
+            .strip_prefix(&folder_path)
+            .unwrap_or(&file.path)
+            .trim_start_matches('/');
+
+        let sanitized = match sanitize_zip_path(relative_path) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(path = %relative_path, "Skipping file with invalid path containing ..");
+                continue;
+            }
+        };
+
+        let zip_path = format!("{}/{}", folder_name, sanitized);
+        let storage_key = format!("blobs/{}", file.content_hash);
+
+        match state.object_store.get(&storage_key).await {
+            Ok(bytes) => {
+                file_contents.push((zip_path, bytes));
+            }
+            Err(e) => {
+                tracing::warn!(file = %file.name, error = %e, "Failed to fetch file from object store");
+            }
+        }
+    }
+
+    // 6. Build zip in a blocking task
+    let folder_name_for_zip = folder_name.clone();
+
+    let temp_file = tokio::task::spawn_blocking(move || -> Result<tempfile::NamedTempFile, AppError> {
+        let mut temp = tempfile::NamedTempFile::new()
+            .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+        {
+            let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(&mut temp));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            // Add empty folders as directory entries
+            for f in &all_folders {
+                let relative_path = f
+                    .path
+                    .strip_prefix(&folder_path)
+                    .unwrap_or(&f.path)
+                    .trim_start_matches('/');
+                if relative_path.is_empty() {
+                    continue;
+                }
+                let Some(sanitized) = sanitize_zip_path(relative_path) else {
+                    tracing::warn!(path = %relative_path, "Skipping folder with invalid path containing ..");
+                    continue;
+                };
+                let dir_path = format!("{}/{}/", folder_name_for_zip, sanitized);
+                if let Err(e) = zip.add_directory(&dir_path, options) {
+                    tracing::warn!(error = %e, path = %dir_path, "Failed to add directory to zip");
+                }
+            }
+
+            // Add files
+            for (zip_path, bytes) in file_contents {
+                if let Err(e) = zip.start_file(&zip_path, options) {
+                    tracing::warn!(path = %zip_path, error = %e, "Failed to start zip file");
+                    continue;
+                }
+                if let Err(e) = std::io::Write::write_all(&mut zip, &bytes) {
+                    tracing::warn!(path = %zip_path, error = %e, "Failed to write file to zip");
+                    continue;
+                }
+            }
+
+            zip.finish()
+                .map_err(|e| AppError::internal(format!("Failed to finalize zip: {e}")))?;
+        }
+
+        Ok(temp)
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("Zip generation task panicked: {e}")))??;
+
+    // 6. Stream the temp file back
+    let temp_path = temp_file.path().to_path_buf();
+    let file = tokio::fs::File::open(&temp_path)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to open temp file: {e}")))?;
+
+    let filename = format!("{}.zip", folder_name);
+    let content_disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        filename.replace('"', "\\\""),
+        urlencoding::encode(&filename)
+    );
+
+    let stream = futures_util::stream::unfold(file, |mut file| async move {
+        let mut buf = vec![0u8; 64 * 1024];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => Some((
+                Ok::<_, std::io::Error>(Bytes::copy_from_slice(&buf[..n])),
+                file,
+            )),
+            Err(e) => Some((Err(e), file)),
+        }
+    });
+
+    // Append a final chunk that drops the temp file after streaming
+    let stream = stream.chain(futures_util::stream::once(async move {
+        drop(temp_file);
+        Ok::<_, std::io::Error>(Bytes::new())
+    }));
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/zip"),
+            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
 }

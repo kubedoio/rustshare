@@ -5,6 +5,9 @@
 	import { getShareAccessLog, listAllUserShares, revokeShare } from '$lib/api/shares';
 	import Toast from '$lib/components/common/Toast.svelte';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
+	import SharesSkeleton from '$lib/components/common/SharesSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
+	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { queryClient } from '$lib/query-client';
 	import {
 		Activity,
@@ -178,6 +181,8 @@
 	let totalAccessCount = $derived(shares.reduce((sum, share) => sum + share.access_count, 0));
 </script>
 
+<OfflineBanner />
+
 <div class="mx-auto max-w-6xl space-y-6 p-4 lg:p-6">
 	<div class="space-y-6">
 		<div
@@ -269,26 +274,13 @@
 		</div>
 
 		{#if $sharesQuery.isLoading}
-			<div class="flex justify-center py-12">
-				<span class="loading loading-lg loading-spinner"></span>
-			</div>
+			<SharesSkeleton />
 		{:else if $sharesQuery.isError}
-			<div class="alert alert-error">
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					class="h-6 w-6 shrink-0 stroke-current"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-					></path>
-				</svg>
-				<span>Failed to load shares: {$sharesQuery.error?.message}</span>
-			</div>
+			<ErrorState
+				title="Failed to load shares"
+				message={$sharesQuery.error?.message || 'Unknown error'}
+				onRetry={() => $sharesQuery.refetch()}
+			/>
 		{:else if $sharesQuery.data && $sharesQuery.data.length === 0}
 			<div
 				class="rounded-[2rem] border border-dashed border-base-300 bg-base-100 px-6 py-16 text-center shadow-sm"

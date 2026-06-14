@@ -14,6 +14,7 @@ mod thumbnail;
 mod user;
 mod user_module_preference;
 mod user_session;
+mod vault;
 
 pub use device_token::{DevicePairRequest, DeviceToken};
 
@@ -27,7 +28,7 @@ pub use replication::{
     ReplicationJob, ReplicationJobId, ReplicationJobStatus, ReplicationTarget, ReplicationTargetId,
 };
 pub use response_types::{FolderContents, FolderTree};
-pub use share::{Share, SharePermissions, ShareRecipient};
+pub use share::{Share, SharePermissions, ShareRecipient, ShareType};
 pub use template::{CreateFromTemplateRequest, CreatedObject, Template, TemplateDefaultFile};
 pub use tenant_config::RecipientVisibility;
 pub use thumbnail::{
@@ -39,6 +40,11 @@ pub use thumbnail::{
 pub use user::{DashboardConfig, Theme, User};
 pub use user_module_preference::UserModulePreference;
 pub use user_session::UserSession;
+pub use vault::{
+    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest, UploadVaultFileRequest,
+    Vault, VaultAdapter, VaultDevice, VaultFile, VaultManifest, VaultManifestEntry,
+    VaultManifestResult,
+};
 
 use uuid::Uuid;
 
@@ -53,3 +59,5 @@ pub type FolderId = Uuid;
 pub type ShareId = Uuid;
 /// Unique identifier for a file version.
 pub type VersionId = Uuid;
+/// Unique identifier for a vault.
+pub type VaultId = Uuid;

@@ -12,6 +12,128 @@ use uuid::Uuid;
 
 use crate::services::icon_registry::is_approved_icon_key;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use sqlx::Row;
+
+#[allow(clippy::type_complexity)]
+fn default_modules() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+    serde_json::Value,
+)> {
+    vec![
+        (
+            "notes",
+            "Notes",
+            "Capture file-backed notes and reusable knowledge.",
+            "/Workspace/Notes",
+            "notes",
+            "template_default_note",
+            "sticky-note",
+            true,
+            json!({
+                "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
+                "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_note" } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note" }
+            }),
+        ),
+        (
+            "meetings",
+            "Meeting Notes",
+            "Record simple meeting notes, decisions, and follow-up items.",
+            "/Workspace/Meetings",
+            "meetings",
+            "template_default_meeting",
+            "calendar-days",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 40, "icon": "calendar-days", "label": "Meeting Notes" },
+                "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Recent meeting notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New meeting note", "action": "create-from-template", "template": "template_default_meeting" } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meeting notes yet", "emptyStateDescription": "Create a meeting note to capture agenda, discussion, decisions, and follow-up items.", "emptyStateAction": "New meeting note" }
+            }),
+        ),
+        (
+            "standups",
+            "Standup Records",
+            "Capture simple daily updates, blockers, and follow-up items.",
+            "/Workspace/Standups",
+            "standups",
+            "template_default_standup",
+            "clipboard-list",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 50, "icon": "clipboard-list", "label": "Standup Records" },
+                "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Recent standup records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New standup", "action": "create-from-template", "template": "template_default_standup" } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standup records yet", "emptyStateDescription": "Create a daily update to capture progress, blockers, and follow-up items.", "emptyStateAction": "New standup" }
+            }),
+        ),
+        (
+            "kanban",
+            "Kanban",
+            "Organize lightweight work boards in your workspace.",
+            "/Workspace/Kanban",
+            "kanban",
+            "template_default_kanban",
+            "columns",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 50, "icon": "columns", "label": "Kanban" },
+                "dashboard": { "enabled": true, "order": 40, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban", "description": "Recent boards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } } },
+                "page": { "enabled": true, "route": "/modules/kanban", "renderer": "kanban", "layout": "kanban-board", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create a lightweight board to organize work, ideas, or follow-up items.", "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } }
+            }),
+        ),
+        (
+            "decisions",
+            "Decisions",
+            "Record important decisions with context and rationale.",
+            "/Workspace/Decisions",
+            "decisions",
+            "template_default_decision",
+            "git-branch",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 70, "icon": "git-branch", "label": "Decisions" },
+                "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Recent decision records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New decision", "action": "create-from-template", "template": "template_default_decision" } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Create a decision record to preserve context, rationale, and follow-up.", "emptyStateAction": "New decision" }
+            }),
+        ),
+        (
+            "brainstorming",
+            "Brainstorming",
+            "Capture sketches, flows, and early ideas as visual workspace boards.",
+            "/Workspace/Brainstorming",
+            "brainstorming",
+            "template_blank_brainstorm",
+            "lightbulb",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 55, "icon": "lightbulb", "label": "Brainstorming" },
+                "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent idea boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
+                "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No idea boards yet", "emptyStateDescription": "Create a simple visual board to capture sketches, flows, or early thinking.", "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
+            }),
+        ),
+        (
+            "shares",
+            "Shares",
+            "Manage items shared from your workspace.",
+            "/Workspace/Shares",
+            "shares",
+            "template_default_share",
+            "share-2",
+            false,
+            json!({
+                "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
+                "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Recent shares.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New share", "action": "generic-create" } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
+            }),
+        ),
+    ]
+}
 
 /// Errors that can occur in module operations.
 #[derive(Debug, thiserror::Error)]
@@ -81,7 +203,7 @@ pub struct ModuleService {
     metadata_store: Arc<MetadataStore>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct ModuleSummary {
     pub module_key: String,
     pub mode: String,
@@ -90,7 +212,7 @@ pub struct ModuleSummary {
     pub extra: Option<serde_json::Value>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct SummaryItem {
     pub id: String,
     pub name: String,
@@ -131,113 +253,7 @@ impl ModuleService {
 
     /// Ensure default predefined modules exist. Does not overwrite existing.
     pub async fn ensure_default_modules(&self, tenant_id: Uuid) -> Result<(), ModuleError> {
-        let defaults = vec![
-            (
-                "notes",
-                "Notes",
-                "Capture file-backed notes and reusable knowledge.",
-                "/Workspace/Notes",
-                "notes",
-                "template_default_note",
-                "sticky-note",
-                true,
-                json!({
-                    "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
-                    "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_note" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note" }
-                }),
-            ),
-            (
-                "meetings",
-                "Meeting Notes",
-                "Record simple meeting notes, decisions, and follow-up items.",
-                "/Workspace/Meetings",
-                "meetings",
-                "template_default_meeting",
-                "calendar-days",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 40, "icon": "calendar-days", "label": "Meeting Notes" },
-                    "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Recent meeting notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New meeting note", "action": "create-from-template", "template": "template_default_meeting" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meeting notes yet", "emptyStateDescription": "Create a meeting note to capture agenda, discussion, decisions, and follow-up items.", "emptyStateAction": "New meeting note" }
-                }),
-            ),
-            (
-                "standups",
-                "Standup Records",
-                "Capture simple daily updates, blockers, and follow-up items.",
-                "/Workspace/Standups",
-                "standups",
-                "template_default_standup",
-                "clipboard-list",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 50, "icon": "clipboard-list", "label": "Standup Records" },
-                    "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Recent standup records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New standup", "action": "create-from-template", "template": "template_default_standup" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standup records yet", "emptyStateDescription": "Create a daily update to capture progress, blockers, and follow-up items.", "emptyStateAction": "New standup" }
-                }),
-            ),
-            (
-                "kanban",
-                "Kanban",
-                "Organize lightweight work boards in your workspace.",
-                "/Workspace/Kanban",
-                "kanban",
-                "template_default_kanban",
-                "columns",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 50, "icon": "columns", "label": "Kanban" },
-                    "dashboard": { "enabled": true, "order": 40, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban", "description": "Recent boards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } } },
-                    "page": { "enabled": true, "route": "/modules/kanban", "renderer": "kanban", "layout": "kanban-board", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create a lightweight board to organize work, ideas, or follow-up items.", "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } }
-                }),
-            ),
-            (
-                "decisions",
-                "Decisions",
-                "Record important decisions with context and rationale.",
-                "/Workspace/Decisions",
-                "decisions",
-                "template_default_decision",
-                "git-branch",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 70, "icon": "git-branch", "label": "Decisions" },
-                    "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Recent decision records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New decision", "action": "create-from-template", "template": "template_default_decision" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Create a decision record to preserve context, rationale, and follow-up.", "emptyStateAction": "New decision" }
-                }),
-            ),
-            (
-                "brainstorming",
-                "Brainstorming",
-                "Capture sketches, flows, and early ideas as visual workspace boards.",
-                "/Workspace/Brainstorming",
-                "brainstorming",
-                "template_blank_brainstorm",
-                "lightbulb",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 55, "icon": "lightbulb", "label": "Brainstorming" },
-                    "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent idea boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
-                    "page": { "enabled": true, "route": "/modules/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No idea boards yet", "emptyStateDescription": "Create a simple visual board to capture sketches, flows, or early thinking.", "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
-                }),
-            ),
-            (
-                "shares",
-                "Shares",
-                "Manage items shared from your workspace.",
-                "/Workspace/Shares",
-                "shares",
-                "template_default_share",
-                "share-2",
-                false,
-                json!({
-                    "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
-                    "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Recent shares.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New share", "action": "generic-create" } },
-                    "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
-                }),
-            ),
-        ];
+        let defaults = default_modules();
 
         for (
             key,
@@ -555,8 +571,12 @@ impl ModuleService {
         let description = input.description.unwrap_or(module.description);
         let icon = input.icon.unwrap_or(module.icon);
         validate_module_icon(&icon)?;
-        let root_path = input.root_path.unwrap_or(module.root_path);
-        validate_root_path(&root_path)?;
+        let root_path = input.root_path.clone().unwrap_or(module.root_path);
+        // Only enforce canonical path when explicitly changing root_path.
+        // Existing legacy modules may keep their root path for read compatibility.
+        if input.root_path.is_some() {
+            validate_root_path(&root_path)?;
+        }
         let renderer = input.renderer.unwrap_or(module.renderer);
         let default_template = input.default_template.unwrap_or(module.default_template);
         let permissions = input.permissions.unwrap_or(module.permissions);
@@ -663,26 +683,84 @@ impl ModuleService {
         let root_path = module.root_path.trim_end_matches('/').to_string();
         let path_prefix = format!("{root_path}/%");
 
-        let row = sqlx::query!(
-            "SELECT COUNT(*) as count FROM files WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3",
-            tenant_id,
-            user_id,
-            &path_prefix
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM files f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND (
+                      s.file_id = f.id
+                      OR (
+                        shared_folder.id IS NOT NULL
+                        AND f.path LIKE shared_folder.path || '/%'
+                      )
+                    )
+                )
+              )
+            "#,
         )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(&path_prefix)
         .fetch_one(self.metadata_store.pool())
         .await;
-        let file_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+        let file_count = row
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0);
 
-        let row = sqlx::query!(
-            "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND path <> $4",
-            tenant_id,
-            user_id,
-            &path_prefix,
-            &root_path
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND f.path <> $4
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            "#,
         )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(&path_prefix)
+        .bind(&root_path)
         .fetch_one(self.metadata_store.pool())
         .await;
-        let folder_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+        let folder_count = row
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0);
 
         let total_items = file_count + folder_count;
 
@@ -866,29 +944,63 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name FROM files f LEFT JOIN folders pf ON f.parent_folder_id = pf.id WHERE f.tenant_id = $1 AND f.owner_id = $2 AND f.deleted_at IS NULL AND f.path LIKE $3 ORDER BY f.modified_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.modified_at, f.parent_folder_id, pf.name as parent_name
+            FROM files f
+            LEFT JOIN folders pf ON f.parent_folder_id = pf.id
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND (
+                      s.file_id = f.id
+                      OR (
+                        shared_folder.id IS NOT NULL
+                        AND f.path LIKE shared_folder.path || '/%'
+                      )
+                    )
+                )
+              )
+            ORDER BY f.modified_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| {
-                let display_name = if row.name == "note.md" {
-                    row.parent_name
+                let name: String = row.get("name");
+                let parent_name: Option<String> = row.try_get("parent_name").unwrap_or(None);
+                let display_name = if name == "note.md" {
+                    parent_name.unwrap_or(name)
                 } else {
-                    row.name
+                    name
                 };
                 SummaryItem {
-                    id: row.id.to_string(),
+                    id: row.get::<Uuid, _>("id").to_string(),
                     name: display_name,
                     item_type: "file".to_string(),
-                    updated_at: row.modified_at,
+                    updated_at: row.get("modified_at"),
                 }
             })
             .collect())
@@ -901,23 +1013,49 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 ORDER BY updated_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }
@@ -930,24 +1068,51 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND path LIKE $3 AND name LIKE $4 ORDER BY updated_at DESC LIMIT $5",
-            tenant_id,
-            owner_id,
-            path_prefix,
-            name_pattern,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND f.path LIKE $3
+              AND f.name LIKE $4
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $5
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(path_prefix)
+        .bind(name_pattern)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }
@@ -959,23 +1124,53 @@ impl ModuleService {
         tenant_id: Uuid,
         owner_id: UserId,
     ) -> Result<Vec<SummaryItem>, ModuleError> {
-        let rows = sqlx::query!(
-            "SELECT id, name, updated_at FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND parent_folder_id = (SELECT id FROM folders WHERE path = $3 AND tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL LIMIT 1) ORDER BY updated_at DESC LIMIT $4",
-            tenant_id,
-            owner_id,
-            root_path,
-            max_items
+        let rows = sqlx::query(
+            r#"
+            SELECT f.id, f.name, f.updated_at
+            FROM folders f
+            JOIN folders root
+              ON root.id = f.parent_folder_id
+             AND root.path = $3
+             AND root.tenant_id = $1
+             AND root.deleted_at IS NULL
+            WHERE f.tenant_id = $1
+              AND f.deleted_at IS NULL
+              AND (
+                f.owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM shares s
+                  LEFT JOIN group_members gm
+                    ON gm.group_id = s.recipient_group_id
+                   AND gm.user_id = $2
+                  LEFT JOIN folders shared_folder
+                    ON shared_folder.id = s.folder_id
+                   AND shared_folder.deleted_at IS NULL
+                  WHERE s.revoked_at IS NULL
+                    AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                    AND (s.recipient_user_id = $2 OR gm.user_id IS NOT NULL)
+                    AND shared_folder.id IS NOT NULL
+                    AND (f.id = shared_folder.id OR f.path LIKE shared_folder.path || '/%')
+                )
+              )
+            ORDER BY f.updated_at DESC
+            LIMIT $4
+            "#,
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(root_path)
+        .bind(max_items)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
         Ok(rows
             .into_iter()
             .map(|row| SummaryItem {
-                id: row.id.to_string(),
-                name: row.name,
+                id: row.get::<Uuid, _>("id").to_string(),
+                name: row.get("name"),
                 item_type: "folder".to_string(),
-                updated_at: row.updated_at,
+                updated_at: row.get("updated_at"),
             })
             .collect())
     }
@@ -1055,6 +1250,14 @@ fn validate_root_path(root_path: &str) -> Result<(), ModuleError> {
     if !root_path.starts_with('/') || root_path.contains("..") || root_path.trim() == "/" {
         return Err(ModuleError::InvalidName(format!(
             "Invalid root path: {root_path}"
+        )));
+    }
+
+    // Enforce canonical /Workspace prefix for new/changed module roots.
+    // Legacy roots are read-only; new writes must be under /Workspace.
+    if !root_path.starts_with("/Workspace/") {
+        return Err(ModuleError::InvalidName(format!(
+            "Root path must be under /Workspace: {root_path}"
         )));
     }
 
@@ -1353,7 +1556,7 @@ fn default_sidebar_order(module_key: &str) -> i64 {
 
 fn default_page_layout(module_key: &str) -> &str {
     match module_key {
-        "kanban" => "board",
+        "kanban" => "kanban-board",
         _ => "list-grid",
     }
 }
@@ -1385,6 +1588,93 @@ fn default_empty_state_description(module_key: &str, description: &str) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_module_ui_config_contract() {
+        let ui = normalize_module_ui_config(
+            "notes",
+            "Notes",
+            "Capture file-backed notes.",
+            "sticky-note",
+            "/Workspace/Notes",
+            "notes",
+            Some("template_default_note"),
+            Some(serde_json::json!({
+                "sidebar": {"enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes"},
+                "dashboard": {"enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_note"}},
+                "modulePage": {"layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note"}
+            })),
+        );
+
+        let ui_obj = ui.as_object().unwrap();
+
+        // Canonical page key must exist
+        assert!(ui_obj.contains_key("page"), "canonical 'page' key missing");
+        // Legacy alias must exist for backward compatibility
+        assert!(
+            ui_obj.contains_key("modulePage"),
+            "legacy 'modulePage' alias missing"
+        );
+
+        let page = ui_obj.get("page").unwrap().as_object().unwrap();
+        assert_eq!(
+            page.get("route").unwrap().as_str().unwrap(),
+            "/modules/notes"
+        );
+        assert_eq!(page.get("renderer").unwrap().as_str().unwrap(), "notes");
+        assert_eq!(page.get("layout").unwrap().as_str().unwrap(), "list-grid");
+        assert!(page.get("enabled").unwrap().as_bool().unwrap());
+
+        let dashboard = ui_obj.get("dashboard").unwrap().as_object().unwrap();
+        let widget = dashboard.get("widget").unwrap().as_object().unwrap();
+        assert_eq!(
+            widget.get("type").unwrap().as_str().unwrap(),
+            "recent-items"
+        );
+        assert_eq!(widget.get("size").unwrap().as_str().unwrap(), "small");
+        assert_eq!(widget.get("maxItems").unwrap().as_i64().unwrap(), 4);
+
+        // Columns must be present
+        let columns = widget.get("columns").unwrap().as_object().unwrap();
+        assert!(columns.contains_key("desktop"));
+        assert!(columns.contains_key("tablet"));
+        assert!(columns.contains_key("mobile"));
+    }
+
+    #[test]
+    fn test_normalize_module_ui_config_defaults_match_contract() {
+        let ui = normalize_module_ui_config(
+            "kanban",
+            "Kanban",
+            "Organize work.",
+            "columns",
+            "/Workspace/Kanban",
+            "kanban",
+            Some("template_default_kanban"),
+            None,
+        );
+
+        let ui_obj = ui.as_object().unwrap();
+        let dashboard = ui_obj.get("dashboard").unwrap().as_object().unwrap();
+        let widget = dashboard.get("widget").unwrap().as_object().unwrap();
+
+        // Default widget types must not drift from contract
+        assert_eq!(
+            widget.get("type").unwrap().as_str().unwrap(),
+            "kanban-summary"
+        );
+        assert_eq!(widget.get("size").unwrap().as_str().unwrap(), "large");
+
+        let page = ui_obj.get("page").unwrap().as_object().unwrap();
+        assert_eq!(
+            page.get("layout").unwrap().as_str().unwrap(),
+            "kanban-board"
+        );
+        assert_eq!(
+            page.get("route").unwrap().as_str().unwrap(),
+            "/modules/kanban"
+        );
+    }
 
     #[test]
     fn test_module_error_display() {
@@ -1471,6 +1761,69 @@ mod tests {
     #[test]
     fn rejects_unapproved_module_icons() {
         assert!(validate_module_icon("users").is_err());
-        assert!(validate_module_icon("activity").is_err());
+        assert!(validate_module_icon("invalid-random-icon").is_err());
+        assert!(validate_module_icon("script<alert>1</alert>").is_err());
+    }
+
+    #[test]
+    fn default_module_definitions_use_canonical_workspace_root_paths() {
+        // This test protects the legacy module root policy at the registry level:
+        // all predefined modules must use /Workspace/<Module> so that new writes
+        // go to the canonical path.
+        let expected_roots = [
+            ("notes", "/Workspace/Notes"),
+            ("meetings", "/Workspace/Meetings"),
+            ("standups", "/Workspace/Standups"),
+            ("kanban", "/Workspace/Kanban"),
+            ("decisions", "/Workspace/Decisions"),
+            ("brainstorming", "/Workspace/Brainstorming"),
+            ("shares", "/Workspace/Shares"),
+        ];
+
+        let defaults = default_modules();
+        for (key, expected) in expected_roots {
+            let found = defaults
+                .iter()
+                .find(|(k, _, _, _, _, _, _, _, _)| *k == key);
+            assert!(found.is_some(), "default module {} must exist", key);
+            let (_, _, _, root_path, _, _, _, _, _) = found.unwrap();
+            assert_eq!(
+                *root_path, expected,
+                "module {} must use canonical workspace root",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn validate_root_path_accepts_canonical_workspace_paths() {
+        assert!(validate_root_path("/Workspace/Notes").is_ok());
+        assert!(validate_root_path("/Workspace/Meetings").is_ok());
+        assert!(validate_root_path("/Workspace/Decisions").is_ok());
+    }
+
+    #[test]
+    fn validate_root_path_rejects_invalid_paths() {
+        assert!(validate_root_path("Notes").is_err()); // missing leading slash
+        assert!(validate_root_path("/").is_err()); // root only
+        assert!(validate_root_path("/../Notes").is_err()); // path traversal
+    }
+
+    #[test]
+    fn validate_root_path_rejects_legacy_roots() {
+        // Legacy roots are read-only; new/changed module roots must be canonical.
+        assert!(validate_root_path("/Notes").is_err());
+        assert!(validate_root_path("/Meetings").is_err());
+        assert!(validate_root_path("/Standups").is_err());
+        assert!(validate_root_path("/Kanban").is_err());
+        assert!(validate_root_path("/Decisions").is_err());
+        assert!(validate_root_path("/Brainstorming").is_err());
+        assert!(validate_root_path("/Shares").is_err());
+    }
+
+    #[test]
+    fn validate_root_path_accepts_nested_workspace_paths() {
+        assert!(validate_root_path("/Workspace/Notes/Archive").is_ok());
+        assert!(validate_root_path("/Workspace/Meetings/2026").is_ok());
     }
 }

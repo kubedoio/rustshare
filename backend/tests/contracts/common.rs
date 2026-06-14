@@ -1,15 +1,21 @@
+#![allow(dead_code)]
+
 //! Common helpers for contract tests
 //!
 //! Provides utilities for setting up test tenants, users, files, folders, and shares.
 
 use bytes::Bytes;
-use rustshare_core::domain::{File, Folder, Share, SharePermissions, User};
+use rustshare_core::domain::{
+    CreateVaultRequest, File, Folder, Share, SharePermissions, User, Vault, VaultAdapter,
+};
 use rustshare_core::services::PermissionResolver;
 use rustshare_core::services::{
-    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService,
+    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService, VaultSyncService,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_server::services::note_service::NoteService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -43,6 +49,55 @@ pub struct TestContext {
     pub metadata_store: Arc<MetadataStore>,
     pub object_store: Arc<ObjectStore>,
     pub broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
+    pub tenant_id: Uuid,
+}
+
+impl TestContext {
+    /// Cleanup all data associated with this context's tenant.
+    pub async fn cleanup(&self) {
+        cleanup_tenant(&self.pool, self.tenant_id).await;
+    }
+
+    /// Create a test user in this context's tenant.
+    pub async fn create_test_user(&self, username: &str) -> User {
+        create_test_user(&self.metadata_store, username, self.tenant_id).await
+    }
+
+    /// Create a test folder in this context's tenant.
+    pub async fn create_test_folder(
+        &self,
+        owner_id: Uuid,
+        name: &str,
+        parent_id: Option<Uuid>,
+    ) -> Folder {
+        create_test_folder(
+            &self.folder_service(),
+            owner_id,
+            self.tenant_id,
+            name,
+            parent_id,
+        )
+        .await
+    }
+
+    /// Create a test file in this context's tenant.
+    pub async fn create_test_file(
+        &self,
+        owner_id: Uuid,
+        folder_id: Option<Uuid>,
+        name: &str,
+        content: &[u8],
+    ) -> File {
+        create_test_file(
+            &self.file_service(),
+            owner_id,
+            self.tenant_id,
+            folder_id,
+            name,
+            content,
+        )
+        .await
+    }
 }
 
 impl TestContext {
@@ -76,6 +131,41 @@ impl TestContext {
             permission_resolver,
         )
     }
+
+    /// Create a new NoteService instance
+    pub fn note_service(&self) -> NoteService {
+        let file_service = Arc::new(self.file_service());
+        let folder_service = Arc::new(self.folder_service());
+        NoteService::new(
+            file_service,
+            folder_service,
+            self.metadata_store.clone(),
+            self.object_store.clone(),
+        )
+    }
+
+    /// Create a new VaultSyncService instance
+    pub fn vault_sync_service(&self) -> VaultSyncService<MetadataStore, ObjectStore> {
+        VaultSyncService::new(self.metadata_store.clone(), self.object_store.clone())
+    }
+
+    /// Create a test vault
+    pub async fn create_test_vault(&self, name: &str, owner_id: Uuid, tenant_id: Uuid) -> Vault {
+        let service = self.vault_sync_service();
+        service
+            .create_vault(
+                CreateVaultRequest {
+                    name: name.to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "test-device".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap()
+    }
 }
 
 /// Setup test environment with database and S3 connections
@@ -107,12 +197,15 @@ pub async fn setup_test_env() -> TestContext {
             .expect("Failed to create object store"),
     );
 
+    let tenant_id = setup_test_tenant(&pool).await;
+
     TestContext {
         pool,
         event_store,
         metadata_store,
         object_store,
         broadcaster,
+        tenant_id,
     }
 }
 
@@ -203,6 +296,40 @@ pub async fn create_test_file(
         .expect("Failed to create test file")
 }
 
+/// Seed a hidden/internal file directly, bypassing user-facing upload validation.
+pub async fn create_hidden_test_file(
+    ctx: &TestContext,
+    owner_id: Uuid,
+    tenant_id: Uuid,
+    parent_folder: &Folder,
+    name: &str,
+    content: &[u8],
+    mime_type: &str,
+) -> File {
+    let content_hash = hex::encode(Sha256::digest(content));
+    let file = File::new(
+        name.to_string(),
+        format!("{}/{}", parent_folder.path, name),
+        content_hash,
+        content.len() as i64,
+        mime_type.to_string(),
+        Some(parent_folder.id),
+        owner_id,
+        tenant_id,
+    );
+
+    ctx.object_store
+        .put(&file.storage_key(), Bytes::copy_from_slice(content))
+        .await
+        .expect("Failed to store hidden test file");
+    ctx.metadata_store
+        .create_file(&file)
+        .await
+        .expect("Failed to create hidden test file");
+
+    file
+}
+
 /// Create a test share service
 pub fn create_test_share_service<J: JwtOps>(
     ctx: &TestContext,
@@ -241,6 +368,7 @@ pub async fn create_test_share<J: JwtOps>(
 }
 
 /// Create a test folder share
+#[allow(clippy::too_many_arguments)]
 pub async fn create_test_folder_share<J: JwtOps>(
     share_service: &ShareService<EventStore, MetadataStore, J, MockNotificationRepo>,
     folder_id: Uuid,
@@ -289,19 +417,69 @@ pub async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
         .ok();
 }
 
+/// Create a test group and return its ID
+pub async fn create_test_group(
+    pool: &PgPool,
+    name: &str,
+    tenant_id: Uuid,
+    created_by: Uuid,
+) -> Uuid {
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO user_groups (id, name, tenant_id, created_by)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(group_id)
+    .bind(name)
+    .bind(tenant_id)
+    .bind(created_by)
+    .execute(pool)
+    .await
+    .expect("Failed to create test group");
+
+    group_id
+}
+
+/// Add a user to a group
+pub async fn add_user_to_group(pool: &PgPool, group_id: Uuid, user_id: Uuid) {
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to add user to group");
+}
+
+/// Remove a user from a group
+pub async fn remove_user_from_group(pool: &PgPool, group_id: Uuid, user_id: Uuid) {
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("Failed to remove user from group");
+}
+
 /// Cleanup a tenant and all its data
 pub async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
-    // Delete all users in the tenant (this will cascade)
-    sqlx::query("DELETE FROM users WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
-
-    // Delete the tenant
-    sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .ok();
+    // Order matters for foreign key constraints.
+    let queries = [
+        "DELETE FROM vault_files WHERE tenant_id = $1",
+        "DELETE FROM vault_devices WHERE tenant_id = $1",
+        "DELETE FROM vaults WHERE tenant_id = $1",
+        "DELETE FROM file_thumbnails WHERE tenant_id = $1",
+        "DELETE FROM file_versions WHERE tenant_id = $1",
+        "DELETE FROM shares WHERE tenant_id = $1",
+        "DELETE FROM files WHERE tenant_id = $1",
+        "DELETE FROM folders WHERE tenant_id = $1",
+        "DELETE FROM user_groups WHERE tenant_id = $1",
+        "DELETE FROM notifications WHERE tenant_id = $1",
+        "DELETE FROM users WHERE tenant_id = $1",
+        "DELETE FROM tenants WHERE id = $1",
+    ];
+    for sql in &queries {
+        sqlx::query(sql).bind(tenant_id).execute(pool).await.ok();
+    }
 }

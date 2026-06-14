@@ -31,6 +31,19 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
             .map_err(|e| UploadError::Storage(e.to_string()))
     }
 
+    async fn put_chunk_from_path(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        path: &std::path::Path,
+    ) -> Result<(), UploadError> {
+        let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
+        self.inner
+            .put_from_path(&key, path)
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))
+    }
+
     async fn get_chunk(
         &self,
         session_id: Uuid,
@@ -120,6 +133,16 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
     ) -> Result<Option<rustshare_core::domain::Folder>, UploadError> {
         self.inner
             .find_folder_by_id(id, owner_id)
+            .await
+            .map_err(|e| UploadError::Database(e.to_string()))
+    }
+
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<rustshare_core::domain::Folder>, UploadError> {
+        self.inner
+            .find_folder_by_id_unchecked(id)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }

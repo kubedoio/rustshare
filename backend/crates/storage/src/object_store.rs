@@ -68,6 +68,23 @@ impl ObjectStore {
         Ok(())
     }
 
+    /// Put object in storage by streaming from a local file.
+    ///
+    /// This avoids loading the file into memory and is used for large uploads
+    /// that have already been buffered to disk.
+    pub async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let body = ByteStream::from_path(path).await?;
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(body)
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
     /// Get object from storage
     pub async fn get(&self, key: &str) -> Result<Bytes> {
         let output = self
@@ -113,6 +130,19 @@ impl ObjectStore {
     pub async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
         self.get_presigned_url_with_disposition(key, expires_in_secs, None)
             .await
+    }
+
+    /// Health check: verify the object store bucket is accessible.
+    pub async fn health_check(&self) -> Result<()> {
+        self.client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .with_context(|| {
+                format!("object storage bucket `{}` is not accessible", self.bucket)
+            })?;
+        Ok(())
     }
 
     /// Generate a presigned URL with optional response-content-disposition

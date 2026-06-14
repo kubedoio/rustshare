@@ -30,6 +30,14 @@ export interface File {
 	/// Earliest share expiration date (ISO 8601 format), null if shares don't expire
 	share_expires_at?: string | null;
 	effective_permission?: 'View' | 'Edit' | 'Admin' | null;
+	// Vault sync metadata (optional, only present for vault files)
+	vault_id?: string;
+	vault_name?: string;
+	adapter?: 'obsidian_vault';
+	source_type?: 'external_vault';
+	server_rev?: number;
+	last_synced_at?: string;
+	last_writer_device_id?: string;
 }
 
 export interface Folder {
@@ -545,4 +553,76 @@ export interface KanbanEvent {
 export interface KanbanCardDetail extends KanbanCard {
 	attachments: KanbanCardAttachment[];
 	activity: KanbanEvent[];
+}
+
+// ---------------------------------------------------------------------------
+// Vault Sync Types
+// ---------------------------------------------------------------------------
+
+export interface Vault {
+	id: string;
+	name: string;
+	adapter: 'obsidian_vault';
+	root_path?: string;
+	server_rev: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface VaultFile {
+	id: string;
+	vault_id: string;
+	relative_path: string;
+	content_type?: string;
+	sha256?: string;
+	size?: number;
+	server_rev: number;
+	mtime_server: string;
+	deleted: boolean;
+	deleted_at?: string | null;
+	last_writer_device_id?: string | null;
+}
+
+export interface VaultManifest {
+	vault_id: string;
+	adapter: 'obsidian_vault';
+	server_rev: number;
+	generated_at: string;
+	files: VaultManifestEntry[];
+}
+
+export interface VaultManifestEntry {
+	path: string;
+	sha256?: string;
+	size?: number;
+	content_type?: string;
+	server_rev: number;
+	mtime_server: string;
+	deleted: boolean;
+	deleted_at?: string | null;
+}
+
+export interface VaultDevice {
+	id: string;
+	device_name: string;
+	client_type: string;
+	client_version?: string;
+	last_sync_rev?: number;
+	revoked_at?: string | null;
+	created_at: string;
+	last_seen_at: string;
+}
+
+export interface CreateVaultRequest {
+	name: string;
+	adapter: 'obsidian_vault';
+	client_vault_id?: string;
+	device_id: string;
+}
+
+export interface RenameVaultFileRequest {
+	old_path: string;
+	new_path: string;
+	base_server_rev: number;
+	device_id: string;
 }

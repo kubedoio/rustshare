@@ -28,7 +28,7 @@ use crate::AppState;
 
 /// Query parameters for SCIM list operations.
 #[allow(dead_code)]
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
 pub struct ListQuery {
     /// SCIM filter expression
     pub filter: Option<String>,
@@ -673,7 +673,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
 /// Generate a temporary password hash.
 fn generate_temporary_password_hash() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let random_bytes: [u8; 32] = rng.random();
     format!("$scim_temp${}", base64_encode(&random_bytes))

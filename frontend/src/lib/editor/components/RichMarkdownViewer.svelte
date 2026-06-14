@@ -3,6 +3,7 @@
   consistent rendering with the editor.
 -->
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { createEventDispatcher } from 'svelte';
 	import { markdownToHtml } from '../adapter/markdown';
 	import { sanitizeHtml } from '../adapter/security';
@@ -11,10 +12,12 @@
 
 	let {
 		content = '',
-		attachments = []
+		attachments = [],
+		vaultId = undefined
 	}: {
 		content?: string;
 		attachments?: RichMarkdownAttachment[];
+		vaultId?: string;
 	} = $props();
 
 	let renderedHtml = $state('');
@@ -34,12 +37,58 @@
 		return attachments.find((a) => url.includes(a.path) || url.endsWith(a.filename));
 	}
 
+	function escapeHtml(str: string): string {
+		return str
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+
+	function resolveWikilinkHtml(html: string, vaultId: string | undefined): string {
+		if (!vaultId) {
+			// Without vaultId: show wikilink text without link, image placeholders as text
+			return html
+				.replace(
+					/<a[^>]*\sdata-wikilink="([^"]*)"[^>]*>([^<]*)<\/a>/g,
+					'<span class="wikilink-text">$2</span>'
+				)
+				.replace(/<img[^>]*>/g, (tag) => {
+					if (!tag.includes('data-wikilink-src=')) return tag;
+					const altMatch = tag.match(/alt="([^"]*)"/);
+					const srcMatch = tag.match(/data-wikilink-src="([^"]*)"/);
+					const label = altMatch ? altMatch[1] : srcMatch ? srcMatch[1] : '';
+					return `<span class="wikilink-missing">[image: ${label}]</span>`;
+				});
+		}
+
+		// With vaultId: resolve image sources to vault file API URLs
+		return html.replace(/<img[^>]*>/g, (tag) => {
+			if (!tag.includes('data-wikilink-src=')) return tag;
+			const srcMatch = tag.match(/data-wikilink-src="([^"]*)"/);
+			const altMatch = tag.match(/alt="([^"]*)"/);
+			const path = srcMatch ? srcMatch[1] : '';
+			const alt = altMatch ? altMatch[1] : path;
+			const apiUrl = `/api/vault-sync/v1/vaults/${escapeHtml(vaultId)}/files/${encodeURIComponent(path)}`;
+			return `<img src="${apiUrl}" alt="${escapeHtml(alt)}" />`;
+		});
+	}
+
 	function handleViewerClick(event: MouseEvent) {
 		const target = event.target as HTMLElement;
 
 		// Check for <a> tag clicks
 		const anchor = target.closest('a') as HTMLAnchorElement | null;
 		if (anchor) {
+			const wikilink = anchor.getAttribute('data-wikilink');
+			if (wikilink && vaultId) {
+				event.preventDefault();
+				event.stopPropagation();
+				goto(`/vaults/${vaultId}?preview=${encodeURIComponent(wikilink)}`);
+				return;
+			}
+
 			const href = anchor.getAttribute('href');
 			if (!href) return;
 
@@ -59,6 +108,14 @@
 		// Check for <img> tag clicks
 		const img = target.closest('img') as HTMLImageElement | null;
 		if (img) {
+			const wikilinkSrc = img.getAttribute('data-wikilink-src');
+			if (wikilinkSrc && vaultId) {
+				event.preventDefault();
+				event.stopPropagation();
+				goto(`/vaults/${vaultId}?preview=${encodeURIComponent(wikilinkSrc)}`);
+				return;
+			}
+
 			const src = img.getAttribute('src');
 			if (!src) return;
 
@@ -78,7 +135,7 @@
 			: content;
 		const result = markdownToHtml(resolvedContent);
 		if (result.success) {
-			renderedHtml = sanitizeHtml(result.html);
+			renderedHtml = sanitizeHtml(resolveWikilinkHtml(result.html, vaultId));
 			parseError = null;
 		} else {
 			parseError = result.error || 'Failed to render Markdown';
@@ -305,5 +362,16 @@
 		background: var(--color-base-200, #f3f4f6);
 		font-weight: 600;
 		text-align: left;
+	}
+
+	/* Wikilink placeholders */
+	.viewer-content :global(.wikilink-text) {
+		color: var(--color-base-content, #374151);
+	}
+
+	.viewer-content :global(.wikilink-missing) {
+		color: var(--color-base-content, #9ca3af);
+		font-style: italic;
+		opacity: 0.7;
 	}
 </style>

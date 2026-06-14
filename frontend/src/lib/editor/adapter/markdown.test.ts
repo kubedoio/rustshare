@@ -4,7 +4,8 @@ import {
 	markdownToHtml,
 	editorToMarkdown,
 	createRichEditor,
-	preprocessMarkdownTables
+	preprocessMarkdownTables,
+	preprocessWikilinks
 } from './markdown';
 import { getEditorExtensions } from './extensions';
 
@@ -60,6 +61,27 @@ describe('markdownToHtml', () => {
 	it('returns empty for whitespace-only input', () => {
 		expect(markdownToHtml('   ').success).toBe(true);
 		expect(markdownToHtml('   ').html).toBe('');
+	});
+
+	it('renders wikilinks as data attributes', () => {
+		const result = markdownToHtml('See [[Note Title]] for details');
+		expect(result.success).toBe(true);
+		expect(result.html).toContain('data-wikilink="Note Title"');
+		expect(result.html).toContain('Note Title');
+	});
+
+	it('renders wikilinks with display text', () => {
+		const result = markdownToHtml('[[Note Title|Click here]]');
+		expect(result.success).toBe(true);
+		expect(result.html).toContain('data-wikilink="Note Title"');
+		expect(result.html).toContain('Click here');
+	});
+
+	it('renders embedded wikilink images as data attributes', () => {
+		const result = markdownToHtml('Check this out: ![[image.png]]');
+		expect(result.success).toBe(true);
+		expect(result.html).toContain('data-wikilink-src="image.png"');
+		expect(result.html).toContain('alt="image.png"');
 	});
 });
 
@@ -331,6 +353,43 @@ describe('preprocessMarkdownTables', () => {
 	it('passes through markdown with no tables unchanged', () => {
 		const input = '# Hello\n\nSome **bold** text.';
 		expect(preprocessMarkdownTables(input)).toBe(input);
+	});
+});
+
+describe('preprocessWikilinks', () => {
+	it('converts simple wikilink to placeholder', () => {
+		const result = preprocessWikilinks('[[Note Title]]');
+		expect(result.text).not.toContain('[[');
+		expect(result.placeholders).toHaveLength(1);
+		expect(result.placeholders[0].type).toBe('link');
+		expect(result.placeholders[0].path).toBe('Note Title');
+		expect(result.placeholders[0].display).toBe('Note Title');
+	});
+
+	it('converts wikilink with display text', () => {
+		const result = preprocessWikilinks('[[Note Title|Display]]');
+		expect(result.placeholders).toHaveLength(1);
+		expect(result.placeholders[0].path).toBe('Note Title');
+		expect(result.placeholders[0].display).toBe('Display');
+	});
+
+	it('converts embedded image wikilink', () => {
+		const result = preprocessWikilinks('![[image.png]]');
+		expect(result.placeholders).toHaveLength(1);
+		expect(result.placeholders[0].type).toBe('image');
+		expect(result.placeholders[0].path).toBe('image.png');
+	});
+
+	it('handles multiple wikilinks', () => {
+		const result = preprocessWikilinks('[[A]] and [[B|b]] and ![[c.png]]');
+		expect(result.placeholders).toHaveLength(3);
+	});
+
+	it('leaves regular markdown links untouched', () => {
+		const input = '[text](https://example.com)';
+		const result = preprocessWikilinks(input);
+		expect(result.text).toBe(input);
+		expect(result.placeholders).toHaveLength(0);
 	});
 });
 

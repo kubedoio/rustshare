@@ -6,7 +6,7 @@ use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use rustshare_server::services::decision_service::DecisionService;
+use rustshare_server::services::decision_service::{DecisionError, DecisionService};
 use rustshare_server::services::note_service::NoteService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -190,10 +190,10 @@ async fn contract_create_decision_creates_file_in_decisions_folder() {
 
     // 1. File is a markdown file
     assert!(decision.name.ends_with(".md"));
-    // 2. File path is under Decisions folder
+    // 2. File path is under canonical /Workspace/Decisions folder
     assert!(
-        decision.path.starts_with("/Decisions/") || decision.path.starts_with("/Workspace/Decisions/"),
-        "Decision should be in Decisions folder, got path: {}",
+        decision.path.starts_with("/Workspace/Decisions/"),
+        "Decision should be in canonical /Workspace/Decisions folder, got path: {}",
         decision.path
     );
     // 3. Metadata sidecar exists with kind=decision
@@ -222,12 +222,8 @@ async fn contract_decision_does_not_appear_in_notes_list() {
         object_store.clone(),
         &pool,
     );
-    let note_service = create_note_service(
-        event_store,
-        metadata_store.clone(),
-        object_store,
-        &pool,
-    );
+    let note_service =
+        create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     // Create a decision
     let decision = decision_service
@@ -255,7 +251,7 @@ async fn contract_decision_does_not_appear_in_notes_list() {
 
     // List notes — should NOT contain the decision
     let notes = note_service
-        .list_notes(user.id, tenant_id, Some(50))
+        .list_notes(user.id, tenant_id, 50, 0)
         .await
         .unwrap();
 
@@ -291,16 +287,23 @@ async fn contract_rename_decision_updates_filename_and_metadata() {
         .unwrap();
 
     let original_name = decision.name;
-    let original_prefix = original_name.split('-').take(2).collect::<Vec<_>>().join("-");
+    let original_prefix = original_name
+        .split('-')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("-");
 
     // Rename the decision
     let renamed = service
-        .rename_decision(decision.id, user.id, "Updated Title".to_string())
+        .rename_decision(decision.id, user.id, tenant_id, "Updated Title".to_string())
         .await
         .unwrap();
 
     // 1. Name should still have DEC- prefix and .md suffix
-    assert!(renamed.name.starts_with(&original_prefix), "DEC-ID prefix should be preserved");
+    assert!(
+        renamed.name.starts_with(&original_prefix),
+        "DEC-ID prefix should be preserved"
+    );
     assert!(renamed.name.ends_with(".md"));
     // 2. Title should be updated
     assert_eq!(renamed.metadata.title, "Updated Title");
@@ -339,13 +342,13 @@ async fn contract_rename_decision_empty_title_fails() {
 
     // Empty title should fail
     let result = service
-        .rename_decision(decision.id, user.id, "   ".to_string())
+        .rename_decision(decision.id, user.id, tenant_id, "   ".to_string())
         .await;
     assert!(result.is_err(), "Renaming with empty title should fail");
 
     // Empty string should also fail
     let result2 = service
-        .rename_decision(decision.id, user.id, "".to_string())
+        .rename_decision(decision.id, user.id, tenant_id, "".to_string())
         .await;
     assert!(result2.is_err(), "Renaming with empty string should fail");
 
@@ -364,12 +367,8 @@ async fn contract_list_decisions_only_returns_decisions() {
         object_store.clone(),
         &pool,
     );
-    let note_service = create_note_service(
-        event_store,
-        metadata_store.clone(),
-        object_store,
-        &pool,
-    );
+    let note_service =
+        create_note_service(event_store, metadata_store.clone(), object_store, &pool);
 
     // Create a decision
     let decision = decision_service
@@ -397,7 +396,7 @@ async fn contract_list_decisions_only_returns_decisions() {
 
     // List decisions
     let decisions = decision_service
-        .list_decisions(user.id, tenant_id)
+        .list_decisions(user.id, tenant_id, 1000, 0)
         .await
         .unwrap();
 
@@ -413,4 +412,252 @@ async fn contract_list_decisions_only_returns_decisions() {
     );
 
     cleanup_user(&pool, user.id).await;
+}
+// LB-02: Negative tenant/permission contract tests
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_get_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "decision_user_a", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "decision_user_b", tenant_b).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service.get_decision(decision.id, user_b.id, tenant_b).await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Cross-tenant get_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_update_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "decision_user_a2", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "decision_user_b2", tenant_b).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .update_decision(
+            decision.id,
+            user_b.id,
+            tenant_b,
+            Some("Hacked".to_string()),
+            None,
+            Some("evil".to_string()),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Cross-tenant update_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_rename_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "decision_user_a3", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "decision_user_b3", tenant_b).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .rename_decision(decision.id, user_b.id, tenant_b, "Hacked".to_string())
+        .await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Cross-tenant rename_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_cross_tenant_list_decisions_does_not_leak() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = create_test_user(&metadata_store, "decision_user_a4", tenant_a).await;
+    let user_b = create_test_user(&metadata_store, "decision_user_b4", tenant_b).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let _decision = service
+        .create_decision(
+            user_a.id,
+            tenant_a,
+            "Secret".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let list_b = service
+        .list_decisions(user_b.id, tenant_b, 1000, 0)
+        .await
+        .unwrap();
+    assert!(
+        !list_b.iter().any(|d| d.metadata.title == "Secret"),
+        "Cross-tenant list_decisions should not leak decisions"
+    );
+
+    cleanup_user(&pool, user_a.id).await;
+    cleanup_user(&pool, user_b.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_get_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "decision_owner", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "decision_other", tenant_id).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_owner.id,
+            tenant_id,
+            "Private".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .get_decision(decision.id, user_other.id, tenant_id)
+        .await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Same-tenant unauthorized get_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_update_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "decision_owner_update", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "decision_other_update", tenant_id).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_owner.id,
+            tenant_id,
+            "Private".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .update_decision(
+            decision.id,
+            user_other.id,
+            tenant_id,
+            Some("Hacked".to_string()),
+            None,
+            Some("evil".to_string()),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Same-tenant unauthorized update_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
+}
+
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_same_tenant_unauthorized_rename_decision_denied() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user_owner = create_test_user(&metadata_store, "decision_owner_rename", tenant_id).await;
+    let user_other = create_test_user(&metadata_store, "decision_other_rename", tenant_id).await;
+    let service = create_decision_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let decision = service
+        .create_decision(
+            user_owner.id,
+            tenant_id,
+            "Private".to_string(),
+            "Exec".to_string(),
+            "content".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let result = service
+        .rename_decision(decision.id, user_other.id, tenant_id, "Hacked".to_string())
+        .await;
+    assert!(
+        matches!(result, Err(DecisionError::PermissionDenied)),
+        "Same-tenant unauthorized rename_decision should be denied, got {:?}",
+        result
+    );
+
+    cleanup_user(&pool, user_owner.id).await;
+    cleanup_user(&pool, user_other.id).await;
 }

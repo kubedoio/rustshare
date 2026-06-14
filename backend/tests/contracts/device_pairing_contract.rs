@@ -8,7 +8,7 @@
 //! - C-05: Device tokens are tenant-scoped
 //! - C-06: Device sync respects file permissions
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::domain::{DevicePairRequest, DeviceToken};
 
 /// C-01: Device pairing creates scoped trust relationship
@@ -16,7 +16,7 @@ use rustshare_core::domain::{DevicePairRequest, DeviceToken};
 #[ignore] // Requires database and S3
 async fn test_device_pairing_creates_scoped_trust() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "device_user", tenant_id).await;
@@ -42,8 +42,7 @@ async fn test_device_pairing_creates_scoped_trust() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// C-02: Revoked device cannot sync
@@ -51,14 +50,14 @@ async fn test_device_pairing_creates_scoped_trust() {
 #[ignore] // Requires database and S3
 async fn test_revoked_device_cannot_sync() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "revoked_device_user", tenant_id).await;
 
     // Create file service and a file
     let file_service = ctx.file_service();
-    let file = create_test_file(
+    let _file = create_test_file(
         &file_service,
         user.id,
         tenant_id,
@@ -87,8 +86,7 @@ async fn test_revoked_device_cannot_sync() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// C-03: Device token is not reusable after revocation
@@ -96,7 +94,7 @@ async fn test_revoked_device_cannot_sync() {
 #[ignore] // Requires database and S3
 async fn test_device_token_not_reusable_after_revocation() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "token_user", tenant_id).await;
@@ -120,8 +118,7 @@ async fn test_device_token_not_reusable_after_revocation() {
     assert!(revoked_device.revoked_at.is_some());
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// C-04: Device pairing requires user approval
@@ -129,7 +126,7 @@ async fn test_device_token_not_reusable_after_revocation() {
 #[ignore] // Requires database and S3
 async fn test_device_pairing_requires_user_approval() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "approval_user", tenant_id).await;
@@ -169,8 +166,7 @@ async fn test_device_pairing_requires_user_approval() {
     assert!(approved_request.approved_at.is_some());
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// C-05: Device tokens are tenant-scoped
@@ -190,7 +186,7 @@ async fn test_device_tokens_are_tenant_scoped() {
     let file_service = ctx.file_service();
 
     // Create file in tenant A
-    let file = create_test_file(
+    let _file = create_test_file(
         &file_service,
         user_a.id,
         tenant_a,
@@ -217,9 +213,8 @@ async fn test_device_tokens_are_tenant_scoped() {
     assert_ne!(device_token.tenant_id, tenant_b);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// C-06: Device sync respects file permissions
@@ -227,7 +222,7 @@ async fn test_device_tokens_are_tenant_scoped() {
 #[ignore] // Requires database and S3
 async fn test_device_sync_respects_file_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner and another user
     let owner = create_test_user(&ctx.metadata_store, "file_owner", tenant_id).await;
@@ -259,16 +254,14 @@ async fn test_device_sync_respects_file_permissions() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, other_user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// Additional test: Device code expiration
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_device_pair_request_expires() {
-    let ctx = setup_test_env().await;
+    let _ctx = setup_test_env().await;
 
     // Create a pair request that expires in the future
     let future_request = DevicePairRequest {
@@ -301,4 +294,6 @@ async fn test_device_pair_request_expires() {
         expired_request.expires_at < chrono::Utc::now(),
         "Expired request should be past expiration"
     );
+
+    _ctx.cleanup().await;
 }

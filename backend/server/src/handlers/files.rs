@@ -31,6 +31,53 @@ fn is_hidden_kanban_file(name: &str) -> bool {
     ) || name.ends_with(".editor.json")
 }
 
+/// Maximum file size for uploads (2GB).
+const MAX_UPLOAD_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
+/// Stream a multipart field to a temporary file and return the temp file plus size.
+/// Enforces a per-field size limit during streaming to prevent OOM.
+async fn stream_multipart_field_to_temp_file(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_size: usize,
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
+    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+    let mut async_file = tokio::fs::File::from_std(
+        temp_file
+            .reopen()
+            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
+    );
+
+    let mut total_size: usize = 0;
+
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        tracing::error!("Failed to read chunk: {e}");
+        AppError::internal(format!("Failed to read chunk: {e}"))
+    })? {
+        total_size += chunk.len();
+        if total_size > max_size {
+            return Err(AppError::payload_too_large(format!(
+                "File size exceeds maximum allowed {max_size} bytes"
+            )));
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write to temp file: {e}");
+                AppError::internal(format!("Failed to write to temp file: {e}"))
+            })?;
+    }
+
+    tokio::io::AsyncWriteExt::flush(&mut async_file)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
+
+    Ok((temp_file, total_size))
+}
+
 // ============================================================================
 // Task 15: File Upload
 // ============================================================================
@@ -43,17 +90,27 @@ fn is_hidden_kanban_file(name: &str) -> bool {
 /// - file: the file content
 /// - name: the file name
 /// - parent_folder_id: optional parent folder UUID
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/upload",
+    tag = "Files",
+    responses(
+        (status = 200, description = "File uploaded", body = FileUploadResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<FileUploadResponse>), AppError> {
-    let mut file_data: Option<Bytes> = None;
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
 
     // Parse multipart fields
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
         tracing::error!("Failed to read multipart field: {}", e);
         AppError::internal(format!("Failed to read multipart field: {}", e))
     })? {
@@ -61,10 +118,11 @@ pub async fn upload_file(
 
         match field_name.as_str() {
             "file" => {
-                file_data = Some(field.bytes().await.map_err(|e| {
-                    tracing::error!("Failed to read file data: {}", e);
-                    AppError::internal(format!("Failed to read file data: {}", e))
-                })?);
+                file_temp = Some(
+                    stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                        .await?
+                        .0,
+                );
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
@@ -87,7 +145,7 @@ pub async fn upload_file(
     }
 
     // Validate required fields
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
     let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // Validate file name length and content
@@ -99,9 +157,18 @@ pub async fn upload_file(
             "File name must not exceed 255 characters",
         ));
     }
-    if file_name.contains('\0') || file_name.contains('/') {
+    if file_name.contains('\0')
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains("..")
+    {
         return Err(AppError::bad_request(
             "File name contains invalid characters",
+        ));
+    }
+    if file_name.starts_with(".rustshare") || file_name == "index.editor.json" {
+        return Err(AppError::bad_request(
+            "File name is reserved for internal use",
         ));
     }
 
@@ -110,14 +177,16 @@ pub async fn upload_file(
         .first_or_octet_stream()
         .to_string();
 
-    // Upload file
+    // Upload file using the streaming path so the temp file is never read
+    // back into memory.
+    let file_path = file_temp.path();
     let file = state
         .file_service
-        .upload_file(
+        .upload_file_from_path(
             auth.user_id,
             file_name,
             parent_folder_id,
-            file_data,
+            file_path,
             mime_type,
             auth.tenant_id,
         )
@@ -136,7 +205,7 @@ pub async fn upload_file(
     ))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileUploadResponse {
     pub id: Uuid,
     pub name: String,
@@ -153,6 +222,17 @@ pub struct FileUploadResponse {
 /// Get file metadata.
 ///
 /// GET /api/files/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 200, description = "File metadata", body = File),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -168,6 +248,17 @@ pub async fn get_file(
 /// Get file download URL.
 ///
 /// GET /api/files/{id}/download
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/download",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 200, description = "Download URL", body = DownloadUrlResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -180,7 +271,7 @@ pub async fn download_file(
     Ok(Json(DownloadUrlResponse { url }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DownloadUrlResponse {
     pub url: String,
 }
@@ -191,6 +282,17 @@ pub struct DownloadUrlResponse {
 ///
 /// Returns the file content with Content-Disposition header set to attachment
 /// with the original filename, ensuring downloaded files have correct names.
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/content",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_file_content(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -237,6 +339,17 @@ pub async fn download_file_content(
 ///
 /// Returns the file content with Content-Disposition set to inline
 /// for browser preview (images, PDFs, videos, etc).
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/preview",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn preview_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -273,6 +386,17 @@ pub async fn preview_file(
 /// Delete a file.
 ///
 /// DELETE /api/files/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/files/{id}",
+    tag = "Files",
+    params(("id" = Uuid, Path, description = "File ID")),
+    responses(
+        (status = 204, description = "File deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -297,6 +421,17 @@ pub async fn delete_file(
 /// Requires If-Match header with expected version number.
 /// Accepts multipart/form-data with field:
 /// - file: the new file content
+#[utoipa::path(
+    put,
+    path = "/api/v1/files/{id}",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success", body = FileUpdateResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -314,31 +449,30 @@ pub async fn update_file(
         .parse()
         .map_err(|_| AppError::bad_request("Invalid If-Match header: must be an integer"))?;
 
-    // Extract file data from multipart
-    let mut file_data: Option<Bytes> = None;
+    // Extract file data from multipart, streaming to a temp file on disk.
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
     {
         if field.name() == Some("file") {
-            file_data = Some(
-                field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::internal(format!("Failed to read file data: {}", e)))?,
+            file_temp = Some(
+                stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                    .await?
+                    .0,
             );
             break;
         }
     }
 
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
 
-    // Update file
+    // Update file using the streaming path.
     let file = state
         .file_service
-        .update_file(file_id, auth.user_id, expected_version, file_data)
+        .update_file_from_path(file_id, auth.user_id, expected_version, file_temp.path())
         .await?;
 
     Ok(Json(FileUpdateResponse {
@@ -349,7 +483,7 @@ pub async fn update_file(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileUpdateResponse {
     pub id: Uuid,
     pub current_version: i32,
@@ -364,7 +498,7 @@ pub struct FileUpdateResponse {
 /// Get file version history.
 ///
 /// GET /api/files/{id}/versions
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileVersionResponse {
     pub id: Uuid,
     pub version_number: i32,
@@ -374,6 +508,17 @@ pub struct FileVersionResponse {
     pub change_description: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/versions",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success", body = Vec<FileVersionResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_file_versions(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -402,6 +547,18 @@ pub async fn get_file_versions(
 /// POST /api/files/{id}/restore
 ///
 /// Request body: { "version": 3 }
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/restore",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = RestoreVersionRequest,
+    responses(
+        (status = 200, description = "Success", body = FileRestoreResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn restore_file_version(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -422,12 +579,12 @@ pub async fn restore_file_version(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RestoreVersionRequest {
     pub version: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileRestoreResponse {
     pub id: Uuid,
     pub current_version: i32,
@@ -445,6 +602,18 @@ pub struct FileRestoreResponse {
 /// POST /api/files/{id}/move
 ///
 /// Request body: { "target_folder_id": "uuid" }
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/move",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = MoveFileRequest,
+    responses(
+        (status = 200, description = "Success", body = File),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn move_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -459,7 +628,7 @@ pub async fn move_file(
     Ok(Json(file))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MoveFileRequest {
     pub target_folder_id: Option<Uuid>,
 }
@@ -469,6 +638,18 @@ pub struct MoveFileRequest {
 /// POST /api/files/{id}/rename
 ///
 /// Request body: { "new_name": "document.pdf" }
+#[utoipa::path(
+    post,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/rename",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = RenameFileRequest,
+    responses(
+        (status = 200, description = "Success", body = File),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn rename_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -483,7 +664,7 @@ pub async fn rename_file(
     Ok(Json(file))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameFileRequest {
     pub new_name: String,
 }
@@ -496,7 +677,7 @@ pub struct RenameFileRequest {
 const MAX_THUMBNAIL_FILE_SIZE: i64 = 100 * 1024 * 1024;
 
 /// Query parameters for thumbnail requests.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ThumbnailParams {
     /// Thumbnail size: sm (40x40), md (128x128), lg (256x256)
     /// Defaults to "md" if not specified
@@ -512,6 +693,15 @@ pub struct ThumbnailParams {
 ///
 /// Query parameters:
 /// - size: "sm" | "md" | "lg" (default: "md")
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/thumbnail",
+    tag = "Files",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_file_thumbnail(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -617,7 +807,7 @@ pub async fn get_file_thumbnail(
 ///   "save_mode": "overwrite" | "new_version",
 ///   "change_description": "optional description"
 /// }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct EditFileRequest {
     /// Base64-encoded file content
     pub content: String,
@@ -627,7 +817,7 @@ pub struct EditFileRequest {
     pub change_description: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EditFileResponse {
     pub id: Uuid,
     pub current_version: i32,
@@ -636,6 +826,18 @@ pub struct EditFileResponse {
     pub saved_as_new_version: bool,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/edit",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = EditFileRequest,
+    responses(
+        (status = 200, description = "Success", body = EditFileResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn edit_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -687,7 +889,7 @@ pub async fn edit_file(
 // ============================================================================
 
 /// File with share information for list responses
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct FileWithShares {
     // File fields
     pub id: Uuid,
@@ -716,9 +918,19 @@ pub struct FileWithShares {
 /// GET /api/files
 ///
 /// Returns a simple flat list of all files owned by the user with share indicators.
+#[utoipa::path(
+    get,
+    path = "/api/v1/files",
+    tag = "Files",
+    responses(
+        (status = 200, description = "Success", body = Vec<FileWithShares>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_files(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<super::PaginationQuery>,
 ) -> Result<Json<Vec<FileWithShares>>, AppError> {
     // Query all files with share information
     let files = sqlx::query_as::<_, FileWithShares>(
@@ -752,21 +964,36 @@ pub async fn list_files(
           AND f.name NOT IN ('index.md', '__primary__.md')
           AND f.name NOT LIKE '%.editor.json'
         ORDER BY f.created_at DESC
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.tenant_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 
     Ok(Json(files))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WorkspaceStarRequest {
     pub starred: bool,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/files/{id}/star",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = WorkspaceStarRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn toggle_file_star(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -786,6 +1013,17 @@ pub async fn toggle_file_star(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/restore-from-trash",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn restore_file_from_trash(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -804,6 +1042,17 @@ pub async fn restore_file_from_trash(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/files/{id}/permanent",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn permanently_delete_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -822,9 +1071,19 @@ pub async fn permanently_delete_file(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/starred",
+    tag = "Files",
+    responses(
+        (status = 200, description = "Success", body = crate::handlers::folders::FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_starred_items(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<super::PaginationQuery>,
 ) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, AppError> {
     let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
         r#"
@@ -878,10 +1137,13 @@ pub async fn list_starred_items(
           AND f.deleted_at IS NULL
           AND f.starred_at IS NOT NULL
         ORDER BY f.starred_at DESC NULLS LAST, f.name ASC
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.tenant_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -914,10 +1176,13 @@ pub async fn list_starred_items(
           AND f.deleted_at IS NULL
           AND f.starred_at IS NOT NULL
         ORDER BY f.starred_at DESC NULLS LAST, f.name ASC
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.tenant_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -928,9 +1193,19 @@ pub async fn list_starred_items(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/deleted",
+    tag = "Files",
+    responses(
+        (status = 200, description = "Success", body = crate::handlers::folders::FolderContentsWithShares),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_deleted_items(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<super::PaginationQuery>,
 ) -> Result<Json<crate::handlers::folders::FolderContentsWithShares>, AppError> {
     let folders = sqlx::query_as::<_, crate::handlers::folders::FolderWithShares>(
         r#"
@@ -982,10 +1257,13 @@ pub async fn list_deleted_items(
           AND f.tenant_id = $2
           AND f.deleted_at IS NOT NULL
         ORDER BY f.deleted_at DESC NULLS LAST, f.name ASC
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.tenant_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -1017,10 +1295,13 @@ pub async fn list_deleted_items(
           AND f.tenant_id = $2
           AND f.deleted_at IS NOT NULL
         ORDER BY f.deleted_at DESC NULLS LAST, f.name ASC
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
     .bind(auth.tenant_id)
+    .bind(query.limit())
+    .bind(query.offset())
     .fetch_all(&state.db_pool)
     .await?;
 

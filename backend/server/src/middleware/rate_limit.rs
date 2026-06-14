@@ -6,7 +6,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
+use governor::{
+    clock::Clock, clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter,
+};
 use std::{net::IpAddr, num::NonZeroU32, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +21,9 @@ enum RateLimitScope {
     ShareUpload,
     AuthenticatedShareAdmin,
     AiQuery,
+    VaultSyncUpload,
+    VaultSyncRead,
+    VaultSyncWrite,
 }
 
 impl RateLimitScope {
@@ -32,6 +37,9 @@ impl RateLimitScope {
             Self::ShareUpload => HeaderValue::from_static("share-upload"),
             Self::AuthenticatedShareAdmin => HeaderValue::from_static("authenticated-share-admin"),
             Self::AiQuery => HeaderValue::from_static("ai-query"),
+            Self::VaultSyncUpload => HeaderValue::from_static("vault-sync-upload"),
+            Self::VaultSyncRead => HeaderValue::from_static("vault-sync-read"),
+            Self::VaultSyncWrite => HeaderValue::from_static("vault-sync-write"),
         }
     }
 }
@@ -40,58 +48,84 @@ impl RateLimitScope {
 #[derive(Clone)]
 pub struct RateLimitConfig {
     pub auth_login: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub auth_login_quota: NonZeroU32,
     pub oidc_login: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub oidc_login_quota: NonZeroU32,
     pub share_session: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub share_session_quota: NonZeroU32,
     pub share_info: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub share_info_quota: NonZeroU32,
     pub share_download: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub share_download_quota: NonZeroU32,
     pub share_upload: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub share_upload_quota: NonZeroU32,
     pub authenticated_share_admin:
         Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub authenticated_share_admin_quota: NonZeroU32,
     pub ai_query: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub ai_query_quota: NonZeroU32,
+    pub vault_sync_upload: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub vault_sync_upload_quota: NonZeroU32,
+    pub vault_sync_read: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub vault_sync_read_quota: NonZeroU32,
+    pub vault_sync_write: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub vault_sync_write_quota: NonZeroU32,
 }
 
 impl RateLimitConfig {
     /// Create new rate limiter configuration with default quotas (per-IP)
     pub fn new() -> Self {
-        Self {
-            auth_login: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE",
-                10,
-            ))),
-            oidc_login: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE",
-                30,
-            ))),
-            // 5 requests per minute PER IP for session creation (prevent brute-force password attacks)
-            share_session: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_SHARE_SESSION_PER_MINUTE",
-                5,
-            ))),
-            // Public share metadata and folder listing
-            share_info: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_SHARE_INFO_PER_MINUTE",
-                30,
-            ))),
-            // Anonymous downloads from public links
-            share_download: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_SHARE_DOWNLOAD_PER_MINUTE",
-                30,
-            ))),
-            // Anonymous uploads to public folder links
-            share_upload: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_SHARE_UPLOAD_PER_MINUTE",
-                20,
-            ))),
-            // Authenticated share-management endpoints
-            authenticated_share_admin: Arc::new(RateLimiter::dashmap(quota_from_env(
+        let (auth_login_quota, auth_login_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE", 10);
+        let (oidc_login_quota, oidc_login_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_OIDC_LOGIN_PER_MINUTE", 30);
+        let (share_session_quota, share_session_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_SHARE_SESSION_PER_MINUTE", 5);
+        let (share_info_quota, share_info_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_SHARE_INFO_PER_MINUTE", 30);
+        let (share_download_quota, share_download_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_SHARE_DOWNLOAD_PER_MINUTE", 30);
+        let (share_upload_quota, share_upload_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_SHARE_UPLOAD_PER_MINUTE", 20);
+        let (authenticated_share_admin_quota, authenticated_share_admin_per_minute) =
+            quota_from_env(
                 "RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE",
                 120,
-            ))),
-            // AI endpoints (search, summarize, ask)
-            ai_query: Arc::new(RateLimiter::dashmap(quota_from_env(
-                "RUSTSHARE_RATE_LIMIT_AI_QUERY_PER_MINUTE",
-                30,
-            ))),
+            );
+        let (ai_query_quota, ai_query_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_AI_QUERY_PER_MINUTE", 30);
+        let (vault_sync_upload_quota, vault_sync_upload_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_VAULT_SYNC_UPLOAD_PER_MINUTE", 60);
+        let (vault_sync_read_quota, vault_sync_read_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_VAULT_SYNC_READ_PER_MINUTE", 120);
+        let (vault_sync_write_quota, vault_sync_write_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_VAULT_SYNC_WRITE_PER_MINUTE", 60);
+
+        Self {
+            auth_login: Arc::new(RateLimiter::dashmap(auth_login_quota)),
+            auth_login_quota: auth_login_per_minute,
+            oidc_login: Arc::new(RateLimiter::dashmap(oidc_login_quota)),
+            oidc_login_quota: oidc_login_per_minute,
+            share_session: Arc::new(RateLimiter::dashmap(share_session_quota)),
+            share_session_quota: share_session_per_minute,
+            share_info: Arc::new(RateLimiter::dashmap(share_info_quota)),
+            share_info_quota: share_info_per_minute,
+            share_download: Arc::new(RateLimiter::dashmap(share_download_quota)),
+            share_download_quota: share_download_per_minute,
+            share_upload: Arc::new(RateLimiter::dashmap(share_upload_quota)),
+            share_upload_quota: share_upload_per_minute,
+            authenticated_share_admin: Arc::new(RateLimiter::dashmap(
+                authenticated_share_admin_quota,
+            )),
+            authenticated_share_admin_quota: authenticated_share_admin_per_minute,
+            ai_query: Arc::new(RateLimiter::dashmap(ai_query_quota)),
+            ai_query_quota: ai_query_per_minute,
+            vault_sync_upload: Arc::new(RateLimiter::dashmap(vault_sync_upload_quota)),
+            vault_sync_upload_quota: vault_sync_upload_per_minute,
+            vault_sync_read: Arc::new(RateLimiter::dashmap(vault_sync_read_quota)),
+            vault_sync_read_quota: vault_sync_read_per_minute,
+            vault_sync_write: Arc::new(RateLimiter::dashmap(vault_sync_write_quota)),
+            vault_sync_write_quota: vault_sync_write_per_minute,
         }
     }
 }
@@ -144,10 +178,21 @@ pub async fn rate_limit_middleware(
     match limiter.check_key(&client_ip) {
         Ok(_) => {
             // Request allowed
-            next.run(request).await
+            let limit = scope_limit_per_minute(&state.rate_limit_config, scope);
+            let mut response = next.run(request).await;
+            response.headers_mut().insert(
+                "x-ratelimit-limit",
+                HeaderValue::from_str(&limit.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("60")),
+            );
+            response
         }
-        Err(_) => {
+        Err(not_until) => {
             // Rate limit exceeded for this IP
+            let clock = DefaultClock::default();
+            let wait_time = not_until.wait_time_from(clock.now());
+            let retry_after_secs = wait_time.as_secs().max(1);
+            let limit = scope_limit_per_minute(&state.rate_limit_config, scope);
             tracing::warn!(
                 "Rate limit exceeded for IP: {} on path: {} ({:?})",
                 client_ip,
@@ -161,9 +206,16 @@ pub async fn rate_limit_middleware(
                 })),
             )
                 .into_response();
-            response
-                .headers_mut()
-                .insert("retry-after", HeaderValue::from_static("60"));
+            response.headers_mut().insert(
+                "retry-after",
+                HeaderValue::from_str(&retry_after_secs.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("1")),
+            );
+            response.headers_mut().insert(
+                "x-ratelimit-limit",
+                HeaderValue::from_str(&limit.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("60")),
+            );
             response
                 .headers_mut()
                 .insert("x-rustshare-rate-limit-scope", scope.header_value());
@@ -172,7 +224,7 @@ pub async fn rate_limit_middleware(
     }
 }
 
-fn quota_from_env(var_name: &str, default_per_minute: u32) -> Quota {
+fn quota_from_env(var_name: &str, default_per_minute: u32) -> (Quota, NonZeroU32) {
     let per_minute = std::env::var(var_name)
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -183,7 +235,7 @@ fn quota_from_env(var_name: &str, default_per_minute: u32) -> Quota {
                 .expect("default_per_minute.max(1) is always non-zero")
         });
 
-    Quota::per_minute(per_minute)
+    (Quota::per_minute(per_minute), per_minute)
 }
 
 fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
@@ -225,6 +277,10 @@ fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
         return Some(RateLimitScope::AiQuery);
     }
 
+    if let Some(scope) = matches_vault_sync(method, path) {
+        return Some(scope);
+    }
+
     None
 }
 
@@ -259,6 +315,33 @@ fn is_public_share_path(path: &str) -> bool {
     path.starts_with("/api/v1/public/share/")
 }
 
+fn matches_vault_sync(method: &Method, path: &str) -> Option<RateLimitScope> {
+    if !path.starts_with("/api/vault-sync/v1/") {
+        return None;
+    }
+
+    if *method == Method::PUT
+        && path.starts_with("/api/vault-sync/v1/vaults/")
+        && path
+            .strip_prefix("/api/vault-sync/v1/vaults/")
+            .and_then(|rest| rest.split_once('/'))
+            .map(|(_vault_id, remainder)| remainder.starts_with("files/"))
+            .unwrap_or(false)
+    {
+        return Some(RateLimitScope::VaultSyncUpload);
+    }
+
+    if *method == Method::GET || *method == Method::HEAD {
+        return Some(RateLimitScope::VaultSyncRead);
+    }
+
+    if *method == Method::POST || *method == Method::DELETE {
+        return Some(RateLimitScope::VaultSyncWrite);
+    }
+
+    None
+}
+
 fn limiter_for_scope(
     config: &RateLimitConfig,
     scope: RateLimitScope,
@@ -272,6 +355,25 @@ fn limiter_for_scope(
         RateLimitScope::ShareUpload => &config.share_upload,
         RateLimitScope::AuthenticatedShareAdmin => &config.authenticated_share_admin,
         RateLimitScope::AiQuery => &config.ai_query,
+        RateLimitScope::VaultSyncUpload => &config.vault_sync_upload,
+        RateLimitScope::VaultSyncRead => &config.vault_sync_read,
+        RateLimitScope::VaultSyncWrite => &config.vault_sync_write,
+    }
+}
+
+fn scope_limit_per_minute(config: &RateLimitConfig, scope: RateLimitScope) -> u32 {
+    match scope {
+        RateLimitScope::AuthLogin => config.auth_login_quota.get(),
+        RateLimitScope::OidcLogin => config.oidc_login_quota.get(),
+        RateLimitScope::ShareSession => config.share_session_quota.get(),
+        RateLimitScope::ShareInfo => config.share_info_quota.get(),
+        RateLimitScope::ShareDownload => config.share_download_quota.get(),
+        RateLimitScope::ShareUpload => config.share_upload_quota.get(),
+        RateLimitScope::AuthenticatedShareAdmin => config.authenticated_share_admin_quota.get(),
+        RateLimitScope::AiQuery => config.ai_query_quota.get(),
+        RateLimitScope::VaultSyncUpload => config.vault_sync_upload_quota.get(),
+        RateLimitScope::VaultSyncRead => config.vault_sync_read_quota.get(),
+        RateLimitScope::VaultSyncWrite => config.vault_sync_write_quota.get(),
     }
 }
 
@@ -292,6 +394,9 @@ mod tests {
         assert!(config.share_upload.check_key(&test_ip).is_ok());
         assert!(config.authenticated_share_admin.check_key(&test_ip).is_ok());
         assert!(config.ai_query.check_key(&test_ip).is_ok());
+        assert!(config.vault_sync_upload.check_key(&test_ip).is_ok());
+        assert!(config.vault_sync_read.check_key(&test_ip).is_ok());
+        assert!(config.vault_sync_write.check_key(&test_ip).is_ok());
     }
 
     #[tokio::test]
@@ -341,6 +446,27 @@ mod tests {
             assert!(config.share_info.check_key(&test_ip2).is_ok());
         }
         assert!(config.share_info.check_key(&test_ip2).is_err());
+
+        // Vault sync read endpoint should have highest limit (120/min per IP)
+        let test_ip3: IpAddr = "10.0.0.3".parse().unwrap();
+        for _ in 0..120 {
+            assert!(config.vault_sync_read.check_key(&test_ip3).is_ok());
+        }
+        assert!(config.vault_sync_read.check_key(&test_ip3).is_err());
+
+        // Vault sync write endpoint should have limit of 60/min per IP
+        let test_ip4: IpAddr = "10.0.0.4".parse().unwrap();
+        for _ in 0..60 {
+            assert!(config.vault_sync_write.check_key(&test_ip4).is_ok());
+        }
+        assert!(config.vault_sync_write.check_key(&test_ip4).is_err());
+
+        // Vault sync upload endpoint should have limit of 60/min per IP
+        let test_ip5: IpAddr = "10.0.0.5".parse().unwrap();
+        for _ in 0..60 {
+            assert!(config.vault_sync_upload.check_key(&test_ip5).is_ok());
+        }
+        assert!(config.vault_sync_upload.check_key(&test_ip5).is_err());
     }
 
     #[test]
@@ -386,6 +512,52 @@ mod tests {
         assert_eq!(
             classify_request(&Method::DELETE, "/api/v1/shares/share-id"),
             Some(RateLimitScope::AuthenticatedShareAdmin)
+        );
+        assert_eq!(
+            classify_request(&Method::GET, "/api/vault-sync/v1/vaults"),
+            Some(RateLimitScope::VaultSyncRead)
+        );
+        assert_eq!(
+            classify_request(&Method::HEAD, "/api/vault-sync/v1/vaults"),
+            Some(RateLimitScope::VaultSyncRead)
+        );
+        assert_eq!(
+            classify_request(
+                &Method::GET,
+                "/api/vault-sync/v1/vaults/vault-id/files/path/to/file"
+            ),
+            Some(RateLimitScope::VaultSyncRead)
+        );
+        assert_eq!(
+            classify_request(
+                &Method::PUT,
+                "/api/vault-sync/v1/vaults/vault-id/files/path/to/file"
+            ),
+            Some(RateLimitScope::VaultSyncUpload)
+        );
+        // PUT to a non-/files/ vault path should NOT be classified as upload
+        assert_eq!(
+            classify_request(&Method::PUT, "/api/vault-sync/v1/vaults/vault-id/rename"),
+            None
+        );
+        assert_eq!(
+            classify_request(&Method::POST, "/api/vault-sync/v1/vaults/vault-id/rename"),
+            Some(RateLimitScope::VaultSyncWrite)
+        );
+        assert_eq!(
+            classify_request(
+                &Method::DELETE,
+                "/api/vault-sync/v1/vaults/vault-id/files/path/to/file"
+            ),
+            Some(RateLimitScope::VaultSyncWrite)
+        );
+        assert_eq!(
+            classify_request(&Method::POST, "/api/vault-sync/v1/devices/register"),
+            Some(RateLimitScope::VaultSyncWrite)
+        );
+        assert_eq!(
+            classify_request(&Method::PATCH, "/api/vault-sync/v1/vaults/vault-id"),
+            None
         );
         assert_eq!(classify_request(&Method::GET, "/api/v1/me"), None);
     }

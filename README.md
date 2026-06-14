@@ -1,22 +1,38 @@
 # RustShare
 
-RustShare is a modern file-sharing and sync platform for technical teams and security-conscious organizations.
+> Durable company memory for technical teams: files, notes, decisions, diagrams, and long-lived artifacts.
 
-Our motto is: "Everything is a File."
+RustShare is an open-source artifact and workspace system with a Rust backend and a modern web interface. It is designed for teams that want self-hosted control over durable company memory: files, notes, diagrams, meeting records, decisions, technical documents, and operational knowledge.
 
-RustShare is built around files and their relationships.
+RustShare is part of the broader **Kubedo.io Company Memory Infrastructure** direction, together with RustChat and future permission-aware Company RAG.
 
-It is being designed as a serious alternative in the category of Nextcloud, Seafile, OpenCloud, and Dropbox-style systems, with a strong focus on:
+| Field | Value |
+|---|---|
+| Status | Public Preview / Active Development |
+| Latest Release | [v0.5.0](https://github.com/kubedoio/rustshare/releases/tag/v0.5.0) |
+| License | Apache-2.0 core |
+| Website | [rustshare.io](https://rustshare.io) |
 
-- self-hosted and private-cloud deployment
-- clear permissions and auditable sharing
-- lightweight clients
-- secure architecture
-- clean integration with **RustChat**
-- future-ready, permission-aware AI on top of authorized content
+## What this is
 
-RustShare is not meant to be “just another sync tool.”
-The product direction is to make files, sharing, governance, and collaboration work together without collapsing everything into one oversized platform.
+RustShare is a durable memory and artifact layer for technical teams that need control over their documents, files, notes, diagrams, and long-lived operational knowledge.
+
+It focuses on:
+
+* durable company memory
+* files, notes, diagrams, and technical artifacts
+* markdown-based knowledge work
+* meeting notes and decision records
+* self-hosted deployment
+* audit-friendly artifact storage
+* API-driven integrations
+* future permission-aware AI memory foundations
+
+## What this is not
+
+RustShare is not positioned as a Dropbox clone, a Nextcloud clone, or a generic file-sharing app.
+
+It is not presented as a fully mature enterprise content platform yet. It is a public-preview infrastructure product for teams that are comfortable evaluating and operating self-hosted software.
 
 ![CI](https://github.com/kubedoio/rustshare/actions/workflows/ci.yml/badge.svg)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)

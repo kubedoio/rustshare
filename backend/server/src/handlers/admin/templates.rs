@@ -12,6 +12,15 @@ use crate::{
 };
 use rustshare_core::domain::Template;
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/templates",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success", body = Vec<Template>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_templates(
     _admin: AdminUser,
     State(state): State<AppState>,
@@ -25,6 +34,17 @@ pub async fn list_templates(
     Ok(Json(templates))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/modules/{key}/templates",
+    tag = "Admin",
+    params(("module_key" = String, Path, description = "Module Key")),
+    responses(
+        (status = 200, description = "Success", body = Vec<Template>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_templates_by_module(
     _admin: AdminUser,
     State(state): State<AppState>,
@@ -39,6 +59,17 @@ pub async fn list_templates_by_module(
     Ok(Json(templates))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/templates/{key}",
+    tag = "Admin",
+    params(("key" = String, Path, description = "Key")),
+    responses(
+        (status = 200, description = "Success", body = Template),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_template(
     _admin: AdminUser,
     State(state): State<AppState>,
@@ -52,6 +83,15 @@ pub async fn get_template(
     Ok(Json(template))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/templates",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
@@ -75,6 +115,15 @@ pub async fn create_template(
     Ok(Json(template))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/templates/{key}",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
@@ -99,6 +148,15 @@ pub async fn update_template(
     Ok(Json(template))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/templates/{key}",
+    tag = "Admin",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,
@@ -127,6 +185,15 @@ pub async fn delete_template(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/templates/{key}/duplicate",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn duplicate_template(
     AdminUser { user_id, .. }: AdminUser,
     State(state): State<AppState>,

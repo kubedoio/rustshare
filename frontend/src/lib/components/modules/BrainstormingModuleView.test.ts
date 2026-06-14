@@ -27,6 +27,7 @@ const mockModule = {
 	rootPath: '/Workspace/Brainstorming',
 	renderer: 'brainstorming',
 	defaultTemplate: 'template_blank_brainstorm',
+	icon: 'lightbulb',
 	schemaVersion: '1.0',
 	permissions: {
 		adminCanConfigure: true,

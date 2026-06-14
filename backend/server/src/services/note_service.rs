@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteAttachment {
     pub file_id: Uuid,
     pub name: String,
@@ -24,7 +24,7 @@ pub struct NoteAttachment {
 }
 
 /// Note-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteMetadata {
     pub kind: String,
     pub title: String,
@@ -66,7 +66,7 @@ impl NoteMetadata {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoteVisibility {
     Private,
@@ -83,7 +83,7 @@ impl NoteVisibility {
 }
 
 /// Unified note payload returned to clients.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Note {
     pub id: Uuid,
     pub name: String,
@@ -91,14 +91,14 @@ pub struct Note {
     pub content: String,
     pub metadata: NoteMetadata,
     pub parent_folder_id: Option<Uuid>,
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub current_version: i32,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
 
 /// Public note view (no internal identifiers).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PublicNote {
     pub title: String,
     pub content: String,
@@ -109,14 +109,15 @@ pub struct PublicNote {
 }
 
 /// Note summary for listings (includes file id but not full content).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteSummary {
     pub id: Uuid,
     pub name: String,
     pub path: String,
     pub metadata: NoteMetadata,
     pub parent_folder_id: Option<Uuid>,
-    pub owner_id: UserId,
+    #[schema(value_type = Uuid)]
+    pub owner_id: Uuid,
     pub current_version: i32,
     pub size: i64,
     pub created_at: DateTime<Utc>,
@@ -526,26 +527,14 @@ impl NoteService {
     }
 
     /// Find or create the target folder under workspace.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical /Workspace/<Module> path. Legacy roots are read-only.
     async fn ensure_target_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, NoteError> {
-        // Legacy: try to find existing folder at root
-        let root_folders = self
-            .metadata_store
-            .list_folders(None, owner_id, tenant_id)
-            .await
-            .map_err(|e| NoteError::Database(e.to_string()))?;
-
-        if let Some(target_folder) = root_folders
-            .into_iter()
-            .find(|f| f.name == self.folder_name)
-        {
-            return Ok(target_folder);
-        }
-
-        // New: find or create Workspace, then folder under it
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -653,6 +642,11 @@ impl NoteService {
         file.name == "note.md"
     }
 
+    /// Returns true if a file is hidden metadata that should not be counted or exposed.
+    fn is_hidden_metadata_file(name: &str) -> bool {
+        name.starts_with(".rustshare") || name.ends_with(".editor.json")
+    }
+
     /// Count visible files in a note bundle's attachments, drawings, and exports subfolders.
     async fn count_bundle_contents(
         &self,
@@ -678,7 +672,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    attachment_count = files.len() as i64;
+                    attachment_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 "drawings" => {
                     let files = self
@@ -686,7 +683,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    drawing_count = files.len() as i64;
+                    drawing_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 "exports" => {
                     let files = self
@@ -694,7 +694,10 @@ impl NoteService {
                         .list_files(Some(subfolder.id), owner_id, tenant_id)
                         .await
                         .map_err(|e| NoteError::Database(e.to_string()))?;
-                    export_count = files.len() as i64;
+                    export_count = files
+                        .into_iter()
+                        .filter(|f| !Self::is_hidden_metadata_file(&f.name))
+                        .count() as i64;
                 }
                 _ => {}
             }
@@ -832,8 +835,16 @@ impl NoteService {
     }
 
     /// Read a note by file ID.
-    pub async fn get_note(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
+    pub async fn get_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
 
         let meta = self
             .load_metadata(file_id, user_id, file.tenant_id)
@@ -875,11 +886,15 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         content: String,
         color: Option<String>,
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Update file content via edit_file (overwrite mode)
@@ -970,9 +985,13 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         new_title: String,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // Load metadata BEFORE renaming so sidecar is found by old name
@@ -1047,8 +1066,16 @@ impl NoteService {
     }
 
     /// Delete a note (and its sidecar).
-    pub async fn delete_note(&self, file_id: Uuid, user_id: UserId) -> Result<(), NoteError> {
+    pub async fn delete_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         // If public, invalidate share index
@@ -1094,9 +1121,13 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         target_folder_id: Option<Uuid>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
         let moved_file = if is_folder_backed {
@@ -1144,8 +1175,13 @@ impl NoteService {
     }
 
     /// Duplicate a note (creates a copy of the bundle with new IDs).
-    pub async fn duplicate_note(&self, file_id: Uuid, user_id: UserId) -> Result<Note, NoteError> {
-        let original = self.get_note(file_id, user_id).await?;
+    pub async fn duplicate_note(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Note, NoteError> {
+        let original = self.get_note(file_id, user_id, tenant_id).await?;
         let original_file = self.file_service.get_file(file_id, user_id).await?;
         let tenant_id = original_file.tenant_id;
         let is_folder_backed = Self::is_folder_backed_note(&original_file);
@@ -1324,7 +1360,8 @@ impl NoteService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
-        limit: Option<usize>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<NoteSummary>, NoteError> {
         // Load all markdown files but filter to Notes paths only
         let files = self
@@ -1408,11 +1445,13 @@ impl NoteService {
 
         notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
 
-        if let Some(limit) = limit {
-            notes.truncate(limit);
-        }
+        let paginated: Vec<NoteSummary> = notes
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
 
-        Ok(notes)
+        Ok(paginated)
     }
 
     /// List notes for a user, optionally filtered to a specific folder path prefix.
@@ -1421,7 +1460,8 @@ impl NoteService {
         user_id: UserId,
         tenant_id: Uuid,
         path_prefix: Option<&str>,
-        limit: Option<usize>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<NoteSummary>, NoteError> {
         // Find all markdown files owned by the user
         let files = self
@@ -1504,11 +1544,13 @@ impl NoteService {
         // Sort by updated_at desc
         notes.sort_by_key(|b| std::cmp::Reverse(b.modified_at));
 
-        if let Some(limit) = limit {
-            notes.truncate(limit);
-        }
+        let paginated: Vec<NoteSummary> = notes
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
 
-        Ok(notes)
+        Ok(paginated)
     }
 
     /// Toggle note visibility between private and public.
@@ -1516,8 +1558,12 @@ impl NoteService {
         &self,
         file_id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
 
         let mut meta = self
             .load_metadata(file_id, user_id, file.tenant_id)
@@ -1640,7 +1686,7 @@ fn extract_h1_title(content: &str) -> Option<String> {
 }
 
 fn generate_share_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
     (0..32)

@@ -18,9 +18,30 @@ import {
 	parseCardMarkdown
 } from '$lib/kanban/cardMarkdown';
 
+const MAX_PAGE_SIZE = 100;
+
 export async function listKanbanBoards(limit?: number): Promise<KanbanBoardSummary[]> {
-	const params = limit !== undefined ? `?limit=${limit}` : '';
-	return apiClient.get<KanbanBoardSummary[]>(`/modules/kanban/boards${params}`);
+	// When no limit is requested, preserve the original unbounded behaviour by
+	// walking all pages. A requested limit returns a single slice.
+	if (limit === undefined) {
+		const boards: KanbanBoardSummary[] = [];
+		let page = 1;
+
+		while (true) {
+			const batch = await apiClient.get<KanbanBoardSummary[]>(
+				`/modules/kanban/boards?page=${page}&per_page=${MAX_PAGE_SIZE}`
+			);
+			boards.push(...batch);
+
+			if (batch.length < MAX_PAGE_SIZE) {
+				return boards;
+			}
+
+			page += 1;
+		}
+	}
+
+	return apiClient.get<KanbanBoardSummary[]>(`/modules/kanban/boards?per_page=${limit}`);
 }
 
 export async function createKanbanBoard(title: string): Promise<KanbanBoard> {
@@ -42,8 +63,9 @@ export async function archiveKanbanBoard(boardId: string): Promise<void> {
 	await apiClient.post(`/modules/kanban/boards/${boardId}/archive`, {});
 }
 
-export async function listKanbanCards(boardId: string): Promise<KanbanCard[]> {
-	return apiClient.get<KanbanCard[]>(`/modules/kanban/boards/${boardId}/cards`);
+export async function listKanbanCards(boardId: string, limit?: number): Promise<KanbanCard[]> {
+	const params = `?per_page=${limit ?? 100}`;
+	return apiClient.get<KanbanCard[]>(`/modules/kanban/boards/${boardId}/cards${params}`);
 }
 
 export async function createKanbanCard(

@@ -25,8 +25,17 @@ impl MetadataStoreCompat {
 /// Compatibility layer for file operations
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn create_file(&self, file: &File) -> anyhow::Result<()> {
-        // Convert old File to new FileDocument
+        let mut tx = self.pool.begin().await?;
+        self.create_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_file_in_tx(&self, _tx: &mut Self::Tx, file: &File) -> anyhow::Result<()> {
+        // Compat layer: delegate to non-transactional repository for now
         let doc = file_to_document(file);
         self.repo.files().create(&doc).await.map_err(|e| e.into())
     }
@@ -67,6 +76,17 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
     }
 
     async fn create_file_version(&self, version: &FileVersion) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_file_version_in_tx(&mut tx, version).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_file_version_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        version: &FileVersion,
+    ) -> anyhow::Result<()> {
         let doc = version_to_document(version);
         self.repo
             .file_versions()
@@ -89,6 +109,13 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
                     Ok(None)
                 }
             }
+            None => Ok(None),
+        }
+    }
+
+    async fn find_folder_by_id_unchecked(&self, id: uuid::Uuid) -> anyhow::Result<Option<Folder>> {
+        match self.repo.folders().get(id).await? {
+            Some(doc) => Ok(Some(folder_from_document(&doc))),
             None => Ok(None),
         }
     }
@@ -119,12 +146,30 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
     }
 
     async fn update_file(&self, file: &File) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn update_file_in_tx(&self, _tx: &mut Self::Tx, file: &File) -> anyhow::Result<()> {
         let doc = file_to_document(file);
         self.repo.files().update(&doc).await.map_err(|e| e.into())
     }
 
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
-        // Verify ownership before deleting
+        let mut tx = self.pool.begin().await?;
+        self.delete_file_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn delete_file_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
         match self.repo.files().get(id).await? {
             Some(file) => {
                 if file.owner_id != owner_id {
@@ -228,7 +273,16 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStoreCompat {
 /// Compatibility layer for folder operations
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
     async fn create_folder(&self, folder: &Folder) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_folder_in_tx(&self, _tx: &mut Self::Tx, folder: &Folder) -> anyhow::Result<()> {
         let doc = folder_to_document(folder);
         self.repo.folders().create(&doc).await.map_err(|e| e.into())
     }
@@ -259,12 +313,30 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStoreCompat {
     }
 
     async fn update_folder(&self, folder: &Folder) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn update_folder_in_tx(&self, _tx: &mut Self::Tx, folder: &Folder) -> anyhow::Result<()> {
         let doc = folder_to_document(folder);
         self.repo.folders().update(&doc).await.map_err(|e| e.into())
     }
 
     async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
-        // Verify ownership before deleting
+        let mut tx = self.pool.begin().await?;
+        self.delete_folder_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn delete_folder_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
         match self.repo.folders().get(id).await? {
             Some(folder) => {
                 if folder.owner_id != owner_id {

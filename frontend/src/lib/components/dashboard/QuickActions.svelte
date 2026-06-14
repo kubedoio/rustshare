@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { ChevronRight } from 'lucide-svelte';
+	import ModuleIcon from './ModuleIcon.svelte';
 
 	import type { Component } from 'svelte';
 
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: unknown;
+		icon: unknown | string;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -22,13 +23,19 @@
 </script>
 
 <section class="quick-actions" aria-label="Quick actions">
-	<h2 class="section-title">Quick actions</h2>
+	<header class="section-header">
+		<h2 class="section-title">Quick actions</h2>
+	</header>
 	<div class="action-list">
 		{#each actions as action}
-			{@const ActionIcon = action.icon as Component}
 			<button type="button" class="action-item" onclick={action.onClick} disabled={creating}>
 				<div class="action-icon" style="background: {action.iconBg}; color: {action.iconColor};">
-					<ActionIcon size={18} />
+					{#if typeof action.icon === 'string'}
+						<ModuleIcon name={action.icon} size={18} />
+					{:else}
+						{@const ActionIcon = action.icon as Component}
+						<ActionIcon size={18} />
+					{/if}
 				</div>
 				<div class="action-body">
 					<span class="action-label">{action.label}</span>
@@ -41,8 +48,17 @@
 </section>
 
 <style>
+	.quick-actions {
+		border: 1px solid color-mix(in oklab, var(--base-300) 52%, transparent);
+		border-radius: 0.5rem;
+		background: color-mix(in oklab, var(--base-100) 94%, white);
+		overflow: hidden;
+	}
+	.section-header {
+		padding: 1rem 1rem 0.75rem;
+	}
 	.section-title {
-		margin: 0 0 0.75rem;
+		margin: 0;
 		font-size: 0.9rem;
 		font-weight: 700;
 		color: var(--base-content);
@@ -50,16 +66,16 @@
 	.action-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
 	}
 	.action-item {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 0.65rem 0.75rem;
-		border-radius: 0.75rem;
-		border: 1px solid color-mix(in oklab, var(--base-300) 35%, transparent);
-		background: color-mix(in oklab, var(--base-100) 96%, white);
+		min-height: 3.75rem;
+		padding: 0.75rem 1rem;
+		border: 0;
+		border-top: 1px solid color-mix(in oklab, var(--base-300) 44%, transparent);
+		background: transparent;
 		color: inherit;
 		font-size: inherit;
 		font-family: inherit;
@@ -71,8 +87,11 @@
 		width: 100%;
 	}
 	.action-item:hover:not(:disabled) {
-		border-color: color-mix(in oklab, var(--brand-500) 30%, transparent);
-		background: color-mix(in oklab, var(--brand-500) 4%, white);
+		background: color-mix(in oklab, var(--brand-500) 4%, var(--base-100));
+	}
+	.action-item:focus-visible {
+		outline: 2px solid color-mix(in oklab, var(--brand-500) 72%, transparent);
+		outline-offset: -2px;
 	}
 	.action-item:disabled {
 		opacity: 0.5;
@@ -84,7 +103,7 @@
 		justify-content: center;
 		width: 2rem;
 		height: 2rem;
-		border-radius: 0.5rem;
+		border-radius: 0.45rem;
 		flex-shrink: 0;
 	}
 	.action-body {

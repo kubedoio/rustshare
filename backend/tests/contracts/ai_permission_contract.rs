@@ -9,14 +9,16 @@
 //! - A-06: AI handles revoked/deleted content
 //! - A-07: AI request audit logging
 
-use crate::contracts::common::*;
+use crate::common::*;
+
+use uuid::Uuid;
 
 /// A-01: AI search only returns authorized content
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_ai_search_returns_authorized_content() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "ai_search_user", tenant_id).await;
@@ -25,7 +27,7 @@ async fn test_ai_search_returns_authorized_content() {
     let file_service = ctx.file_service();
 
     // Create files
-    let file1 = create_test_file(
+    let _file1 = create_test_file(
         &file_service,
         user.id,
         tenant_id,
@@ -35,7 +37,7 @@ async fn test_ai_search_returns_authorized_content() {
     )
     .await;
 
-    let file2 = create_test_file(
+    let _file2 = create_test_file(
         &file_service,
         user.id,
         tenant_id,
@@ -59,8 +61,123 @@ async fn test_ai_search_returns_authorized_content() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
+}
+
+/// A-05-02: AI excludes revoked shares
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_ai_excludes_revoked_shares() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+
+    // Create users
+    let owner = create_test_user(&ctx.metadata_store, "ai_revoke_owner", tenant_id).await;
+    let recipient = create_test_user(&ctx.metadata_store, "ai_revoke_recipient", tenant_id).await;
+
+    // Create file service
+    let file_service = ctx.file_service();
+
+    // Owner creates a file
+    let file = create_test_file(
+        &file_service,
+        owner.id,
+        tenant_id,
+        None,
+        "ai_revoked_share_doc.txt",
+        b"Shared content for AI",
+    )
+    .await;
+
+    // Create a direct user share via SQL
+    let share_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO shares (id, file_id, folder_id, share_token, permissions, password_hash, expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by, created_at, revoked_at, tenant_id)
+        VALUES ($1, $2, NULL, NULL, 'View', NULL, NULL, false, 0, $3, NULL, $4, NOW(), NULL, $5)
+        "#,
+    )
+    .bind(share_id)
+    .bind(file.id)
+    .bind(recipient.id)
+    .bind(owner.id)
+    .bind(tenant_id)
+    .execute(&ctx.pool)
+    .await
+    .expect("Failed to create share");
+
+    // Recipient can access via file service before revoke
+    let access_before = file_service.get_file(file.id, recipient.id).await;
+    assert!(
+        access_before.is_ok(),
+        "Recipient should access shared file before revoke"
+    );
+
+    // Revoke the share
+    sqlx::query("UPDATE shares SET revoked_at = NOW() WHERE id = $1")
+        .bind(share_id)
+        .execute(&ctx.pool)
+        .await
+        .expect("Failed to revoke share");
+
+    // Recipient can no longer access
+    let access_after = file_service.get_file(file.id, recipient.id).await;
+    assert!(access_after.is_err(), "AI should exclude revoked shares");
+
+    // Cleanup
+    ctx.cleanup().await;
+}
+
+/// A-06-02: AI excludes expired shares
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_ai_excludes_expired_shares() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+
+    // Create users
+    let owner = create_test_user(&ctx.metadata_store, "ai_expire_owner", tenant_id).await;
+    let recipient = create_test_user(&ctx.metadata_store, "ai_expire_recipient", tenant_id).await;
+
+    // Create file service
+    let file_service = ctx.file_service();
+
+    // Owner creates a file
+    let file = create_test_file(
+        &file_service,
+        owner.id,
+        tenant_id,
+        None,
+        "ai_expired_share_doc.txt",
+        b"Shared content for AI",
+    )
+    .await;
+
+    // Create an expired direct user share via SQL
+    let share_id = Uuid::new_v4();
+    let expired_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    sqlx::query(
+        r#"
+        INSERT INTO shares (id, file_id, folder_id, share_token, permissions, password_hash, expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by, created_at, revoked_at, tenant_id)
+        VALUES ($1, $2, NULL, NULL, 'View', NULL, $3, false, 0, $4, NULL, $5, NOW(), NULL, $6)
+        "#,
+    )
+    .bind(share_id)
+    .bind(file.id)
+    .bind(expired_at)
+    .bind(recipient.id)
+    .bind(owner.id)
+    .bind(tenant_id)
+    .execute(&ctx.pool)
+    .await
+    .expect("Failed to create share");
+
+    // Recipient cannot access because share is expired
+    let access = file_service.get_file(file.id, recipient.id).await;
+    assert!(access.is_err(), "AI should exclude expired shares");
+
+    // Cleanup
+    ctx.cleanup().await;
 }
 
 /// A-02: AI responses cite source files (conceptual)
@@ -68,7 +185,7 @@ async fn test_ai_search_returns_authorized_content() {
 #[ignore] // Requires database and S3
 async fn test_ai_cites_source_files() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "ai_citation_user", tenant_id).await;
@@ -93,8 +210,7 @@ async fn test_ai_cites_source_files() {
     assert!(!file.path.is_empty(), "File path needed for citation");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// A-03: AI cannot access content user cannot access
@@ -102,7 +218,7 @@ async fn test_ai_cites_source_files() {
 #[ignore] // Requires database and S3
 async fn test_ai_respects_user_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create two users
     let user_a = create_test_user(&ctx.metadata_store, "ai_user_a", tenant_id).await;
@@ -152,9 +268,7 @@ async fn test_ai_respects_user_permissions() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// A-04: AI respects tenant boundaries
@@ -202,9 +316,8 @@ async fn test_ai_respects_tenant_boundaries() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// A-05: AI respects share permissions
@@ -212,7 +325,7 @@ async fn test_ai_respects_tenant_boundaries() {
 #[ignore] // Requires database and S3
 async fn test_ai_respects_share_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create users
     let owner = create_test_user(&ctx.metadata_store, "ai_share_owner", tenant_id).await;
@@ -237,9 +350,7 @@ async fn test_ai_respects_share_permissions() {
     assert!(no_access.is_err(), "AI should not access unshared files");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_user(&ctx.pool, recipient.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// A-06: AI handles deleted content gracefully
@@ -247,7 +358,7 @@ async fn test_ai_respects_share_permissions() {
 #[ignore] // Requires database and S3
 async fn test_ai_handles_deleted_content() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "ai_delete_user", tenant_id).await;
@@ -289,8 +400,7 @@ async fn test_ai_handles_deleted_content() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// A-07: AI request context tracking (conceptual)
@@ -298,7 +408,7 @@ async fn test_ai_handles_deleted_content() {
 #[ignore] // Requires database and S3
 async fn test_ai_request_context() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "ai_context_user", tenant_id).await;
@@ -323,6 +433,5 @@ async fn test_ai_request_context() {
     assert!(!tenant_id.is_nil(), "Tenant ID needed");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

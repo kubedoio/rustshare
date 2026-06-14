@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE vault_files\n            SET relative_path = $1, server_rev = $2, last_writer_device_id = $3, updated_at = NOW()\n            WHERE vault_id = $4 AND relative_path = $5 AND tenant_id = $6\n              AND server_rev = $7 AND deleted = false\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "af7c0a2a9684536859abfa730984a6aa992bad97f959f82308401840dddd9a97"
+}

@@ -1,7 +1,7 @@
 //! HTTP handlers for standup record operations.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -15,13 +15,23 @@ use crate::services::standup_service::{StandupRecord, StandupSummary};
 use crate::AppState;
 use rustshare_core::events::{AggregateType, Event, EventType, StandupModifiedPayload};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateStandupRequest {
     pub title: String,
     pub date: DateTime<Utc>,
     pub content: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/standups",
+    tag = "Standups",
+    request_body = CreateStandupRequest,
+    responses(
+        (status = 200, description = "Success", body = StandupRecord),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_standup(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -38,9 +48,38 @@ pub async fn create_standup(
         )
         .await?;
 
+    let payload = StandupModifiedPayload {
+        standup_id: standup.id.to_string(),
+        title: standup.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::StandupModified,
+        standup.id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     Ok((StatusCode::CREATED, Json(standup)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/standups/{id}",
+    tag = "Standups",
+    params(("standup_id" = Uuid, Path, description = "Standup Id")),
+    responses(
+        (status = 200, description = "Success", body = StandupRecord),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_standup(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -48,18 +87,30 @@ pub async fn get_standup(
 ) -> Result<Json<StandupRecord>, AppError> {
     let standup = state
         .standup_service
-        .get_standup(standup_id, auth.user_id)
+        .get_standup(standup_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(standup))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateStandupRequest {
     pub title: Option<String>,
     pub content: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/standups/{id}",
+    tag = "Standups",
+    params(("standup_id" = Uuid, Path, description = "Standup Id")),
+    request_body = UpdateStandupRequest,
+    responses(
+        (status = 200, description = "Success", body = StandupRecord),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_standup(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -68,7 +119,13 @@ pub async fn update_standup(
 ) -> Result<Json<StandupRecord>, AppError> {
     let standup = state
         .standup_service
-        .update_standup(standup_id, auth.user_id, req.title, req.content)
+        .update_standup(
+            standup_id,
+            auth.user_id,
+            auth.tenant_id,
+            req.title,
+            req.content,
+        )
         .await?;
 
     let payload = StandupModifiedPayload {
@@ -83,18 +140,78 @@ pub async fn update_standup(
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         auth.user_id,
     );
-    state.broadcaster.publish(event);
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(standup))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/standups/{id}",
+    tag = "Standups",
+    params(("standup_id" = Uuid, Path, description = "Standup Id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn delete_standup(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(standup_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let standup = state
+        .standup_service
+        .get_standup(standup_id, auth.user_id, auth.tenant_id)
+        .await?;
+    state
+        .standup_service
+        .delete_standup(standup_id, auth.user_id, auth.tenant_id)
+        .await?;
+
+    let payload = StandupModifiedPayload {
+        standup_id: standup_id.to_string(),
+        title: standup.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::StandupModified,
+        standup_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/standups",
+    tag = "Standups",
+    responses(
+        (status = 200, description = "Success", body = Vec<StandupSummary>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_standups(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<StandupSummary>>, AppError> {
     let standups = state
         .standup_service
-        .list_standups(auth.user_id, auth.tenant_id)
+        .list_standups(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
 
     Ok(Json(standups))

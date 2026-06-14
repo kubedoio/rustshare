@@ -1,0 +1,319 @@
+openapi: 3.1.0
+info:
+  title: RustShare Vault Sync API
+  version: 1.0.0
+  description: |
+    RustShare-owned API for generic vault synchronization with adapter support.
+    Obsidian support is represented as adapter=obsidian_vault.
+servers:
+  - url: /api/vault-sync/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Vault:
+      type: object
+      required: [vault_id, name, adapter, root_path, server_rev]
+      properties:
+        vault_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        adapter:
+          type: string
+          enum: [obsidian_vault]
+        root_path:
+          type: string
+        server_rev:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateVaultRequest:
+      type: object
+      required: [name, adapter, device_id]
+      properties:
+        name:
+          type: string
+        adapter:
+          type: string
+          enum: [obsidian_vault]
+        client_vault_id:
+          type: string
+        device_id:
+          type: string
+    Manifest:
+      type: object
+      required: [vault_id, adapter, server_rev, files]
+      properties:
+        vault_id:
+          type: string
+          format: uuid
+        adapter:
+          type: string
+        server_rev:
+          type: integer
+        generated_at:
+          type: string
+          format: date-time
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileManifestEntry'
+    FileManifestEntry:
+      type: object
+      required: [path, server_rev, deleted]
+      properties:
+        path:
+          type: string
+        sha256:
+          type: string
+        size:
+          type: integer
+        content_type:
+          type: string
+        server_rev:
+          type: integer
+        mtime_server:
+          type: string
+          format: date-time
+        deleted:
+          type: boolean
+        deleted_at:
+          type: string
+          format: date-time
+    RenameRequest:
+      type: object
+      required: [old_path, new_path, base_server_rev, device_id]
+      properties:
+        old_path:
+          type: string
+        new_path:
+          type: string
+        base_server_rev:
+          type: integer
+        device_id:
+          type: string
+    ConflictError:
+      type: object
+      required: [error, message, path, client_base_server_rev, current_server_rev, resolution]
+      properties:
+        error:
+          type: string
+          enum: [conflict]
+        message:
+          type: string
+        path:
+          type: string
+        client_base_server_rev:
+          type: integer
+        current_server_rev:
+          type: integer
+        server_sha256:
+          type: string
+        resolution:
+          type: string
+          enum: [create_conflict_copy]
+paths:
+  /vaults:
+    post:
+      summary: Create or map a vault
+      operationId: createVault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVaultRequest'
+      responses:
+        '201':
+          description: Vault created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vault'
+    get:
+      summary: List vaults accessible to current user
+      operationId: listVaults
+      responses:
+        '200':
+          description: Vault list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vaults:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Vault'
+  /vaults/{vault_id}:
+    get:
+      summary: Get vault metadata
+      operationId: getVault
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Vault metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vault'
+  /vaults/{vault_id}/manifest:
+    get:
+      summary: Get vault manifest
+      operationId: getManifest
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Manifest'
+  /vaults/{vault_id}/files/{path}:
+    get:
+      summary: Download file bytes
+      operationId: downloadFile
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+    put:
+      summary: Upload file bytes
+      operationId: uploadFile
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-RustShare-Base-Server-Rev
+          in: header
+          required: true
+          schema:
+            type: integer
+        - name: X-RustShare-SHA256
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-RustShare-Device-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: File updated
+        '201':
+          description: File created
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+    delete:
+      summary: Delete file by creating tombstone
+      operationId: deleteFile
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-RustShare-Base-Server-Rev
+          in: header
+          required: true
+          schema:
+            type: integer
+        - name: X-RustShare-Device-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tombstone created
+        '409':
+          description: Conflict
+  /vaults/{vault_id}/rename:
+    post:
+      summary: Rename a file or folder
+      operationId: renamePath
+      parameters:
+        - name: vault_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameRequest'
+      responses:
+        '200':
+          description: Rename accepted
+        '409':
+          description: Conflict

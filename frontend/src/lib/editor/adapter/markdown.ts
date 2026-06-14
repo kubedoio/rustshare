@@ -133,6 +133,93 @@ function convertTableLinesToHtml(lines: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Wikilink preprocessing
+// ---------------------------------------------------------------------------
+
+export interface WikilinkPlaceholder {
+	placeholder: string;
+	type: 'link' | 'image';
+	path: string;
+	display: string;
+}
+
+function makeWikilinkPlaceholder(index: number): string {
+	return `\u00ABWIKILINK-${index}\u00BB`;
+}
+
+function escapeHtmlAttribute(text: string): string {
+	return text
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+
+/**
+ * Converts Obsidian-style wikilinks into placeholders so they survive
+ * Tiptap rendering. Placeholders are restored to HTML with data attributes
+ * after Tiptap produces HTML. This ensures the original Markdown is never
+ * modified.
+ */
+export function preprocessWikilinks(markdown: string): {
+	text: string;
+	placeholders: WikilinkPlaceholder[];
+} {
+	const placeholders: WikilinkPlaceholder[] = [];
+	let index = 0;
+
+	let text = markdown;
+
+	// Embedded images: ![[path]]
+	text = text.replace(/!\[\[([^\]|]+)\]\]/g, (match, path) => {
+		const trimmed = path.trim();
+		const placeholder = makeWikilinkPlaceholder(index++);
+		placeholders.push({ placeholder, type: 'image', path: trimmed, display: trimmed });
+		return placeholder;
+	});
+
+	// Wikilinks with display text: [[path|display]]
+	text = text.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (match, path, display) => {
+		const placeholder = makeWikilinkPlaceholder(index++);
+		placeholders.push({
+			placeholder,
+			type: 'link',
+			path: path.trim(),
+			display: display.trim()
+		});
+		return placeholder;
+	});
+
+	// Wikilinks without display text: [[path]]
+	text = text.replace(/\[\[([^\]|]+)\]\]/g, (match, path) => {
+		const trimmed = path.trim();
+		const placeholder = makeWikilinkPlaceholder(index++);
+		placeholders.push({ placeholder, type: 'link', path: trimmed, display: trimmed });
+		return placeholder;
+	});
+
+	return { text, placeholders };
+}
+
+function restoreWikilinkPlaceholders(html: string, placeholders: WikilinkPlaceholder[]): string {
+	let result = html;
+	for (const p of placeholders) {
+		if (p.type === 'link') {
+			result = result.replace(
+				p.placeholder,
+				`<a data-wikilink="${escapeHtmlAttribute(p.path)}">${escapeHtmlAttribute(p.display)}</a>`
+			);
+		} else {
+			result = result.replace(
+				p.placeholder,
+				`<img data-wikilink-src="${escapeHtmlAttribute(p.path)}" alt="${escapeHtmlAttribute(p.display)}" />`
+			);
+		}
+	}
+	return result;
+}
+
+// ---------------------------------------------------------------------------
 // Markdown → HTML (for viewer)
 // ---------------------------------------------------------------------------
 
@@ -146,15 +233,18 @@ export function markdownToHtml(markdown: string): MarkdownParseResult {
 	}
 
 	try {
-		const preprocessed = preprocessMarkdownTables(markdown);
+		const wikilinkResult = preprocessWikilinks(markdown);
+		const preprocessed = preprocessMarkdownTables(wikilinkResult.text);
 		const editor = new Editor({
 			extensions: getEditorExtensions(),
 			content: preprocessed,
 			editable: false
 		});
 
-		const html = editor.getHTML();
+		let html = editor.getHTML();
 		editor.destroy();
+
+		html = restoreWikilinkPlaceholders(html, wikilinkResult.placeholders);
 
 		return { success: true, html };
 	} catch (err) {

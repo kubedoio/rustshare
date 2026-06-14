@@ -80,28 +80,87 @@ Current confidence by area:
 - [x] Backup and restore runbook exists
 - [x] Restore drill checklist exists
 - [ ] A real restore drill against an actual backup artifact should still be performed and recorded
-- [ ] RPO/RTO targets should be formally defined before launch
+- [x] RPO/RTO targets formally defined in backup-restore runbook (< 24h RPO, < 2h RTO)
 
 ## Observability Checklist
 
 - [x] Health endpoints exist
+- [x] Readiness endpoint exists
 - [x] Replication summary endpoint exists
 - [x] Replication target-health endpoint exists
 - [x] CLI replication health helper exists
-- [ ] Centralized metrics and dashboards are still partial
-- [ ] Centralized alerting is still partial
-- [ ] Error tracking / incident paging is not yet documented as complete
+- [x] Alerting thresholds and Prometheus rules documented
+- [x] Error tracking / incident paging documented with PagerDuty/OpsGenie examples
+- [ ] Centralized metrics dashboards are still partial (Grafana setup required)
+
+### Operational Readiness Endpoints
+
+RustShare exposes two distinct health endpoints so operators can separate **process liveness** from **dependency readiness**.
+
+#### `GET /health` — Liveness Probe
+
+Lightweight. Returns `200 OK` when the Axum process is running.
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Use this for Kubernetes liveness probes or load-balancer health checks that only need to know whether the binary has started.
+
+#### `GET /health/ready` — Readiness Probe
+
+Returns `200 OK` when all **required** runtime dependencies are healthy. Returns `503 Service Unavailable` when any required dependency is unhealthy.
+
+Response body (stable, machine-readable JSON):
+
+```json
+{
+  "status": "ready",
+  "components": {
+    "database": { "status": "healthy" },
+    "object_storage": { "status": "healthy" },
+    "event_delivery": { "status": "healthy" },
+    "auth_session": { "status": "healthy" },
+    "ai": { "status": "disabled" }
+  }
+}
+```
+
+Component definitions:
+
+| Component | Required? | Meaning |
+|-----------|-----------|---------|
+| `database` | **Yes** | Metadata projection database is reachable and queryable. |
+| `object_storage` | **Yes** | S3/RustFS bucket is accessible. |
+| `event_delivery` | **Yes** | Event-store database is reachable **and** the in-memory broadcaster channel is open. |
+| `auth_session` | **Yes** | JWT manager can round-trip a token **and** the `user_sessions` table is queryable. |
+| `ai` | No | AI / semantic-search service is present. Reports `disabled` when `RUSTSHARE_AI_ENABLED` is off or the service is not initialized; a disabled AI component **does not** fail readiness. |
+
+If a component is unhealthy, the response includes an `error` field:
+
+```json
+{
+  "status": "not_ready",
+  "components": {
+    "object_storage": {
+      "status": "unhealthy",
+      "error": "object storage check failed: connection refused"
+    }
+  }
+}
+```
+
+Use `/health/ready` for Kubernetes readiness probes or load-balancer membership decisions.
 
 Reference planning docs:
 
-- [OIDC Production Validation Checklist](docs/2026-03-21-oidc-production-validation-checklist.md)
-- [Alerting And Incident Thresholds](docs/2026-03-21-alerting-and-incident-thresholds.md)
-- [Post-Restore Expected Outcomes](docs/2026-03-21-post-restore-expected-outcomes.md)
-- [Compatibility Removal Plan](docs/2026-03-21-compatibility-removal-plan.md)
-- [Phase 6 Environment Sign-Off Spec](docs/2026-03-21-phase-6-environment-signoff-spec.md)
-- [Launch Gate: Web-First Pilot](docs/2026-03-21-launch-gate-web-first-pilot.md)
-- [Phase 6 Execution Report](docs/2026-03-21-phase-6-execution-report.md)
-- [Web-First Pilot Gate Decision](docs/2026-03-21-web-first-pilot-gate-decision.md)
+- [OIDC Production Validation Checklist](2026-03-21-oidc-production-validation-checklist.md)
+- [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md)
+- [Backup and Restore Runbook](2026-03-20-backup-restore-runbook.md)
+- [Backup and Restore Guide](backup-restore.md)
+- [Deployment Guide](DEPLOYMENT.md)
 
 ## Deployment Checklist
 

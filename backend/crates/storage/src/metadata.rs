@@ -7,13 +7,24 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
-    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession,
+    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession, Vault,
+    VaultDevice, VaultFile,
 };
 use serde_json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// Business-level errors for vault file operations.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum VaultFileStoreError {
+    #[error("file not found")]
+    NotFound,
+    #[error("destination exists")]
+    DestinationExists,
+}
+
 /// Metadata store for querying projection tables
+#[derive(Clone)]
 pub struct MetadataStore {
     pool: PgPool,
 }
@@ -685,6 +696,8 @@ impl MetadataStore {
     /// Record a failed login attempt for an IP address.
     /// If failed_count reaches max_login_attempts, blocks the IP for login_block_duration_minutes.
     pub async fn record_login_failure(&self, ip_address: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
         let config = sqlx::query!(
             r#"
             SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes
@@ -692,11 +705,12 @@ impl MetadataStore {
             WHERE id = 1
             "#,
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
 
         let enabled = config.login_protection_enabled;
         if !enabled {
+            tx.commit().await?;
             return Ok(());
         }
 
@@ -708,7 +722,7 @@ impl MetadataStore {
             "SELECT blocked_until FROM login_attempts WHERE ip_address = $1",
             ip_address
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
         if let Some(row) = existing {
@@ -720,7 +734,7 @@ impl MetadataStore {
                         "UPDATE login_attempts SET failed_count = 0, blocked_until = NULL WHERE ip_address = $1",
                         ip_address
                     )
-                    .execute(&self.pool)
+                    .execute(&mut *tx)
                     .await?;
                 }
             }
@@ -737,7 +751,7 @@ impl MetadataStore {
             "#,
             ip_address
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
 
         let failed_count = row.failed_count;
@@ -753,10 +767,11 @@ impl MetadataStore {
                 ip_address,
                 block_until
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
@@ -825,8 +840,12 @@ impl MetadataStore {
         })
     }
 
-    /// Create a new file in the projection table
-    pub async fn create_file(&self, file: &File) -> Result<()> {
+    /// Create a new file in the projection table inside a transaction.
+    pub async fn create_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        file: &File,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, parent_folder_id, current_version, created_at, modified_at, tenant_id, starred_at, deleted_at)
@@ -846,9 +865,17 @@ impl MetadataStore {
             file.modified_at,
             file.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new file in the projection table
+    pub async fn create_file(&self, file: &File) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -897,8 +924,12 @@ impl MetadataStore {
         Ok(file)
     }
 
-    /// Update a file in the projection table
-    pub async fn update_file(&self, file: &File) -> Result<()> {
+    /// Update a file in the projection table inside a transaction.
+    pub async fn update_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        file: &File,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE files
@@ -919,14 +950,27 @@ impl MetadataStore {
             file.tenant_id,
             file.owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
     }
 
-    /// Delete a file from the projection table
-    pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+    /// Update a file in the projection table
+    pub async fn update_file(&self, file: &File) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_file_in_tx(&mut tx, file).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete a file from the projection table inside a transaction.
+    pub async fn delete_file_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE files
@@ -936,9 +980,17 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Delete a file from the projection table
+    pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.delete_file_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -994,6 +1046,35 @@ impl MetadataStore {
             tenant_id,
             parent_id
         )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(files)
+    }
+
+    /// Find all non-deleted files that belong to any of the given folders.
+    pub async fn find_files_in_folders(
+        &self,
+        folder_ids: &[Uuid],
+        owner_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<File>> {
+        let files = sqlx::query_as::<_, File>(
+            r#"
+            SELECT
+                id, name, path, size, mime_type, content_hash,
+                owner_id, parent_folder_id, current_version,
+                created_at, modified_at, starred_at, deleted_at, tenant_id
+            FROM files
+            WHERE tenant_id = $1
+              AND owner_id = $2
+              AND deleted_at IS NULL
+              AND parent_folder_id = ANY($3)
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(folder_ids)
         .fetch_all(&self.pool)
         .await?;
         Ok(files)
@@ -1099,8 +1180,12 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Create a new file version in the projection table
-    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+    /// Create a new file version in the projection table inside a transaction.
+    pub async fn create_file_version_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        version: &FileVersion,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO file_versions (
@@ -1137,9 +1222,17 @@ impl MetadataStore {
             version.change_description.as_deref(),
             version.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new file version in the projection table
+    pub async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_file_version_in_tx(&mut tx, version).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1558,8 +1651,12 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Create a new folder in the projection table
-    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
+    /// Create a new folder in the projection table inside a transaction.
+    pub async fn create_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        folder: &Folder,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO folders (id, name, path, parent_folder_id, owner_id, created_at, updated_at, tenant_id, starred_at, deleted_at)
@@ -1574,9 +1671,17 @@ impl MetadataStore {
             folder.updated_at,
             folder.tenant_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Create a new folder in the projection table
+    pub async fn create_folder(&self, folder: &Folder) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1639,8 +1744,12 @@ impl MetadataStore {
         Ok(folder)
     }
 
-    /// Update a folder in the projection table
-    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
+    /// Update a folder in the projection table inside a transaction.
+    pub async fn update_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        folder: &Folder,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE folders
@@ -1655,14 +1764,27 @@ impl MetadataStore {
             folder.tenant_id,
             folder.owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
     }
 
-    /// Delete a folder from the projection table
-    pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+    /// Update a folder in the projection table
+    pub async fn update_folder(&self, folder: &Folder) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_folder_in_tx(&mut tx, folder).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete a folder from the projection table inside a transaction.
+    pub async fn delete_folder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE folders
@@ -1672,7 +1794,7 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         sqlx::query!(
@@ -1684,9 +1806,17 @@ impl MetadataStore {
             id,
             owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
+        Ok(())
+    }
+
+    /// Delete a folder from the projection table
+    pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.delete_folder_in_tx(&mut tx, id, owner_id).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -2072,6 +2202,104 @@ impl MetadataStore {
         Ok(file_result.rows_affected() + folder_result.rows_affected())
     }
 
+    /// Delete audit logs (admin_actions) older than the given number of days.
+    pub async fn clean_audit_logs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM admin_actions WHERE performed_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete expired browser sessions older than the given number of days.
+    pub async fn clean_expired_sessions_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM user_sessions WHERE expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete expired shares older than the given number of days.
+    pub async fn clean_expired_shares_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete old file versions older than the given number of days,
+    /// keeping at least 3 versions per file.
+    pub async fn clean_old_file_versions(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM file_versions
+            WHERE id IN (
+                SELECT fv.id
+                FROM file_versions fv
+                JOIN files f ON f.id = fv.file_id
+                WHERE fv.created_at < NOW() - INTERVAL '1 day' * $1
+                AND fv.version_number <= f.current_version - 3
+            )
+            "#,
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete replication attempt history older than the given number of days.
+    pub async fn clean_replication_history_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM replication_attempts WHERE completed_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete OIDC login states older than the given number of days.
+    pub async fn clean_oidc_states_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM oidc_login_states WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete device pair requests older than the given number of days.
+    pub async fn clean_device_pairs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM device_pair_requests WHERE expires_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete webhook delivery logs older than the given number of days.
+    pub async fn clean_webhook_logs_older_than(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM webhook_logs WHERE created_at < NOW() - INTERVAL '1 day' * $1",
+            days as f64
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Find all descendant folders of a given folder using recursive CTE
     ///
     /// Returns all folders in the subtree rooted at the specified folder,
@@ -2367,7 +2595,12 @@ impl MetadataStore {
     }
 
     /// Get all active shares created by a specific user (public, user, and group shares).
-    pub async fn get_user_all_shares(&self, user_id: Uuid) -> Result<Vec<OwnedPublicShare>> {
+    pub async fn get_user_all_shares(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<OwnedPublicShare>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -2398,8 +2631,11 @@ impl MetadataStore {
             WHERE s.created_by = $1
               AND s.revoked_at IS NULL
             ORDER BY s.created_at DESC
+            LIMIT $2 OFFSET $3
             "#,
-            user_id
+            user_id,
+            limit,
+            offset
         )
         .fetch_all(&self.pool)
         .await?;
@@ -2486,18 +2722,19 @@ impl MetadataStore {
             .collect()
     }
 
-    /// Update a share's password and expiration
+    /// Update a share's password, expiration, and permissions
     pub async fn update_share(&self, share: &Share) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE shares
-            SET password_hash = $2, expires_at = $3, tenant_id = $4
-            WHERE id = $1 AND created_by = $5
+            SET password_hash = $2, expires_at = $3, tenant_id = $4, permissions = $5
+            WHERE id = $1 AND created_by = $6
             "#,
             share.id,
             share.password_hash,
             share.expires_at,
             share.tenant_id,
+            Self::permission_to_db_value(share.permissions),
             share.created_by
         )
         .execute(&self.pool)
@@ -2634,6 +2871,907 @@ impl MetadataStore {
 
         Ok(exists)
     }
+
+    // -----------------------------------------------------------------
+    // Vault sync
+    // -----------------------------------------------------------------
+
+    /// Obsidian is a trademark of Dynalist Inc. RustShare is not affiliated with,
+    /// endorsed by, or sponsored by Obsidian.
+    /// Create a new vault.
+    pub async fn create_vault(&self, vault: &Vault) -> sqlx::Result<Vault> {
+        sqlx::query!(
+            r#"
+            INSERT INTO vaults (id, tenant_id, owner_user_id, name, adapter, root_path, server_rev, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+            vault.id,
+            vault.tenant_id,
+            vault.owner_user_id,
+            vault.name,
+            vault.adapter.to_string(),
+            vault.root_path,
+            vault.server_rev,
+            vault.created_at,
+            vault.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(vault.clone())
+    }
+
+    /// Get a vault by ID.
+    pub async fn get_vault(&self, vault_id: Uuid, tenant_id: Uuid) -> sqlx::Result<Option<Vault>> {
+        let vault = sqlx::query_as!(
+            Vault,
+            r#"
+            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, server_rev, created_at, updated_at
+            FROM vaults
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+            vault_id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(vault)
+    }
+
+    /// List vaults for an owner within a tenant.
+    pub async fn list_vaults(&self, tenant_id: Uuid, owner_id: Uuid) -> sqlx::Result<Vec<Vault>> {
+        let vaults = sqlx::query_as!(
+            Vault,
+            r#"
+            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, server_rev, created_at, updated_at
+            FROM vaults
+            WHERE tenant_id = $1 AND owner_user_id = $2
+            ORDER BY name ASC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(vaults)
+    }
+
+    /// Atomically increment the server revision of a vault.
+    pub async fn increment_vault_rev(&self, vault_id: Uuid, tenant_id: Uuid) -> sqlx::Result<i64> {
+        let row = sqlx::query!(
+            r#"
+            UPDATE vaults
+            SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING server_rev
+            "#,
+            vault_id,
+            tenant_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.server_rev)
+    }
+
+    /// Get a file by vault ID and relative path.
+    pub async fn get_vault_file(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+    ) -> sqlx::Result<Option<VaultFile>> {
+        let file = sqlx::query_as!(
+            VaultFile,
+            r#"
+            SELECT id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            FROM vault_files
+            WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3 AND deleted = false
+            "#,
+            vault_id,
+            relative_path,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(file)
+    }
+
+    /// Get a file by vault ID and relative path, including tombstones.
+    pub async fn get_vault_file_including_deleted(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+    ) -> sqlx::Result<Option<VaultFile>> {
+        let file = sqlx::query_as::<_, VaultFile>(
+            r#"
+            SELECT id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            FROM vault_files
+            WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3
+            ORDER BY deleted ASC, server_rev DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(vault_id)
+        .bind(relative_path)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(file)
+    }
+
+    /// List all files in a vault.
+    pub async fn list_vault_files(
+        &self,
+        vault_id: Uuid,
+        tenant_id: Uuid,
+        limit: Option<i64>,
+    ) -> sqlx::Result<Vec<VaultFile>> {
+        let limit = limit.unwrap_or(i64::MAX);
+        let files = sqlx::query_as!(
+            VaultFile,
+            r#"
+            SELECT id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            FROM vault_files
+            WHERE vault_id = $1 AND tenant_id = $2
+            ORDER BY relative_path ASC
+            LIMIT $3
+            "#,
+            vault_id,
+            tenant_id,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(files)
+    }
+
+    /// Insert a new file in a vault.
+    pub async fn insert_vault_file(&self, file: &VaultFile) -> sqlx::Result<VaultFile> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO vault_files (id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            file.id,
+            file.tenant_id,
+            file.vault_id,
+            file.relative_path,
+            file.content_type,
+            file.sha256,
+            file.size,
+            file.server_rev,
+            file.mtime_client,
+            file.mtime_server,
+            file.deleted,
+            file.deleted_at,
+            file.last_writer_device_id,
+            file.created_at,
+            file.updated_at,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(VaultFile {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            vault_id: row.vault_id,
+            relative_path: row.relative_path,
+            content_type: row.content_type,
+            sha256: row.sha256,
+            size: row.size,
+            server_rev: row.server_rev,
+            mtime_client: row.mtime_client,
+            mtime_server: row.mtime_server,
+            deleted: row.deleted,
+            deleted_at: row.deleted_at,
+            last_writer_device_id: row.last_writer_device_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+
+    /// Insert a new file atomically, incrementing the vault revision in the
+    /// same transaction so the revision cannot leak on conflict.
+    pub async fn insert_vault_file_atomic(&self, file: &VaultFile) -> sqlx::Result<VaultFile> {
+        let mut tx = self.pool.begin().await?;
+
+        let rev_row = sqlx::query!(
+            r#"
+            UPDATE vaults SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING server_rev
+            "#,
+            file.vault_id,
+            file.tenant_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO vault_files (id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            file.id,
+            file.tenant_id,
+            file.vault_id,
+            file.relative_path,
+            file.content_type,
+            file.sha256,
+            file.size,
+            rev_row.server_rev,
+            file.mtime_client,
+            file.mtime_server,
+            file.deleted,
+            file.deleted_at,
+            file.last_writer_device_id,
+            file.created_at,
+            file.updated_at,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(VaultFile {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            vault_id: row.vault_id,
+            relative_path: row.relative_path,
+            content_type: row.content_type,
+            sha256: row.sha256,
+            size: row.size,
+            server_rev: row.server_rev,
+            mtime_client: row.mtime_client,
+            mtime_server: row.mtime_server,
+            deleted: row.deleted,
+            deleted_at: row.deleted_at,
+            last_writer_device_id: row.last_writer_device_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+
+    /// Upsert a file in a vault.
+    pub async fn upsert_vault_file(&self, file: &VaultFile) -> sqlx::Result<VaultFile> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO vault_files (id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ON CONFLICT (vault_id, relative_path) WHERE deleted_at IS NULL DO UPDATE SET
+                content_type = EXCLUDED.content_type,
+                sha256 = EXCLUDED.sha256,
+                size = EXCLUDED.size,
+                server_rev = EXCLUDED.server_rev,
+                mtime_client = EXCLUDED.mtime_client,
+                mtime_server = EXCLUDED.mtime_server,
+                deleted = EXCLUDED.deleted,
+                deleted_at = EXCLUDED.deleted_at,
+                last_writer_device_id = EXCLUDED.last_writer_device_id,
+                updated_at = EXCLUDED.updated_at
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            file.id,
+            file.tenant_id,
+            file.vault_id,
+            file.relative_path,
+            file.content_type,
+            file.sha256,
+            file.size,
+            file.server_rev,
+            file.mtime_client,
+            file.mtime_server,
+            file.deleted,
+            file.deleted_at,
+            file.last_writer_device_id,
+            file.created_at,
+            file.updated_at,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(VaultFile {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            vault_id: row.vault_id,
+            relative_path: row.relative_path,
+            content_type: row.content_type,
+            sha256: row.sha256,
+            size: row.size,
+            server_rev: row.server_rev,
+            mtime_client: row.mtime_client,
+            mtime_server: row.mtime_server,
+            deleted: row.deleted,
+            deleted_at: row.deleted_at,
+            last_writer_device_id: row.last_writer_device_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+
+    /// Update an existing vault file ONLY if its current server_rev matches base_rev.
+    /// Returns true if updated, false if the revision didn't match (conflict).
+    pub async fn update_vault_file_conditional(
+        &self,
+        file: &VaultFile,
+        base_server_rev: i64,
+    ) -> sqlx::Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET sha256 = $1, size = $2, server_rev = $3, mtime_server = NOW(),
+                updated_at = NOW(), last_writer_device_id = $4, content_type = $5
+            WHERE vault_id = $6 AND relative_path = $7 AND tenant_id = $8
+              AND server_rev = $9 AND deleted = false
+            "#,
+            file.sha256,
+            file.size,
+            file.server_rev,
+            file.last_writer_device_id,
+            file.content_type,
+            file.vault_id,
+            file.relative_path,
+            file.tenant_id,
+            base_server_rev,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Atomically increment vault revision and update an existing file ONLY if
+    /// its current server_rev matches base_server_rev.  Returns the updated
+    /// file on success, or `None` if the revision did not match.
+    pub async fn update_vault_file_conditional_atomic(
+        &self,
+        file: &VaultFile,
+        base_server_rev: i64,
+    ) -> sqlx::Result<Option<VaultFile>> {
+        let mut tx = self.pool.begin().await?;
+
+        let rev_row = sqlx::query!(
+            r#"
+            UPDATE vaults SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING server_rev
+            "#,
+            file.vault_id,
+            file.tenant_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET sha256 = $1, size = $2, server_rev = $3, mtime_server = NOW(),
+                updated_at = NOW(), last_writer_device_id = $4, content_type = $5
+            WHERE vault_id = $6 AND relative_path = $7 AND tenant_id = $8
+              AND server_rev = $9 AND deleted = false
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            file.sha256,
+            file.size,
+            rev_row.server_rev,
+            file.last_writer_device_id,
+            file.content_type,
+            file.vault_id,
+            file.relative_path,
+            file.tenant_id,
+            base_server_rev,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        match row {
+            Some(r) => {
+                tx.commit().await?;
+                Ok(Some(VaultFile {
+                    id: r.id,
+                    tenant_id: r.tenant_id,
+                    vault_id: r.vault_id,
+                    relative_path: r.relative_path,
+                    content_type: r.content_type,
+                    sha256: r.sha256,
+                    size: r.size,
+                    server_rev: r.server_rev,
+                    mtime_client: r.mtime_client,
+                    mtime_server: r.mtime_server,
+                    deleted: r.deleted,
+                    deleted_at: r.deleted_at,
+                    last_writer_device_id: r.last_writer_device_id,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }))
+            }
+            None => {
+                tx.rollback().await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Tombstone (soft-delete) a file in a vault.
+    pub async fn tombstone_vault_file(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+        new_rev: i64,
+        device_id: &str,
+    ) -> Result<VaultFile> {
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET deleted = true, deleted_at = NOW(), server_rev = $4, last_writer_device_id = $5, updated_at = NOW()
+            WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            vault_id,
+            relative_path,
+            tenant_id,
+            new_rev,
+            device_id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Err(VaultFileStoreError::NotFound.into()),
+        };
+
+        Ok(VaultFile {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            vault_id: row.vault_id,
+            relative_path: row.relative_path,
+            content_type: row.content_type,
+            sha256: row.sha256,
+            size: row.size,
+            server_rev: row.server_rev,
+            mtime_client: row.mtime_client,
+            mtime_server: row.mtime_server,
+            deleted: row.deleted,
+            deleted_at: row.deleted_at,
+            last_writer_device_id: row.last_writer_device_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+
+    /// Tombstone a vault file ONLY if its current server_rev matches base_rev.
+    /// Returns true if tombstoned, false if revision didn't match.
+    pub async fn tombstone_vault_file_conditional(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+        base_server_rev: i64,
+        new_rev: i64,
+        device_id: &str,
+    ) -> sqlx::Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET deleted = true, deleted_at = NOW(), server_rev = $1,
+                last_writer_device_id = $2, updated_at = NOW()
+            WHERE vault_id = $3 AND relative_path = $4 AND tenant_id = $5
+              AND server_rev = $6 AND deleted = false
+            "#,
+            new_rev,
+            device_id,
+            vault_id,
+            relative_path,
+            tenant_id,
+            base_server_rev,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Atomically increment vault revision and tombstone a file ONLY if its
+    /// current server_rev matches base_server_rev.  Returns the updated file
+    /// on success, or `None` if the revision did not match.
+    pub async fn tombstone_vault_file_conditional_atomic(
+        &self,
+        vault_id: Uuid,
+        relative_path: &str,
+        tenant_id: Uuid,
+        base_server_rev: i64,
+        device_id: &str,
+    ) -> sqlx::Result<Option<VaultFile>> {
+        let mut tx = self.pool.begin().await?;
+
+        let rev_row = sqlx::query!(
+            r#"
+            UPDATE vaults SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING server_rev
+            "#,
+            vault_id,
+            tenant_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET deleted = true, deleted_at = NOW(), server_rev = $1,
+                last_writer_device_id = $2, updated_at = NOW()
+            WHERE vault_id = $3 AND relative_path = $4 AND tenant_id = $5
+              AND server_rev = $6 AND deleted = false
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            rev_row.server_rev,
+            device_id,
+            vault_id,
+            relative_path,
+            tenant_id,
+            base_server_rev,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        match row {
+            Some(r) => {
+                tx.commit().await?;
+                Ok(Some(VaultFile {
+                    id: r.id,
+                    tenant_id: r.tenant_id,
+                    vault_id: r.vault_id,
+                    relative_path: r.relative_path,
+                    content_type: r.content_type,
+                    sha256: r.sha256,
+                    size: r.size,
+                    server_rev: r.server_rev,
+                    mtime_client: r.mtime_client,
+                    mtime_server: r.mtime_server,
+                    deleted: r.deleted,
+                    deleted_at: r.deleted_at,
+                    last_writer_device_id: r.last_writer_device_id,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }))
+            }
+            None => {
+                tx.rollback().await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Rename a file within a vault.
+    pub async fn rename_vault_file(
+        &self,
+        vault_id: Uuid,
+        old_path: &str,
+        new_path: &str,
+        tenant_id: Uuid,
+        new_rev: i64,
+        device_id: &str,
+    ) -> Result<VaultFile> {
+        let mut tx = self.pool.begin().await?;
+
+        // Check if an active file already exists at the destination path
+        let existing = sqlx::query!(
+            r#"SELECT id FROM vault_files WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3 AND deleted = false"#,
+            vault_id,
+            new_path,
+            tenant_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if existing.is_some() {
+            tx.rollback().await?;
+            return Err(VaultFileStoreError::DestinationExists.into());
+        }
+
+        // Update the old row to the new path
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET relative_path = $4, server_rev = $5, last_writer_device_id = $6, updated_at = NOW()
+            WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            vault_id,
+            old_path,
+            tenant_id,
+            new_path,
+            new_rev,
+            device_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(VaultFile {
+            id: row.id,
+            tenant_id: row.tenant_id,
+            vault_id: row.vault_id,
+            relative_path: row.relative_path,
+            content_type: row.content_type,
+            sha256: row.sha256,
+            size: row.size,
+            server_rev: row.server_rev,
+            mtime_client: row.mtime_client,
+            mtime_server: row.mtime_server,
+            deleted: row.deleted,
+            deleted_at: row.deleted_at,
+            last_writer_device_id: row.last_writer_device_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+
+    /// Rename a vault file ONLY if its current server_rev matches base_rev.
+    /// Returns `true` if renamed, `false` if revision didn't match.
+    /// Returns `Err(VaultFileStoreError::DestinationExists)` if destination already exists.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn rename_vault_file_conditional(
+        &self,
+        vault_id: Uuid,
+        old_path: &str,
+        new_path: &str,
+        tenant_id: Uuid,
+        base_server_rev: i64,
+        new_rev: i64,
+        device_id: &str,
+    ) -> anyhow::Result<bool> {
+        let mut tx = self.pool.begin().await?;
+
+        // First check destination does NOT exist (active file)
+        let existing = sqlx::query!(
+            r#"SELECT 1 as one FROM vault_files WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3 AND deleted = false"#,
+            vault_id,
+            new_path,
+            tenant_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if existing.is_some() {
+            tx.rollback().await?;
+            return Err(VaultFileStoreError::DestinationExists.into());
+        }
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET relative_path = $1, server_rev = $2, last_writer_device_id = $3, updated_at = NOW()
+            WHERE vault_id = $4 AND relative_path = $5 AND tenant_id = $6
+              AND server_rev = $7 AND deleted = false
+            "#,
+            new_path,
+            new_rev,
+            device_id,
+            vault_id,
+            old_path,
+            tenant_id,
+            base_server_rev,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Atomically increment vault revision and rename a file ONLY if its
+    /// current server_rev matches base_server_rev.  Returns the updated file
+    /// on success, or `None` if the revision did not match.
+    /// Returns `Err(VaultFileStoreError::DestinationExists)` if destination
+    /// already occupied by an active file.
+    pub async fn rename_vault_file_conditional_atomic(
+        &self,
+        vault_id: Uuid,
+        old_path: &str,
+        new_path: &str,
+        tenant_id: Uuid,
+        base_server_rev: i64,
+        device_id: &str,
+    ) -> anyhow::Result<Option<VaultFile>> {
+        let mut tx = self.pool.begin().await?;
+
+        let existing = sqlx::query!(
+            r#"SELECT 1 as one FROM vault_files WHERE vault_id = $1 AND relative_path = $2 AND tenant_id = $3 AND deleted = false"#,
+            vault_id,
+            new_path,
+            tenant_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if existing.is_some() {
+            tx.rollback().await?;
+            return Err(VaultFileStoreError::DestinationExists.into());
+        }
+
+        let rev_row = sqlx::query!(
+            r#"
+            UPDATE vaults SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING server_rev
+            "#,
+            vault_id,
+            tenant_id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET relative_path = $1, server_rev = $2, last_writer_device_id = $3, updated_at = NOW()
+            WHERE vault_id = $4 AND relative_path = $5 AND tenant_id = $6
+              AND server_rev = $7 AND deleted = false
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            new_path,
+            rev_row.server_rev,
+            device_id,
+            vault_id,
+            old_path,
+            tenant_id,
+            base_server_rev,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        match row {
+            Some(r) => {
+                tx.commit().await?;
+                Ok(Some(VaultFile {
+                    id: r.id,
+                    tenant_id: r.tenant_id,
+                    vault_id: r.vault_id,
+                    relative_path: r.relative_path,
+                    content_type: r.content_type,
+                    sha256: r.sha256,
+                    size: r.size,
+                    server_rev: r.server_rev,
+                    mtime_client: r.mtime_client,
+                    mtime_server: r.mtime_server,
+                    deleted: r.deleted,
+                    deleted_at: r.deleted_at,
+                    last_writer_device_id: r.last_writer_device_id,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }))
+            }
+            None => {
+                tx.rollback().await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Register a new device for vault sync.
+    pub async fn create_vault_device(&self, device: &VaultDevice) -> sqlx::Result<VaultDevice> {
+        sqlx::query!(
+            r#"
+            INSERT INTO vault_devices (id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+            device.id,
+            device.tenant_id,
+            device.user_id,
+            device.vault_id,
+            device.device_name,
+            device.client_type,
+            device.client_version,
+            device.last_sync_rev,
+            device.revoked_at,
+            device.created_at,
+            device.last_seen_at,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(device.clone())
+    }
+
+    /// Get a device by its ID string.
+    pub async fn get_vault_device(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+    ) -> sqlx::Result<Option<VaultDevice>> {
+        let id = Uuid::parse_str(device_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+        let device = sqlx::query_as!(
+            VaultDevice,
+            r#"
+            SELECT id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at
+            FROM vault_devices
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+            id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(device)
+    }
+
+    /// Bind a device to a vault.
+    pub async fn bind_vault_device_to_vault(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+        vault_id: Uuid,
+    ) -> sqlx::Result<VaultDevice> {
+        let id = Uuid::parse_str(device_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+        let device = sqlx::query_as::<_, VaultDevice>(
+            r#"
+            UPDATE vault_devices
+            SET vault_id = $3, last_seen_at = NOW()
+            WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (vault_id IS NULL OR vault_id = $3)
+            RETURNING id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at
+            "#,
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .bind(vault_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(device)
+    }
+
+    /// Revoke a device.
+    pub async fn revoke_vault_device(&self, device_id: Uuid, tenant_id: Uuid) -> sqlx::Result<()> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE vault_devices
+            SET revoked_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+            device_id,
+            tenant_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+
+        Ok(())
+    }
+
+    /// Update the last_seen_at timestamp for a device.
+    pub async fn update_vault_device_last_seen(
+        &self,
+        device_id: &str,
+        tenant_id: Uuid,
+    ) -> sqlx::Result<()> {
+        let id = Uuid::parse_str(device_id).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE vault_devices
+            SET last_seen_at = NOW()
+            WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+            "#,
+            id,
+            tenant_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2681,7 +3819,8 @@ mod tests {
         assert_eq!(found_user.username, "testuser");
 
         // Cleanup
-        sqlx::query!("DELETE FROM users WHERE email = $1", "test@example.com")
+        sqlx::query("DELETE FROM users WHERE email = $1")
+            .bind("test@example.com")
             .execute(&pool)
             .await
             .unwrap();
@@ -2758,7 +3897,8 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -2856,13 +3996,15 @@ mod tests {
         assert!(not_found.is_none());
 
         // Cleanup (file_versions will cascade delete with file)
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", user.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3020,28 +4162,33 @@ mod tests {
 
         // Cleanup: Delete folders (cascade will handle children)
         // Delete in order: leaf -> parent
-        sqlx::query!("DELETE FROM folders WHERE id = $1", work_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(work_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", docs_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(docs_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", photos_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(photos_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", root_folder.id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(root_folder.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3182,18 +4329,21 @@ mod tests {
         assert!(revoked_share.is_some());
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
 
         // Cleanup user
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3255,16 +4405,16 @@ mod tests {
 
         // Create backing group row for the FK used by recipient_group_id.
         let group_id = Uuid::new_v4();
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO user_groups (id, name, description, created_by)
             VALUES ($1, $2, $3, $4)
             "#,
-            group_id,
-            format!("test-group-{}", group_id),
-            Some("Test group".to_string()),
-            owner.id
         )
+        .bind(group_id)
+        .bind(format!("test-group-{}", group_id))
+        .bind(Some("Test group".to_string()))
+        .bind(owner.id)
         .execute(&pool)
         .await
         .unwrap();
@@ -3297,19 +4447,23 @@ mod tests {
         assert_eq!(public_shares[0].share.id, public_share.id);
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE file_id = $1", file.id)
+        sqlx::query("DELETE FROM shares WHERE file_id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(group_id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM users WHERE id = $1", owner.id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
             .execute(&pool)
             .await
             .unwrap();
@@ -3371,14 +4525,12 @@ mod tests {
 
         // Cleanup
         store.delete_file(file.id, user_a.id).await.unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3428,14 +4580,12 @@ mod tests {
 
         // Cleanup
         store.delete_folder(folder.id, user_a.id).await.unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3508,21 +4658,203 @@ mod tests {
         assert!(still_exists.is_some(), "User A's share should still exist");
 
         // Cleanup
-        sqlx::query!("DELETE FROM shares WHERE id = $1", share.id)
+        sqlx::query("DELETE FROM shares WHERE id = $1")
+            .bind(share.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!("DELETE FROM files WHERE id = $1", file.id)
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(file.id)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query!(
-            "DELETE FROM users WHERE id = $1 OR id = $2",
-            user_a.id,
-            user_b.id
+        sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+            .bind(user_a.id)
+            .bind(user_b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_find_files_in_folders() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let owner = User::new(
+            "filefinder".to_string(),
+            "File Finder".to_string(),
+            "hash".to_string(),
+            "filefinder@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        // Create folder hierarchy: Root > Documents > Work
+        let root = Folder::new_root(owner.id, tenant_id);
+        store.create_folder(&root).await.unwrap();
+
+        let docs = Folder::new_child(
+            "Documents".to_string(),
+            "/Documents".to_string(),
+            root.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&docs).await.unwrap();
+
+        let work = Folder::new_child(
+            "Work".to_string(),
+            "/Documents/Work".to_string(),
+            docs.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&work).await.unwrap();
+
+        // Create files in different folders
+        let file_in_docs = File::new(
+            "report.pdf".to_string(),
+            "/Documents/report.pdf".to_string(),
+            "hash1".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            Some(docs.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_docs).await.unwrap();
+
+        let file_in_work = File::new(
+            "notes.txt".to_string(),
+            "/Documents/Work/notes.txt".to_string(),
+            "hash2".to_string(),
+            512,
+            "text/plain".to_string(),
+            Some(work.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_work).await.unwrap();
+
+        let file_in_root = File::new(
+            "rootfile.txt".to_string(),
+            "/rootfile.txt".to_string(),
+            "hash3".to_string(),
+            256,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&file_in_root).await.unwrap();
+
+        // Query files in Documents and Work
+        let folder_ids = vec![docs.id, work.id];
+        let files = store
+            .find_files_in_folders(&folder_ids, owner.id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(files.len(), 2, "Should find 2 files in Documents + Work");
+        assert!(files.iter().any(|f| f.name == "report.pdf"));
+        assert!(files.iter().any(|f| f.name == "notes.txt"));
+
+        // Query files in root only
+        let root_files = store
+            .find_files_in_folders(&[root.id], owner.id, tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(root_files.len(), 1);
+        assert_eq!(root_files[0].name, "rootfile.txt");
+
+        // Query empty folder list
+        let empty = store
+            .find_files_in_folders(&[], owner.id, tenant_id)
+            .await
+            .unwrap();
+        assert!(empty.is_empty());
+
+        // Cleanup
+        sqlx::query("DELETE FROM files WHERE owner_id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(owner.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_record_login_failure_concurrent() {
+        let (store, pool) = setup_metadata_store().await;
+        let ip = "192.168.1.1";
+
+        // Ensure login protection is enabled and max attempts is high enough
+        // so the concurrent tasks don't trigger a block before reaching 10.
+        store
+            .update_security_config(Some(true), Some(100), None)
+            .await
+            .unwrap();
+
+        // Clean up any existing attempts for this IP
+        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Spawn 10 concurrent tasks, each recording a login failure
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let store = store.clone();
+            let ip = ip.to_string();
+            handles.push(tokio::spawn(async move {
+                store.record_login_failure(&ip).await.unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify the final failed_count is exactly 10
+        let row = sqlx::query!(
+            "SELECT failed_count FROM login_attempts WHERE ip_address = $1",
+            ip
         )
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
+
+        assert_eq!(
+            row.failed_count, 10,
+            "Concurrent login failures should sum to exactly 10"
+        );
+
+        // Clean up
+        sqlx::query("DELETE FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Restore default security config
+        store
+            .update_security_config(Some(true), Some(5), Some(15))
+            .await
+            .unwrap();
     }
 }

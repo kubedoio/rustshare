@@ -28,7 +28,11 @@ impl TrashCleanupConfig {
     }
 }
 
-pub fn spawn_trash_cleanup_worker(metadata_store: Arc<MetadataStore>, config: TrashCleanupConfig) {
+pub fn spawn_trash_cleanup_worker(
+    metadata_store: Arc<MetadataStore>,
+    config: TrashCleanupConfig,
+    mut shutdown: tokio::sync::broadcast::Receiver<()>,
+) {
     if !config.enabled {
         info!("Trash cleanup worker disabled");
         return;
@@ -41,11 +45,17 @@ pub fn spawn_trash_cleanup_worker(metadata_store: Arc<MetadataStore>, config: Tr
         );
 
         loop {
-            if let Err(error) = tick_trash_cleanup(&metadata_store).await {
-                error!(error = %error, "Trash cleanup tick failed");
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    info!("Trash cleanup worker shutting down");
+                    break;
+                }
+                _ = tokio::time::sleep(config.interval) => {
+                    if let Err(error) = tick_trash_cleanup(&metadata_store).await {
+                        error!(error = %error, "Trash cleanup tick failed");
+                    }
+                }
             }
-
-            tokio::time::sleep(config.interval).await;
         }
     });
 }

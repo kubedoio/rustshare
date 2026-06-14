@@ -283,7 +283,7 @@ mod tests {
                 .collect();
 
             // Sort by created_at descending
-            filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            filtered.sort_by_key(|b| std::cmp::Reverse(b.created_at));
 
             // Apply pagination
             let start = offset as usize;

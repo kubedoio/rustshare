@@ -380,15 +380,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.toml");
 
-        let mut config = Config::default();
-        config.server_url = "https://example.com".to_string();
-        config.sync_folders.push(SyncFolderConfig {
-            folder_id: uuid::Uuid::new_v4(),
-            local_path: "/test/path".into(),
-            enabled: true,
-            direction: SyncDirection::Bidirectional,
-            ignore_patterns: vec!["*.tmp".to_string()],
-        });
+        let config = Config {
+            server_url: "https://example.com".to_string(),
+            sync_folders: vec![SyncFolderConfig {
+                folder_id: uuid::Uuid::new_v4(),
+                local_path: "/test/path".into(),
+                enabled: true,
+                direction: SyncDirection::Bidirectional,
+                ignore_patterns: vec!["*.tmp".to_string()],
+            }],
+            ..Default::default()
+        };
 
         // Save to temp location
         let content = toml::to_string_pretty(&config).unwrap();

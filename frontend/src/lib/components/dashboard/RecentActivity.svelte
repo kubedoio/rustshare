@@ -1,40 +1,37 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { getActivityDisplay, getRelativeTime, type Activity } from '$lib/stores/activity';
-	import { getActivityVerb, getUserInitials } from '$lib/utils/dashboard';
+	import { onMount } from 'svelte';
+	import {
+		serverActivityStore,
+		getActivityDisplay,
+		getRelativeTime,
+		getActivityHref
+	} from '$lib/stores/activity';
+	import { getActivityVerb, getModuleColor } from '$lib/utils/dashboard';
 	import DashboardSectionHeader from './DashboardSectionHeader.svelte';
 	import DashboardEmptyState from './DashboardEmptyState.svelte';
 
 	let {
-		activities,
-		userName = undefined
+		userName: _userName = undefined,
+		nameLookup = undefined
 	}: {
-		activities: Activity[];
 		userName?: string | undefined;
+		nameLookup?: Map<string, string> | undefined;
 	} = $props();
 
-	function getActivityHref(activity: Activity): string | null {
-		if (!activity.artifactId) return null;
+	onMount(() => {
+		serverActivityStore.fetch(6);
+	});
 
-		switch (activity.moduleKey) {
-			case 'notes':
-				return `/modules/notes/${activity.artifactId}`;
-			case 'meetings':
-				return `/modules/meetings/${activity.artifactId}`;
-			case 'standups':
-				return `/modules/standups/${activity.artifactId}`;
-			case 'decisions':
-				return `/modules/decisions/${activity.artifactId}`;
-			case 'brainstorming':
-				return `/modules/brainstorming/${activity.artifactId}`;
-			case 'kanban':
-				return '/modules/kanban';
-			case 'shares':
-				return `/modules/shares/${activity.artifactId}`;
-			default:
-				// Fallback for file-system artifacts
-				return `/files?preview=${activity.artifactId}`;
+	function getActivityName(activity: { fileName: string; artifactId?: string }): string {
+		if (activity.fileName && activity.fileName !== 'Unknown') {
+			return activity.fileName;
 		}
+
+		if (activity.artifactId) {
+			return nameLookup?.get(activity.artifactId) ?? activity.fileName;
+		}
+
+		return activity.fileName;
 	}
 </script>
 
@@ -45,58 +42,78 @@
 			window.location.href = '/settings?tab=activity';
 		}}
 	/>
-	{#if activities.length === 0}
+	{#if $serverActivityStore.loading}
+		<div class="py-6 text-center">
+			<div
+				class="inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+			></div>
+		</div>
+	{:else if $serverActivityStore.error}
+		<DashboardEmptyState description={$serverActivityStore.error} minimal />
+	{:else if $serverActivityStore.items.length === 0}
 		<DashboardEmptyState
 			description="Activity will appear here as you work in your workspace."
 			minimal
 		/>
 	{:else}
 		<ul class="activity-list">
-			{#each activities as activity}
+			{#each $serverActivityStore.items as activity}
 				{@const href = getActivityHref(activity)}
 				{@const display = getActivityDisplay(activity)}
+				{@const moduleColor = getModuleColor(activity.moduleKey ?? '')}
+				{@const activityName = getActivityName(activity)}
 				{#if href}
-					<a
-						{href}
-						class="activity-item activity-item--clickable"
-						aria-label="Open {activity.fileName}"
-					>
-						<div class="activity-icon-wrap">
-							{#if typeof display.icon === 'string'}
-								{display.icon}
-							{:else}
-								<svelte:component this={display.icon} size={16} />
-							{/if}
-						</div>
-						<div class="activity-body">
-							<span class="activity-text">
-								<strong>{activity.fileName}</strong>
-								{getActivityVerb(activity.type)}
-							</span>
+					<li>
+						<a
+							{href}
+							class="activity-item activity-item--clickable"
+							aria-label="Open {activityName}"
+						>
+							<div
+								class="activity-icon-wrap"
+								style="background: {moduleColor.bg}; color: {moduleColor.color};"
+							>
+								{#if typeof display.icon === 'string'}
+									{display.icon}
+								{:else}
+									<svelte:component this={display.icon} size={16} />
+								{/if}
+							</div>
+							<div class="activity-body">
+								<span class="activity-name">{activityName}</span>
+								<span class="activity-description">
+									<span class="activity-actor">You</span>
+									<span>{getActivityVerb(activity.type)}</span>
+								</span>
+							</div>
 							<span class="activity-time">{getRelativeTime(activity.timestamp)}</span>
-						</div>
-						<span class="activity-user-avatar">
-							{getUserInitials(userName)}
-						</span>
-					</a>
+						</a>
+					</li>
 				{:else}
-					<li
-						class="activity-item activity-item--stale"
-						title="This activity record cannot be opened"
-					>
-						<div class="activity-icon-wrap">
-							{display.icon}
-						</div>
-						<div class="activity-body">
-							<span class="activity-text">
-								<strong>{activity.fileName}</strong>
-								{getActivityVerb(activity.type)}
-							</span>
+					<li>
+						<div
+							class="activity-item activity-item--stale"
+							title="This activity record cannot be opened"
+						>
+							<div
+								class="activity-icon-wrap"
+								style="background: {moduleColor.bg}; color: {moduleColor.color};"
+							>
+								{#if typeof display.icon === 'string'}
+									{display.icon}
+								{:else}
+									<svelte:component this={display.icon} size={16} />
+								{/if}
+							</div>
+							<div class="activity-body">
+								<span class="activity-name">{activityName}</span>
+								<span class="activity-description">
+									<span class="activity-actor">You</span>
+									<span>{getActivityVerb(activity.type)}</span>
+								</span>
+							</div>
 							<span class="activity-time">{getRelativeTime(activity.timestamp)}</span>
 						</div>
-						<span class="activity-user-avatar">
-							{getUserInitials(userName)}
-						</span>
 					</li>
 				{/if}
 			{/each}
@@ -105,30 +122,42 @@
 </section>
 
 <style>
+	.recent-activity {
+		border: 1px solid color-mix(in oklab, var(--base-300) 52%, transparent);
+		border-radius: 0.5rem;
+		background: color-mix(in oklab, var(--base-100) 94%, white);
+		overflow: hidden;
+	}
+	.recent-activity :global(.dashboard-section-header) {
+		padding: 1rem 1rem 0.75rem;
+	}
 	.activity-list {
 		margin: 0;
 		padding: 0;
 		list-style: none;
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
 	}
 	.activity-item {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 0.6rem 0.75rem;
-		border-radius: 0.65rem;
-		background: color-mix(in oklab, var(--rs-surface-muted) 50%, white);
+		min-height: 4.25rem;
+		padding: 0.75rem 1rem;
+		border-top: 1px solid color-mix(in oklab, var(--base-300) 44%, transparent);
 	}
 	.activity-item--clickable {
 		cursor: pointer;
 		text-decoration: none;
 		color: inherit;
+		transition: background 150ms ease;
 	}
 	.activity-item--clickable:hover {
-		border-color: color-mix(in oklab, var(--brand-500) 30%, transparent);
-		background: color-mix(in oklab, var(--brand-500) 4%, white);
+		background: color-mix(in oklab, var(--brand-500) 4%, var(--base-100));
+	}
+	.activity-item--clickable:focus-visible {
+		outline: 2px solid color-mix(in oklab, var(--brand-500) 72%, transparent);
+		outline-offset: -2px;
 	}
 	.activity-item--stale {
 		opacity: 0.7;
@@ -138,8 +167,12 @@
 		font-size: 1rem;
 		line-height: 1;
 		flex-shrink: 0;
-		width: 1.75rem;
-		text-align: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 0.45rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 	.activity-body {
 		display: flex;
@@ -148,34 +181,42 @@
 		min-width: 0;
 		flex: 1;
 	}
-	.activity-text {
-		font-size: 0.8rem;
+	.activity-name {
+		font-size: 0.86rem;
+		font-weight: 650;
 		color: var(--base-content);
-		line-height: 1.4;
+		line-height: 1.35;
 		overflow: hidden;
-		display: -webkit-box;
-		line-clamp: 2;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
-	.activity-text strong {
+	.activity-description {
+		display: flex;
+		align-items: baseline;
+		gap: 0.25rem;
+		font-size: 0.74rem;
+		line-height: 1.35;
+		color: color-mix(in oklab, var(--base-content) 56%, transparent);
+	}
+	.activity-actor {
 		font-weight: 600;
+		color: color-mix(in oklab, var(--base-content) 70%, transparent);
 	}
 	.activity-time {
-		font-size: 0.7rem;
+		font-size: 0.72rem;
+		line-height: 1.35;
 		color: color-mix(in oklab, var(--base-content) 45%, transparent);
-	}
-	.activity-user-avatar {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.75rem;
-		height: 1.75rem;
-		border-radius: 999px;
-		background: color-mix(in oklab, var(--brand-500) 15%, transparent);
-		color: var(--brand-500);
-		font-size: 0.65rem;
-		font-weight: 700;
 		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
+	@media (max-width: 520px) {
+		.activity-item {
+			align-items: flex-start;
+		}
+
+		.activity-time {
+			padding-top: 0.1rem;
+		}
 	}
 </style>

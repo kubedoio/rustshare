@@ -26,6 +26,7 @@ reqwest = { workspace = true }
 async-trait = "0.1"
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
+utoipa = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

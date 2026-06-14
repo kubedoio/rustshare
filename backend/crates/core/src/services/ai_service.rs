@@ -177,24 +177,42 @@ where
         // Perform semantic search
         let raw_results = self.indexer.search(tenant_id, query, limit * 3).await;
 
+        // Filter out hidden metadata files
+        let raw_results: Vec<_> = raw_results
+            .into_iter()
+            .filter(|(doc, _)| {
+                !doc.file_name.starts_with(".rustshare")
+                    && doc.file_name != "events.jsonl"
+                    && doc.file_name != "index.md"
+                    && doc.file_name != "__primary__.md"
+                    && !doc.file_name.ends_with(".editor.json")
+            })
+            .collect();
+
         // Filter by permission and build results
         let mut results = Vec::new();
         for (document, score) in raw_results {
             // Check permission - Contract A-01
             let resource = Resource::File(document.file_id);
-            let permission = self
+            let permission = match self
                 .permission_resolver
                 .resolve_permission(user_id, resource)
                 .await
-                .map_err(|e| AiError::Internal(e.to_string()))?;
+            {
+                Ok(perm) => perm,
+                Err(e) => {
+                    tracing::warn!(
+                        "Permission resolution failed for file {}: {}. Skipping.",
+                        document.file_id,
+                        e
+                    );
+                    continue;
+                }
+            };
 
             if let Some(perm) = permission {
                 // Generate snippet (first 200 chars of content)
-                let snippet = if document.content.len() > 200 {
-                    format!("{}...", &document.content[..200])
-                } else {
-                    document.content.clone()
-                };
+                let snippet = truncate_with_ellipsis(&document.content, 200);
 
                 // Sanitize snippet
                 let snippet = sanitize_snippet(&snippet);
@@ -238,11 +256,21 @@ where
     ) -> Result<FileSummary, AiError> {
         // Check permission - Contract A-01
         let resource = Resource::File(file_id);
-        let permission = self
+        let permission = match self
             .permission_resolver
             .resolve_permission(user_id, resource)
             .await
-            .map_err(|e| AiError::Internal(e.to_string()))?;
+        {
+            Ok(perm) => perm,
+            Err(e) => {
+                tracing::warn!(
+                    "Permission resolution failed for file {}: {}. Treating as denied.",
+                    file_id,
+                    e
+                );
+                return Err(AiError::PermissionDenied { user_id });
+            }
+        };
 
         if permission.is_none() {
             return Err(AiError::PermissionDenied { user_id });
@@ -270,11 +298,7 @@ where
             file_name: document.file_name.clone(),
             file_path: document.file_path.clone(),
             relevance_score: 1.0,
-            excerpt: if document.content.len() > 300 {
-                format!("{}...", &document.content[..300])
-            } else {
-                document.content.clone()
-            },
+            excerpt: truncate_with_ellipsis(&document.content, 300),
         };
 
         Ok(FileSummary {
@@ -424,17 +448,23 @@ fn sanitize_snippet(snippet: &str) -> String {
         .to_string()
 }
 
+fn truncate_with_ellipsis(content: &str, max_chars: usize) -> String {
+    let mut chars = content.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        content.to_string()
+    }
+}
+
 /// Generate a simple document summary.
 /// Phase 1.5: Basic summary generation.
 /// Future phases: Use LLM for more sophisticated summaries.
 fn generate_document_summary(document: &IndexedDocument) -> String {
     let word_count = document.content.split_whitespace().count();
 
-    let content_preview = if document.content.len() > 500 {
-        format!("{}...", &document.content[..500].trim())
-    } else {
-        document.content.clone()
-    };
+    let content_preview = truncate_with_ellipsis(document.content.trim(), 500);
 
     format!(
         "This {} file ({}) contains approximately {} words. Preview: {}",
@@ -673,5 +703,383 @@ mod tests {
         assert!(!sanitized.contains('\x00'));
         assert!(!sanitized.contains('\x01'));
         assert!(sanitized.contains('\n') || sanitized.contains(' '));
+    }
+
+    #[test]
+    fn test_preview_truncates_unicode_on_character_boundary() {
+        let content = "é".repeat(300);
+        let preview = truncate_with_ellipsis(&content, 200);
+
+        assert!(preview.ends_with("..."));
+        assert!(preview.is_char_boundary(preview.len() - 3));
+        assert_eq!(preview.trim_end_matches("...").chars().count(), 200);
+    }
+
+    // --- Configurable mock for permission-boundary tests ---
+
+    use crate::domain::{File, Folder, Share, SharePermissions};
+    use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct ConfigurableMockOps {
+        files: Mutex<HashMap<Uuid, File>>,
+        folders: Mutex<HashMap<Uuid, Folder>>,
+        shares: Mutex<Vec<Share>>,
+    }
+
+    impl ConfigurableMockOps {
+        fn new() -> Self {
+            Self {
+                files: Mutex::new(HashMap::new()),
+                folders: Mutex::new(HashMap::new()),
+                shares: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn add_file(&self, file: File) {
+            self.files.lock().unwrap().insert(file.id, file);
+        }
+
+        fn add_share(&self, share: Share) {
+            self.shares.lock().unwrap().push(share);
+        }
+    }
+
+    impl PermissionResolverOps for ConfigurableMockOps {
+        async fn find_user_share(
+            &self,
+            file_id: Option<Uuid>,
+            folder_id: Option<Uuid>,
+            recipient_user_id: UserId,
+        ) -> anyhow::Result<Option<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .find(|s| {
+                    s.file_id == file_id
+                        && s.folder_id == folder_id
+                        && s.recipient_user_id == Some(recipient_user_id)
+                })
+                .cloned())
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<Uuid>,
+            _folder_id: Option<Uuid>,
+            _group_ids: &[Uuid],
+        ) -> anyhow::Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _recipient_user_id: UserId,
+        ) -> anyhow::Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _group_ids: &[Uuid],
+        ) -> anyhow::Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(&self, id: Uuid) -> anyhow::Result<Option<File>> {
+            Ok(self.files.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<Folder>> {
+            Ok(self.folders.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn get_user_group_ids(&self, _user_id: UserId) -> anyhow::Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn create_configurable_service() -> AiService<SimpleEmbeddingGenerator, ConfigurableMockOps> {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let permission_ops = Arc::new(ConfigurableMockOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
+        AiService::new(indexer, permission_resolver)
+    }
+
+    fn make_file(id: Uuid, name: &str, owner_id: Uuid, tenant_id: Uuid) -> File {
+        File {
+            id,
+            name: name.to_string(),
+            path: format!("/{}", name),
+            content_hash: "hash".to_string(),
+            size: 100,
+            mime_type: "text/plain".to_string(),
+            parent_folder_id: None,
+            owner_id,
+            current_version: 1,
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            starred_at: None,
+            deleted_at: None,
+            tenant_id,
+        }
+    }
+
+    fn make_share(
+        file_id: Uuid,
+        recipient_user_id: Uuid,
+        permissions: SharePermissions,
+        revoked_at: Option<chrono::DateTime<Utc>>,
+        expires_at: Option<chrono::DateTime<Utc>>,
+    ) -> Share {
+        Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: Some(Uuid::new_v4().to_string()),
+            permissions,
+            password_hash: None,
+            expires_at,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(recipient_user_id),
+            recipient_group_id: None,
+            created_by: Uuid::new_v4(),
+            created_at: Utc::now(),
+            revoked_at,
+            tenant_id: Uuid::new_v4(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ai_excludes_deleted_content() {
+        let service = create_configurable_service();
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        // Index a file but do NOT register it in the permission ops
+        service
+            .index_file(
+                file_id,
+                "deleted.txt".to_string(),
+                "/deleted.txt".to_string(),
+                "sensitive content".to_string(),
+                "text/plain".to_string(),
+                user_id,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let results = service
+            .semantic_search("sensitive", user_id, tenant_id, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "AI search should exclude deleted/unreachable content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ai_excludes_revoked_content() {
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let ops = Arc::new(ConfigurableMockOps::new());
+        ops.add_file(make_file(file_id, "revoked.txt", owner_id, tenant_id));
+        ops.add_share(make_share(
+            file_id,
+            recipient_id,
+            SharePermissions::View,
+            Some(Utc::now()), // revoked
+            None,
+        ));
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        service
+            .index_file(
+                file_id,
+                "revoked.txt".to_string(),
+                "/revoked.txt".to_string(),
+                "revoked content".to_string(),
+                "text/plain".to_string(),
+                owner_id,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let results = service
+            .semantic_search("revoked", recipient_id, tenant_id, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "AI search should exclude revoked shares"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ai_excludes_expired_content() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let ops = Arc::new(ConfigurableMockOps::new());
+
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        ops.add_file(make_file(file_id, "expired.txt", owner_id, tenant_id));
+        ops.add_share(make_share(
+            file_id,
+            recipient_id,
+            SharePermissions::View,
+            None,
+            Some(Utc::now() - Duration::hours(1)),
+        ));
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        service
+            .index_file(
+                file_id,
+                "expired.txt".to_string(),
+                "/expired.txt".to_string(),
+                "expired content".to_string(),
+                "text/plain".to_string(),
+                owner_id,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let results = service
+            .semantic_search("expired", recipient_id, tenant_id, 10)
+            .await
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "AI search should exclude expired shares"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ai_uses_normal_effective_permissions() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let ops = Arc::new(ConfigurableMockOps::new());
+
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        ops.add_file(make_file(file_id, "shared.txt", owner_id, tenant_id));
+        ops.add_share(make_share(
+            file_id,
+            recipient_id,
+            SharePermissions::Edit,
+            None,
+            None,
+        ));
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        service
+            .index_file(
+                file_id,
+                "shared.txt".to_string(),
+                "/shared.txt".to_string(),
+                "Rust is a systems programming language with memory safety".to_string(),
+                "text/plain".to_string(),
+                owner_id,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let results = service
+            .semantic_search("programming language", recipient_id, tenant_id, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_name, "shared.txt");
+        assert!(
+            results[0].can_edit,
+            "AI should reflect effective Edit permission"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ai_disabled_mode_returns_empty() {
+        // When ai_service is None (disabled), handlers return empty / 503.
+        // This is an AppState-level behavior verified by readiness tests.
+        // At the service level, semantic_search simply requires an AiService instance.
+        // We verify that an AiService with no indexed docs returns empty.
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let ops = Arc::new(ConfigurableMockOps::new());
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        let results = service
+            .semantic_search("anything", Uuid::new_v4(), Uuid::new_v4(), 10)
+            .await
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "AI with no indexed data should return empty results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ai_summarize_denies_deleted_file() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = Arc::new(ContentIndexer::new(generator));
+        let ops = Arc::new(ConfigurableMockOps::new());
+
+        let user_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        // Index but do not register file in permission ops
+        let service = AiService::new(indexer, Arc::new(PermissionResolver::new(ops)));
+        service
+            .index_file(
+                file_id,
+                "ghost.txt".to_string(),
+                "/ghost.txt".to_string(),
+                "ghost content".to_string(),
+                "text/plain".to_string(),
+                user_id,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let result = service.summarize_file(file_id, user_id, tenant_id).await;
+        assert!(
+            matches!(result, Err(AiError::PermissionDenied { .. })),
+            "Summarizing a deleted file should be denied"
+        );
     }
 }

@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::adapters;
@@ -29,6 +29,13 @@ pub type AppUserShareService = rustshare_core::services::UserShareService<
 pub type AppAiService = rustshare_core::services::AiService<
     rustshare_core::services::SimpleEmbeddingGenerator,
     rustshare_infrastructure::repositories::PermissionResolverRepository,
+>;
+
+/// Type alias for chat integration service
+pub type AppChatIntegrationService = rustshare_core::services::ChatIntegrationService<
+    rustshare_storage::MetadataStore,
+    rustshare_storage::EventStore,
+    rustshare_core::services::HttpWebhookDispatcher,
 >;
 
 // Note: Upload service disabled due to trait mismatch between storage and core crates
@@ -102,6 +109,8 @@ pub struct ServiceState {
     pub kanban_service: Arc<services::kanban_service::KanbanService>,
     pub brainstorming_service: Arc<services::brainstorming_service::BrainstormingService>,
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
+    pub vault_sync_service:
+        Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
 }
 
 /// Application configuration and runtime state.
@@ -183,6 +192,11 @@ pub struct AppState {
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
     pub public_base_url: String,
     pub collab_rooms: Arc<CollabRooms>,
+    pub vault_sync_service:
+        Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
+    pub chat_integration_service: Arc<AppChatIntegrationService>,
+    pub shutdown_tx: broadcast::Sender<()>,
+    pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }
 
 impl FromRef<AppState> for DatabaseState {
@@ -217,6 +231,7 @@ impl FromRef<AppState> for ServiceState {
             kanban_service: state.kanban_service.clone(),
             brainstorming_service: state.brainstorming_service.clone(),
             user_repository: state.user_repository.clone(),
+            vault_sync_service: state.vault_sync_service.clone(),
         }
     }
 }

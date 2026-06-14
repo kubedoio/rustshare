@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use super::UserId;
 
 /// Per-user module preference.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UserModulePreference {
+    #[schema(value_type = Uuid)]
     pub user_id: UserId,
     pub module_key: String,
     pub enabled: bool,

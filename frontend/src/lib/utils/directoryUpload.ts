@@ -61,7 +61,6 @@ export async function collectFilesFromDataTransfer(
 			if (entry.isFile) {
 				entry.file((file: globalThis.File) => {
 					const relativePath = path ? `${path}/${file.name}` : file.name;
-					(file as any).webkitRelativePath = relativePath;
 					result.push({ file, relativePath });
 					resolve();
 				}, reject);

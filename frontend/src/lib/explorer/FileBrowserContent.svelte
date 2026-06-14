@@ -8,6 +8,8 @@
 	import FileGrid from '$lib/files/FileGrid.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import FileListSkeleton from '$lib/components/common/FileListSkeleton.svelte';
+	import FileGridSkeleton from '$lib/components/common/FileGridSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import { FolderOpen } from 'lucide-svelte';
 
 	interface Props {
@@ -47,6 +49,7 @@
 		onPermanentDeleteFolder?: (folder: Folder) => void;
 		onShareFolder?: (folder: Folder) => void;
 		onMoveFolder?: (folder: Folder, targetFolderId: string | null) => void;
+		onDownloadFolder?: (folder: Folder) => void;
 		pagination?: import('svelte').Snippet;
 	}
 
@@ -87,6 +90,7 @@
 		onPermanentDeleteFolder = () => {},
 		onShareFolder = () => {},
 		onMoveFolder = () => {},
+		onDownloadFolder = () => {},
 		pagination
 	}: Props = $props();
 
@@ -150,6 +154,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onDownloadFolder}
 			{onRenameFile}
 			{onDeleteFile}
 			{onToggleFileStar}
@@ -186,6 +191,7 @@
 			{onPermanentDeleteFolder}
 			{onShareFolder}
 			{onMoveFolder}
+			{onDownloadFolder}
 			{onRenameFile}
 			{onDeleteFile}
 			{onToggleFileStar}

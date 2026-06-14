@@ -4,22 +4,22 @@ This guide explains how to test the RustShare deployment to prevent issues befor
 
 ## Quick Test
 
-Run the automated deployment test suite:
+Run the automated launch smoke test suite:
 
 ```bash
-./test-deployment.sh
+scripts/final-launch-smoke.sh
 ```
 
 This will verify:
-- ✓ All containers are running
-- ✓ Database connectivity
-- ✓ Object storage health
-- ✓ Frontend pages load correctly
-- ✓ Login API functionality
-- ✓ Authentication works
-- ✓ API routing through nginx
-- ✓ No SSR errors
-- ✓ Correct API URL configuration
+- ✓ Admin and viewer password login
+- ✓ Root folder listing
+- ✓ Folder creation and deletion
+- ✓ Private file upload and download
+- ✓ Internal share visibility for recipients
+- ✓ Public file link download flow
+- ✓ Upload-only public folder upload flow
+- ✓ Replication summary endpoint
+- ✓ Logout behavior
 
 ## Manual Browser Testing
 
@@ -133,7 +133,7 @@ docker compose restart nginx
 
 Before deploying or committing changes:
 
-- [ ] Run `./test-deployment.sh` - all tests pass
+- [ ] Run `scripts/final-launch-smoke.sh` - all tests pass
 - [ ] Login works in browser
 - [ ] Can create folders
 - [ ] Can upload files (when implemented)
@@ -150,21 +150,21 @@ Before deploying or committing changes:
 ```bash
 docker compose build backend
 docker compose up -d --force-recreate backend
-./test-deployment.sh
+scripts/final-launch-smoke.sh
 ```
 
 2. **Frontend changes:**
 ```bash
 docker compose build --no-cache backend
 docker compose up -d --force-recreate backend
-./test-deployment.sh
+scripts/final-launch-smoke.sh
 ```
 
 3. **Docker/Config changes:**
 ```bash
 docker compose down
 docker compose up -d --build
-./test-deployment.sh
+scripts/final-launch-smoke.sh
 ```
 
 ### Integration with CI/CD
@@ -176,7 +176,7 @@ Add to your CI pipeline:
 - name: Test Deployment
   run: |
     docker compose up -d
-    ./test-deployment.sh
+    scripts/final-launch-smoke.sh
 ```
 
 ## Monitoring in Production
@@ -242,4 +242,4 @@ Planned test additions:
 If issues persist:
 1. Check logs: `docker compose logs`
 2. Review this guide's Common Issues section
-3. Run: `./test-deployment.sh` for detailed diagnostics
+3. Run: `scripts/final-launch-smoke.sh` for detailed diagnostics

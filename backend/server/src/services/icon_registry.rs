@@ -7,10 +7,13 @@ pub const APPROVED_ICON_KEYS: &[&str] = &[
     "clipboard-list",
     "columns",
     "git-branch",
+    "path-separation",
     "share-2",
     "lock",
     "globe",
     "settings",
+    "lightbulb",
+    "activity",
 ];
 
 pub fn is_approved_icon_key(icon: &str) -> bool {

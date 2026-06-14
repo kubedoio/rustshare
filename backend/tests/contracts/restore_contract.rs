@@ -5,14 +5,14 @@
 //! - F-04: Restore preserves file identity and path
 //! - G-06: Backup artifacts can restore tenant data
 
-use crate::contracts::common::*;
+use crate::common::*;
 
 /// F-04-01: Deleted file can be restored with history
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_deleted_file_can_be_restored_with_history() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "restore_deleted_user", tenant_id).await;
@@ -32,10 +32,10 @@ async fn test_deleted_file_can_be_restored_with_history() {
     .await;
 
     let file_id = file.id;
-    let v1_hash = file.content_hash.clone();
+    let _v1_hash = file.content_hash.clone();
 
     // Create v2
-    let file = file_service
+    let _file = file_service
         .update_file(file_id, user.id, 1, bytes::Bytes::from("Version 2"))
         .await
         .expect("Failed to create v2");
@@ -64,8 +64,7 @@ async fn test_deleted_file_can_be_restored_with_history() {
     assert!(result.is_err(), "File should be deleted");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-04-02: Restore preserves file identity and path
@@ -73,7 +72,7 @@ async fn test_deleted_file_can_be_restored_with_history() {
 #[ignore] // Requires database and S3
 async fn test_restore_preserves_file_identity_and_path() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "identity_user", tenant_id).await;
@@ -140,8 +139,7 @@ async fn test_restore_preserves_file_identity_and_path() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// G-06-01: Backup artifacts can restore tenant data (conceptual)
@@ -149,7 +147,7 @@ async fn test_restore_preserves_file_identity_and_path() {
 #[ignore] // Requires database and S3
 async fn test_backup_artifacts_structure() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user with data
     let user = create_test_user(&ctx.metadata_store, "backup_user", tenant_id).await;
@@ -202,8 +200,7 @@ async fn test_backup_artifacts_structure() {
     assert_eq!(file2.tenant_id, tenant_id);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-04-03: Multiple restores preserve history
@@ -211,7 +208,7 @@ async fn test_backup_artifacts_structure() {
 #[ignore] // Requires database and S3
 async fn test_multiple_restores_preserve_history() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "multi_restore_user", tenant_id).await;
@@ -299,8 +296,7 @@ async fn test_multiple_restores_preserve_history() {
     assert_eq!(v5.content_hash, v2_hash, "v5 should have v2's content");
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// F-04-04: Restore to non-existent version fails gracefully
@@ -308,7 +304,7 @@ async fn test_multiple_restores_preserve_history() {
 #[ignore] // Requires database and S3
 async fn test_restore_nonexistent_version_fails() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "bad_restore_user", tenant_id).await;
@@ -339,8 +335,7 @@ async fn test_restore_nonexistent_version_fails() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// G-06-02: Tenant data is properly isolated for backup
@@ -414,8 +409,6 @@ async fn test_tenant_backup_isolation() {
     }
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_user(&ctx.pool, user_b.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }

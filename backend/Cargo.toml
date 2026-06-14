@@ -12,7 +12,7 @@ resolver = "2"
 # Note: crates/protocols will be added in Phase 4
 
 [workspace.package]
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.95.0"
 authors = ["RustShare Contributors"]
@@ -37,11 +37,15 @@ serde_json = "1.0"
 # Crypto
 argon2 = "0.5"
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
-rand = "0.9"
+rand = "0.10"
 
 # S3 client
 aws-sdk-s3 = "1.17"
 aws-config = "1.1"
+# Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
+# aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
+aws-smithy-types = "=1.4.9"
+time = "=0.3.47"
 
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
@@ -49,7 +53,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 bytes = "1.5"
 sha2 = "0.11"
 aes-gcm = "0.10"
@@ -57,6 +61,10 @@ base64 = { version = "0.22", features = ["alloc"] }
 hmac = "0.13"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+
+# OpenAPI generation
+utoipa = { version = "5.0", features = ["uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
 # Testing
 mockall = "0.14"

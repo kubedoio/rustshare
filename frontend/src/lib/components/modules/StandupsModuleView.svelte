@@ -4,6 +4,8 @@
 	import { standupsApi } from '$lib/api/standups';
 	import { activityStore } from '$lib/stores/activity';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -170,9 +172,13 @@ What needs follow-up or support?
 			</div>
 		{/if}
 		{#if $standupsQuery.isLoading}
-			<div class="flex h-32 items-center justify-center">
-				<div class="loading loading-md loading-spinner text-brand-500"></div>
-			</div>
+			<ModulePageSkeleton />
+		{:else if $standupsQuery.isError}
+			<ErrorState
+				title="Failed to load standups"
+				message={$standupsQuery.error?.message || 'Unknown error'}
+				onRetry={() => $standupsQuery.refetch()}
+			/>
 		{:else if standups.length === 0}
 			<EmptyState
 				icon={'📊'}

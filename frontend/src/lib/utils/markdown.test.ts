@@ -102,3 +102,27 @@ describe('task list rendering', () => {
 		expect(html).not.toContain('<input');
 	});
 });
+
+describe('wikilink rendering', () => {
+	it('renders simple wikilink as plain text', () => {
+		const input = 'See [[Note Title]] for details';
+		const html = renderMarkdown(input);
+		expect(html).toContain('Note Title');
+		expect(html).not.toContain('[[');
+		expect(html).toContain('<span class="wikilink-text">');
+	});
+
+	it('renders wikilink with display text', () => {
+		const input = '[[Note Title|Click here]]';
+		const html = renderMarkdown(input);
+		expect(html).toContain('Click here');
+		expect(html).not.toContain('[[');
+	});
+
+	it('renders embedded wikilink image as placeholder', () => {
+		const input = '![[image.png]]';
+		const html = renderMarkdown(input);
+		expect(html).toContain('[image: image.png]');
+		expect(html).not.toContain('![');
+	});
+});

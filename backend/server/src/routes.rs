@@ -3,7 +3,9 @@ use axum::Router;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
-    Router::new().route("/health", get(crate::health_check))
+    Router::new()
+        .route("/health", get(crate::health_check))
+        .route("/health/ready", get(crate::handlers::readiness_check))
 }
 
 pub fn auth_routes() -> Router<AppState> {
@@ -375,7 +377,7 @@ pub fn kanban_routes() -> Router<AppState> {
 }
 
 pub fn decision_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/decisions", get(crate::handlers::list_decisions))
         .route("/api/v1/decisions", post(crate::handlers::create_decision))
@@ -385,13 +387,17 @@ pub fn decision_routes() -> Router<AppState> {
             put(crate::handlers::update_decision),
         )
         .route(
+            "/api/v1/decisions/{id}",
+            delete(crate::handlers::delete_decision),
+        )
+        .route(
             "/api/v1/decisions/{id}/rename",
             post(crate::handlers::rename_decision),
         )
 }
 
 pub fn meeting_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/meetings", get(crate::handlers::list_meetings))
         .route("/api/v1/meetings", post(crate::handlers::create_meeting))
@@ -400,10 +406,14 @@ pub fn meeting_routes() -> Router<AppState> {
             "/api/v1/meetings/{id}",
             put(crate::handlers::update_meeting),
         )
+        .route(
+            "/api/v1/meetings/{id}",
+            delete(crate::handlers::delete_meeting),
+        )
 }
 
 pub fn standup_routes() -> Router<AppState> {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     Router::new()
         .route("/api/v1/standups", get(crate::handlers::list_standups))
         .route("/api/v1/standups", post(crate::handlers::create_standup))
@@ -411,6 +421,10 @@ pub fn standup_routes() -> Router<AppState> {
         .route(
             "/api/v1/standups/{id}",
             put(crate::handlers::update_standup),
+        )
+        .route(
+            "/api/v1/standups/{id}",
+            delete(crate::handlers::delete_standup),
         )
 }
 
@@ -444,6 +458,35 @@ pub fn brainstorming_routes() -> Router<AppState> {
         .route(
             "/api/v1/modules/brainstorming/boards/{board_id}",
             delete(crate::handlers::delete_brainstorm_board),
+        )
+}
+
+pub fn chat_integration_routes() -> Router<AppState> {
+    use axum::routing::{get, post};
+    Router::new()
+        .route(
+            "/api/v1/integrations/chat/unfurl",
+            post(crate::handlers::chat_integration::unfurl_link),
+        )
+        .route(
+            "/api/v1/integrations/chat/unfurl/public",
+            post(crate::handlers::chat_integration::unfurl_link_public),
+        )
+        .route(
+            "/api/v1/integrations/chat/events",
+            post(crate::handlers::chat_integration::receive_chat_event),
+        )
+        .route(
+            "/api/v1/integrations/webhooks/dispatch",
+            post(crate::handlers::chat_integration::dispatch_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/chat/webhooks",
+            get(crate::handlers::chat_integration::list_chat_webhooks),
+        )
+        .route(
+            "/api/v1/admin/integrations/chat/webhooks",
+            post(crate::handlers::chat_integration::register_chat_webhook),
         )
 }
 
@@ -723,6 +766,10 @@ pub fn folder_routes() -> Router<AppState> {
             "/api/v1/folders/{id}/rename",
             post(crate::handlers::rename_folder),
         )
+        .route(
+            "/api/v1/folders/{id}/download",
+            get(crate::handlers::download_folder),
+        )
         .route("/api/v1/folders/{id}", get(crate::handlers::get_folder))
         .route(
             "/api/v1/folders/{id}",
@@ -947,6 +994,7 @@ pub fn notification_routes() -> Router<AppState> {
             "/api/v1/notifications/{id}",
             delete(crate::handlers::delete_notification),
         )
+        .route("/api/v1/activity", get(crate::handlers::list_activity))
 }
 
 pub fn invite_routes() -> Router<AppState> {
@@ -1008,6 +1056,58 @@ pub fn public_share_routes() -> Router<AppState> {
             "/api/v1/public/share/{token}/folder/upload",
             post(crate::handlers::upload_shared_folder_file),
         )
+}
+
+/// Vault sync routes.
+///
+/// Rate limiting is applied globally in `main.rs` via `rate_limit_middleware`,
+/// which classifies these endpoints as `VaultSyncRead`, `VaultSyncWrite`, or
+/// `VaultSyncUpload` based on method and path.
+pub fn vault_sync_routes() -> Router<AppState> {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::{delete, get, post, put};
+    Router::new()
+        .route(
+            "/api/vault-sync/v1/vaults",
+            post(crate::handlers::vault_sync::create_vault),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults",
+            get(crate::handlers::vault_sync::list_vaults),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}",
+            get(crate::handlers::vault_sync::get_vault),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/manifest",
+            get(crate::handlers::vault_sync::get_manifest),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            get(crate::handlers::vault_sync::download_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            put(crate::handlers::vault_sync::upload_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/files/{*path}",
+            delete(crate::handlers::vault_sync::delete_file),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/rename",
+            post(crate::handlers::vault_sync::rename_file),
+        )
+        .route(
+            "/api/vault-sync/v1/devices/register",
+            post(crate::handlers::vault_sync::register_device),
+        )
+        .route(
+            "/api/vault-sync/v1/devices/{device_id}",
+            delete(crate::handlers::vault_sync::revoke_device),
+        )
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
 }
 
 pub fn sync_routes() -> Router<AppState> {

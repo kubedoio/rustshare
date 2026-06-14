@@ -22,7 +22,7 @@ fn utc_now() -> DateTime<Utc> {
 }
 
 /// Meeting-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingMetadata {
     #[serde(alias = "type")]
     pub kind: String,
@@ -56,20 +56,20 @@ impl MeetingMetadata {
 }
 
 /// Unified meeting note payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingNote {
     pub id: Uuid,     // Folder ID
     pub name: String, // Folder name
     pub path: String,
     pub content: String,           // From index.md
     pub metadata: MeetingMetadata, // From .rustshare.json
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Meeting summary for listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeetingSummary {
     pub id: Uuid,
     pub name: String,
@@ -158,19 +158,15 @@ impl MeetingService {
     }
 
     /// Ensure the root "Meetings" folder exists under /Workspace.
+    /// Ensure the canonical /Workspace/Meetings folder exists.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical /Workspace/Meetings path. Legacy roots are read-only.
     async fn ensure_meetings_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, MeetingError> {
-        let root_folders = self
-            .metadata_store
-            .list_folders(None, owner_id, tenant_id)
-            .await
-            .map_err(|e| MeetingError::Database(e.to_string()))?;
-        if let Some(folder) = root_folders.into_iter().find(|f| f.name == "Meetings") {
-            return Ok(folder);
-        }
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -255,6 +251,8 @@ impl MeetingService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<MeetingSummary>, MeetingError> {
         // Meetings are folders that contain .rustshare.json with kind="meeting"
         // This is expensive to scan everything.
@@ -286,7 +284,14 @@ impl MeetingService {
         }
 
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
-        Ok(summaries)
+
+        let paginated: Vec<MeetingSummary> = summaries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Create a new meeting note.
@@ -416,11 +421,15 @@ impl MeetingService {
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<MeetingNote, MeetingError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
         let files = self
             .metadata_store
-            .list_files(Some(id), user_id, folder.tenant_id)
+            .list_files_by_parent(Some(id), folder.tenant_id)
             .await
             .map_err(|e| MeetingError::Database(e.to_string()))?;
 
@@ -462,15 +471,36 @@ impl MeetingService {
         })
     }
 
+    pub async fn delete_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
+        self.folder_service
+            .delete_folder(id, user_id)
+            .await
+            .map_err(MeetingError::from)?;
+        Ok(())
+    }
+
     pub async fn update_meeting(
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         title: Option<String>,
         content: Option<String>,
         attendees: Option<Vec<String>>,
     ) -> Result<MeetingNote, MeetingError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
         let mut meta = self
             .load_metadata(id, user_id, folder.tenant_id)
             .await?
@@ -495,7 +525,7 @@ impl MeetingService {
         // Update sidecar
         let files = self
             .metadata_store
-            .list_files(Some(id), user_id, folder.tenant_id)
+            .list_files_by_parent(Some(id), folder.tenant_id)
             .await
             .map_err(|e| MeetingError::Database(e.to_string()))?;
         if let Some(sidecar) = files.iter().find(|f| f.name == ".rustshare.json") {
@@ -521,6 +551,6 @@ impl MeetingService {
             }
         }
 
-        self.get_meeting(id, user_id).await
+        self.get_meeting(id, user_id, tenant_id).await
     }
 }

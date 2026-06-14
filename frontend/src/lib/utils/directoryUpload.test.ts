@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractFolderPaths, sortFolderPaths } from './directoryUpload';
+import {
+	collectFilesFromDataTransfer,
+	extractFolderPaths,
+	sortFolderPaths
+} from './directoryUpload';
 
 describe('directoryUpload utils', () => {
 	describe('extractFolderPaths', () => {
@@ -37,6 +41,61 @@ describe('directoryUpload utils', () => {
 			const paths = ['z', 'a'];
 			const result = sortFolderPaths(paths);
 			expect(result).toEqual(['z', 'a']);
+		});
+	});
+
+	describe('collectFilesFromDataTransfer', () => {
+		it('should preserve relative paths from dropped directory entries', async () => {
+			const sourceFile = new File(['hello'], 'hello.txt', { type: 'text/plain' });
+			let rootReaderCalled = false;
+			const dataTransferItems = [
+				{
+					webkitGetAsEntry: () => ({
+						isFile: false,
+						isDirectory: true,
+						name: 'project',
+						createReader: () => ({
+							readEntries: (resolve: (entries: unknown[]) => void) => {
+								if (rootReaderCalled) {
+									resolve([]);
+									return;
+								}
+								rootReaderCalled = true;
+								resolve([
+									{
+										isFile: false,
+										isDirectory: true,
+										name: 'docs',
+										createReader: () => ({
+											readEntries: (() => {
+												let called = false;
+												return (resolveNested: (entries: unknown[]) => void) => {
+													if (called) {
+														resolveNested([]);
+														return;
+													}
+													called = true;
+													resolveNested([
+														{
+															isFile: true,
+															isDirectory: false,
+															file: (resolveFile: (file: File) => void) => resolveFile(sourceFile)
+														}
+													]);
+												};
+											})()
+										})
+									}
+								]);
+							}
+						})
+					})
+				}
+			] as unknown as DataTransferItemList;
+
+			const result = await collectFilesFromDataTransfer(dataTransferItems);
+
+			expect(result).toEqual([{ file: sourceFile, relativePath: 'project/docs/hello.txt' }]);
 		});
 	});
 });

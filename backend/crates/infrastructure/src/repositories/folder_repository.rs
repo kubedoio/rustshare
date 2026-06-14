@@ -77,46 +77,44 @@ mod tests {
         let user_id = Uuid::new_v4();
         let folder_id = Uuid::new_v4();
 
-        sqlx::query!(
-            "INSERT INTO tenants (id, name) VALUES ($1, $2)",
-            tenant_id,
-            format!("test-tenant-{test_id}")
-        )
-        .execute(&pool)
-        .await
-        .expect("create tenant");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant_id)
+            .bind(format!("test-tenant-{test_id}"))
+            .execute(&pool)
+            .await
+            .expect("create tenant");
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            user_id,
-            format!("user-{test_id}"),
-            format!("user-{test_id}@example.com"),
-            "hash",
-            "Test User",
-            false,
-            1024_i64,
-            tenant_id
         )
+        .bind(user_id)
+        .bind(format!("user-{test_id}"))
+        .bind(format!("user-{test_id}@example.com"))
+        .bind("hash")
+        .bind("Test User")
+        .bind(false)
+        .bind(1024_i64)
+        .bind(tenant_id)
         .execute(&pool)
         .await
         .expect("create user");
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO folders (
                 id, name, path, owner_id, parent_folder_id, tenant_id, starred_at, deleted_at
             )
             VALUES ($1, $2, $3, $4, NULL, $5, NOW(), NULL)
             "#,
-            folder_id,
-            "A",
-            "/A",
-            user_id,
-            tenant_id
         )
+        .bind(folder_id)
+        .bind("A")
+        .bind("/A")
+        .bind(user_id)
+        .bind(tenant_id)
         .execute(&pool)
         .await
         .expect("create folder");
@@ -135,15 +133,18 @@ mod tests {
         assert_eq!(folder.deleted_at, None);
         assert_eq!(folder.ancestor_ids, None);
 
-        sqlx::query!("DELETE FROM folders WHERE id = $1", folder_id)
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(folder_id)
             .execute(&pool)
             .await
             .ok();
-        sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
             .execute(&pool)
             .await
             .ok();
-        sqlx::query!("DELETE FROM tenants WHERE id = $1", tenant_id)
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
             .execute(&pool)
             .await
             .ok();

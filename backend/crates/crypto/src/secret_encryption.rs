@@ -32,6 +32,11 @@ impl SecretEncryptionKey {
         Ok(Self(arr))
     }
 
+    /// Create a key from a 32-byte array. Useful for tests.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

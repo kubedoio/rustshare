@@ -43,13 +43,13 @@ App mark / logo
 Dashboard
 My Files
 
-Enabled module icons:
-  Notes
-  Meeting Notes
-  Standups
-  Kanban
-  Decisions
-  Shares
+Enabled module icons (canonical roots under /Workspace):
+  Notes       → /Workspace/Notes
+  Meeting Notes → /Workspace/Meetings
+  Standups    → /Workspace/Standups
+  Kanban      → /Workspace/Kanban
+  Decisions   → /Workspace/Decisions
+  Shares      → /Workspace/Shares
 
 Bottom:
   Settings

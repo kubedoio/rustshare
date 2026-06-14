@@ -11,7 +11,7 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::{distr::Uniform, Rng};
+use rand::{distr::Uniform, RngExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
@@ -39,7 +39,7 @@ const POLL_RATE_LIMIT_SECONDS: u64 = 5;
 const DEVICE_APPROVAL_PATH: &str = "/device/approve";
 
 /// Response for QR info endpoint
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceQrInfoResponse {
     pub instance_url: String,
     pub device_pairing_path: String,
@@ -89,6 +89,15 @@ impl DeviceApprovalLookup {
 
 /// GET /api/v1/auth/device/qr-info
 /// Returns information needed for QR code generation on the device pairing page
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/device/qr-info",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success", body = DeviceQrInfoResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_qr_info(headers: HeaderMap) -> Result<Json<DeviceQrInfoResponse>, AppError> {
     let instance_url = build_instance_url(&headers);
 
@@ -98,7 +107,7 @@ pub async fn device_qr_info(headers: HeaderMap) -> Result<Json<DeviceQrInfoRespo
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DevicePollRequest {
     pub device_code: String,
 }
@@ -116,20 +125,20 @@ pub enum DevicePollResponse {
 }
 
 /// Request body for device approval
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct DeviceApproveRequest {
     pub user_code: Option<String>,
     pub device_code: Option<String>,
 }
 
 /// Response for device approval
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceApproveResponse {
     pub device_name: String,
 }
 
 /// Response for device request
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DeviceRequestResponse {
     pub user_code: String,
     pub device_code: String,
@@ -140,6 +149,15 @@ pub struct DeviceRequestResponse {
 
 /// POST /api/v1/auth/device/approve
 /// Approves a device pair request using either a user_code or device_code
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/approve",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_approve(
     State(db): State<DatabaseState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
@@ -316,6 +334,15 @@ fn hash_token(raw: &str) -> String {
 
 /// POST /api/v1/auth/device/request
 /// Generates a new device pair request with user_code and device_code
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/request",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Success", body = DeviceRequestResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_request(
     State(state): State<crate::state::AppState>,
     headers: HeaderMap,
@@ -353,6 +380,16 @@ pub async fn device_request(
 
 /// POST /api/v1/auth/device/poll
 /// Polls for approval status and issues token when approved
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/device/poll",
+    tag = "Auth",
+    request_body = DevicePollRequest,
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn device_poll(
     State(db): State<DatabaseState>,
     State(config): State<AppConfigState>,
@@ -489,7 +526,9 @@ async fn device_poll_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgPoolOptions;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tokio::sync::Mutex as AsyncMutex;
 
     const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
@@ -755,7 +794,10 @@ mod tests {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
 
-        sqlx::PgPool::connect(&database_url)
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(60))
+            .connect(&database_url)
             .await
             .expect("Failed to connect to test database")
     }
@@ -768,18 +810,18 @@ mod tests {
         expires_at: chrono::DateTime<chrono::Utc>,
         approved_at: Option<chrono::DateTime<chrono::Utc>>,
     ) {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO device_pair_requests (id, device_code, user_code, user_id, expires_at, approved_at)
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,
-            Uuid::new_v4(),
-            device_code,
-            user_code,
-            user_id,
-            expires_at,
-            approved_at
         )
+        .bind(Uuid::new_v4())
+        .bind(device_code)
+        .bind(user_code)
+        .bind(user_id)
+        .bind(expires_at)
+        .bind(approved_at)
         .execute(pool)
         .await
         .expect("Failed to insert test pair request");
@@ -787,7 +829,7 @@ mod tests {
 
     async fn insert_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
         let suffix = user_id.as_simple().to_string();
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO users (
                 id,
@@ -801,55 +843,56 @@ mod tests {
             )
             VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)
             "#,
-            user_id,
-            format!("device_pairing_test_{}", suffix),
-            format!("device_pairing_test_{}@example.com", suffix),
-            "test-password-hash",
-            "Device Pairing Test",
-            10_737_418_240_i64,
-            Uuid::nil()
         )
+        .bind(user_id)
+        .bind(format!("device_pairing_test_{}", suffix))
+        .bind(format!("device_pairing_test_{}@example.com", suffix))
+        .bind("test-password-hash")
+        .bind("Device Pairing Test")
+        .bind(10_737_418_240_i64)
+        .bind(Uuid::nil())
         .execute(pool)
         .await
         .expect("Failed to insert test user");
     }
 
     async fn cleanup_test_user(pool: &sqlx::PgPool, user_id: Uuid) {
-        sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
             .execute(pool)
             .await
             .ok();
     }
 
     async fn device_token_count(pool: &sqlx::PgPool, user_id: Uuid) -> i64 {
-        sqlx::query!(
+        sqlx::query(
             r#"
             SELECT COUNT(*)::bigint AS count
             FROM device_tokens
             WHERE user_id = $1
             "#,
-            user_id
         )
+        .bind(user_id)
         .fetch_one(pool)
         .await
         .expect("Failed to count device tokens")
-        .count
+        .get::<Option<i64>, _>("count")
         .unwrap_or(0)
     }
 
     async fn pair_request_count(pool: &sqlx::PgPool, device_code: &str) -> i64 {
-        sqlx::query!(
+        sqlx::query(
             r#"
             SELECT COUNT(*)::bigint AS count
             FROM device_pair_requests
             WHERE device_code = $1
             "#,
-            device_code
         )
+        .bind(device_code)
         .fetch_one(pool)
         .await
         .expect("Failed to count device pair requests")
-        .count
+        .get::<Option<i64>, _>("count")
         .unwrap_or(0)
     }
 
@@ -883,13 +926,11 @@ mod tests {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(device_token_count(&pool, user_id).await, 0);
 
-        sqlx::query!(
-            "DELETE FROM device_pair_requests WHERE device_code = $1",
-            device_code
-        )
-        .execute(&pool)
-        .await
-        .ok();
+        sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
+            .bind(device_code)
+            .execute(&pool)
+            .await
+            .ok();
         cleanup_test_user(&pool, user_id).await;
     }
 
@@ -940,7 +981,8 @@ mod tests {
         assert_eq!(device_token_count(&pool, user_id).await, 1);
         assert_eq!(pair_request_count(&pool, device_code).await, 0);
 
-        sqlx::query!("DELETE FROM device_tokens WHERE user_id = $1", user_id)
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
             .execute(&pool)
             .await
             .ok();
@@ -981,7 +1023,8 @@ mod tests {
 
         assert_eq!(pair_request_count(&pool, device_code).await, 0);
 
-        sqlx::query!("DELETE FROM device_tokens WHERE user_id = $1", user_id)
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+            .bind(user_id)
             .execute(&pool)
             .await
             .ok();

@@ -8,7 +8,7 @@
 //! - H-05: Unfurl handles deleted files gracefully
 //! - H-06: Unfurl rate limiting
 
-use crate::contracts::common::*;
+use crate::common::*;
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::ShareError;
 use rustshare_storage::{EventStore, MetadataStore};
@@ -29,9 +29,9 @@ fn create_share_service(
     EventStore,
     MetadataStore,
     MockJwtManager,
-    crate::contracts::common::MockNotificationRepo,
+    crate::common::MockNotificationRepo,
 > {
-    crate::contracts::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
+    crate::common::create_test_share_service(ctx, Arc::new(MockJwtManager))
 }
 
 /// H-01: Unfurl checks permissions before returning preview
@@ -39,7 +39,7 @@ fn create_share_service(
 #[ignore] // Requires database and S3
 async fn test_unfurl_checks_permissions() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "unfurl_owner", tenant_id).await;
@@ -85,8 +85,7 @@ async fn test_unfurl_checks_permissions() {
     assert_eq!(retrieved_share.id, share.id);
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// H-02: Revoked share stops unfurl from working
@@ -94,7 +93,7 @@ async fn test_unfurl_checks_permissions() {
 #[ignore] // Requires database and S3
 async fn test_revoked_share_stops_unfurl() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "revoke_unfurl_owner", tenant_id).await;
@@ -146,8 +145,7 @@ async fn test_revoked_share_stops_unfurl() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// H-03: Webhook events are signed and verifiable (conceptual)
@@ -155,7 +153,7 @@ async fn test_revoked_share_stops_unfurl() {
 #[ignore] // Requires database and S3
 async fn test_webhook_event_structure() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create user
     let user = create_test_user(&ctx.metadata_store, "webhook_user", tenant_id).await;
@@ -179,8 +177,7 @@ async fn test_webhook_event_structure() {
     assert_eq!(file.owner_id, user.id);
 
     // Cleanup
-    cleanup_user(&ctx.pool, user.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// H-04: Unfurl respects tenant boundaries
@@ -241,9 +238,8 @@ async fn test_unfurl_respects_tenant_boundaries() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, user_a.id).await;
-    cleanup_tenant(&ctx.pool, tenant_a).await;
     cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
 }
 
 /// H-05: Unfurl handles deleted files gracefully
@@ -251,7 +247,7 @@ async fn test_unfurl_respects_tenant_boundaries() {
 #[ignore] // Requires database and S3
 async fn test_unfurl_handles_deleted_files() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "deleted_unfurl_owner", tenant_id).await;
@@ -298,8 +294,7 @@ async fn test_unfurl_handles_deleted_files() {
         .expect("Failed to delete file");
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }
 
 /// H-06: Expired share stops unfurl
@@ -307,7 +302,7 @@ async fn test_unfurl_handles_deleted_files() {
 #[ignore] // Requires database and S3
 async fn test_expired_share_stops_unfurl() {
     let ctx = setup_test_env().await;
-    let tenant_id = setup_test_tenant(&ctx.pool).await;
+    let tenant_id = ctx.tenant_id;
 
     // Create owner user
     let owner = create_test_user(&ctx.metadata_store, "expired_unfurl_owner", tenant_id).await;
@@ -352,6 +347,5 @@ async fn test_expired_share_stops_unfurl() {
     );
 
     // Cleanup
-    cleanup_user(&ctx.pool, owner.id).await;
-    cleanup_tenant(&ctx.pool, tenant_id).await;
+    ctx.cleanup().await;
 }

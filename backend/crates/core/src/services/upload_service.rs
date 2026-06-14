@@ -4,7 +4,9 @@
 //! handling chunked uploads, and assembling files on completion.
 
 use bytes::Bytes;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::domain::{File, FolderId, UserId};
@@ -123,15 +125,32 @@ pub trait UploadSessionRepository: Send + Sync {
     async fn list_user_sessions(&self, user_id: UserId) -> Result<Vec<UploadSession>, UploadError>;
 }
 
+/// Source of chunk data for an upload.
+enum ChunkSource {
+    Bytes(Bytes),
+    Path(std::path::PathBuf),
+}
+
 /// Object store operations for upload service
 #[async_trait::async_trait]
 pub trait UploadObjectStore: Send + Sync {
-    /// Store a chunk
+    /// Store a chunk from in-memory bytes.
     async fn put_chunk(
         &self,
         session_id: Uuid,
         chunk_index: u32,
         data: Bytes,
+    ) -> Result<(), UploadError>;
+
+    /// Store a chunk by streaming from a local file path.
+    ///
+    /// This avoids loading the chunk into memory and is used by HTTP handlers
+    /// that buffer chunks to disk.
+    async fn put_chunk_from_path(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        path: &std::path::Path,
     ) -> Result<(), UploadError>;
 
     /// Get a chunk
@@ -166,11 +185,18 @@ pub trait UploadObjectStore: Send + Sync {
 /// Metadata store operations for upload service
 #[async_trait::async_trait]
 pub trait UploadMetadataStore: Send + Sync {
-    /// Find a folder by ID
+    /// Find a folder by ID (owner-filtered)
     async fn find_folder_by_id(
         &self,
         id: Uuid,
         owner_id: UserId,
+    ) -> Result<Option<crate::domain::Folder>, UploadError>;
+
+    /// Find a folder by ID without owner filtering.
+    /// Callers must verify access before using this method.
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: Uuid,
     ) -> Result<Option<crate::domain::Folder>, UploadError>;
 
     /// Find a file by canonical path for an owner
@@ -246,18 +272,12 @@ where
 
         // Validate parent folder if provided
         if let Some(folder_id) = request.folder_id {
-            let folder = self
-                .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+            self.metadata_store
+                .find_folder_by_id_unchecked(folder_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
-
-            if folder.owner_id != user_id {
-                return Err(UploadError::PermissionDenied {
-                    user_id,
-                    session_id: Uuid::nil(),
-                });
-            }
+            // Permission check is the responsibility of the caller (handler layer)
+            // so that shared folder uploads are supported.
         }
 
         // Validate chunk size (min 1MB, max 100MB)
@@ -312,13 +332,64 @@ where
         Ok(SessionStatusResponse::from_session(&session))
     }
 
-    /// Upload a chunk
+    /// Upload a chunk from in-memory bytes.
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_chunk(
         &self,
         session_id: Uuid,
         chunk_index: u32,
         data: Bytes,
+        provided_hash: Option<String>,
+        user_id: UserId,
+    ) -> Result<ChunkUploadResponse, UploadError> {
+        let actual_size = data.len() as u64;
+        let chunk_hash = crate::validation::calculate_sha256(&data);
+        self.upload_chunk_impl(
+            session_id,
+            chunk_index,
+            actual_size,
+            chunk_hash,
+            ChunkSource::Bytes(data),
+            provided_hash,
+            user_id,
+        )
+        .await
+    }
+
+    /// Upload a chunk whose contents are stored on disk at `chunk_path`.
+    ///
+    /// The chunk is hashed and stored without being fully loaded into memory.
+    pub async fn upload_chunk_from_path(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        chunk_path: &std::path::Path,
+        provided_hash: Option<String>,
+        user_id: UserId,
+    ) -> Result<ChunkUploadResponse, UploadError> {
+        let (chunk_hash, actual_size) =
+            Self::calculate_sha256_and_size_from_path(chunk_path).await?;
+        self.upload_chunk_impl(
+            session_id,
+            chunk_index,
+            actual_size,
+            chunk_hash,
+            ChunkSource::Path(chunk_path.to_path_buf()),
+            provided_hash,
+            user_id,
+        )
+        .await
+    }
+
+    /// Shared implementation for chunk uploads from either bytes or a file path.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_chunk_impl(
+        &self,
+        session_id: Uuid,
+        chunk_index: u32,
+        actual_size: u64,
+        chunk_hash: String,
+        source: ChunkSource,
         provided_hash: Option<String>,
         user_id: UserId,
     ) -> Result<ChunkUploadResponse, UploadError> {
@@ -382,16 +453,12 @@ where
             session.chunk_size
         };
 
-        let actual_size = data.len() as u64;
         if actual_size > expected_size {
             return Err(UploadError::InvalidChunkSize {
                 expected: expected_size,
                 actual: actual_size,
             });
         }
-
-        // Calculate chunk hash
-        let chunk_hash = crate::validation::calculate_sha256(&data);
 
         // Verify hash if provided
         if let Some(expected_hash) = provided_hash {
@@ -401,9 +468,18 @@ where
         }
 
         // Store chunk
-        self.object_store
-            .put_chunk(session_id, chunk_index, data)
-            .await?;
+        match source {
+            ChunkSource::Bytes(data) => {
+                self.object_store
+                    .put_chunk(session_id, chunk_index, data)
+                    .await?;
+            }
+            ChunkSource::Path(path) => {
+                self.object_store
+                    .put_chunk_from_path(session_id, chunk_index, &path)
+                    .await?;
+            }
+        }
 
         // Update session
         session.mark_in_progress();
@@ -422,6 +498,33 @@ where
             progress_percent: session.progress_percent(),
             is_complete: session.is_complete(),
         })
+    }
+
+    /// Calculate SHA256 hash and size of a chunk file using streaming I/O.
+    async fn calculate_sha256_and_size_from_path(
+        path: &std::path::Path,
+    ) -> Result<(String, u64), UploadError> {
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| UploadError::Storage(format!("Failed to open chunk file: {e}")))?;
+
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut total_size: u64 = 0;
+
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| UploadError::Storage(format!("Failed to read chunk file: {e}")))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            total_size += n as u64;
+        }
+
+        Ok((hex::encode(hasher.finalize()), total_size))
     }
 
     /// Complete the upload and assemble the file
@@ -486,16 +589,18 @@ where
             }
         }
 
-        // Get parent folder path
-        let parent_path = if let Some(folder_id) = session.folder_id {
+        // Get parent folder path and determine file owner
+        let (parent_path, file_owner_id) = if let Some(folder_id) = session.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await?
                 .ok_or(UploadError::ParentFolderNotFound(folder_id))?;
-            folder.path.clone()
+            // Files in shared folders are owned by the folder owner so that
+            // deduplication and versioning work within the shared namespace.
+            (folder.path.clone(), folder.owner_id)
         } else {
-            String::new()
+            (String::new(), user_id)
         };
 
         // Construct file path
@@ -513,7 +618,7 @@ where
 
         let file = if let Some(mut existing) = self
             .metadata_store
-            .find_file_by_path(&path, user_id)
+            .find_file_by_path(&path, file_owner_id)
             .await?
         {
             if existing.content_hash == final_hash && existing.size == session.total_size as i64 {
@@ -583,7 +688,7 @@ where
                 session.total_size as i64,
                 session.mime_type.clone(),
                 session.folder_id,
-                user_id,
+                file_owner_id,
                 session.tenant_id,
             );
 
@@ -877,6 +982,15 @@ mod tests {
             unreachable!()
         }
 
+        async fn put_chunk_from_path(
+            &self,
+            _session_id: Uuid,
+            _chunk_index: u32,
+            _path: &std::path::Path,
+        ) -> Result<(), UploadError> {
+            unreachable!()
+        }
+
         async fn get_chunk(
             &self,
             _session_id: Uuid,
@@ -951,6 +1065,13 @@ mod tests {
             Ok(None)
         }
 
+        async fn find_folder_by_id_unchecked(
+            &self,
+            _id: Uuid,
+        ) -> Result<Option<Folder>, UploadError> {
+            Ok(None)
+        }
+
         async fn find_file_by_path(
             &self,
             _path: &str,
@@ -993,6 +1114,8 @@ mod tests {
     }
 
     impl EventStoreOps for MockEventStore {
+        type Tx = ();
+
         async fn append(
             &self,
             event: &Event,
@@ -1001,11 +1124,24 @@ mod tests {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
+
+        async fn begin_transaction(&self) -> anyhow::Result<Self::Tx> {
+            Ok(())
+        }
+
+        async fn commit_transaction(&self, _tx: Self::Tx) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn append_in_tx(&self, _tx: &mut Self::Tx, event: &Event) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
     }
 
     #[test]
     fn test_validate_file_name() {
-        assert!(true);
+        // Placeholder for future validation tests
     }
 
     #[tokio::test]

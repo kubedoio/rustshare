@@ -1,5 +1,6 @@
 mod ai;
 mod ai_service;
+mod chat_integration;
 mod email_service;
 mod errors;
 mod file_service;
@@ -10,6 +11,7 @@ mod notification_service;
 mod permission_resolver;
 mod scim_service;
 mod scim_v2_service;
+mod search_service;
 mod share_errors;
 mod share_service;
 mod thumbnail_service;
@@ -17,6 +19,8 @@ mod upload_service;
 pub mod upload_session;
 #[allow(deprecated)]
 mod user_share_service;
+mod vault_service;
+mod vault_sync_service;
 
 pub use ai::{
     ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument, SimpleEmbeddingGenerator,
@@ -24,8 +28,14 @@ pub use ai::{
 pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,
 };
+pub use chat_integration::{
+    ChatEvent, ChatEventPayload, ChatEventType, ChatIntegrationError, ChatIntegrationService,
+    EventStoreOps as ChatEventStoreOps, HttpWebhookDispatcher, IncomingChatEvent,
+    MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest, UnfurlResponse,
+    WebhookDispatcher,
+};
 pub use email_service::{EmailError, EmailService};
-pub use errors::{FileError, FolderError};
+pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,
     MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
@@ -51,6 +61,7 @@ pub use scim_v2_service::{
     ScimV2ResourceType, ScimV2Schema, ScimV2SchemaAttribute, ScimV2SchemaExtension, ScimV2Service,
     ScimV2ServiceProviderConfig, ScimV2SupportConfig, ScimV2User, ScimV2UserRecord,
 };
+pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use share_errors::ShareError;
 pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
@@ -68,3 +79,5 @@ pub use upload_session::{
 pub use user_share_service::{
     FileOps, FolderOps, ShareOps, UserOps, UserShareService, UserShareServiceDeps,
 };
+pub use vault_service::VaultStore;
+pub use vault_sync_service::VaultSyncService;

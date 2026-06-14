@@ -8,15 +8,18 @@ use super::{FileId, FolderId, UserId};
 ///
 /// Files use content-addressed storage where the actual file content is stored
 /// in object storage using the content hash as the key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct File {
+    #[schema(value_type = Uuid)]
     pub id: FileId,
     pub name: String,
     pub path: String,
     pub content_hash: String,
     pub size: i64,
     pub mime_type: String,
+    #[schema(value_type = Option<Uuid>)]
     pub parent_folder_id: Option<FolderId>,
+    #[schema(value_type = Uuid)]
     pub owner_id: UserId,
     pub current_version: i32,
     pub created_at: DateTime<Utc>,

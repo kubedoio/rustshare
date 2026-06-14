@@ -42,7 +42,8 @@ const SANITIZE_CONFIG = {
 		'tbody',
 		'tr',
 		'th',
-		'td'
+		'td',
+		'span'
 	],
 	ALLOWED_ATTR: [
 		'href',
@@ -55,7 +56,9 @@ const SANITIZE_CONFIG = {
 		'rel',
 		'checked',
 		'type',
-		'disabled'
+		'disabled',
+		'data-wikilink',
+		'data-wikilink-src'
 	],
 	// Ensure we block dangerous URIs by default
 	ADD_ATTR: ['target', 'rel'],

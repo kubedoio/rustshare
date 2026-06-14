@@ -3,35 +3,38 @@
 pub mod admin;
 pub mod ai;
 pub mod auth;
-mod brainstorming;
+pub mod brainstorming;
+pub mod chat_integration;
 pub mod collab;
-mod decisions;
+pub mod decisions;
 pub mod device_auth;
 pub mod devices;
-mod extractors;
+pub mod extractors;
 pub mod features;
-mod files;
-mod folders;
-mod groups;
+pub mod files;
+pub mod folders;
+pub mod groups;
+pub mod health;
 pub mod invites;
-mod kanban;
-mod meetings;
-mod modules;
-mod notes;
-mod notifications;
-mod profile;
-mod public_shares;
+pub mod kanban;
+pub mod meetings;
+pub mod modules;
+pub mod notes;
+pub mod notifications;
+pub mod profile;
+pub mod public_shares;
 pub mod scim;
 pub mod scim_v2;
-mod shares;
-mod standups;
-mod sync;
-mod trash;
+pub mod shares;
+pub mod standups;
+pub mod sync;
+pub mod trash;
 pub mod upload;
-mod user_shares;
-mod users;
-mod validated_json;
-mod workspace_surface;
+pub mod user_shares;
+pub mod users;
+pub mod validated_json;
+pub mod vault_sync;
+pub mod workspace_surface;
 pub mod ws_auth;
 
 pub use brainstorming::{
@@ -48,10 +51,11 @@ pub use files::{
     restore_file_version, toggle_file_star, update_file, upload_file,
 };
 pub use folders::{
-    create_folder, delete_folder, get_folder, get_folder_contents, get_folder_tree,
-    get_root_contents, move_folder, permanently_delete_folder, rename_folder,
+    create_folder, delete_folder, download_folder, get_folder, get_folder_contents,
+    get_folder_tree, get_root_contents, move_folder, permanently_delete_folder, rename_folder,
     restore_folder_from_trash, toggle_folder_star,
 };
+pub use health::readiness_check;
 pub use kanban::{
     add_card_attachment, add_card_label, archive_board, archive_card, assign_card_member,
     create_board, create_card, create_checklist, create_checklist_item, create_label, delete_card,
@@ -61,7 +65,8 @@ pub use kanban::{
     update_card_description, update_label,
 };
 pub use notifications::{
-    count_unread_notifications, delete_notification, list_notifications, mark_notification_read,
+    count_unread_notifications, delete_notification, list_activity, list_notifications,
+    mark_notification_read,
 };
 pub use profile::{get_profile, update_profile, update_trash_retention};
 pub use public_shares::{
@@ -79,7 +84,8 @@ pub use validated_json::ValidatedJson;
 pub use ai::{ask_question, semantic_search, summarize_file};
 pub use auth::{ensure_optional_seed_user, login, logout};
 pub use decisions::{
-    create_decision, get_decision, list_decisions, rename_decision, update_decision,
+    create_decision, delete_decision, get_decision, list_decisions, rename_decision,
+    update_decision,
 };
 pub use features::get_features;
 pub use groups::{
@@ -87,13 +93,13 @@ pub use groups::{
     list_folder_group_shares, list_my_groups, revoke_group_share, update_group_share_permission,
 };
 pub use invites::{accept_invite, create_invite, get_invite};
-pub use meetings::{create_meeting, get_meeting, list_meetings, update_meeting};
+pub use meetings::{create_meeting, delete_meeting, get_meeting, list_meetings, update_meeting};
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
     list_recent_notes, move_note, rename_note, save_note, toggle_visibility,
 };
-pub use standups::{create_standup, get_standup, list_standups, update_standup};
+pub use standups::{create_standup, delete_standup, get_standup, list_standups, update_standup};
 pub use user_shares::{
     create_file_share, create_folder_share, get_user_shared_folder_contents,
     get_user_shared_folder_tree, list_file_recipients, list_folder_recipients,
@@ -112,13 +118,41 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Deserialize;
+
+/// Standard pagination query parameters.
+#[derive(Deserialize, Debug, Clone, utoipa::ToSchema)]
+pub struct PaginationQuery {
+    #[serde(default = "default_page")]
+    pub page: u32,
+    #[serde(default = "default_per_page")]
+    pub per_page: u32,
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_per_page() -> u32 {
+    50
+}
+
+impl PaginationQuery {
+    pub fn limit(&self) -> i64 {
+        self.per_page.clamp(1, 100) as i64
+    }
+
+    pub fn offset(&self) -> i64 {
+        ((self.page.saturating_sub(1)) as i64) * self.limit()
+    }
+}
 use rustshare_core::services::{
-    AiError, FileError, FolderError, NotificationError, ShareError, UploadError,
+    AiError, FileError, FolderError, NotificationError, ShareError, UploadError, VaultSyncError,
 };
 use serde::Serialize;
 
 /// Standard error response format.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,6 +184,11 @@ pub enum AppError {
     Unauthorized,
     Forbidden(String),
     Conflict(String),
+    VaultConflict {
+        client_rev: i64,
+        current_rev: i64,
+        server_sha256: Option<String>,
+    },
     Gone(String),
     UnsupportedMediaType(String),
     PayloadTooLarge(String),
@@ -200,6 +239,21 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            AppError::VaultConflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            } => {
+                let body = serde_json::json!({
+                    "error": "conflict",
+                    "message": "Conflict detected",
+                    "client_rev": client_rev,
+                    "current_rev": current_rev,
+                    "server_sha256": server_sha256,
+                    "resolution": "create_conflict_copy",
+                });
+                return (StatusCode::CONFLICT, Json(body)).into_response();
+            }
             AppError::Gone(msg) => (StatusCode::GONE, msg),
             AppError::UnsupportedMediaType(msg) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, msg),
             AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
@@ -476,6 +530,40 @@ impl From<crate::services::template_service::TemplateError> for AppError {
             TemplateError::PermissionDenied => AppError::Forbidden(err.to_string()),
             TemplateError::InvalidData(_) => AppError::BadRequest(err.to_string()),
             TemplateError::Storage(_) | TemplateError::Database(_) => {
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<VaultSyncError> for AppError {
+    fn from(err: VaultSyncError) -> Self {
+        match err {
+            VaultSyncError::VaultNotFound(_)
+            | VaultSyncError::FileNotFound(_)
+            | VaultSyncError::DeviceNotFound(_) => AppError::NotFound(err.to_string()),
+            // Security note: returning server_sha256 in 409 responses enables client-side
+            // deduplication but acts as a confirmation oracle. This is an accepted MVP trade-off.
+            VaultSyncError::Conflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            } => AppError::VaultConflict {
+                client_rev,
+                current_rev,
+                server_sha256,
+            },
+            VaultSyncError::TombstoneConflict
+            | VaultSyncError::VaultAlreadyExists(_)
+            | VaultSyncError::FileAlreadyExists(_) => AppError::Conflict(err.to_string()),
+            VaultSyncError::ManifestTooLarge { .. } => AppError::PayloadTooLarge(err.to_string()),
+            VaultSyncError::InvalidPath(_) => AppError::BadRequest(err.to_string()),
+            VaultSyncError::InvalidName(_) => AppError::BadRequest(err.to_string()),
+            VaultSyncError::Unauthorized | VaultSyncError::DeviceRevoked => {
+                AppError::Forbidden(err.to_string())
+            }
+            VaultSyncError::Database(ref msg) | VaultSyncError::Storage(ref msg) => {
+                tracing::error!("Vault sync internal error: {}", msg);
                 AppError::Internal("Internal server error".to_string())
             }
         }

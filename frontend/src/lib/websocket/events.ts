@@ -18,7 +18,9 @@ export type WebSocketEventType =
 	| 'BrainstormBoardModified'
 	| 'MeetingNoteModified'
 	| 'DecisionModified'
-	| 'StandupModified';
+	| 'StandupModified'
+	| 'KanbanModified'
+	| 'NoteModified';
 
 export interface WebSocketEvent {
 	event_id?: string;
@@ -45,7 +47,9 @@ export interface WebSocketEvent {
 		| BrainstormBoardModifiedPayload
 		| MeetingNoteModifiedPayload
 		| DecisionModifiedPayload
-		| StandupModifiedPayload;
+		| StandupModifiedPayload
+		| KanbanModifiedPayload
+		| NoteModifiedPayload;
 	file_id?: string;
 	file_version_id?: string;
 	replication_state?: ReplicationStateValue;
@@ -171,6 +175,16 @@ export interface DecisionModifiedPayload {
 
 export interface StandupModifiedPayload {
 	standup_id: string;
+	title: string;
+}
+
+export interface KanbanModifiedPayload {
+	board_id: string | null;
+	card_id: string | null;
+}
+
+export interface NoteModifiedPayload {
+	note_id: string;
 	title: string;
 }
 

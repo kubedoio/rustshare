@@ -60,6 +60,10 @@ pub enum ChatIntegrationError {
     /// Serialization error.
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    /// Internal error.
+    #[error("Internal error: {0}")]
+    Internal(#[from] anyhow::Error),
 }
 
 impl From<ShareError> for ChatIntegrationError {
@@ -78,7 +82,7 @@ impl From<ShareError> for ChatIntegrationError {
 }
 
 /// Types of chat events that can be dispatched.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatEventType {
     /// A share has been revoked.
@@ -90,14 +94,14 @@ pub enum ChatEventType {
 }
 
 /// Payload for chat events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", content = "data")]
 pub enum ChatEventPayload {
     ShareRevoked {
         share_id: Uuid,
         resource_id: Uuid,
         resource_type: String,
-        revoked_by: UserId,
+        revoked_by: Uuid,
         revoked_at: DateTime<Utc>,
     },
     FileUpdated {
@@ -105,19 +109,19 @@ pub enum ChatEventPayload {
         name: String,
         mime_type: String,
         size: i64,
-        updated_by: UserId,
+        updated_by: Uuid,
         updated_at: DateTime<Utc>,
     },
     FileDeleted {
         file_id: Uuid,
         name: String,
-        deleted_by: UserId,
+        deleted_by: Uuid,
         deleted_at: DateTime<Utc>,
     },
 }
 
 /// A signed chat event for webhook dispatch.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChatEvent {
     pub event_type: ChatEventType,
     pub timestamp: DateTime<Utc>,
@@ -163,7 +167,7 @@ impl ChatEvent {
 }
 
 /// Metadata for link unfurl responses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlMetadata {
     pub title: String,
     pub description: Option<String>,
@@ -180,19 +184,19 @@ pub struct UnfurlMetadata {
 }
 
 /// Request to unfurl a RustShare link.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlRequest {
     pub url: String,
 }
 
 /// Response from unfurling a link.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlResponse {
     pub metadata: UnfurlMetadata,
 }
 
 /// Incoming chat event from external chat system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct IncomingChatEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
@@ -502,7 +506,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
                     .metadata_store
                     .get_user_shares(user_id)
                     .await
-                    .map_err(ChatIntegrationError::Database)?;
+                    .map_err(ChatIntegrationError::Internal)?;
 
                 let has_access = user_shares.iter().any(|s| s.id == share.id);
 
@@ -605,7 +609,10 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         let parsed = url::Url::parse(url)
             .map_err(|_| ChatIntegrationError::InvalidWebhookUrl(url.to_string()))?;
 
-        let path_segments: Vec<&str> = parsed.path_segments().map(|s| s.collect()).unwrap_or_default();
+        let path_segments: Vec<&str> = parsed
+            .path_segments()
+            .map(|s| s.collect())
+            .unwrap_or_default();
 
         // Look for share token in path
         if let Some(pos) = path_segments.iter().position(|&s| s == "share" || s == "s") {
@@ -676,7 +683,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl MetadataStoreOps for MockMetadataStore {
         async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>> {
             Ok(self
@@ -689,10 +695,20 @@ mod tests {
         }
 
         async fn find_file_by_id(&self, id: Uuid, _owner_id: Uuid) -> anyhow::Result<Option<File>> {
-            Ok(self.files.lock().unwrap().iter().find(|f| f.id == id).cloned())
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
         }
 
-        async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> anyhow::Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: Uuid,
+            _owner_id: Uuid,
+        ) -> anyhow::Result<Option<Folder>> {
             Ok(self
                 .folders
                 .lock()
@@ -719,9 +735,12 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl EventStoreOps for MockEventStore {
-        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> anyhow::Result<()> {
+        async fn append(
+            &self,
+            event: &Event,
+            _broadcaster: &EventBroadcaster,
+        ) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
@@ -740,6 +759,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn with_failure() -> Self {
             Self {
                 calls: Mutex::new(Vec::new()),
@@ -754,7 +774,10 @@ mod tests {
             if self.should_fail {
                 return Err("Mock dispatch failure".to_string());
             }
-            self.calls.lock().unwrap().push((url.to_string(), event.clone()));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((url.to_string(), event.clone()));
             Ok(())
         }
     }
@@ -784,24 +807,25 @@ mod tests {
         let broadcaster = Arc::new(EventBroadcaster::new(100));
         let dispatcher = Arc::new(MockWebhookDispatcher::new());
 
-        let service = ChatIntegrationService::new(
-            metadata,
-            events,
-            broadcaster,
-            "test_secret",
-            dispatcher,
-        );
+        let service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
 
         assert_eq!(
-            service.extract_share_token("https://example.com/share/abc123").unwrap(),
+            service
+                .extract_share_token("https://example.com/share/abc123")
+                .unwrap(),
             "abc123"
         );
         assert_eq!(
-            service.extract_share_token("https://example.com/s/xyz789").unwrap(),
+            service
+                .extract_share_token("https://example.com/s/xyz789")
+                .unwrap(),
             "xyz789"
         );
         assert_eq!(
-            service.extract_share_token("https://example.com/public/share/token456").unwrap(),
+            service
+                .extract_share_token("https://example.com/public/share/token456")
+                .unwrap(),
             "token456"
         );
     }
@@ -813,15 +837,12 @@ mod tests {
         let broadcaster = Arc::new(EventBroadcaster::new(100));
         let dispatcher = Arc::new(MockWebhookDispatcher::new());
 
-        let service = ChatIntegrationService::new(
-            metadata,
-            events,
-            broadcaster,
-            "test_secret",
-            dispatcher,
-        );
+        let service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
 
-        assert!(service.extract_share_token("https://example.com/other/path").is_err());
+        assert!(service
+            .extract_share_token("https://example.com/other/path")
+            .is_err());
         assert!(service.extract_share_token("not_a_url").is_err());
     }
 
@@ -841,13 +862,8 @@ mod tests {
         let broadcaster = Arc::new(EventBroadcaster::new(100));
         let dispatcher = Arc::new(MockWebhookDispatcher::new());
 
-        let mut service = ChatIntegrationService::new(
-            metadata,
-            events,
-            broadcaster,
-            "test_secret",
-            dispatcher,
-        );
+        let mut service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
 
         service.register_webhook("https://chat.example.com/webhook".to_string());
         service.register_webhook("https://chat2.example.com/webhook".to_string());

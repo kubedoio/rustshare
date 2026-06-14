@@ -9,7 +9,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
@@ -22,13 +21,13 @@ use crate::{handlers::ShareSessionAuth, AppState};
 use super::files::FileUploadResponse;
 use crate::handlers::AppError;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionRequest {
     #[serde(default)]
     pub password: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SessionResponse {
     pub session_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -36,7 +35,7 @@ pub struct SessionResponse {
     pub upload_only: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ShareInfoResponse {
     pub resource_id: Uuid,
     pub resource_type: String,
@@ -49,7 +48,7 @@ pub struct ShareInfoResponse {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SharedFolderContentsResponse {
     pub root_folder_id: Uuid,
     pub current_folder_id: Uuid,
@@ -59,13 +58,25 @@ pub struct SharedFolderContentsResponse {
     pub files: Vec<rustshare_core::domain::File>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SharedFolderContentsQuery {
     #[serde(default)]
     pub folder_id: Option<Uuid>,
 }
 
 /// Create anonymous session for share access
+#[utoipa::path(
+    post,
+    path = "/api/v1/public/share/{token}/session",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Share token")),
+    request_body = CreateSessionRequest,
+    responses(
+        (status = 200, description = "Session created", body = SessionResponse),
+        (status = 401, description = "Password required or invalid", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Share not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_session(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -89,6 +100,17 @@ pub async fn create_session(
 }
 
 /// Get share info without authentication
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/info",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Share token")),
+    responses(
+        (status = 200, description = "Share information", body = ShareInfoResponse),
+        (status = 404, description = "Share not found or revoked", body = crate::handlers::ErrorResponse),
+        (status = 410, description = "Share expired or revoked", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -137,16 +159,83 @@ fn ensure_share_session_matches(
     Ok(())
 }
 
+fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), AppError> {
+    if share.revoked_at.is_some() {
+        return Err(AppError::from(
+            rustshare_core::services::ShareError::Revoked,
+        ));
+    }
+    if share.is_expired() {
+        return Err(AppError::from(
+            rustshare_core::services::ShareError::Expired,
+        ));
+    }
+    Ok(())
+}
+
+/// Stream a multipart field to a temporary file and return the temp file plus size.
+/// Enforces a per-field size limit during streaming to prevent OOM.
+async fn stream_multipart_field_to_temp_file(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_size: usize,
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
+    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+    let mut async_file = tokio::fs::File::from_std(
+        temp_file
+            .reopen()
+            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
+    );
+
+    let mut total_size: usize = 0;
+
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        tracing::error!("Failed to read chunk: {e}");
+        AppError::internal(format!("Failed to read chunk: {e}"))
+    })? {
+        total_size += chunk.len();
+        if total_size > max_size {
+            return Err(AppError::payload_too_large(format!(
+                "File size exceeds maximum allowed {max_size} bytes"
+            )));
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to write to temp file: {e}");
+                AppError::internal(format!("Failed to write to temp file: {e}"))
+            })?;
+    }
+
+    tokio::io::AsyncWriteExt::flush(&mut async_file)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
+
+    Ok((temp_file, total_size))
+}
+
 async fn parse_upload_multipart(
     mut multipart: Multipart,
-) -> Result<(Bytes, String, Option<Uuid>, String, Option<String>), AppError> {
-    let mut file_data: Option<Bytes> = None;
+) -> Result<
+    (
+        tempfile::NamedTempFile,
+        String,
+        Option<Uuid>,
+        String,
+        Option<String>,
+    ),
+    AppError,
+> {
+    let mut file_temp: Option<tempfile::NamedTempFile> = None;
     let mut file_name: Option<String> = None;
     let mut parent_folder_id: Option<Uuid> = None;
     let mut uploader_name: Option<String> = None;
     let mut mime_type = "application/octet-stream".to_string();
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::internal(format!("Failed to read multipart field: {}", e)))?
@@ -163,10 +252,11 @@ async fn parse_upload_multipart(
                         file_name = Some(name.to_string());
                     }
                 }
-                file_data =
-                    Some(field.bytes().await.map_err(|e| {
-                        AppError::internal(format!("Failed to read file data: {}", e))
-                    })?);
+                file_temp = Some(
+                    stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
+                        .await?
+                        .0,
+                );
             }
             "name" => {
                 file_name = Some(field.text().await.map_err(|e| {
@@ -204,7 +294,7 @@ async fn parse_upload_multipart(
         }
     }
 
-    let file_data = file_data.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let file_temp = file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
     let file_name = file_name.ok_or_else(|| AppError::bad_request("Missing file name"))?;
 
     // If mime_type is generic or not provided, guess from file extension
@@ -215,7 +305,7 @@ async fn parse_upload_multipart(
     }
 
     Ok((
-        file_data,
+        file_temp,
         file_name,
         parent_folder_id,
         mime_type,
@@ -224,6 +314,17 @@ async fn parse_upload_multipart(
 }
 
 /// Download shared file (requires session JWT)
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/file",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_shared_file(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -245,6 +346,9 @@ pub async fn download_shared_file(
 
     // Verify JWT share_id matches the share we're accessing
     ensure_share_session_matches(&share, &claims)?;
+
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
 
     // Get file metadata
     let file_id = share
@@ -326,6 +430,17 @@ pub async fn download_shared_file(
 }
 
 /// List contents of a shared folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/folder/contents",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_shared_folder_contents(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -344,6 +459,9 @@ pub async fn get_shared_folder_contents(
         })?;
 
     ensure_share_session_matches(&share, &claims)?;
+
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
 
     if share.folder_id.is_none() {
         return Err(AppError::bad_request("This share is not for a folder"));
@@ -386,6 +504,17 @@ pub async fn get_shared_folder_contents(
 }
 
 /// Download a file from a shared folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/public/share/{token}/folder/files/{file_id}",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token"), ("file_id" = Uuid, Path, description = "File Id")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn download_shared_folder_file(
     State(state): State<AppState>,
     Path((token, file_id)): Path<(String, Uuid)>,
@@ -405,6 +534,9 @@ pub async fn download_shared_folder_file(
         })?;
 
     ensure_share_session_matches(&share, &claims)?;
+
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
 
     let root_folder_id = share
         .folder_id
@@ -498,6 +630,17 @@ pub async fn download_shared_folder_file(
 const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 /// Upload a file into a shared folder using an authenticated share session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/public/share/{token}/folder/upload",
+    tag = "Public Shares",
+    params(("token" = String, Path, description = "Token")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn upload_shared_folder_file(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -519,6 +662,9 @@ pub async fn upload_shared_folder_file(
 
     ensure_share_session_matches(&share, &claims)?;
 
+    // Re-check revocation and expiration to block already-issued tokens
+    ensure_share_is_active(&share)?;
+
     let root_folder_id = share
         .folder_id
         .ok_or_else(|| AppError::bad_request("This share is not for a folder"))?;
@@ -527,16 +673,9 @@ pub async fn upload_shared_folder_file(
         return Err(AppError::forbidden("This share does not allow uploads"));
     }
 
-    let (file_data, file_name, requested_folder_id, mime_type, uploader_name) =
+    let (file_temp, file_name, requested_folder_id, mime_type, uploader_name) =
         parse_upload_multipart(multipart).await?;
-
-    if file_data.len() > MAX_PUBLIC_UPLOAD_SIZE {
-        return Err(AppError::payload_too_large(format!(
-            "File size {} exceeds maximum allowed {} bytes",
-            file_data.len(),
-            MAX_PUBLIC_UPLOAD_SIZE
-        )));
-    }
+    let file_path = file_temp.path();
 
     let root_folder = state
         .metadata_store
@@ -576,7 +715,7 @@ pub async fn upload_shared_folder_file(
 
     let file = state
         .file_service
-        .upload_file_with_actor(
+        .upload_file_with_actor_from_path(
             root_folder.owner_id,
             FileUploadActor {
                 actor_type: "public_share_session".to_string(),
@@ -587,7 +726,7 @@ pub async fn upload_shared_folder_file(
             },
             file_name,
             Some(target_folder_id),
-            file_data,
+            file_path,
             mime_type,
             share.tenant_id,
         )

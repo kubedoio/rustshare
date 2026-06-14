@@ -2,6 +2,7 @@
 //!
 //! These tests verify the SQL conditions that the AdminUser extractor checks:
 //!   - SELECT is_admin, disabled_at FROM users WHERE id = $1
+//!
 //! They do NOT go through HTTP routing; they insert rows and assert the DB values.
 //!
 //! Run with: cargo test --test admin_require_admin_test -- --ignored

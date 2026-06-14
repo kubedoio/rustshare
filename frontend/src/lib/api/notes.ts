@@ -92,8 +92,29 @@ export async function duplicateNote(noteId: string): Promise<CreateNoteResponse>
 }
 
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {
-	const query = limit !== undefined ? `?limit=${limit}` : '';
-	return apiClient.get<NoteSummary[]>(`/notes${query}`);
+	// When no limit is provided, preserve the original unbounded behaviour by
+	// walking all pages. Callers that pass a limit only want a single slice.
+	if (limit === undefined) {
+		return fetchAllNotePages();
+	}
+	return apiClient.get<NoteSummary[]>(`/notes?per_page=${limit}`);
+}
+
+async function fetchAllNotePages(): Promise<NoteSummary[]> {
+	const PAGE_SIZE = 100;
+	const notes: NoteSummary[] = [];
+	let page = 1;
+
+	while (true) {
+		const batch = await apiClient.get<NoteSummary[]>(`/notes?page=${page}&per_page=${PAGE_SIZE}`);
+		notes.push(...batch);
+
+		if (batch.length < PAGE_SIZE) {
+			return notes;
+		}
+
+		page += 1;
+	}
 }
 
 export async function listRecentNotes(folderName?: string): Promise<RecentNotesResponse> {

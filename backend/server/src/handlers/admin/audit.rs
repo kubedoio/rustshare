@@ -17,7 +17,7 @@ use crate::{
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AuditLogQuery {
     /// Filter by event type: `share_access | security_event | admin_action | all`
     #[serde(rename = "type")]
@@ -32,7 +32,7 @@ pub struct AuditLogQuery {
     pub per_page: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuditEntry {
     pub id: String,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
@@ -44,7 +44,7 @@ pub struct AuditEntry {
     pub detail: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PaginatedAuditLog {
     pub entries: Vec<AuditEntry>,
     pub total: i64,
@@ -74,6 +74,15 @@ struct AuditRow {
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/admin/audit
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/audit",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_audit_log(
     State(state): State<AppState>,
     AdminUser { user_id: _ }: AdminUser,

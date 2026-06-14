@@ -1,0 +1,39 @@
+.rustshare-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rustshare-sync-status-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.rustshare-sync-status--connected .rustshare-sync-status-icon {
+  background-color: var(--color-green);
+}
+
+.rustshare-sync-status--disconnected .rustshare-sync-status-icon {
+  background-color: var(--color-red);
+}
+
+.rustshare-sync-status--syncing .rustshare-sync-status-icon {
+  background-color: var(--color-yellow);
+}
+
+.rustshare-sync-status--synced .rustshare-sync-status-icon {
+  background-color: var(--color-green);
+}
+
+.rustshare-sync-status--conflict .rustshare-sync-status-icon {
+  background-color: var(--color-orange);
+}
+
+.rustshare-sync-status--error .rustshare-sync-status-icon {
+  background-color: var(--color-red);
+}
+
+.rustshare-sync-status--offline .rustshare-sync-status-icon {
+  background-color: var(--text-muted);
+}

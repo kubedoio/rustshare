@@ -56,7 +56,7 @@ struct WebhookRow {
 // Response type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WebhookResponse {
     pub id: String,
     pub name: String,
@@ -90,7 +90,7 @@ impl From<WebhookRow> for WebhookResponse {
 // Request types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateWebhookRequest {
     pub name: String,
     pub url: String,
@@ -100,7 +100,7 @@ pub struct CreateWebhookRequest {
     pub events: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateWebhookRequest {
     pub name: Option<String>,
     pub url: Option<String>,
@@ -117,6 +117,16 @@ pub struct UpdateWebhookRequest {
 const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, created_at, updated_at";
 
 /// GET /api/v1/admin/integrations/webhooks
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/integrations/webhooks",
+    tag = "Webhooks",
+    responses(
+        (status = 200, description = "List of configured webhooks", body = Vec<WebhookResponse>),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_webhooks(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,
@@ -132,6 +142,18 @@ pub async fn list_webhooks(
 }
 
 /// POST /api/v1/admin/integrations/webhooks
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/integrations/webhooks",
+    tag = "Webhooks",
+    request_body = CreateWebhookRequest,
+    responses(
+        (status = 201, description = "Webhook created", body = WebhookResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn create_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -180,6 +202,20 @@ pub async fn create_webhook(
 }
 
 /// PATCH /api/v1/admin/integrations/webhooks/:id
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/integrations/webhooks/{id}",
+    tag = "Webhooks",
+    params(("id" = Uuid, Path, description = "Webhook ID")),
+    request_body = UpdateWebhookRequest,
+    responses(
+        (status = 200, description = "Webhook updated", body = WebhookResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Webhook not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -250,6 +286,18 @@ pub async fn update_webhook(
 }
 
 /// DELETE /api/v1/admin/integrations/webhooks/:id
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/integrations/webhooks/{id}",
+    tag = "Webhooks",
+    params(("id" = Uuid, Path, description = "Webhook ID")),
+    responses(
+        (status = 204, description = "Webhook deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Webhook not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn delete_webhook(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
@@ -280,6 +328,19 @@ pub async fn delete_webhook(
 /// POST /api/v1/admin/integrations/webhooks/:id/test
 ///
 /// Fires a `ping` event to the webhook URL and returns the result.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/integrations/webhooks/{id}/test",
+    tag = "Webhooks",
+    params(("id" = Uuid, Path, description = "Webhook ID")),
+    responses(
+        (status = 200, description = "Test result", body = serde_json::Value),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Webhook not found", body = crate::handlers::ErrorResponse),
+        (status = 502, description = "Webhook returned non-success", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn test_webhook(
     State(state): State<AppState>,
     AdminUser { .. }: AdminUser,

@@ -19,12 +19,12 @@ use crate::{
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ModuleListResponse {
     pub modules: Vec<Module>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateModuleRequest {
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -42,6 +42,15 @@ pub struct UpdateModuleRequest {
 // Handlers
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/modules",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_modules(
     AdminUser { user_id: _ }: AdminUser,
     State(state): State<AppState>,
@@ -55,6 +64,15 @@ pub async fn list_modules(
     Ok(Json(ModuleListResponse { modules }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/modules/{key}",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn get_module(
     AdminUser { user_id: _ }: AdminUser,
     State(state): State<AppState>,
@@ -72,6 +90,15 @@ pub async fn get_module(
     Ok(Json(module))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/modules/{key}/enable",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn enable_module(
     AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
@@ -99,6 +126,15 @@ pub async fn enable_module(
     Ok(Json(module))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/modules/{key}/disable",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn disable_module(
     AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,
@@ -126,6 +162,15 @@ pub async fn disable_module(
     Ok(Json(module))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/modules/{key}",
+    tag = "Modules",
+    responses(
+        (status = 200, description = "Success"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn update_module(
     AdminUser { user_id }: AdminUser,
     State(state): State<AppState>,

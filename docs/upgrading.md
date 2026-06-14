@@ -182,10 +182,9 @@ If an upgrade fails or causes unexpected behavior:
 
 > This section documents known breaking changes by version. Because RustShare is pre-1.0, MINOR version bumps may require operator action.
 
-*No breaking changes have been documented yet. This section will be populated as releases are cut.*
-
 | Version | Breaking Change | Migration Path |
 |---------|-----------------|----------------|
+| 0.4.0 | No known breaking changes. | Follow the general upgrade steps and verify the deployment health check after restart. |
 | — | — | — |
 
 ---
@@ -194,8 +193,7 @@ If an upgrade fails or causes unexpected behavior:
 
 > This section tracks new, removed, or renamed environment variables by version.
 
-*No environment variable changes have been documented yet.*
-
 | Version | Change | Details |
 |---------|--------|---------|
+| 0.4.0 | No changes. | No new, removed, or renamed environment variables are required for this release. |
 | — | — | — |

@@ -14,7 +14,9 @@ pub enum ShareTypeError {
 }
 
 /// Permission level for a share link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT")]
 pub enum SharePermissions {
     /// Read-only access (download files, view folder contents)
@@ -58,7 +60,7 @@ impl Ord for SharePermissions {
 }
 
 /// Type of share (determined by which fields are set)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum ShareType {
     Public, // share_token is Some
     User,   // recipient_user_id is Some
@@ -69,12 +71,15 @@ pub enum ShareType {
 ///
 /// Supports both public shares (anonymous access via token), user shares
 /// (authenticated user-to-user sharing), and group shares (access via group membership).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Share {
+    #[schema(value_type = Uuid)]
     pub id: ShareId,
     /// File being shared (None for folder shares)
+    #[schema(value_type = Option<Uuid>)]
     pub file_id: Option<FileId>,
     /// Folder being shared (None for file shares)
+    #[schema(value_type = Option<Uuid>)]
     pub folder_id: Option<FolderId>,
     /// Token for public shares (None for user shares)
     pub share_token: Option<String>,
@@ -88,9 +93,11 @@ pub struct Share {
     /// Access count for public shares only
     pub access_count: i32,
     /// Recipient user for user shares (None for public/group shares)
+    #[schema(value_type = Option<Uuid>)]
     pub recipient_user_id: Option<UserId>,
     /// Recipient group for group shares (None for public/user shares)
     pub recipient_group_id: Option<Uuid>,
+    #[schema(value_type = Uuid)]
     pub created_by: UserId,
     pub created_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
@@ -192,6 +199,11 @@ impl Share {
         }
     }
 
+    /// Checks if the share is active (not revoked and not expired).
+    pub fn is_active(&self) -> bool {
+        self.revoked_at.is_none() && !self.is_expired()
+    }
+
     /// Checks if the share link is password-protected (public shares only).
     pub fn is_password_protected(&self) -> bool {
         self.password_hash.is_some()
@@ -217,13 +229,16 @@ impl Share {
 /// Represents a recipient of a share (for API responses).
 ///
 /// Used in GET /api/shares/{id}/recipients endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ShareRecipient {
+    #[schema(value_type = Uuid)]
     pub share_id: ShareId,
+    #[schema(value_type = Uuid)]
     pub user_id: UserId,
     pub email: String,
     pub permission: SharePermissions,
     pub added_at: DateTime<Utc>,
+    #[schema(value_type = Uuid)]
     pub added_by: UserId,
 }
 

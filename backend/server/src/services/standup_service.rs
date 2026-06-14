@@ -23,7 +23,7 @@ fn utc_now() -> DateTime<Utc> {
 }
 
 /// Standup-specific metadata sidecar schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupMetadata {
     #[serde(alias = "type")]
     pub kind: String,
@@ -51,20 +51,20 @@ impl StandupMetadata {
 }
 
 /// Unified standup record payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupRecord {
     pub id: Uuid,     // Folder ID
     pub name: String, // Folder name
     pub path: String,
     pub content: String,           // From index.md
     pub metadata: StandupMetadata, // From .rustshare.json
-    pub owner_id: UserId,
+    pub owner_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// Standup summary for listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StandupSummary {
     pub id: Uuid,
     pub name: String,
@@ -153,19 +153,15 @@ impl StandupService {
     }
 
     /// Ensure the root "Standups" folder exists under /Workspace.
+    /// Ensure the canonical /Workspace/Standups folder exists.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical /Workspace/Standups path. Legacy roots are read-only.
     async fn ensure_standups_folder(
         &self,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, StandupError> {
-        let root_folders = self
-            .metadata_store
-            .list_folders(None, owner_id, tenant_id)
-            .await
-            .map_err(|e| StandupError::Database(e.to_string()))?;
-        if let Some(folder) = root_folders.into_iter().find(|f| f.name == "Standups") {
-            return Ok(folder);
-        }
         let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         let ws_folders = self
             .metadata_store
@@ -230,6 +226,8 @@ impl StandupService {
         &self,
         user_id: UserId,
         tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<StandupSummary>, StandupError> {
         let folders = self
             .metadata_store
@@ -258,7 +256,14 @@ impl StandupService {
         }
 
         summaries.sort_by_key(|s| std::cmp::Reverse(s.modified_at));
-        Ok(summaries)
+
+        let paginated: Vec<StandupSummary> = summaries
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(paginated)
     }
 
     /// Create a new standup record.
@@ -287,7 +292,7 @@ impl StandupService {
             .map_err(|e| StandupError::Database(e.to_string()))?;
         if let Some(existing) = existing_folders.into_iter().find(|f| f.name == folder_name) {
             // Return the existing standup
-            return self.get_standup(existing.id, owner_id).await;
+            return self.get_standup(existing.id, owner_id, tenant_id).await;
         }
 
         let standup_folder = self
@@ -378,11 +383,15 @@ impl StandupService {
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<StandupRecord, StandupError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
         let files = self
             .metadata_store
-            .list_files(Some(id), user_id, folder.tenant_id)
+            .list_files_by_parent(Some(id), folder.tenant_id)
             .await
             .map_err(|e| StandupError::Database(e.to_string()))?;
 
@@ -416,14 +425,35 @@ impl StandupService {
         })
     }
 
+    pub async fn delete_standup(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), StandupError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
+        self.folder_service
+            .delete_folder(id, user_id)
+            .await
+            .map_err(StandupError::from)?;
+        Ok(())
+    }
+
     pub async fn update_standup(
         &self,
         id: Uuid,
         user_id: UserId,
+        tenant_id: Uuid,
         title: Option<String>,
         content: Option<String>,
     ) -> Result<StandupRecord, StandupError> {
         let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
         let mut meta = self
             .load_metadata(id, user_id, folder.tenant_id)
             .await?
@@ -437,7 +467,7 @@ impl StandupService {
         // Update sidecar
         let files = self
             .metadata_store
-            .list_files(Some(id), user_id, folder.tenant_id)
+            .list_files_by_parent(Some(id), folder.tenant_id)
             .await
             .map_err(|e| StandupError::Database(e.to_string()))?;
         if let Some(sidecar) = files.iter().find(|f| f.name == ".rustshare.json") {
@@ -463,6 +493,6 @@ impl StandupService {
             }
         }
 
-        self.get_standup(id, user_id).await
+        self.get_standup(id, user_id, tenant_id).await
     }
 }

@@ -2,34 +2,23 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
-	import { createFromTemplate } from '$lib/api/modules';
+	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
 	import { createNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { createBrainstormBoard } from '$lib/api/brainstorming';
-	import { currentUser } from '$lib/stores/auth';
 	import { activityStore } from '$lib/stores/activity';
-	import { filterUserVisibleEntries, isInternalRustShareFile } from '$lib/utils/artifactVisibility';
-	import { getModuleObjectHref, resolveModuleFolderId } from '$lib/modules/modulePages';
-	import { getEnabledModules, getModuleByKey } from '$lib/modules/registry';
+	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+	import { resolveModuleFolderId } from '$lib/modules/modulePages';
+	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
 	import { todayDateString } from '$lib/utils/dashboard';
-	import type { ModuleSummary } from '$lib/api/types';
-	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
 	import RecentActivity from '$lib/components/dashboard/RecentActivity.svelte';
 	import QuickActions from '$lib/components/dashboard/QuickActions.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
-	import {
-		CalendarDays,
-		Columns,
-		Share2,
-		FileText,
-		Clock,
-		Package,
-		Lightbulb,
-		CheckCircle2
-	} from 'lucide-svelte';
+	import ErrorState from '$lib/components/common/ErrorState.svelte';
+	import { Share2, Clock, Package } from 'lucide-svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -38,7 +27,7 @@
 	interface QuickAction {
 		label: string;
 		subtitle: string;
-		icon: unknown;
+		icon: unknown | string;
 		iconColor: string;
 		iconBg: string;
 		onClick: () => void;
@@ -53,25 +42,9 @@
 		queryFn: () => listAllFiles()
 	});
 
-	const moduleSummariesQuery = createQuery({
-		queryKey: ['workspace-module-summaries'],
-		queryFn: async () => {
-			const { getModuleSummary } = await import('$lib/api/modules');
-			const modules = getEnabledModules();
-			const results = await Promise.all(
-				modules.map(async (m) => {
-					try {
-						const summary: ModuleSummary = await getModuleSummary(m.key);
-						return { module: m, summary };
-					} catch {
-						return null;
-					}
-				})
-			);
-			return results.filter(
-				(r): r is { module: ModuleDefinition; summary: ModuleSummary } => r !== null
-			);
-		}
+	const enabledModulesQuery = createQuery({
+		queryKey: ['enabled-modules'],
+		queryFn: () => listEnabledModules()
 	});
 
 	// ---------------------------------------------------------------------------
@@ -94,29 +67,19 @@
 			.slice(0, 30)
 	);
 
-	// Build a lookup map from artifact ID → current name using data already loaded
-	let nameLookup = $derived.by(() => {
+	let activityNameLookup = $derived.by(() => {
 		const map = new Map<string, string>();
 		for (const file of allFiles) {
 			map.set(file.id, file.name);
 		}
-		for (const { summary } of $moduleSummariesQuery.data ?? []) {
-			for (const item of summary.recent_items) {
-				map.set(item.id, item.name);
-			}
-		}
 		return map;
 	});
 
-	// Enrich activities with current names from the lookup map
-	let enrichedActivities = $derived(
-		($activityStore ?? []).map((a) => ({
-			...a,
-			fileName: a.artifactId ? (nameLookup.get(a.artifactId) ?? a.fileName) : a.fileName
-		}))
+	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
+	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError);
+	let errorMessage = $derived(
+		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || 'Unknown error'
 	);
-
-	let isLoading = $derived($allFilesQuery.isLoading || $moduleSummariesQuery.isLoading);
 
 	// ---------------------------------------------------------------------------
 	// Quick actions
@@ -128,15 +91,12 @@
 	let decisionTitle = $state('');
 	let decisionTitleError = $state('');
 
-	async function handleNewNote() {
+	async function handleNewNote(rootPath?: string | null) {
 		if (creating) return;
 		creating = true;
 		createError = '';
 		try {
-			const notesModule = getModuleByKey('notes');
-			const parentFolderId = notesModule?.rootPath
-				? await resolveModuleFolderId(notesModule.rootPath)
-				: null;
+			const parentFolderId = rootPath ? await resolveModuleFolderId(rootPath) : null;
 			const result = await createNote({
 				title: 'Untitled Note',
 				content: '# Untitled Note\n\n',
@@ -234,48 +194,68 @@
 		}
 	}
 
-	const quickActions: QuickAction[] = [
-		{
-			label: 'New note',
-			subtitle: 'Create a new note',
-			icon: FileText,
-			iconColor: '#ea580c',
-			iconBg: 'rgba(234, 88, 12, 0.1)',
-			onClick: handleNewNote
-		},
-		{
-			label: 'New meeting note',
-			subtitle: 'Record a meeting',
-			icon: CalendarDays,
-			iconColor: '#7c3aed',
-			iconBg: 'rgba(124, 58, 237, 0.1)',
-			onClick: handleNewMeeting
-		},
-		{
-			label: 'New decision record',
-			subtitle: 'Capture a decision',
-			icon: CheckCircle2,
-			iconColor: '#16a34a',
-			iconBg: 'rgba(22, 163, 74, 0.1)',
-			onClick: handleNewDecision
-		},
-		{
-			label: 'New Kanban board',
-			subtitle: 'Create a new board',
-			icon: Columns,
-			iconColor: '#ea580c',
-			iconBg: 'rgba(234, 88, 12, 0.1)',
-			onClick: handleNewKanban
-		},
-		{
-			label: 'New idea board',
-			subtitle: 'Brainstorm and capture ideas',
-			icon: Lightbulb,
-			iconColor: '#ca8a04',
-			iconBg: 'rgba(202, 138, 4, 0.1)',
-			onClick: handleNewBrainstorm
+	function getQuickActionLabel(moduleKey: string, fallback: string): string {
+		switch (moduleKey) {
+			case 'brainstorming':
+				return 'New idea board';
+			case 'kanban':
+				return 'New Kanban board';
+			case 'meetings':
+				return 'New meeting note';
+			case 'notes':
+				return 'New note';
+			case 'shares':
+				return 'New share';
+			default:
+				return fallback;
 		}
-	];
+	}
+
+	const quickActions = $derived(
+		($enabledModulesQuery.data ?? [])
+			.filter((m) => m.enabled)
+			.filter((m) => {
+				const dashboard = m.ui_config?.dashboard;
+				return dashboard?.enabled !== false && dashboard?.primaryAction;
+			})
+			.map((module): QuickAction => {
+				const primaryAction = module.ui_config?.dashboard?.primaryAction;
+				let handler: () => Promise<void> | void;
+
+				switch (module.module_key) {
+					case 'notes':
+						handler = () => handleNewNote(module.root_path);
+						break;
+					case 'meetings':
+						handler = handleNewMeeting;
+						break;
+					case 'decisions':
+						handler = handleNewDecision;
+						break;
+					case 'kanban':
+						handler = handleNewKanban;
+						break;
+					case 'brainstorming':
+						handler = handleNewBrainstorm;
+						break;
+					default:
+						handler = () => runModulePrimaryAction(module, primaryAction);
+						break;
+				}
+
+				return {
+					label: getQuickActionLabel(
+						module.module_key,
+						primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`
+					),
+					subtitle: module.description,
+					icon: module.icon,
+					iconColor: '#ea580c',
+					iconBg: 'rgba(234, 88, 12, 0.1)',
+					onClick: handler
+				};
+			})
+	);
 
 	const summaryCards = $derived([
 		{
@@ -314,11 +294,13 @@
 
 {#if isLoading}
 	<DashboardSkeleton />
+{:else if isError}
+	<ErrorState message={errorMessage} onRetry={() => window.location.reload()} />
 {:else}
 	<div class="workspace-overview-page">
 		<!-- Header -->
 		<header class="overview-header">
-			<h1>Workspace overview</h1>
+			<h1>Workspace Overview</h1>
 			<p class="overview-subtitle">Your company memory, organized and easy to find.</p>
 		</header>
 
@@ -328,18 +310,14 @@
 			</div>
 		{/if}
 
-		<div class="dashboard-grid">
-			<!-- Left column -->
-			<div class="dashboard-main">
-				<MetricCards cards={summaryCards} />
-				<RecentActivity
-					activities={enrichedActivities.slice(0, 6)}
-					userName={$currentUser?.display_name}
-				/>
+		<MetricCards cards={summaryCards} />
+
+		<div class="dashboard-content-grid">
+			<div class="dashboard-primary">
+				<RecentActivity nameLookup={activityNameLookup} />
 			</div>
 
-			<!-- Right column -->
-			<div class="dashboard-sidebar">
+			<div class="dashboard-secondary">
 				<QuickActions actions={quickActions} {creating} />
 			</div>
 		</div>
@@ -368,7 +346,7 @@
 		padding: 0 2rem 3rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.5rem;
+		gap: 1.25rem;
 	}
 
 	.overview-header {
@@ -384,7 +362,7 @@
 		font-weight: 700;
 		color: var(--base-content);
 		font-family: 'Fraunces', serif;
-		letter-spacing: -0.02em;
+		letter-spacing: 0;
 	}
 
 	.overview-subtitle {
@@ -393,38 +371,24 @@
 		color: color-mix(in oklab, var(--base-content) 60%, transparent);
 	}
 
-	/* Dashboard grid */
-	.dashboard-grid {
+	.dashboard-content-grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
-		gap: 2rem;
+		grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+		gap: 1.25rem;
 		align-items: start;
 	}
 
-	.dashboard-main {
+	.dashboard-primary,
+	.dashboard-secondary {
 		display: flex;
 		flex-direction: column;
-		gap: 1.75rem;
 		min-width: 0;
 	}
 
-	.dashboard-sidebar {
-		display: flex;
-		flex-direction: column;
-		gap: 1.75rem;
-		min-width: 0;
-	}
-
-	/* Responsive */
 	@media (max-width: 1023px) {
-		.dashboard-grid {
+		.dashboard-content-grid {
 			grid-template-columns: minmax(0, 1fr);
-		}
-
-		.dashboard-sidebar {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: 1.5rem;
+			gap: 1rem;
 		}
 	}
 
@@ -432,10 +396,6 @@
 		.workspace-overview-page {
 			padding: 0 1rem 2rem;
 			gap: 1.25rem;
-		}
-
-		.dashboard-sidebar {
-			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 </style>
