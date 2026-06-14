@@ -139,7 +139,10 @@ impl SyncPlan {
 /// Database state for a single file
 #[derive(Debug, Clone)]
 pub(crate) struct DbFileState {
-    pub(crate) hash: String,
+    /// Local content hash (SHA-256 when available).
+    pub(crate) local_hash: String,
+    /// Remote content hash or version token used for change detection.
+    pub(crate) remote_hash: String,
     pub(crate) modified_at: u64,
     pub(crate) _remote_id: Option<Uuid>,
     pub(crate) is_directory: bool,
@@ -151,7 +154,8 @@ pub(crate) struct DbFileState {
 impl DbFileState {
     fn synced(hash: String, modified_at: u64, remote_id: Option<Uuid>) -> Self {
         Self {
-            hash,
+            local_hash: hash.clone(),
+            remote_hash: hash,
             modified_at,
             _remote_id: remote_id,
             is_directory: false,
@@ -399,8 +403,10 @@ where
 
         match (local, remote, db) {
             (Some(local), Some(remote), Some(db)) => {
-                let local_changed = local.hash != db.hash || local.modified_at != db.modified_at;
-                let remote_changed = remote.hash != db.hash || remote.modified_at != db.modified_at;
+                let local_changed =
+                    local.hash != db.local_hash || local.modified_at != db.modified_at;
+                let remote_changed =
+                    remote.hash != db.remote_hash || remote.modified_at != db.modified_at;
 
                 if local_changed && remote_changed {
                     let resolution = if local.modified_at >= remote.modified_at {
@@ -833,7 +839,8 @@ mod tests {
             |path| {
                 if path == &PathBuf::from("deleted.txt") {
                     Some(DbFileState {
-                        hash: "hash".to_string(),
+                        local_hash: "hash".to_string(),
+                        remote_hash: "hash".to_string(),
                         modified_at: 1000,
                         _remote_id: None,
                         is_directory: false,
@@ -865,7 +872,8 @@ mod tests {
             |path| {
                 if path == &PathBuf::from("deleted.txt") {
                     Some(DbFileState {
-                        hash: "old_hash".to_string(),
+                        local_hash: "old_hash".to_string(),
+                        remote_hash: "old_hash".to_string(),
                         modified_at: 1000,
                         _remote_id: None,
                         is_directory: false,
@@ -899,7 +907,8 @@ mod tests {
             |path| {
                 if path == &PathBuf::from("deleted.txt") {
                     Some(DbFileState {
-                        hash: "old_hash".to_string(),
+                        local_hash: "old_hash".to_string(),
+                        remote_hash: "old_hash".to_string(),
                         modified_at: 1000,
                         _remote_id: Some(remote_id),
                         is_directory: false,
@@ -1022,7 +1031,8 @@ mod tests {
             |path| {
                 if path == &PathBuf::from("docs") {
                     Some(DbFileState {
-                        hash: String::new(),
+                        local_hash: String::new(),
+                        remote_hash: String::new(),
                         modified_at: 1000,
                         _remote_id: Some(Uuid::new_v4()),
                         is_directory: true,
@@ -1062,7 +1072,8 @@ mod tests {
             |path| {
                 if path == &PathBuf::from("assets") {
                     Some(DbFileState {
-                        hash: String::new(),
+                        local_hash: String::new(),
+                        remote_hash: String::new(),
                         modified_at: 1000,
                         _remote_id: Some(remote_dir_id),
                         is_directory: true,
@@ -1090,5 +1101,41 @@ mod tests {
             }
             _ => panic!("Expected DeleteRemoteDir operation"),
         }
+    }
+
+    #[test]
+    fn test_no_op_when_local_hash_matches_and_remote_version_matches() {
+        let root_id = Uuid::new_v4();
+        let remote_id = Uuid::new_v4();
+
+        let local = create_local_file("synced.txt", "sha256_local", 1000);
+        let remote = create_remote_file(remote_id, "synced.txt", "2", 1000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[local],
+            &[remote],
+            &[],
+            &[PathBuf::from("synced.txt")],
+            |path| {
+                if path == &PathBuf::from("synced.txt") {
+                    Some(DbFileState {
+                        local_hash: "sha256_local".to_string(),
+                        remote_hash: "2".to_string(),
+                        modified_at: 1000,
+                        _remote_id: Some(remote_id),
+                        is_directory: false,
+                        sync_status: "synced".to_string(),
+                        tombstone_side: None,
+                        tombstone_at: None,
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.is_empty());
     }
 }

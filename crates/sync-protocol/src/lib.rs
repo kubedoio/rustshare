@@ -77,7 +77,8 @@ pub struct CompleteUploadResponse {
     pub file_id: Uuid,
     pub file_name: String,
     pub file_size: u64,
-    pub content_hash: String,
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// File info from the files list endpoint
@@ -86,7 +87,15 @@ pub struct RemoteFile {
     pub id: Uuid,
     pub name: String,
     pub path: String,
-    pub content_hash: String,
+    /// SHA-256 hash of the file contents. Older/lighter server responses may
+    /// omit this field; in that case `current_version` is used as a change
+    /// token instead.
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    /// Monotonically increasing file version. Used as a fallback change token
+    /// when the server does not provide a content hash.
+    #[serde(default)]
+    pub current_version: i32,
     pub size: u64,
     pub modified_at: String,
 }

@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::config_dir;
 
 /// Default server URL
-pub const DEFAULT_SERVER_URL: &str = "http://localhost:8080";
+pub const DEFAULT_SERVER_URL: &str = "https://app.rustshare.io";
 
 /// Default sync interval in seconds
 pub const DEFAULT_SYNC_INTERVAL_SECS: u64 = 30;
@@ -177,8 +177,11 @@ impl Config {
         Ok(config_dir()?.join("config.toml"))
     }
 
-    /// Add a sync folder
-    pub fn add_sync_folder(&mut self, folder_id: uuid::Uuid, local_path: PathBuf) -> Result<()> {
+    /// Add a sync folder in memory.
+    ///
+    /// The caller is responsible for persisting the configuration with
+    /// [`Config::save`] or [`Config::save_to`].
+    pub fn add_sync_folder(&mut self, folder_id: uuid::Uuid, local_path: PathBuf) {
         // Check if already exists
         if let Some(existing) = self
             .sync_folders
@@ -196,22 +199,17 @@ impl Config {
                 ignore_patterns: default_ignore_patterns(),
             });
         }
-
-        self.save()?;
-        Ok(())
     }
 
-    /// Remove a sync folder
-    pub fn remove_sync_folder(&mut self, folder_id: uuid::Uuid) -> Result<bool> {
+    /// Remove a sync folder in memory.
+    ///
+    /// The caller is responsible for persisting the configuration with
+    /// [`Config::save`] or [`Config::save_to`].
+    pub fn remove_sync_folder(&mut self, folder_id: uuid::Uuid) -> bool {
         let initial_len = self.sync_folders.len();
         self.sync_folders.retain(|f| f.folder_id != folder_id);
 
-        let removed = self.sync_folders.len() < initial_len;
-        if removed {
-            self.save()?;
-        }
-
-        Ok(removed)
+        self.sync_folders.len() < initial_len
     }
 
     /// Get all enabled sync folders
@@ -247,20 +245,22 @@ pub struct FolderUpdate {
 }
 
 impl Config {
-    /// Update a sync folder with the given changes
+    /// Update a sync folder in memory.
     ///
     /// Returns true if the folder was found and updated, false otherwise.
+    /// The caller is responsible for persisting the configuration with
+    /// [`Config::save`] or [`Config::save_to`].
     pub fn update_sync_folder(
         &mut self,
         folder_id: uuid::Uuid,
         updates: FolderUpdate,
-    ) -> Result<bool> {
+    ) -> bool {
         let Some(folder) = self
             .sync_folders
             .iter_mut()
             .find(|f| f.folder_id == folder_id)
         else {
-            return Ok(false);
+            return false;
         };
 
         // Apply basic field updates
@@ -292,14 +292,15 @@ impl Config {
             }
         }
 
-        self.save()?;
-        Ok(true)
+        true
     }
 
-    /// Convenience method to enable or disable a sync folder
+    /// Convenience method to enable or disable a sync folder in memory.
     ///
     /// Returns true if the folder was found and updated, false otherwise.
-    pub fn set_folder_enabled(&mut self, folder_id: uuid::Uuid, enabled: bool) -> Result<bool> {
+    /// The caller is responsible for persisting the configuration with
+    /// [`Config::save`] or [`Config::save_to`].
+    pub fn set_folder_enabled(&mut self, folder_id: uuid::Uuid, enabled: bool) -> bool {
         self.update_sync_folder(
             folder_id,
             FolderUpdate {
@@ -369,7 +370,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.server_url, DEFAULT_SERVER_URL);
+        assert_eq!(config.server_url, "https://app.rustshare.io");
         assert_eq!(config.sync_interval, Duration::from_secs(30));
         assert!(config.sync_folders.is_empty());
     }
@@ -407,9 +408,7 @@ mod tests {
 
         // Add a sync folder
         let folder_id = uuid::Uuid::new_v4();
-        config
-            .add_sync_folder(folder_id, "/test/path".into())
-            .unwrap();
+        config.add_sync_folder(folder_id, "/test/path".into());
         assert_eq!(config.sync_folders.len(), 1);
         assert_eq!(
             config.sync_folders[0].local_path,
@@ -430,8 +429,7 @@ mod tests {
             remove_ignore_patterns: vec![],
             clear_ignores: false,
         };
-        let result = config.update_sync_folder(folder_id, updates).unwrap();
-        assert!(result);
+        assert!(config.update_sync_folder(folder_id, updates));
 
         // Save and reload to verify persistence
         config.save_to(&config_path).unwrap();
@@ -453,14 +451,11 @@ mod tests {
 
         // Add a sync folder
         let folder_id = uuid::Uuid::new_v4();
-        config
-            .add_sync_folder(folder_id, "/test/path".into())
-            .unwrap();
+        config.add_sync_folder(folder_id, "/test/path".into());
         assert!(config.sync_folders[0].enabled);
 
         // Disable it
-        let result = config.set_folder_enabled(folder_id, false).unwrap();
-        assert!(result);
+        assert!(config.set_folder_enabled(folder_id, false));
         assert!(!config.sync_folders[0].enabled);
 
         // Save and reload
@@ -470,8 +465,7 @@ mod tests {
 
         // Enable it again
         let mut config = loaded;
-        let result = config.set_folder_enabled(folder_id, true).unwrap();
-        assert!(result);
+        assert!(config.set_folder_enabled(folder_id, true));
         assert!(config.sync_folders[0].enabled);
 
         // Verify enabled=true persisted
@@ -488,14 +482,11 @@ mod tests {
 
         // Add a sync folder
         let folder_id = uuid::Uuid::new_v4();
-        config
-            .add_sync_folder(folder_id, "/test/path".into())
-            .unwrap();
+        config.add_sync_folder(folder_id, "/test/path".into());
         assert_eq!(config.sync_folders.len(), 1);
 
         // Remove it
-        let result = config.remove_sync_folder(folder_id).unwrap();
-        assert!(result);
+        assert!(config.remove_sync_folder(folder_id));
         assert!(config.sync_folders.is_empty());
 
         // Save and reload to verify persistence
@@ -504,7 +495,6 @@ mod tests {
         assert!(loaded.sync_folders.is_empty());
 
         // Try removing again - should return false
-        let result = loaded.remove_sync_folder(folder_id).unwrap();
-        assert!(!result);
+        assert!(!loaded.remove_sync_folder(folder_id));
     }
 }
