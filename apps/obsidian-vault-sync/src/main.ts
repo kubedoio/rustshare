@@ -167,18 +167,35 @@ export default class RustShareVaultSyncPlugin extends Plugin {
 
     try {
       this.statusBar.updateStatus('syncing', 'Requesting device pairing...');
+      console.log('RustShare Vault Sync: requesting device pairing');
 
       // Step 1: Request device pairing
       const pairing = await api.requestDevicePairing();
+      console.log('RustShare Vault Sync: pairing requested', pairing);
 
       // Step 2: Show pairing code to user
-      const verificationUrl = pairing.verification_uri_complete || pairing.verification_uri;
+      let verificationUrl = pairing.verification_uri_complete || pairing.verification_uri;
+      // The backend may return http:// behind a reverse proxy; normalize to the
+      // scheme the user configured so the approval page opens correctly.
+      if (this.settings.rustshareUrl.startsWith('https:') && verificationUrl.startsWith('http:')) {
+        verificationUrl = verificationUrl.replace(/^http:/, 'https:');
+      }
       const formattedCode = `${pairing.user_code.slice(0, 4)}-${pairing.user_code.slice(4)}`;
 
       new Notice(
-        `Pairing code: ${formattedCode}. Go to ${verificationUrl} and approve.`,
-        30000 // 30 seconds
+        `Pairing code: ${formattedCode}. Opening approval page...`,
+        10000
       );
+
+      try {
+        window.open(verificationUrl, '_blank');
+      } catch (openErr) {
+        console.warn('RustShare Vault Sync: could not open approval URL automatically', openErr);
+        new Notice(
+          `Open this URL to approve: ${verificationUrl}`,
+          30000
+        );
+      }
 
       this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${formattedCode})...`);
 
@@ -191,6 +208,7 @@ export default class RustShareVaultSyncPlugin extends Plugin {
         await new Promise(resolve => setTimeout(resolve, 3000));
 
         const poll = await api.pollDevicePairing(pairing.device_code);
+        console.log('RustShare Vault Sync: poll status', poll.status);
 
         if (poll.status === 'approved') {
           token = poll.token;
@@ -204,6 +222,8 @@ export default class RustShareVaultSyncPlugin extends Plugin {
       if (!token) {
         throw new Error('Pairing timed out. Please try again.');
       }
+
+      console.log('RustShare Vault Sync: device approved, registering device');
 
       // Step 4: Store token
       this.settings.authToken = token;
@@ -222,9 +242,10 @@ export default class RustShareVaultSyncPlugin extends Plugin {
         deviceId = resp.id;
         this.settings.deviceId = deviceId;
         await this.saveSettings();
+        console.log('RustShare Vault Sync: device registered', deviceId);
       } catch (e: any) {
         const isNetworkError = e instanceof TypeError ||
-          /fetch|network|Failed to fetch/i.test(e?.message || '');
+          /fetch|network|Failed to fetch|net::ERR/i.test(e?.message || '');
 
         if (this.settings.deviceId) {
           deviceId = this.settings.deviceId;
