@@ -176,21 +176,21 @@ export default class RustShareVaultSyncPlugin extends Plugin {
       // Step 2: Show pairing code to user
       const baseUrl = this.settings.rustshareUrl.replace(/\/$/, '');
       const manualApprovalUrl = `${baseUrl}/device`;
-      const formattedCode = `${pairing.user_code.slice(0, 4)}-${pairing.user_code.slice(4)}`;
+      const displayCode = pairing.user_code;
 
       // Copy the code to the clipboard so the user can paste it on the web page.
       try {
-        await navigator.clipboard.writeText(formattedCode);
+        await navigator.clipboard.writeText(displayCode);
       } catch (clipErr) {
         console.warn('RustShare Vault Sync: could not copy pairing code', clipErr);
       }
 
       new Notice(
-        `Pairing code: ${formattedCode} (copied). Go to ${manualApprovalUrl} on an already authenticated device and enter the code.`,
+        `Pairing code: ${displayCode} (copied). Go to ${manualApprovalUrl} on an already authenticated device and enter the code.`,
         30000
       );
 
-      this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${formattedCode})...`);
+      this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${displayCode})...`);
 
       // Step 3: Poll for approval
       let token: string | null = null;
