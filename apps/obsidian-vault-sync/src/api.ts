@@ -151,7 +151,10 @@ export class RustShareAPI {
 
   private async request<T>(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<T>;
   private async request(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<unknown> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'Accept': 'application/json, */*;q=0.8',
+      'User-Agent': 'RustShare-Obsidian-VaultSync/0.1.0',
+    };
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
@@ -166,7 +169,10 @@ export class RustShareAPI {
 
     const url = urlBuilder ? urlBuilder(endpoint) : this.buildUrl(endpoint);
     const requestBody = body instanceof ArrayBuffer ? body : body !== undefined ? JSON.stringify(body) : undefined;
+
+    console.log('RustShare API request', { url, method, headers: { ...headers, Authorization: headers.Authorization ? '***' : undefined }, bodyLength: typeof requestBody === 'string' ? requestBody.length : requestBody?.byteLength });
     const response = await this.requestUrlWithTimeout(url, { method, headers, body: requestBody });
+    console.log('RustShare API response', { url, status: response.status, bodyPreview: response.text.slice(0, 500) });
 
     if (response.status === 409) {
       const conflict = (response.json ?? {}) as Partial<ConflictError>;
