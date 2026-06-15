@@ -1,10 +1,12 @@
 // Disclaimer: Obsidian is a trademark of Dynalist Inc. RustShare is not affiliated with, endorsed by, or sponsored by Obsidian.
 // RustShare Vault Sync — API client for the RustShare vault sync backend.
 
+import { requestUrl, RequestUrlResponse } from 'obsidian';
+
 export interface Vault {
   id: string;
   name: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   root_path?: string;
   server_rev: number;
   created_at: string;
@@ -13,7 +15,7 @@ export interface Vault {
 
 export interface VaultManifest {
   vault_id: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   server_rev: number;
   generated_at: string;
   files: VaultManifestEntry[];
@@ -32,7 +34,7 @@ export interface VaultManifestEntry {
 
 export interface CreateVaultRequest {
   name: string;
-  adapter: 'obsidian_vault';
+  adapter: 'ObsidianVault';
   client_vault_id?: string;
   device_id: string;
 }
@@ -106,6 +108,10 @@ export class RustShareAPI {
     return `${this.baseUrl.replace(/\/$/, '')}/api/vault-sync/v1${endpoint}`;
   }
 
+  private buildAuthUrl(endpoint: string): string {
+    return `${this.baseUrl.replace(/\/$/, '')}/api/v1${endpoint}`;
+  }
+
   private encodePath(path: string): string {
     return path.replace(/\/+/g, '/').split('/').map(encodeURIComponent).join('/');
   }
@@ -130,17 +136,25 @@ export class RustShareAPI {
     }
   }
 
-  private fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30000): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...init, signal: controller.signal }).finally(() => {
-      clearTimeout(timeout);
-    });
+  private requestUrlWithTimeout(
+    url: string,
+    init: { method: string; headers: Record<string, string>; body?: string | ArrayBuffer },
+    timeoutMs = 30000
+  ): Promise<RequestUrlResponse> {
+    return Promise.race([
+      requestUrl({ url, method: init.method, headers: init.headers, body: init.body }),
+      new Promise<RequestUrlResponse>((_, reject) => {
+        setTimeout(() => reject(new Error('Request timeout')), timeoutMs);
+      }),
+    ]);
   }
 
-  private async request<T>(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T>;
-  private async request(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<unknown> {
-    const headers: Record<string, string> = {};
+  private async request<T>(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<T>;
+  private async request(method: string, endpoint: string, body?: unknown, extraHeaders?: Record<string, string>, urlBuilder?: (endpoint: string) => string): Promise<unknown> {
+    const headers: Record<string, string> = {
+      'Accept': 'application/json, */*;q=0.8',
+      'User-Agent': 'RustShare-Obsidian-VaultSync/0.1.0',
+    };
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
@@ -153,14 +167,15 @@ export class RustShareAPI {
       headers['Content-Type'] = 'application/json';
     }
 
-    const response = await this.fetchWithTimeout(this.buildUrl(endpoint), {
-      method,
-      headers,
-      body: body instanceof ArrayBuffer ? body : body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    const url = urlBuilder ? urlBuilder(endpoint) : this.buildUrl(endpoint);
+    const requestBody = body instanceof ArrayBuffer ? body : body !== undefined ? JSON.stringify(body) : undefined;
+
+    console.log('RustShare API request', { url, method, headers: { ...headers, Authorization: headers.Authorization ? '***' : undefined }, bodyLength: typeof requestBody === 'string' ? requestBody.length : requestBody?.byteLength });
+    const response = await this.requestUrlWithTimeout(url, { method, headers, body: requestBody });
+    console.log('RustShare API response', { url, status: response.status, bodyPreview: response.text.slice(0, 500) });
 
     if (response.status === 409) {
-      const conflict = await response.json().catch(() => ({})) as Partial<ConflictError>;
+      const conflict = (response.json ?? {}) as Partial<ConflictError>;
       const error: ConflictError = {
         error: 'conflict',
         message: conflict.message ?? 'Conflict detected',
@@ -176,7 +191,7 @@ export class RustShareAPI {
     }
 
     if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after') || response.headers.get('Retry-After');
+      const retryAfter = response.headers['retry-after'] || response.headers['Retry-After'];
       let retryAfterSeconds: number | undefined;
       if (retryAfter) {
         const trimmed = retryAfter.trim();
@@ -185,37 +200,35 @@ export class RustShareAPI {
           retryAfterSeconds = parseInt(trimmed, 10);
         }
       }
-      const text = await response.text();
-      const err = new Error(`HTTP 429: ${text}`);
+      const err = new Error(`HTTP 429: ${response.text}`);
       (err as any).status = 429;
       (err as any).retry_after = retryAfterSeconds;
       throw err;
     }
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => 'Unknown error');
-      throw new Error(`HTTP ${response.status}: ${text}`);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`HTTP ${response.status}: ${response.text}`);
     }
 
     if (response.status === 204) {
       return undefined;
     }
 
-    const contentType = response.headers.get('Content-Type') ?? '';
+    const contentType = response.headers['content-type'] ?? response.headers['Content-Type'] ?? '';
     if (contentType.includes('application/json')) {
-      return response.json();
+      return response.json;
     }
 
-    return response.arrayBuffer();
+    return response.arrayBuffer;
   }
 
   // Device pairing methods
   async requestDevicePairing(): Promise<DeviceRequestResponse> {
-    return this.request<DeviceRequestResponse>('POST', '/auth/device/request');
+    return this.request<DeviceRequestResponse>('POST', '/auth/device/request', undefined, undefined, this.buildAuthUrl.bind(this));
   }
 
   async pollDevicePairing(deviceCode: string): Promise<DevicePollResponse> {
-    return this.request<DevicePollResponse>('POST', '/auth/device/poll', { device_code: deviceCode });
+    return this.request<DevicePollResponse>('POST', '/auth/device/poll', { device_code: deviceCode }, undefined, this.buildAuthUrl.bind(this));
   }
 
   // Vault methods

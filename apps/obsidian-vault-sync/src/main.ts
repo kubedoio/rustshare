@@ -10,7 +10,7 @@ import { SyncEngine } from './sync';
 import { SyncState, createEmptySyncState, migrateSyncState, pruneTombstones } from './state';
 import { SyncQueue, SyncOperation } from './sync-queue';
 import { syncLog } from './sync-log';
-import { generateDeviceId, detectCloudSyncFolder, shouldIgnorePath } from './utils';
+import { generateDeviceId, detectCloudSyncFolder, shouldIgnorePath, isValidUuid, loadDesktopAuthToken } from './utils';
 
 export default class RustShareVaultSyncPlugin extends Plugin {
   declare settings: RustShareVaultSyncSettings;
@@ -150,28 +150,59 @@ export default class RustShareVaultSyncPlugin extends Plugin {
   private async connectVault(): Promise<void> {
     // Validate URL
     if (!this.settings.rustshareUrl) {
-      new Notice('Please enter your RustShare URL in settings first.');
+      new Notice('Please enter your RustShare URL in settings first.', 10000);
       return;
     }
 
-    const api = new RustShareAPI(this.settings.rustshareUrl, ''); // no token yet
+    let api: RustShareAPI;
+    try {
+      api = new RustShareAPI(this.settings.rustshareUrl, ''); // no token yet
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      console.error('RustShare Vault Sync: invalid URL', e);
+      new Notice(`Invalid RustShare URL: ${message}`, 10000);
+      this.statusBar.updateStatus('error', 'Invalid URL');
+      return;
+    }
 
     try {
+      // If rustshare-desktop is already authenticated, reuse its token so the
+      // user does not have to pair Obsidian separately.
+      const desktopToken = loadDesktopAuthToken();
+      if (desktopToken) {
+        console.log('RustShare Vault Sync: reusing desktop auth token');
+        new Notice('Found RustShare desktop auth token. Skipping device pairing.', 5000);
+        this.settings.authToken = desktopToken;
+        await this.saveSettings();
+        await this.finishConnect(desktopToken);
+        return;
+      }
+
       this.statusBar.updateStatus('syncing', 'Requesting device pairing...');
+      console.log('RustShare Vault Sync: requesting device pairing');
 
       // Step 1: Request device pairing
       const pairing = await api.requestDevicePairing();
+      console.log('RustShare Vault Sync: pairing requested', pairing);
 
       // Step 2: Show pairing code to user
-      const verificationUrl = pairing.verification_uri_complete || pairing.verification_uri;
-      const formattedCode = `${pairing.user_code.slice(0, 4)}-${pairing.user_code.slice(4)}`;
+      const baseUrl = this.settings.rustshareUrl.replace(/\/$/, '');
+      const manualApprovalUrl = `${baseUrl}/device`;
+      const displayCode = pairing.user_code;
+
+      // Copy the code to the clipboard so the user can paste it on the web page.
+      try {
+        await navigator.clipboard.writeText(displayCode);
+      } catch (clipErr) {
+        console.warn('RustShare Vault Sync: could not copy pairing code', clipErr);
+      }
 
       new Notice(
-        `Pairing code: ${formattedCode}. Go to ${verificationUrl} and approve.`,
-        30000 // 30 seconds
+        `Pairing code: ${displayCode} (copied). Go to ${manualApprovalUrl} on an already authenticated device and enter the code.`,
+        30000
       );
 
-      this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${formattedCode})...`);
+      this.statusBar.updateStatus('syncing', `Waiting for approval (code: ${displayCode})...`);
 
       // Step 3: Poll for approval
       let token: string | null = null;
@@ -182,6 +213,7 @@ export default class RustShareVaultSyncPlugin extends Plugin {
         await new Promise(resolve => setTimeout(resolve, 3000));
 
         const poll = await api.pollDevicePairing(pairing.device_code);
+        console.log('RustShare Vault Sync: poll status', poll.status);
 
         if (poll.status === 'approved') {
           token = poll.token;
@@ -196,67 +228,82 @@ export default class RustShareVaultSyncPlugin extends Plugin {
         throw new Error('Pairing timed out. Please try again.');
       }
 
+      console.log('RustShare Vault Sync: device approved, registering device');
+
       // Step 4: Store token
       this.settings.authToken = token;
       await this.saveSettings();
 
       new Notice('Device paired successfully!');
 
-      // Step 5: Now proceed with existing connectVault logic
-      // Create a new API instance with the token
-      const authedApi = new RustShareAPI(this.settings.rustshareUrl, token);
-
-      // Register device
-      let deviceId: string;
-      try {
-        const resp = await authedApi.registerDevice(this.settings.deviceName, 'obsidian_plugin', '0.1.0');
-        deviceId = resp.id;
-        this.settings.deviceId = deviceId;
-        await this.saveSettings();
-      } catch (e: any) {
-        const isNetworkError = e instanceof TypeError ||
-          /fetch|network|Failed to fetch/i.test(e?.message || '');
-
-        if (this.settings.deviceId) {
-          deviceId = this.settings.deviceId;
-          if (isNetworkError) {
-            console.info('Using cached device ID due to network error during registration:', e);
-          } else {
-            console.warn('Using cached device ID, registration failed:', e);
-          }
-        } else {
-          throw new Error(`Failed to register device: ${e.message || e}`);
-        }
-      }
-
-      // Create or use existing vault
-      let vaultId = this.settings.vaultId;
-      if (!vaultId) {
-        const vault = await authedApi.createVault({
-          name: this.app.vault.getName(),
-          adapter: 'obsidian_vault',
-          client_vault_id: undefined,
-          device_id: this.settings.deviceId,
-        });
-        vaultId = vault.id;
-        this.settings.vaultId = vaultId;
-        await this.saveSettings();
-        new Notice(`Created vault: ${vault.name}`);
-      } else {
-        const vault = await authedApi.getVault(vaultId);
-        new Notice(`Connected to vault: ${vault.name}`);
-      }
-
-      // Initialize sync state
-      if (!this.syncState || this.syncState.vault_id !== vaultId || this.syncState.device_id !== deviceId) {
-        this.syncState = createEmptySyncState(vaultId, deviceId, this.settings.deviceName);
-      }
-
-      this.statusBar.updateStatus('connected');
-    } catch (e) {
-      this.statusBar.updateStatus('error', `Connect failed: ${e}`);
-      new Notice(`Failed to connect: ${e}`);
+      await this.finishConnect(token);
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      console.error('RustShare Vault Sync: connect failed', e);
+      this.statusBar.updateStatus('error', `Connect failed: ${message}`);
+      new Notice(`Failed to connect: ${message}`, 10000);
     }
+  }
+
+  private async finishConnect(token: string): Promise<void> {
+    const authedApi = new RustShareAPI(this.settings.rustshareUrl, token);
+
+    // Register device
+    let deviceId: string;
+    try {
+      const resp = await authedApi.registerDevice(this.settings.deviceName, 'obsidian_plugin', '0.1.0');
+      deviceId = resp.id;
+      this.settings.deviceId = deviceId;
+      await this.saveSettings();
+      console.log('RustShare Vault Sync: device registered', deviceId);
+    } catch (e: any) {
+      const isNetworkError = e instanceof TypeError ||
+        /fetch|network|Failed to fetch|net::ERR/i.test(e?.message || '');
+
+      if (this.settings.deviceId) {
+        deviceId = this.settings.deviceId;
+        if (isNetworkError) {
+          console.info('Using cached device ID due to network error during registration:', e);
+        } else {
+          console.warn('Using cached device ID, registration failed:', e);
+        }
+      } else {
+        throw new Error(`Failed to register device: ${e.message || e}`);
+      }
+    }
+
+    // Create or use existing vault
+    let vaultId = this.settings.vaultId;
+    if (vaultId && !isValidUuid(vaultId)) {
+      console.warn('RustShare Vault Sync: ignoring invalid stored vaultId:', vaultId);
+      new Notice(
+        `Stored Vault ID "${vaultId}" is not a valid UUID. A new vault will be created.`,
+        10000
+      );
+      vaultId = '';
+    }
+    if (!vaultId) {
+      const vault = await authedApi.createVault({
+        name: this.app.vault.getName(),
+        adapter: 'ObsidianVault',
+        client_vault_id: undefined,
+        device_id: this.settings.deviceId,
+      });
+      vaultId = vault.id;
+      this.settings.vaultId = vaultId;
+      await this.saveSettings();
+      new Notice(`Created vault: ${vault.name}`);
+    } else {
+      const vault = await authedApi.getVault(vaultId);
+      new Notice(`Connected to vault: ${vault.name}`);
+    }
+
+    // Initialize sync state
+    if (!this.syncState || this.syncState.vault_id !== vaultId || this.syncState.device_id !== deviceId) {
+      this.syncState = createEmptySyncState(vaultId, deviceId, this.settings.deviceName);
+    }
+
+    this.statusBar.updateStatus('connected');
   }
 
   private async runManualSync(): Promise<void> {

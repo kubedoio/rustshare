@@ -1,48 +1,50 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { requestUrl } from 'obsidian';
 import { RustShareAPI, ConflictError } from '../src/api';
 
-function createMockResponse(options: {
+interface MockUrlResponse {
+  status: number;
+  headers: Record<string, string>;
+  text: string;
+  json: unknown;
+  arrayBuffer: ArrayBuffer;
+}
+
+function createMockUrlResponse(options: {
   status: number;
   jsonData?: unknown;
+  text?: string;
+  arrayBuffer?: ArrayBuffer;
   contentType?: string;
-}): Response {
-  const { status, jsonData, contentType = 'application/json' } = options;
-  return {
-    ok: status >= 200 && status < 300,
+}): MockUrlResponse {
+  const {
     status,
-    statusText: status === 409 ? 'Conflict' : 'OK',
-    headers: {
-      get: (name: string) => {
-        if (name.toLowerCase() === 'content-type') return contentType;
-        return null;
-      },
-    } as unknown as Headers,
-    json: async () => jsonData,
-    text: async () => (jsonData ? JSON.stringify(jsonData) : ''),
-    arrayBuffer: async () => new ArrayBuffer(0),
-    clone: () => createMockResponse(options),
-    body: null,
-    bodyUsed: false,
-    redirected: false,
-    type: 'basic',
-    url: '',
-  } as Response;
+    jsonData,
+    text,
+    arrayBuffer,
+    contentType = 'application/json',
+  } = options;
+  return {
+    status,
+    headers: { 'content-type': contentType },
+    text: text ?? (jsonData ? JSON.stringify(jsonData) : ''),
+    json: jsonData,
+    arrayBuffer: arrayBuffer ?? new ArrayBuffer(0),
+  };
 }
 
 describe('API contract verification', () => {
   let api: RustShareAPI;
-  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     api = new RustShareAPI('https://api.rustshare.test', 'test-token');
-    fetchMock = vi.fn();
-    global.fetch = fetchMock;
+    (requestUrl as ReturnType<typeof vi.fn>).mockReset();
   });
 
   describe('ConflictError parsing', () => {
     it('parses 409 response into ConflictError with correct fields', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({
           status: 409,
           jsonData: {
             error: 'Conflict',
@@ -76,8 +78,8 @@ describe('API contract verification', () => {
     });
 
     it('preserves all fields from a full 409 response', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({
           status: 409,
           jsonData: {
             error: 'Conflict',
@@ -116,7 +118,9 @@ describe('API contract verification', () => {
 
   describe('Header names', () => {
     it('uploadFile sends exact backend header names', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.uploadFile(
         'vault-1',
@@ -127,8 +131,8 @@ describe('API contract verification', () => {
         'device-123'
       );
 
-      const [, init] = fetchMock.mock.calls[0];
-      const headers = init.headers as Record<string, string>;
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const headers = call.headers as Record<string, string>;
 
       expect(headers).toHaveProperty('X-RustShare-SHA256', 'sha256-abc');
       expect(headers).toHaveProperty('X-RustShare-Base-Server-Rev', '3');
@@ -137,26 +141,28 @@ describe('API contract verification', () => {
     });
 
     it('deleteFile sends exact backend header names', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.deleteFile('vault-1', 'notes/test.md', 2, 'device-123');
 
-      const [, init] = fetchMock.mock.calls[0];
-      const headers = init.headers as Record<string, string>;
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const headers = call.headers as Record<string, string>;
 
       expect(headers).toHaveProperty('X-RustShare-Base-Server-Rev', '2');
       expect(headers).toHaveProperty('X-RustShare-Device-ID', 'device-123');
     });
 
     it('includes Authorization and Content-Type for JSON bodies', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({ status: 200, jsonData: { id: 'd1' } })
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 200, jsonData: { id: 'd1' } })
       );
 
       const result = await api.registerDevice('my-device', 'obsidian');
 
-      const [, init] = fetchMock.mock.calls[0];
-      const headers = init.headers as Record<string, string>;
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const headers = call.headers as Record<string, string>;
 
       expect(headers).toHaveProperty('Authorization', 'Bearer test-token');
       expect(headers).toHaveProperty('Content-Type', 'application/json');
@@ -164,35 +170,45 @@ describe('API contract verification', () => {
     });
 
     it('includes CSRF header on mutating methods', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.uploadFile('vault-1', 'test.md', new ArrayBuffer(0), 'hash', 1, 'device-1');
-      const [, init1] = fetchMock.mock.calls[0];
-      expect(init1.headers).toHaveProperty('X-Rustshare-Csrf', '1');
+      const call1 = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call1.headers).toHaveProperty('X-Rustshare-Csrf', '1');
 
-      fetchMock.mockClear();
-      fetchMock.mockResolvedValue(createMockResponse({ status: 200, jsonData: { id: 'd1' } }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockReset();
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 200, jsonData: { id: 'd1' } })
+      );
       await api.registerDevice('my-device', 'obsidian');
-      const [, init2] = fetchMock.mock.calls[0];
-      expect(init2.headers).toHaveProperty('X-Rustshare-Csrf', '1');
+      const call2 = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call2.headers).toHaveProperty('X-Rustshare-Csrf', '1');
 
-      fetchMock.mockClear();
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockReset();
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
       await api.deleteFile('vault-1', 'test.md', 1, 'device-1');
-      const [, init3] = fetchMock.mock.calls[0];
-      expect(init3.headers).toHaveProperty('X-Rustshare-Csrf', '1');
+      const call3 = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call3.headers).toHaveProperty('X-Rustshare-Csrf', '1');
 
-      fetchMock.mockClear();
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockReset();
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
       await api.renameFile('vault-1', { old_path: 'a.md', new_path: 'b.md', base_server_rev: 1, device_id: 'device-1' });
-      const [, init4] = fetchMock.mock.calls[0];
-      expect(init4.headers).toHaveProperty('X-Rustshare-Csrf', '1');
+      const call4 = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call4.headers).toHaveProperty('X-Rustshare-Csrf', '1');
     });
   });
 
   describe('URL path construction', () => {
     it('builds vault-sync file URLs correctly', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.uploadFile(
         'vault-1',
@@ -203,43 +219,76 @@ describe('API contract verification', () => {
         'device-1'
       );
 
-      const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe(
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault-1/files/notes/hello.md'
       );
     });
 
     it('builds manifest URL correctly', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({
           status: 200,
-          jsonData: { vault_id: 'v1', adapter: 'obsidian_vault', server_rev: 1, generated_at: new Date().toISOString(), files: [] },
+          jsonData: { vault_id: 'v1', adapter: 'ObsidianVault', server_rev: 1, generated_at: new Date().toISOString(), files: [] },
         })
       );
 
       await api.getManifest('vault-1');
 
-      const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe(
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault-1/manifest'
       );
     });
 
     it('builds device register URL correctly', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({ status: 200, jsonData: { id: 'd1' } })
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 200, jsonData: { id: 'd1' } })
       );
 
       await api.registerDevice('my-device', 'obsidian');
 
-      const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe(
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/devices/register'
       );
     });
 
+    it('builds device pairing request URL under /api/v1', async () => {
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({
+          status: 200,
+          jsonData: {
+            user_code: 'ABCD1234',
+            device_code: 'device-code',
+            expires_in: 600,
+            verification_uri: 'https://api.rustshare.test/device',
+            verification_uri_complete: 'https://api.rustshare.test/device?code=ABCD1234',
+          },
+        })
+      );
+
+      await api.requestDevicePairing();
+
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe('https://api.rustshare.test/api/v1/auth/device/request');
+    });
+
+    it('builds device pairing poll URL under /api/v1', async () => {
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 200, jsonData: { status: 'pending' } })
+      );
+
+      await api.pollDevicePairing('device-code');
+
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe('https://api.rustshare.test/api/v1/auth/device/poll');
+    });
+
     it('URL-encodes vault IDs and file paths', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.uploadFile(
         'vault test',
@@ -250,29 +299,37 @@ describe('API contract verification', () => {
         'device-1'
       );
 
-      const [url] = fetchMock.mock.calls[0];
-      expect(url).toBe(
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault%20test/files/notes/hello%20world.md'
       );
     });
 
     it('URL-encodes special characters ? # & in file paths', async () => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await api.uploadFile('vault-1', 'notes/what?.md', new ArrayBuffer(0), 'hash', 1, 'device-1');
-      expect(fetchMock.mock.calls[0][0]).toBe(
+      expect((requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0].url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault-1/files/notes/what%3F.md'
       );
 
-      fetchMock.mockClear();
+      (requestUrl as ReturnType<typeof vi.fn>).mockReset();
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
       await api.uploadFile('vault-1', 'notes/hash#1.md', new ArrayBuffer(0), 'hash', 1, 'device-1');
-      expect(fetchMock.mock.calls[0][0]).toBe(
+      expect((requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0].url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault-1/files/notes/hash%231.md'
       );
 
-      fetchMock.mockClear();
+      (requestUrl as ReturnType<typeof vi.fn>).mockReset();
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
       await api.uploadFile('vault-1', 'notes/a&b.md', new ArrayBuffer(0), 'hash', 1, 'device-1');
-      expect(fetchMock.mock.calls[0][0]).toBe(
+      expect((requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0].url).toBe(
         'https://api.rustshare.test/api/vault-sync/v1/vaults/vault-1/files/notes/a%26b.md'
       );
     });
@@ -280,8 +337,8 @@ describe('API contract verification', () => {
 
   describe('uploadFile return value', () => {
     it('returns server_rev from backend', async () => {
-      fetchMock.mockResolvedValue(
-        createMockResponse({ status: 200, jsonData: { server_rev: 3 } })
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 200, jsonData: { server_rev: 3 } })
       );
 
       const result = await api.uploadFile(
@@ -350,12 +407,14 @@ describe('API contract verification', () => {
         expected: 'DELETE',
       },
     ])('$method uses $expected', async ({ method, args, expected }) => {
-      fetchMock.mockResolvedValue(createMockResponse({ status: 204 }));
+      (requestUrl as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockUrlResponse({ status: 204 })
+      );
 
       await (api as any)[method](...args);
 
-      const [, init] = fetchMock.mock.calls[0];
-      expect(init.method).toBe(expected);
+      const call = (requestUrl as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.method).toBe(expected);
     });
   });
 });
