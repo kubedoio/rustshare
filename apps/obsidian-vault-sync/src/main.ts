@@ -208,7 +208,7 @@ export default class RustShareVaultSyncPlugin extends Plugin {
       let token: string | null = null;
       const startTime = Date.now();
       const maxWaitMs = pairing.expires_in * 1000;
-      let pollIntervalMs = 5000;
+      let pollIntervalMs = 20000;
 
       while (Date.now() - startTime < maxWaitMs) {
         await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -229,7 +229,7 @@ export default class RustShareVaultSyncPlugin extends Plugin {
             const retryAfter = typeof pollErr?.retry_after === 'number' ? pollErr.retry_after : 5;
             console.warn(`RustShare Vault Sync: poll rate-limited, retrying after ${retryAfter}s`);
             new Notice(`Server is busy. Retrying in ${retryAfter} seconds...`, 3000);
-            pollIntervalMs = Math.min(Math.max(retryAfter * 1000, 5000), 30000);
+            pollIntervalMs = Math.min(Math.max(retryAfter * 1000, 20000), 30000);
             continue;
           }
           throw pollErr;
