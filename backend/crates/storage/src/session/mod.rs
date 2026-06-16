@@ -113,6 +113,13 @@ pub struct SessionConfig {
     pub cookie_same_site: String,
 }
 
+/// Parse a truthy environment variable value.
+///
+/// Accepts `"true"` or `"1"` (case-insensitive) as true; everything else is false.
+fn parse_env_bool(value: &str) -> bool {
+    value.eq_ignore_ascii_case("true") || value == "1"
+}
+
 impl SessionConfig {
     /// Create default configuration.
     ///
@@ -139,12 +146,12 @@ impl SessionConfig {
             .unwrap_or(24 * 3600);
         let use_revocation_cache = std::env::var("SESSION_USE_REVOCATION_CACHE")
             .ok()
-            .map(|s| s == "true" || s == "1")
+            .map(|s| parse_env_bool(&s))
             .unwrap_or(true);
         let cookie_secure = std::env::var("RUSTSHARE_SESSION_COOKIE_SECURE")
             .ok()
             .or_else(|| std::env::var("SESSION_COOKIE_SECURE").ok())
-            .map(|s| s == "true" || s == "1")
+            .map(|s| parse_env_bool(&s))
             .unwrap_or(true);
 
         Ok(Self {
@@ -276,6 +283,21 @@ mod tests {
         std::env::remove_var("SESSION_COOKIE_SECURE");
         let config = SessionConfig::from_env().unwrap();
         assert!(config.cookie_secure, "cookie_secure must default to true");
+
+        // Case-insensitive and numeric truthy values are accepted.
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "TRUE");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(config.cookie_secure, "TRUE must be treated as true");
+
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "1");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(config.cookie_secure, "1 must be treated as true");
+
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "False");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(!config.cookie_secure, "False must be treated as false");
+
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
     }
 
     #[test]

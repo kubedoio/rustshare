@@ -171,16 +171,33 @@ fn session_cookie_secure() -> bool {
     std::env::var("RUSTSHARE_SESSION_COOKIE_SECURE")
         .ok()
         .or_else(|| std::env::var("SESSION_COOKIE_SECURE").ok())
-        .and_then(|value| value.parse().ok())
+        .map(|value| parse_env_bool(&value))
         .unwrap_or(true)
+}
+
+/// Parse a truthy environment variable value.
+///
+/// Accepts `"true"` or `"1"` (case-insensitive) as true; everything else is false.
+fn parse_env_bool(value: &str) -> bool {
+    value.eq_ignore_ascii_case("true") || value == "1"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate process-global environment variables.
+    ///
+    /// Env vars are shared across the process, so parallel tests that read and
+    /// write the same variables race with each other. Acquiring this mutex for
+    /// the duration of each such test eliminates the race.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn session_cookie_secure_env_var_precedence_and_fallback() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+
         // Prefixed name takes precedence when both are set.
         std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "false");
         std::env::set_var("SESSION_COOKIE_SECURE", "true");
@@ -204,7 +221,23 @@ mod tests {
     }
 
     #[test]
+    fn session_cookie_secure_truthy_values() {
+        assert!(parse_env_bool("true"));
+        assert!(parse_env_bool("True"));
+        assert!(parse_env_bool("TRUE"));
+        assert!(parse_env_bool("1"));
+
+        assert!(!parse_env_bool("false"));
+        assert!(!parse_env_bool("False"));
+        assert!(!parse_env_bool("FALSE"));
+        assert!(!parse_env_bool("0"));
+        assert!(!parse_env_bool("yes"));
+        assert!(!parse_env_bool(""));
+    }
+
+    #[test]
     fn secure_session_cookie_flags() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "true");
 
         let session_cookie = build_session_cookie("test-token");
@@ -232,10 +265,13 @@ mod tests {
         let expired_csrf_cookie = build_expired_csrf_cookie();
         assert!(expired_csrf_cookie.contains("Secure"));
         assert!(expired_csrf_cookie.contains("Max-Age=0"));
+
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
     }
 
     #[test]
     fn insecure_session_cookie_flags() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "false");
 
         let session_cookie = build_session_cookie("test-token");
@@ -249,5 +285,7 @@ mod tests {
         let csrf_cookie = build_csrf_cookie("test-csrf");
         assert!(!csrf_cookie.contains("Secure"), "CSRF cookie must not be Secure when secure=false");
         assert!(csrf_cookie.contains("SameSite=Lax"));
+
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
     }
 }

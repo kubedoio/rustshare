@@ -303,7 +303,7 @@ Internal service ports (backend 8080, postgres 5432, rustfs 9000/9001) are bound
 
 ### Secure Cookies
 
-`docker-compose.prod.yml` sets `SESSION_COOKIE_SECURE=true` and `CSRF_COOKIE_SECURE=true`. This tells the backend to emit session and CSRF cookies with the `Secure` attribute, which means browsers will only send them over HTTPS. **TLS termination is mandatory when using the production compose file.** If you terminate TLS at an upstream load balancer or CDN, ensure the backend still sees HTTPS requests (for example, via `X-Forwarded-Proto: https`) and that the `Secure` cookie setting matches your TLS topology.
+`docker-compose.prod.yml` sets `SESSION_COOKIE_SECURE=true`. This tells the backend to emit session and CSRF cookies with the `Secure` attribute, which means browsers will only send them over HTTPS. The CSRF cookie's `Secure` flag follows the same setting as the session cookie; there is no separate `CSRF_COOKIE_SECURE` variable. **TLS termination is mandatory when using the production compose file.** If you terminate TLS at an upstream load balancer or CDN, ensure the backend still sees HTTPS requests (for example, via `X-Forwarded-Proto: https`) and that the `Secure` cookie setting matches your TLS topology.
 
 ### Non-Root Containers
 
