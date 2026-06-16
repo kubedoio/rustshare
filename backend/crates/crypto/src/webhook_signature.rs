@@ -6,6 +6,7 @@
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 /// Errors that can occur during webhook signing/verification.
@@ -107,8 +108,11 @@ impl WebhookSigner {
             return Err(WebhookSignatureError::InvalidFormat);
         }
 
-        let expected_sig = self.sign(payload)?;
-        Ok(sig_part == expected_sig)
+        let provided_sig =
+            hex::decode(&sig_part[3..]).map_err(|_| WebhookSignatureError::InvalidFormat)?;
+        let expected_sig = self.sign_raw(payload)?;
+
+        Ok(provided_sig.ct_eq(&expected_sig).into())
     }
 
     fn verify_timestamped(
@@ -131,10 +135,12 @@ impl WebhookSigner {
             .parse::<i64>()
             .map_err(|_| WebhookSignatureError::InvalidFormat)?;
 
+        let provided_sig =
+            hex::decode(&sig_part[3..]).map_err(|_| WebhookSignatureError::InvalidFormat)?;
         let signed_content = format!("{}.{}", timestamp, hex::encode(payload.as_ref()));
-        let expected_sig = format!("v1={}", hex::encode(self.sign_raw(&signed_content)?));
+        let expected_sig = self.sign_raw(&signed_content)?;
 
-        Ok(sig_part == expected_sig)
+        Ok(provided_sig.ct_eq(&expected_sig).into())
     }
 }
 
@@ -207,5 +213,20 @@ mod tests {
         let sig2 = signer2.sign(payload).unwrap();
 
         assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_verify_fails_with_tampered_signature() {
+        let signer = WebhookSigner::new("my_secret_key_12345");
+        let payload = b"test webhook payload";
+
+        let signature = signer.sign(payload).unwrap();
+        let mut tampered = signature.into_bytes();
+        let last = tampered.len() - 1;
+        tampered[last] = if tampered[last] == b'0' { b'1' } else { b'0' };
+        let tampered_sig = String::from_utf8(tampered).unwrap();
+
+        let is_valid = signer.verify(&tampered_sig, payload).unwrap();
+        assert!(!is_valid);
     }
 }

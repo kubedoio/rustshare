@@ -6522,6 +6522,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.18",
 ]
 
