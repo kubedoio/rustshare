@@ -53,6 +53,7 @@ aes-gcm = "0.10"
 base64 = { version = "0.22", features = ["alloc"] }
 hmac = "0.13"
 hex = "0.4"
+subtle = "2.6"
 
 # S3 client
 aws-sdk-s3 = "1.17"
