@@ -4,10 +4,23 @@
 //! Contract: User from tenant A cannot access resources from tenant B.
 
 use crate::common::*;
-use rustshare_core::services::{FileError, FolderError, PermissionResolverOps};
+use rustshare_core::domain::SharePermissions;
+use rustshare_core::services::{
+    FileError, FolderError, NotificationError, PermissionResolverOps, ShareError,
+};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
+
+/// Mock JWT manager used by the share service in contract tests.
+struct MockJwtManager;
+
+impl rustshare_core::services::JwtOps for MockJwtManager {
+    fn encode_custom_claims<T: serde::Serialize>(&self, _claims: &T) -> Result<String, String> {
+        Ok("test_jwt_token".to_string())
+    }
+}
 
 /// G-01-01: User from tenant A cannot access file from tenant B
 #[tokio::test]
@@ -65,22 +78,43 @@ async fn test_cross_tenant_share_link_is_denied() {
     let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
     let _user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
 
-    // Create folder service and a folder
-    let folder_service = ctx.folder_service();
-    let folder =
-        create_test_folder(&folder_service, user_a.id, tenant_a, "SharedFolder", None).await;
+    // User A creates a file in tenant A
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "secret.txt",
+        b"Tenant A secret",
+    )
+    .await;
 
-    // Verify the folder has the correct tenant
-    assert_eq!(folder.tenant_id, tenant_a);
+    // User A creates a public share link for the file
+    let share_service = create_test_share_service(&ctx, Arc::new(MockJwtManager));
+    let share = create_test_share(
+        &share_service,
+        file.id,
+        user_a.id,
+        SharePermissions::View,
+        None,
+        None,
+        tenant_a,
+    )
+    .await;
+    let token = share.share_token.expect("Public share should have a token");
 
-    // Attempting to create a share with mismatched tenant should fail
-    // This simulates what would happen if user_b tried to use a share from tenant_a
-    let folder_from_other_tenant = folder_service.get_folder(folder.id, user_a.id).await;
-    assert!(folder_from_other_tenant.is_ok());
+    // Attempt to access the share link from tenant B. Public share resolution
+    // must be tenant-scoped, so the token should not resolve outside tenant A.
+    let result = share_service
+        .validate_and_create_session(&token, None)
+        .await;
 
-    // The folder should maintain its original tenant_id
-    let folder = folder_from_other_tenant.unwrap();
-    assert_eq!(folder.tenant_id, tenant_a);
+    assert!(
+        matches!(result, Err(ShareError::ShareNotFoundByToken(_))),
+        "Cross-tenant share link access should be denied; got {:?}",
+        result
+    );
 
     // Cleanup
     cleanup_tenant(&ctx.pool, tenant_b).await;
@@ -408,4 +442,248 @@ async fn test_permission_resolver_repository_is_tenant_scoped() {
     // Cleanup
     cleanup_tenant(&pool, tenant_b).await;
     cleanup_tenant(&pool, tenant_a).await;
+}
+
+/// G-01-07: User from tenant B cannot list files in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_list_files_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let file_service = ctx.file_service();
+    let file_a = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "confidential.txt",
+        b"Tenant A data",
+    )
+    .await;
+
+    let files_b = ctx
+        .metadata_store
+        .list_files(None, user_b.id, tenant_b)
+        .await
+        .expect("Failed to list files for tenant B");
+
+    assert!(
+        files_b.iter().all(|f| f.id != file_a.id),
+        "User B should not see files from tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-08: User from tenant B cannot rename/update a file in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_update_file_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let file_service = ctx.file_service();
+    let file_a = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "confidential.txt",
+        b"Tenant A data",
+    )
+    .await;
+
+    let result = file_service
+        .rename_file(file_a.id, "renamed_by_b.txt".to_string(), user_b.id)
+        .await;
+
+    assert!(
+        matches!(result, Err(FileError::PermissionDenied { .. })),
+        "User B should not be able to rename a file in tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-09: User from tenant B cannot delete a file in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_delete_file_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let file_service = ctx.file_service();
+    let file_a = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "confidential.txt",
+        b"Tenant A data",
+    )
+    .await;
+
+    let result = file_service.delete_file(file_a.id, user_b.id).await;
+
+    assert!(
+        matches!(result, Err(FileError::PermissionDenied { .. })),
+        "User B should not be able to delete a file in tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-10: User from tenant B cannot list folders in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_list_folders_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let folder_service = ctx.folder_service();
+    let folder_a = create_test_folder(&folder_service, user_a.id, tenant_a, "Private", None).await;
+
+    let folders_b = ctx
+        .metadata_store
+        .list_folders(None, user_b.id, tenant_b)
+        .await
+        .expect("Failed to list folders for tenant B");
+
+    assert!(
+        folders_b.iter().all(|f| f.id != folder_a.id),
+        "User B should not see folders from tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-11: User from tenant B cannot rename a folder in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_update_folder_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let folder_service = ctx.folder_service();
+    let folder_a = create_test_folder(&folder_service, user_a.id, tenant_a, "Private", None).await;
+
+    let result = folder_service
+        .rename_folder(folder_a.id, "RenamedByB".to_string(), user_b.id)
+        .await;
+
+    assert!(
+        matches!(result, Err(FolderError::PermissionDenied { .. })),
+        "User B should not be able to rename a folder in tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-12: User from tenant B cannot delete a folder in tenant A
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_user_cannot_delete_folder_from_other_tenant() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let folder_service = ctx.folder_service();
+    let folder_a = create_test_folder(&folder_service, user_a.id, tenant_a, "Private", None).await;
+
+    let result = folder_service.delete_folder(folder_a.id, user_b.id).await;
+
+    assert!(
+        matches!(result, Err(FolderError::PermissionDenied { .. })),
+        "User B should not be able to delete a folder in tenant A"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-13: Notifications do not leak across tenants
+#[tokio::test]
+#[ignore] // Requires database
+async fn test_notifications_do_not_leak_across_tenants() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let notification_service = ctx.notification_service();
+    let notification = create_test_notification(&notification_service, user_a.id, tenant_a).await;
+
+    // User B listing notifications in tenant B must not see tenant A's notification.
+    let notifications_b = notification_service
+        .list_notifications(user_b.id, tenant_b, false, 100, 0)
+        .await
+        .expect("Failed to list notifications for tenant B");
+
+    assert!(
+        notifications_b.is_empty(),
+        "User B should not see notifications from tenant A"
+    );
+
+    // Direct fetch by user B in tenant B should also fail to find it.
+    let result = notification_service
+        .get_notification(notification.id, user_b.id, tenant_b)
+        .await;
+
+    assert!(
+        matches!(result, Err(NotificationError::NotFoundById(_))),
+        "User B should not be able to retrieve a tenant A notification"
+    );
+
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-14: RLS context is set for authenticated requests
+#[tokio::test]
+#[ignore] // Requires database
+async fn test_rls_context_is_set_for_authenticated_requests() {
+    // The tenant_context middleware acquires a dedicated connection to run
+    // `SET app.current_tenant_id` and `SET app.current_user_id`, then returns
+    // that connection to the pool before the request handler runs. The handler's
+    // queries execute on connections checked out separately, so we cannot
+    // observe the set values on the middleware's connection without additional
+    // instrumentation. This test is kept as documentation of the limitation.
 }

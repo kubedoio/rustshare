@@ -6,13 +6,17 @@
 
 use bytes::Bytes;
 use rustshare_core::domain::{
-    CreateVaultRequest, File, Folder, Share, SharePermissions, User, Vault, VaultAdapter,
+    CreateVaultRequest, File, Folder, Notification, NotificationType, ResourceType, Share,
+    SharePermissions, User, Vault, VaultAdapter,
 };
 use rustshare_core::services::PermissionResolver;
 use rustshare_core::services::{
-    FileService, FolderService, JwtOps, ShareNotificationRepo, ShareService, VaultSyncService,
+    CreateNotification, FileService, FolderService, JwtOps, NotificationService,
+    ShareNotificationRepo, ShareService, VaultSyncService,
 };
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_infrastructure::repositories::{
+    NotificationRepository, PermissionResolverRepository,
+};
 use rustshare_server::services::note_service::NoteService;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
@@ -147,6 +151,11 @@ impl TestContext {
     /// Create a new VaultSyncService instance
     pub fn vault_sync_service(&self) -> VaultSyncService<MetadataStore, ObjectStore> {
         VaultSyncService::new(self.metadata_store.clone(), self.object_store.clone())
+    }
+
+    /// Create a new NotificationService instance
+    pub fn notification_service(&self) -> NotificationService<NotificationRepository> {
+        NotificationService::new(NotificationRepository::new(self.pool.clone()))
     }
 
     /// Create a test vault
@@ -294,6 +303,27 @@ pub async fn create_test_file(
         )
         .await
         .expect("Failed to create test file")
+}
+
+/// Create a test notification for a user in the specified tenant.
+pub async fn create_test_notification(
+    notification_service: &NotificationService<NotificationRepository>,
+    user_id: Uuid,
+    tenant_id: Uuid,
+) -> Notification {
+    notification_service
+        .create_notification(CreateNotification {
+            user_id,
+            notification_type: NotificationType::ShareReceived,
+            title: "Test notification".to_string(),
+            message: "This is a test notification".to_string(),
+            resource_id: Uuid::new_v4(),
+            resource_type: ResourceType::File,
+            action_url: None,
+            tenant_id,
+        })
+        .await
+        .expect("Failed to create test notification")
 }
 
 /// Seed a hidden/internal file directly, bypassing user-facing upload validation.
