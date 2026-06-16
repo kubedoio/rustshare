@@ -284,6 +284,7 @@ mod tests {
         async fn find_by_id(
             &self,
             notification_id: NotificationId,
+            _tenant_id: Uuid,
         ) -> Result<Option<Notification>, NotificationError> {
             Ok(self
                 .notifications
@@ -297,6 +298,7 @@ mod tests {
         async fn list_for_user(
             &self,
             user_id: UserId,
+            _tenant_id: Uuid,
             unread_only: bool,
             limit: i64,
             offset: i64,
@@ -325,6 +327,7 @@ mod tests {
         async fn count_for_user(
             &self,
             user_id: UserId,
+            _tenant_id: Uuid,
             unread_only: bool,
         ) -> Result<i64, NotificationError> {
             let count = self
@@ -338,7 +341,11 @@ mod tests {
             Ok(count as i64)
         }
 
-        async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
+        async fn count_unread(
+            &self,
+            user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<i64, NotificationError> {
             let count = self
                 .notifications
                 .lock()
@@ -352,6 +359,7 @@ mod tests {
         async fn mark_as_read(
             &self,
             notification_id: NotificationId,
+            _tenant_id: Uuid,
         ) -> Result<Notification, NotificationError> {
             let mut notifications = self.notifications.lock().unwrap();
             if let Some(notification) = notifications.iter_mut().find(|n| n.id == notification_id) {
@@ -362,7 +370,11 @@ mod tests {
             }
         }
 
-        async fn delete(&self, notification_id: NotificationId) -> Result<(), NotificationError> {
+        async fn delete(
+            &self,
+            notification_id: NotificationId,
+            _tenant_id: Uuid,
+        ) -> Result<(), NotificationError> {
             let mut notifications = self.notifications.lock().unwrap();
             if let Some(pos) = notifications.iter().position(|n| n.id == notification_id) {
                 notifications.remove(pos);
@@ -446,7 +458,10 @@ mod tests {
             .await
             .unwrap();
 
-        let retrieved = service.get_notification(created.id, user_id).await.unwrap();
+        let retrieved = service
+            .get_notification(created.id, user_id, Uuid::nil())
+            .await
+            .unwrap();
 
         assert_eq!(retrieved.id, created.id);
         assert_eq!(retrieved.user_id, user_id);
@@ -473,7 +488,7 @@ mod tests {
             .unwrap();
 
         let result = service
-            .get_notification(notification.id, other_user_id)
+            .get_notification(notification.id, other_user_id, Uuid::nil())
             .await;
 
         assert!(matches!(result, Err(NotificationError::NotOwned { .. })));
@@ -485,7 +500,9 @@ mod tests {
         let user_id = Uuid::new_v4();
         let nonexistent_id = Uuid::new_v4();
 
-        let result = service.get_notification(nonexistent_id, user_id).await;
+        let result = service
+            .get_notification(nonexistent_id, user_id, Uuid::nil())
+            .await;
 
         assert!(matches!(result, Err(NotificationError::NotFoundById(_))));
     }
@@ -540,7 +557,7 @@ mod tests {
 
         // List notifications for user
         let notifications = service
-            .list_notifications(user_id, false, 10, 0)
+            .list_notifications(user_id, Uuid::nil(), false, 10, 0)
             .await
             .unwrap();
 
@@ -582,11 +599,14 @@ mod tests {
             .unwrap();
 
         // Mark first as read
-        service.mark_as_read(n1.id, user_id).await.unwrap();
+        service
+            .mark_as_read(n1.id, user_id, Uuid::nil())
+            .await
+            .unwrap();
 
         // List unread only
         let unread = service
-            .list_notifications(user_id, true, 10, 0)
+            .list_notifications(user_id, Uuid::nil(), true, 10, 0)
             .await
             .unwrap();
 
@@ -619,21 +639,21 @@ mod tests {
 
         // Get first page (2 items)
         let page1 = service
-            .list_notifications(user_id, false, 2, 0)
+            .list_notifications(user_id, Uuid::nil(), false, 2, 0)
             .await
             .unwrap();
         assert_eq!(page1.len(), 2);
 
         // Get second page (2 items)
         let page2 = service
-            .list_notifications(user_id, false, 2, 2)
+            .list_notifications(user_id, Uuid::nil(), false, 2, 2)
             .await
             .unwrap();
         assert_eq!(page2.len(), 2);
 
         // Get third page (1 item remaining)
         let page3 = service
-            .list_notifications(user_id, false, 2, 4)
+            .list_notifications(user_id, Uuid::nil(), false, 2, 4)
             .await
             .unwrap();
         assert_eq!(page3.len(), 1);
@@ -646,7 +666,7 @@ mod tests {
         let resource_id = Uuid::new_v4();
 
         // Initially no unread
-        let count = service.count_unread(user_id).await.unwrap();
+        let count = service.count_unread(user_id, Uuid::nil()).await.unwrap();
         assert_eq!(count, 0);
 
         // Create notifications
@@ -677,14 +697,17 @@ mod tests {
             .unwrap();
 
         // Count should be 2
-        let count = service.count_unread(user_id).await.unwrap();
+        let count = service.count_unread(user_id, Uuid::nil()).await.unwrap();
         assert_eq!(count, 2);
 
         // Mark one as read
-        service.mark_as_read(n1.id, user_id).await.unwrap();
+        service
+            .mark_as_read(n1.id, user_id, Uuid::nil())
+            .await
+            .unwrap();
 
         // Count should be 1
-        let count = service.count_unread(user_id).await.unwrap();
+        let count = service.count_unread(user_id, Uuid::nil()).await.unwrap();
         assert_eq!(count, 1);
     }
 
@@ -720,10 +743,19 @@ mod tests {
             .await
             .unwrap();
 
-        service.mark_as_read(first.id, user_id).await.unwrap();
+        service
+            .mark_as_read(first.id, user_id, Uuid::nil())
+            .await
+            .unwrap();
 
-        let total = service.count_notifications(user_id, false).await.unwrap();
-        let unread = service.count_notifications(user_id, true).await.unwrap();
+        let total = service
+            .count_notifications(user_id, Uuid::nil(), false)
+            .await
+            .unwrap();
+        let unread = service
+            .count_notifications(user_id, Uuid::nil(), true)
+            .await
+            .unwrap();
 
         assert_eq!(total, 2);
         assert_eq!(unread, 1);
@@ -751,7 +783,7 @@ mod tests {
         assert!(!notification.read);
 
         let updated = service
-            .mark_as_read(notification.id, user_id)
+            .mark_as_read(notification.id, user_id, Uuid::nil())
             .await
             .unwrap();
 
@@ -778,7 +810,9 @@ mod tests {
             .await
             .unwrap();
 
-        let result = service.mark_as_read(notification.id, other_user_id).await;
+        let result = service
+            .mark_as_read(notification.id, other_user_id, Uuid::nil())
+            .await;
 
         assert!(matches!(result, Err(NotificationError::NotOwned { .. })));
     }
@@ -804,12 +838,14 @@ mod tests {
 
         // Delete should succeed
         service
-            .delete_notification(notification.id, user_id)
+            .delete_notification(notification.id, user_id, Uuid::nil())
             .await
             .unwrap();
 
         // Notification should no longer exist
-        let result = service.get_notification(notification.id, user_id).await;
+        let result = service
+            .get_notification(notification.id, user_id, Uuid::nil())
+            .await;
         assert!(matches!(result, Err(NotificationError::NotFoundById(_))));
     }
 
@@ -834,7 +870,7 @@ mod tests {
             .unwrap();
 
         let result = service
-            .delete_notification(notification.id, other_user_id)
+            .delete_notification(notification.id, other_user_id, Uuid::nil())
             .await;
 
         assert!(matches!(result, Err(NotificationError::NotOwned { .. })));
@@ -846,7 +882,9 @@ mod tests {
         let user_id = Uuid::new_v4();
         let nonexistent_id = Uuid::new_v4();
 
-        let result = service.delete_notification(nonexistent_id, user_id).await;
+        let result = service
+            .delete_notification(nonexistent_id, user_id, Uuid::nil())
+            .await;
 
         assert!(matches!(result, Err(NotificationError::NotFoundById(_))));
     }

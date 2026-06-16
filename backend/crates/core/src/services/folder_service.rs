@@ -1078,6 +1078,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<FolderId>,
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Option<Share>> {
             Ok(None)
         }
@@ -1087,6 +1088,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<FolderId>,
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -1095,6 +1097,7 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -1103,15 +1106,20 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
 
-        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+        async fn find_file_by_id(&self, _id: FileId, _tenant_id: Uuid) -> Result<Option<File>> {
             Ok(None)
         }
 
-        async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: FolderId,
+            _tenant_id: Uuid,
+        ) -> Result<Option<Folder>> {
             if let Some(store) = &self.metadata_store {
                 store.find_folder_by_id(id, Uuid::nil()).await
             } else {
@@ -1119,7 +1127,11 @@ mod tests {
             }
         }
 
-        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
     }

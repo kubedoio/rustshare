@@ -259,7 +259,7 @@ async fn test_create_group_share_success() {
     let resolver =
         PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
     let has_access = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
     assert!(
@@ -452,7 +452,7 @@ async fn test_revoke_group_share() {
 
     // Member should have access before revocation
     let has_access_before = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
     assert!(
@@ -468,7 +468,7 @@ async fn test_revoke_group_share() {
 
     // Member should lose access after revocation
     let has_access_after = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
     assert!(
@@ -503,7 +503,7 @@ async fn test_group_share_access_fails_after_membership_removal() {
 
     // Member should have access before removal
     let has_access_before = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
     assert!(
@@ -521,7 +521,7 @@ async fn test_group_share_access_fails_after_membership_removal() {
 
     // Member should lose access after membership removal
     let has_access_after = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::View)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
         .await
         .expect("Permission check failed");
     assert!(
@@ -556,7 +556,7 @@ async fn test_update_group_share_permission() {
 
     // Initially View only
     let can_edit_before = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::Edit)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Edit)
         .await
         .expect("Permission check failed");
     assert!(
@@ -574,7 +574,7 @@ async fn test_update_group_share_permission() {
 
     // Now member should have Edit
     let can_edit_after = resolver
-        .check_file_permission(f.member_id, f.file_id, SharePermissions::Edit)
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Edit)
         .await
         .expect("Permission check failed");
     assert!(can_edit_after, "Member should have Edit after update");
@@ -656,7 +656,12 @@ async fn test_group_folder_share_revoke_denies_access() {
 
     // Member should have folder access before revocation
     let has_access_before = resolver
-        .check_folder_permission(f.member_id, f.folder_id, SharePermissions::View)
+        .check_folder_permission(
+            f.member_id,
+            f.tenant_id,
+            f.folder_id,
+            SharePermissions::View,
+        )
         .await
         .expect("Permission check failed");
     assert!(
@@ -672,7 +677,12 @@ async fn test_group_folder_share_revoke_denies_access() {
 
     // Member should lose folder access
     let has_access_after = resolver
-        .check_folder_permission(f.member_id, f.folder_id, SharePermissions::View)
+        .check_folder_permission(
+            f.member_id,
+            f.tenant_id,
+            f.folder_id,
+            SharePermissions::View,
+        )
         .await
         .expect("Permission check failed");
     assert!(

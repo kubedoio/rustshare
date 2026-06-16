@@ -1156,15 +1156,15 @@ mod tests {
 
         // Owner should have Admin permission without any share record
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::Admin)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::Edit)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::View)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1211,12 +1211,12 @@ mod tests {
 
         // User should have View permission
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         // But not Edit permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
     }
@@ -1289,15 +1289,15 @@ mod tests {
 
         // User should have Edit permission on file through inheritance
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1344,7 +1344,7 @@ mod tests {
 
         // User should not have permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1391,13 +1391,13 @@ mod tests {
 
         // First call should populate cache
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
 
         // Second call should use cache (we can verify this by checking cache size)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert_eq!(resolver.cache.read().await.len(), 1);
@@ -1429,7 +1429,7 @@ mod tests {
 
         // User has no share, should not have permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1446,15 +1446,15 @@ mod tests {
 
         // Owner should have Admin permission
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::Admin)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::Admin)
             .await
             .unwrap());
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::View)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1538,11 +1538,11 @@ mod tests {
         // User should have View permission from direct share (direct share takes precedence)
         // This is correct because we check direct shares before ancestry
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1595,15 +1595,15 @@ mod tests {
 
         // User should have Edit permission through group membership
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1653,7 +1653,7 @@ mod tests {
 
         // User should NOT have permission (not in the group)
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1725,11 +1725,11 @@ mod tests {
         // User should have View permission because direct share takes precedence
         // (Direct shares are checked before group shares)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
     }
@@ -1802,15 +1802,15 @@ mod tests {
 
         // User should have Admin permission (highest from all group shares)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1887,15 +1887,15 @@ mod tests {
 
         // User should have Edit permission on file through group share inheritance
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1946,7 +1946,7 @@ mod tests {
 
         // User should not have permission (share is revoked)
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -2033,7 +2033,7 @@ mod tests {
 
         // User should have Admin permission (highest from user + group shares in ancestry)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }

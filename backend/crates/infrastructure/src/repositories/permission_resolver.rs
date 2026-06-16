@@ -178,7 +178,6 @@ impl PermissionResolverOps for PermissionResolverRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::SharePermissions;
     use rustshare_core::services::PermissionResolverOps;
     use sqlx::PgPool;
     use uuid::Uuid;

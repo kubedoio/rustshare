@@ -12,6 +12,8 @@ use rustshare_core::domain::{
 };
 use serde_json;
 use sqlx::PgPool;
+#[cfg(test)]
+use sqlx::Row;
 use uuid::Uuid;
 
 /// Business-level errors for vault file operations.
@@ -4831,16 +4833,15 @@ mod tests {
         }
 
         // Verify the final failed_count is exactly 10
-        let row = sqlx::query!(
-            "SELECT failed_count FROM login_attempts WHERE ip_address = $1",
-            ip
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row = sqlx::query("SELECT failed_count FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
+        let failed_count: i32 = row.try_get("failed_count").unwrap();
         assert_eq!(
-            row.failed_count, 10,
+            failed_count, 10,
             "Concurrent login failures should sum to exactly 10"
         );
 
