@@ -652,6 +652,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn device_qr_info_uses_env_var_fallback_when_no_host_header() {
         let _lock = ENV_VAR_MUTEX.lock().unwrap();
 
@@ -676,6 +677,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn device_qr_info_uses_localhost_fallback_when_no_host_or_env_var() {
         let _lock = ENV_VAR_MUTEX.lock().unwrap();
 
