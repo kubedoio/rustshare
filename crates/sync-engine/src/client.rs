@@ -209,8 +209,12 @@ impl ApiClient {
             .await
             .context("Failed to read files list response")?;
 
-        let files: Vec<RemoteFile> = serde_json::from_str(&text)
-            .with_context(|| format!("Failed to parse files list response: {}", &text[..text.len().min(500)]))?;
+        let files: Vec<RemoteFile> = serde_json::from_str(&text).with_context(|| {
+            format!(
+                "Failed to parse files list response: {}",
+                &text[..text.len().min(500)]
+            )
+        })?;
 
         Ok(files)
     }
