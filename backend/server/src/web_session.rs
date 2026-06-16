@@ -166,9 +166,88 @@ fn session_ttl_seconds() -> i64 {
 fn session_cookie_secure() -> bool {
     // Production default is `true` (cookies only sent over HTTPS).
     // Developers running on `http://localhost` must explicitly set
-    // `SESSION_COOKIE_SECURE=false`.
-    std::env::var("SESSION_COOKIE_SECURE")
+    // `RUSTSHARE_SESSION_COOKIE_SECURE=false` (or the legacy
+    // `SESSION_COOKIE_SECURE=false`).
+    std::env::var("RUSTSHARE_SESSION_COOKIE_SECURE")
         .ok()
+        .or_else(|| std::env::var("SESSION_COOKIE_SECURE").ok())
         .and_then(|value| value.parse().ok())
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_cookie_secure_env_var_precedence_and_fallback() {
+        // Prefixed name takes precedence when both are set.
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "false");
+        std::env::set_var("SESSION_COOKIE_SECURE", "true");
+        assert!(
+            !session_cookie_secure(),
+            "RUSTSHARE_SESSION_COOKIE_SECURE must take precedence over SESSION_COOKIE_SECURE"
+        );
+
+        // Fall back to legacy name when prefixed name is absent.
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
+        std::env::set_var("SESSION_COOKIE_SECURE", "false");
+        assert!(
+            !session_cookie_secure(),
+            "SESSION_COOKIE_SECURE must be used when RUSTSHARE_SESSION_COOKIE_SECURE is unset"
+        );
+
+        // Default remains true when neither is set.
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
+        std::env::remove_var("SESSION_COOKIE_SECURE");
+        assert!(session_cookie_secure(), "cookie_secure must default to true");
+    }
+
+    #[test]
+    fn secure_session_cookie_flags() {
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "true");
+
+        let session_cookie = build_session_cookie("test-token");
+        assert!(session_cookie.contains("HttpOnly"), "session cookie must be HttpOnly");
+        assert!(session_cookie.contains("Secure"), "session cookie must be Secure");
+        assert!(
+            session_cookie.contains("SameSite=Lax"),
+            "session cookie must use SameSite=Lax"
+        );
+        assert!(session_cookie.contains("Path=/"), "session cookie must have Path=/");
+
+        let expired_session_cookie = build_expired_session_cookie();
+        assert!(expired_session_cookie.contains("HttpOnly"));
+        assert!(expired_session_cookie.contains("Secure"));
+        assert!(expired_session_cookie.contains("Max-Age=0"));
+
+        let csrf_cookie = build_csrf_cookie("test-csrf");
+        assert!(
+            !csrf_cookie.contains("HttpOnly"),
+            "CSRF cookie must not be HttpOnly so JavaScript can read it"
+        );
+        assert!(csrf_cookie.contains("Secure"), "CSRF cookie must be Secure");
+        assert!(csrf_cookie.contains("SameSite=Lax"), "CSRF cookie must use SameSite=Lax");
+
+        let expired_csrf_cookie = build_expired_csrf_cookie();
+        assert!(expired_csrf_cookie.contains("Secure"));
+        assert!(expired_csrf_cookie.contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn insecure_session_cookie_flags() {
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "false");
+
+        let session_cookie = build_session_cookie("test-token");
+        assert!(session_cookie.contains("HttpOnly"));
+        assert!(
+            !session_cookie.contains("Secure"),
+            "session cookie must not be Secure when secure=false"
+        );
+        assert!(session_cookie.contains("SameSite=Lax"));
+
+        let csrf_cookie = build_csrf_cookie("test-csrf");
+        assert!(!csrf_cookie.contains("Secure"), "CSRF cookie must not be Secure when secure=false");
+        assert!(csrf_cookie.contains("SameSite=Lax"));
+    }
 }

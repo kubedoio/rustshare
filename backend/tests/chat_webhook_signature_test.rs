@@ -159,3 +159,28 @@ async fn chat_webhook_signature_valid() {
         result
     );
 }
+
+#[tokio::test]
+async fn chat_webhook_signature_tampered_body() {
+    let service = build_service("test_secret");
+    let event = sample_event();
+    let original_body = serde_json::to_vec(&event).unwrap();
+
+    // Compute a valid signature over the original body.
+    let signer = WebhookSigner::new("test_secret");
+    let signature = signer.sign(&original_body).unwrap();
+
+    // Modify the body after signing.
+    let mut tampered_body = original_body;
+    tampered_body.push(b'\n');
+
+    let result = service.process_incoming_event(&tampered_body, &signature).await;
+    assert!(
+        matches!(
+            result,
+            Err(ChatIntegrationError::SignatureVerificationFailed)
+        ),
+        "Tampered body must fail signature verification: {:?}",
+        result
+    );
+}

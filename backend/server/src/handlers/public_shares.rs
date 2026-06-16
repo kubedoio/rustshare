@@ -66,12 +66,29 @@ pub struct SharedFolderContentsQuery {
 
 /// Build a safe `Content-Disposition` header value for a file download.
 ///
-/// Escapes quotes in the legacy `filename` parameter and adds a UTF-8
-/// `filename*` parameter for clients that support RFC 5987.
+/// Sanitizes the legacy `filename` parameter by escaping quotes and backslashes
+/// and stripping control characters (including `\n`, `\r`, and `\x7f`). The
+/// RFC 5987 `filename*` parameter is kept and uses percent-encoding so Unicode
+/// names round-trip safely for supporting clients.
+fn sanitize_legacy_filename(file_name: &str) -> String {
+    let mut sanitized = String::with_capacity(file_name.len());
+    for ch in file_name.chars() {
+        match ch {
+            '"' => sanitized.push_str("\\\""),
+            '\\' => sanitized.push_str("\\\\"),
+            c if c.is_control() => {
+                // Drop control characters to prevent header injection.
+            }
+            c => sanitized.push(c),
+        }
+    }
+    sanitized
+}
+
 pub fn build_content_disposition(file_name: &str) -> String {
     format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-        file_name.replace('"', "\\\""),
+        sanitize_legacy_filename(file_name),
         urlencoding::encode(file_name)
     )
 }
@@ -864,6 +881,106 @@ mod tests {
         assert!(
             header.contains("filename*=UTF-8''report%22.txt"),
             "RFC 5987 filename* parameter must URL-encode embedded quotes: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_newline_sanitized() {
+        let file_name = "line\nfeed.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.contains("\n"),
+            "legacy filename must not contain raw newline: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"linefeed.txt\""),
+            "legacy filename must strip newline: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''line%0Afeed.txt"),
+            "RFC 5987 filename* must percent-encode newline: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_carriage_return_sanitized() {
+        let file_name = "car\rriage.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.contains("\r"),
+            "legacy filename must not contain raw carriage return: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"carriage.txt\""),
+            "legacy filename must strip carriage return: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''car%0Driage.txt"),
+            "RFC 5987 filename* must percent-encode carriage return: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_backslash_escaped() {
+        let file_name = "path\\to\\file.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"path\\\\to\\\\file.txt\""),
+            "legacy filename parameter must escape backslashes: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''path%5Cto%5Cfile.txt"),
+            "RFC 5987 filename* must percent-encode backslashes: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_control_chars_sanitized() {
+        let file_name = "foo\x01bar\x7fbaz.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.bytes().any(|b| b < 0x20 || b == 0x7f),
+            "legacy filename must not contain control characters: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"foobarbaz.txt\""),
+            "legacy filename must strip all control characters: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''foo%01bar%7Fbaz.txt"),
+            "RFC 5987 filename* must percent-encode control characters: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_unicode_preserved() {
+        let file_name = "我的報告 \"v2\".pdf";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"我的報告 \\\"v2\\\".pdf\""),
+            "legacy filename must escape quotes while preserving unicode: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A%20%22v2%22.pdf"),
+            "RFC 5987 filename* must percent-encode unicode: {}",
             header
         );
     }

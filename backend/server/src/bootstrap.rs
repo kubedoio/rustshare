@@ -566,21 +566,7 @@ pub async fn init_app() -> Result<AppState> {
             info!("Bootstrap admin user created with user-provided password.");
         } else {
             let password_file = config.bootstrap_password_file.clone();
-
-            {
-                use std::io::Write;
-                let mut file = std::fs::File::create(&password_file)?;
-                file.write_all(admin_password.as_bytes())?;
-            }
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut permissions = std::fs::metadata(&password_file)?.permissions();
-                permissions.set_mode(0o600);
-                std::fs::set_permissions(&password_file, permissions)?;
-            }
-
+            write_bootstrap_password_file(std::path::Path::new(&password_file), &admin_password)?;
             info!(path = %password_file, "Bootstrap admin password written to secure file. Change immediately.");
         }
     }
@@ -677,9 +663,78 @@ pub async fn init_app() -> Result<AppState> {
     Ok(state)
 }
 
+/// Write the generated bootstrap admin password to a secure file.
+///
+/// The file is created with restrictive permissions (0600 on Unix) and the
+/// password bytes are never logged to stdout/stderr by this helper.
+pub fn write_bootstrap_password_file(path: &std::path::Path, password: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(password.as_bytes())?;
+    file.sync_all()?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path)?.permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(path, permissions)?;
+    }
+
+    Ok(())
+}
+
 pub fn default_storage_quota_bytes() -> i64 {
     std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(10_737_418_240)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_password_file_is_written_with_restrictive_permissions() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("bootstrap-password.txt");
+        let password = "super-secret-generated-password-12345";
+
+        write_bootstrap_password_file(&path, password).expect("write password file");
+
+        let contents = std::fs::read_to_string(&path).expect("read password file");
+        assert_eq!(
+            contents, password,
+            "password file must contain the generated password"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("get password file metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "password file must be readable only by the owner"
+            );
+        }
+    }
+
+    #[test]
+    fn bootstrap_password_file_overwrites_existing_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("bootstrap-password.txt");
+        std::fs::write(&path, "old-password").expect("write old password");
+
+        let new_password = "new-super-secret-password";
+        write_bootstrap_password_file(&path, new_password).expect("write password file");
+
+        let contents = std::fs::read_to_string(&path).expect("read password file");
+        assert_eq!(contents, new_password);
+    }
 }

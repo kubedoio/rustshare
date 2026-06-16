@@ -29,7 +29,7 @@ futures = "0.3"
 redis = { version = "1.2", features = ["tokio-comp", "connection-manager"], optional = true }
 
 # JWT for session management
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 
 # Crypto for session hashing
 sha2 = "0.11"
