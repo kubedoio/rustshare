@@ -112,6 +112,15 @@ async fn main() -> Result<()> {
         .route("/api", any(api_not_found))
         .route("/api/{*path}", any(api_not_found))
         .with_state(state.clone())
+        // Set per-request PostgreSQL RLS context for authenticated requests.
+        // The context is stamped on a pool connection before the handler runs;
+        // see `tenant_context` for the important caveat that this is not a
+        // runtime enforcement layer and repository-level filtering remains the
+        // primary tenant isolation defense.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::tenant_context_middleware::<AppState>,
+        ))
         // Increase body size limit for file uploads (2GB)
         // This must be applied BEFORE other middleware layers
         .layer(DefaultBodyLimit::max(2048 * 1024 * 1024))

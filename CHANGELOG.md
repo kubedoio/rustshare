@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added request-scoped PostgreSQL RLS context middleware that sets `app.current_tenant_id` and `app.current_user_id` for authenticated requests. Repository-level tenant filtering remains the primary isolation mechanism.
+
 ### Changed
 
 ### Deprecated

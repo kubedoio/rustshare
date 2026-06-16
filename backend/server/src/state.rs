@@ -199,6 +199,12 @@ pub struct AppState {
     pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }
 
+impl AsRef<PgPool> for AppState {
+    fn as_ref(&self) -> &PgPool {
+        &self.db_pool
+    }
+}
+
 impl FromRef<AppState> for DatabaseState {
     fn from_ref(state: &AppState) -> DatabaseState {
         DatabaseState {

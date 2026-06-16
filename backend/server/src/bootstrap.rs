@@ -96,9 +96,13 @@ async fn init_database(config: &AppConfig) -> Result<PgPool> {
         .max_lifetime(Some(Duration::from_secs(max_lifetime_secs)))
         .before_acquire(|conn, _meta| {
             Box::pin(async move {
-                // Set a default restrictive user context.
-                // This will be overridden per-request by middleware.
-                sqlx::query!("SET app.current_user_id = '00000000-0000-0000-0000-000000000000'")
+                // Set restrictive defaults for the RLS context variables.
+                // These will be overridden per-request by the tenant context
+                // middleware for authenticated requests.
+                sqlx::query("SET app.current_tenant_id = '00000000-0000-0000-0000-000000000000'")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("SET app.current_user_id = '00000000-0000-0000-0000-000000000000'")
                     .execute(&mut *conn)
                     .await?;
                 Ok(true)
