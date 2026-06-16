@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Hardened chat integration webhooks:
+  - Added signature verification for incoming chat webhook events.
+  - Enforced HTTPS-only webhook registration (HTTP only allowed in debug builds or when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`).
+  - Sanitized `Content-Disposition` filename parameters to strip control characters and backslashes.
+- Enforced admin authentication on chat integration admin routes and replication admin routes.
+- Switched to secure session cookie defaults in the production Docker Compose file.
+
 ## [0.5.1] - 2026-06-12
 
 ### Fixed

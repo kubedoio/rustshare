@@ -291,9 +291,9 @@ pub async fn register_chat_webhook(
     info!("Registering chat webhook: {}", req.url);
 
     // Reject non-HTTPS webhook URLs in production. HTTP is permitted in debug
-    // builds or when the RUSTSHARE_ALLOW_HTTP_WEBHOOKS environment variable is set.
-    let allow_http =
-        cfg!(debug_assertions) || std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS").is_ok();
+    // builds or when the RUSTSHARE_ALLOW_HTTP_WEBHOOKS environment variable is
+    // set to "true" or "1" (case-insensitive).
+    let allow_http = http_webhooks_allowed();
 
     if !is_valid_chat_webhook_url(&req.url, allow_http) {
         return (
@@ -364,6 +364,26 @@ pub fn is_valid_chat_webhook_url(url: &str, allow_http: bool) -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// Determine whether HTTP webhook URLs are allowed.
+///
+/// HTTP is always permitted in debug builds. In release builds it is only
+/// permitted when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`
+/// (case-insensitive). Any other value, including `"false"` or an empty string,
+/// is treated as disabled.
+fn http_webhooks_allowed() -> bool {
+    cfg!(debug_assertions)
+        || parse_allow_http_webhooks(std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS").ok().as_deref())
+}
+
+/// Parse the `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` value.
+///
+/// Returns `true` only for `"true"` or `"1"` (case-insensitive).
+fn parse_allow_http_webhooks(value: Option<&str>) -> bool {
+    value
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false)
 }
 
 /// Map ChatIntegrationError to HTTP response.
@@ -458,6 +478,50 @@ mod tests {
         assert!(
             !is_valid_chat_webhook_url("not-a-url", false),
             "Malformed URLs must be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_allow_http_webhooks_is_value_sensitive() {
+        assert!(
+            parse_allow_http_webhooks(Some("true")),
+            "lowercase 'true' must enable HTTP webhooks"
+        );
+        assert!(
+            parse_allow_http_webhooks(Some("TRUE")),
+            "uppercase 'TRUE' must enable HTTP webhooks"
+        );
+        assert!(
+            parse_allow_http_webhooks(Some("True")),
+            "mixed-case 'True' must enable HTTP webhooks"
+        );
+        assert!(
+            parse_allow_http_webhooks(Some("1")),
+            "'1' must enable HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(Some("false")),
+            "'false' must reject HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(Some("FALSE")),
+            "uppercase 'FALSE' must reject HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(Some("0")),
+            "'0' must reject HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(Some("")),
+            "empty value must reject HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(Some("yes")),
+            "arbitrary truthy words must reject HTTP webhooks"
+        );
+        assert!(
+            !parse_allow_http_webhooks(None),
+            "missing value must reject HTTP webhooks"
         );
     }
 
