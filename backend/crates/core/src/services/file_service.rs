@@ -257,12 +257,13 @@ where
     async fn require_file_permission(
         &self,
         user_id: UserId,
+        tenant_id: uuid::Uuid,
         file_id: FileId,
         required: SharePermissions,
     ) -> Result<(), FileError> {
         let has = self
             .permission_resolver
-            .check_file_permission(user_id, file_id, required)
+            .check_file_permission(user_id, tenant_id, file_id, required)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
         if !has {
@@ -441,7 +442,7 @@ where
             // Verify permissions: user must own the folder or have Edit permission
             let has_permission = self
                 .permission_resolver
-                .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+                .check_folder_permission(owner_id, tenant_id, folder_id, SharePermissions::Edit)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
 
@@ -685,7 +686,7 @@ where
 
         // 2. Check permissions. Access was verified above, so this must not be
         // owner-filtered; shared recipients are allowed to read non-owned files.
-        self.require_file_permission(user_id, file_id, SharePermissions::View)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::View)
             .await?;
 
         Ok(file)
@@ -798,7 +799,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Check optimistic lock (current_version == expected_version)
@@ -975,7 +976,7 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Find the old version
@@ -1090,7 +1091,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. If target folder is specified, verify it exists
@@ -1172,7 +1173,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         if file.name == new_name {
@@ -1263,7 +1264,7 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        self.require_file_permission(user_id, file_id, SharePermissions::Admin)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Admin)
             .await?;
 
         // 2. Create FileDeleted event
@@ -1342,7 +1343,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Validate file is editable based on mime type and extension

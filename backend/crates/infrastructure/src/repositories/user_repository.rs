@@ -14,8 +14,12 @@ impl UserRepository {
         Self { pool }
     }
 
-    /// Find user by email (case-insensitive).
-    pub async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>> {
+    /// Find user by email (case-insensitive) within a tenant.
+    pub async fn find_by_email(
+        &self,
+        email: &str,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<Option<User>> {
         let email_lower = email.trim().to_lowercase();
 
         sqlx::query_as!(
@@ -25,9 +29,10 @@ impl UserRepository {
                    storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname,
                    avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _"
             FROM users
-            WHERE LOWER(email) = $1
+            WHERE LOWER(email) = $1 AND tenant_id = $2
             "#,
-            email_lower
+            email_lower,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await
@@ -35,6 +40,10 @@ impl UserRepository {
     }
 
     /// Find a user by ID.
+    ///
+    /// User IDs are globally unique, so a tenant filter is not required for
+    /// ID-based lookups. This avoids a circular dependency when resolving the
+    /// tenant for an authenticated user.
     pub async fn get_by_id(&self, user_id: UserId) -> anyhow::Result<Option<User>> {
         sqlx::query_as!(
             User,
@@ -52,16 +61,22 @@ impl UserRepository {
         .map_err(|e| e.into())
     }
 
-    /// Update user's theme preference.
-    pub async fn update_theme(&self, user_id: UserId, theme: Theme) -> anyhow::Result<()> {
+    /// Update user's theme preference, scoped to a tenant.
+    pub async fn update_theme(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+        theme: Theme,
+    ) -> anyhow::Result<()> {
         sqlx::query!(
             r#"
             UPDATE users
             SET theme = $1, updated_at = NOW()
-            WHERE id = $2
+            WHERE id = $2 AND tenant_id = $3
             "#,
             theme.to_string(),
-            user_id
+            user_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -104,8 +119,9 @@ impl rustshare_core::services::UserOps for UserRepository {
     async fn find_by_email(
         &self,
         email: &str,
+        tenant_id: Uuid,
     ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
-        self.find_by_email(email).await
+        self.find_by_email(email, tenant_id).await
     }
 
     async fn get_by_id(

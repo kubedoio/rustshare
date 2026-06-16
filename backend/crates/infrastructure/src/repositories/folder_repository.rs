@@ -13,17 +13,23 @@ impl FolderRepository {
         Self { pool }
     }
 
-    /// Get a folder by ID.
-    pub async fn get_by_id(&self, folder_id: FolderId) -> anyhow::Result<Option<Folder>> {
+    /// Get a folder by ID, scoped to a tenant.
+    pub async fn get_by_id(
+        &self,
+        folder_id: FolderId,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Folder>> {
         let row = sqlx::query!(
             r#"
             SELECT id, name, path, parent_folder_id, owner_id,
                    created_at, updated_at, starred_at, deleted_at, tenant_id
             FROM folders
             WHERE id = $1
+              AND tenant_id = $2
               AND deleted_at IS NULL
             "#,
-            folder_id
+            folder_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -49,8 +55,9 @@ impl rustshare_core::services::FolderOps for FolderRepository {
     async fn get_by_id(
         &self,
         folder_id: rustshare_core::domain::FolderId,
+        tenant_id: uuid::Uuid,
     ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.get_by_id(folder_id).await
+        self.get_by_id(folder_id, tenant_id).await
     }
 }
 
@@ -120,7 +127,7 @@ mod tests {
         .expect("create folder");
 
         let folder = repo
-            .get_by_id(folder_id)
+            .get_by_id(folder_id, tenant_id)
             .await
             .expect("query folder")
             .expect("folder exists");

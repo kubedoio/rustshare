@@ -4,7 +4,10 @@
 //! Contract: User from tenant A cannot access resources from tenant B.
 
 use crate::common::*;
-use rustshare_core::services::{FileError, FolderError};
+use rustshare_core::services::{FileError, FolderError, PermissionResolverOps};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use sqlx::PgPool;
+use uuid::Uuid;
 
 /// G-01-01: User from tenant A cannot access file from tenant B
 #[tokio::test]
@@ -249,4 +252,160 @@ async fn test_user_queries_are_tenant_scoped() {
 
     // Cleanup
     ctx.cleanup().await;
+}
+
+/// G-01-06: PermissionResolverRepository queries are scoped to a tenant.
+#[tokio::test]
+#[ignore] // Requires database
+async fn test_permission_resolver_repository_is_tenant_scoped() {
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
+    let pool = PgPool::connect(&database_url)
+        .await
+        .expect("Failed to connect to database");
+
+    let repo = PermissionResolverRepository::new(pool.clone());
+    let suffix = Uuid::new_v4();
+
+    let tenant_a = setup_test_tenant(&pool).await;
+    let tenant_b = setup_test_tenant(&pool).await;
+
+    let owner_a = Uuid::new_v4();
+    let recipient_a = Uuid::new_v4();
+
+    for (user_id, username, tenant_id) in [
+        (owner_a, format!("owner-{suffix}"), tenant_a),
+        (recipient_a, format!("recipient-{suffix}"), tenant_a),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&username)
+        .bind(format!("{username}@example.com"))
+        .bind("hash")
+        .bind("Test User")
+        .bind(false)
+        .bind(1024_i64)
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .expect("create user");
+    }
+
+    let folder_a = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO folders (id, name, path, owner_id, parent_folder_id, tenant_id, starred_at, deleted_at)
+        VALUES ($1, $2, $3, $4, NULL, $5, NULL, NULL)
+        "#,
+    )
+    .bind(folder_a)
+    .bind(format!("folder-{suffix}"))
+    .bind(format!("/folder-{suffix}"))
+    .bind(owner_a)
+    .bind(tenant_a)
+    .execute(&pool)
+    .await
+    .expect("create folder");
+
+    let file_a = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO files (
+            id, name, path, size, mime_type, content_hash, storage_key,
+            owner_id, parent_folder_id, current_version, tenant_id, starred_at, deleted_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $10, NULL, NULL)
+        "#,
+    )
+    .bind(file_a)
+    .bind(format!("file-{suffix}"))
+    .bind(format!("/file-{suffix}"))
+    .bind(123_i64)
+    .bind("text/plain")
+    .bind("abc123")
+    .bind(format!("blobs/abc123-{suffix}"))
+    .bind(owner_a)
+    .bind(1_i32)
+    .bind(tenant_a)
+    .execute(&pool)
+    .await
+    .expect("create file");
+
+    let share_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO shares (
+            id, file_id, folder_id, share_token, permissions, password_hash,
+            expires_at, access_count, recipient_user_id, recipient_group_id,
+            created_by, created_at, revoked_at, upload_only, tenant_id
+        )
+        VALUES ($1, $2, NULL, NULL, $3, NULL, NULL, 0, $4, NULL, $5, NOW(), NULL, FALSE, $6)
+        "#,
+    )
+    .bind(share_id)
+    .bind(file_a)
+    .bind("View")
+    .bind(recipient_a)
+    .bind(owner_a)
+    .bind(tenant_a)
+    .execute(&pool)
+    .await
+    .expect("create share");
+
+    // Correct tenant resolves the data.
+    assert!(
+        repo.find_file_by_id(file_a, tenant_a)
+            .await
+            .unwrap()
+            .is_some(),
+        "tenant A should see its own file"
+    );
+    assert!(
+        repo.find_folder_by_id(folder_a, tenant_a)
+            .await
+            .unwrap()
+            .is_some(),
+        "tenant A should see its own folder"
+    );
+    assert!(
+        repo.find_user_share(Some(file_a), None, recipient_a, tenant_a)
+            .await
+            .unwrap()
+            .is_some(),
+        "tenant A should resolve its own share"
+    );
+
+    // Wrong tenant must not resolve any data.
+    assert!(
+        repo.find_file_by_id(file_a, tenant_b)
+            .await
+            .unwrap()
+            .is_none(),
+        "tenant B must not see tenant A's file"
+    );
+    assert!(
+        repo.find_folder_by_id(folder_a, tenant_b)
+            .await
+            .unwrap()
+            .is_none(),
+        "tenant B must not see tenant A's folder"
+    );
+    assert!(
+        repo.find_user_share(Some(file_a), None, recipient_a, tenant_b)
+            .await
+            .unwrap()
+            .is_none(),
+        "tenant B must not resolve tenant A's share"
+    );
+
+    // Cleanup
+    cleanup_tenant(&pool, tenant_b).await;
+    cleanup_tenant(&pool, tenant_a).await;
 }

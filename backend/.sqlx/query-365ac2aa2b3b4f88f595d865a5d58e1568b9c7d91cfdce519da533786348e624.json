@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, name, path, content_hash, size, mime_type,\n                   parent_folder_id, owner_id, current_version,\n                   created_at, modified_at, starred_at, deleted_at, tenant_id\n            FROM files\n            WHERE id = $1\n              AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT id, name, path, content_hash, size, mime_type,\n                   parent_folder_id, owner_id, current_version,\n                   created_at, modified_at, starred_at, deleted_at, tenant_id\n            FROM files\n            WHERE id = $1\n              AND tenant_id = $2\n              AND deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -76,6 +76,7 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid"
       ]
     },
@@ -96,5 +97,5 @@
       false
     ]
   },
-  "hash": "a64a50fd4f37890af59605088a4961a3eaa8b7ee795800a375bf5572f16c35e5"
+  "hash": "365ac2aa2b3b4f88f595d865a5d58e1568b9c7d91cfdce519da533786348e624"
 }

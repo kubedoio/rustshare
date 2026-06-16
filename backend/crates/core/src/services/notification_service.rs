@@ -35,39 +35,51 @@ pub trait NotificationRepositoryOps: Send + Sync {
     /// Create a new notification.
     async fn create(&self, request: CreateNotification) -> Result<Notification, NotificationError>;
 
-    /// Find a notification by ID.
+    /// Find a notification by ID, scoped to a tenant.
     async fn find_by_id(
         &self,
         notification_id: NotificationId,
+        tenant_id: Uuid,
     ) -> Result<Option<Notification>, NotificationError>;
 
-    /// List notifications for a user (paginated, optional unread filter).
+    /// List notifications for a user (paginated, optional unread filter), scoped to a tenant.
     async fn list_for_user(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         unread_only: bool,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Notification>, NotificationError>;
 
-    /// Count notifications for a user with optional unread filtering.
+    /// Count notifications for a user with optional unread filtering, scoped to a tenant.
     async fn count_for_user(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         unread_only: bool,
     ) -> Result<i64, NotificationError>;
 
-    /// Count unread notifications for a user.
-    async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError>;
+    /// Count unread notifications for a user, scoped to a tenant.
+    async fn count_unread(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<i64, NotificationError>;
 
-    /// Mark a notification as read.
+    /// Mark a notification as read, scoped to a tenant.
     async fn mark_as_read(
         &self,
         notification_id: NotificationId,
+        tenant_id: Uuid,
     ) -> Result<Notification, NotificationError>;
 
-    /// Delete a notification.
-    async fn delete(&self, notification_id: NotificationId) -> Result<(), NotificationError>;
+    /// Delete a notification, scoped to a tenant.
+    async fn delete(
+        &self,
+        notification_id: NotificationId,
+        tenant_id: Uuid,
+    ) -> Result<(), NotificationError>;
 }
 
 /// NotificationService handles persistent notification operations.
@@ -102,10 +114,11 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         &self,
         notification_id: NotificationId,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Notification, NotificationError> {
         let notification = self
             .repository
-            .find_by_id(notification_id)
+            .find_by_id(notification_id, tenant_id)
             .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
@@ -126,35 +139,44 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
     ///
     /// # Arguments
     /// * `user_id` - The user to list notifications for
+    /// * `tenant_id` - The tenant ID for scoping
     /// * `unread_only` - If true, only return unread notifications
     /// * `limit` - Maximum number of notifications to return
     /// * `offset` - Number of notifications to skip (for pagination)
     pub async fn list_notifications(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         unread_only: bool,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Notification>, NotificationError> {
         self.repository
-            .list_for_user(user_id, unread_only, limit, offset)
+            .list_for_user(user_id, tenant_id, unread_only, limit, offset)
             .await
     }
 
-    /// Count unread notifications for a user.
+    /// Count unread notifications for a user, scoped to a tenant.
     ///
     /// Returns the count or a NotificationError.
-    pub async fn count_unread(&self, user_id: UserId) -> Result<i64, NotificationError> {
-        self.repository.count_unread(user_id).await
+    pub async fn count_unread(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<i64, NotificationError> {
+        self.repository.count_unread(user_id, tenant_id).await
     }
 
-    /// Count notifications for a user with optional unread filtering.
+    /// Count notifications for a user with optional unread filtering, scoped to a tenant.
     pub async fn count_notifications(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         unread_only: bool,
     ) -> Result<i64, NotificationError> {
-        self.repository.count_for_user(user_id, unread_only).await
+        self.repository
+            .count_for_user(user_id, tenant_id, unread_only)
+            .await
     }
 
     /// Mark a notification as read with ownership validation.
@@ -165,11 +187,12 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         &self,
         notification_id: NotificationId,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Notification, NotificationError> {
         // First verify ownership
         let notification = self
             .repository
-            .find_by_id(notification_id)
+            .find_by_id(notification_id, tenant_id)
             .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
@@ -181,7 +204,9 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         }
 
         // Mark as read
-        self.repository.mark_as_read(notification_id).await
+        self.repository
+            .mark_as_read(notification_id, tenant_id)
+            .await
     }
 
     /// Delete a notification with ownership validation.
@@ -192,11 +217,12 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         &self,
         notification_id: NotificationId,
         user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<(), NotificationError> {
         // First verify ownership
         let notification = self
             .repository
-            .find_by_id(notification_id)
+            .find_by_id(notification_id, tenant_id)
             .await?
             .ok_or(NotificationError::NotFoundById(notification_id))?;
 
@@ -208,7 +234,7 @@ impl<R: NotificationRepositoryOps> NotificationService<R> {
         }
 
         // Delete
-        self.repository.delete(notification_id).await
+        self.repository.delete(notification_id, tenant_id).await
     }
 }
 

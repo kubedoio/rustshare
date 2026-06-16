@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT COUNT(*) as count\n                FROM notifications\n                WHERE user_id = $1\n                ",
+  "query": "\n                SELECT COUNT(*) as count\n                FROM notifications\n                WHERE user_id = $1 AND tenant_id = $2\n                ",
   "describe": {
     "columns": [
       {
@@ -11,6 +11,7 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid"
       ]
     },
@@ -18,5 +19,5 @@
       null
     ]
   },
-  "hash": "c29fa51972eedc8bc5ab554f507d7bb7bd29bc91ac1b0392fa992097ca7b6564"
+  "hash": "173820bdaa16d0fce6d1224f11aa57299525a1bbb93ea881aebca6ee487493f4"
 }

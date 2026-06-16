@@ -156,12 +156,18 @@ pub async fn list_notifications(
 ) -> Result<axum::response::Response, AppError> {
     let notifications = state
         .notification_service
-        .list_notifications(auth.user_id, query.unread_only, query.limit, query.offset)
+        .list_notifications(
+            auth.user_id,
+            auth.tenant_id,
+            query.unread_only,
+            query.limit,
+            query.offset,
+        )
         .await?;
 
     let total = state
         .notification_service
-        .count_notifications(auth.user_id, query.unread_only)
+        .count_notifications(auth.user_id, auth.tenant_id, query.unread_only)
         .await? as usize;
     let response_list: Vec<NotificationResponse> = notifications
         .into_iter()
@@ -194,7 +200,7 @@ pub async fn count_unread_notifications(
 ) -> Result<axum::response::Response, AppError> {
     let count = state
         .notification_service
-        .count_unread(auth.user_id)
+        .count_unread(auth.user_id, auth.tenant_id)
         .await?;
 
     Ok(Json(UnreadNotificationCountResponse { count }).into_response())
@@ -228,7 +234,7 @@ pub async fn mark_notification_read(
 ) -> Result<axum::response::Response, AppError> {
     let notification = state
         .notification_service
-        .mark_as_read(notification_id, auth.user_id)
+        .mark_as_read(notification_id, auth.user_id, auth.tenant_id)
         .await?;
 
     let response = NotificationResponse::from(notification);
@@ -264,7 +270,7 @@ pub async fn delete_notification(
 ) -> Result<axum::response::Response, AppError> {
     state
         .notification_service
-        .delete_notification(notification_id, auth.user_id)
+        .delete_notification(notification_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
@@ -321,13 +327,19 @@ pub async fn list_activity(
             let can_access = match event.aggregate_type {
                 AggregateType::File => state
                     .permission_resolver
-                    .check_file_permission(auth.user_id, event.aggregate_id, SharePermissions::View)
+                    .check_file_permission(
+                        auth.user_id,
+                        auth.tenant_id,
+                        event.aggregate_id,
+                        SharePermissions::View,
+                    )
                     .await
                     .unwrap_or(false),
                 AggregateType::Folder => state
                     .permission_resolver
                     .check_folder_permission(
                         auth.user_id,
+                        auth.tenant_id,
                         event.aggregate_id,
                         SharePermissions::View,
                     )
@@ -348,6 +360,7 @@ pub async fn list_activity(
                                     .permission_resolver
                                     .check_file_permission(
                                         auth.user_id,
+                                        auth.tenant_id,
                                         fid,
                                         SharePermissions::View,
                                     )
@@ -358,6 +371,7 @@ pub async fn list_activity(
                                     .permission_resolver
                                     .check_folder_permission(
                                         auth.user_id,
+                                        auth.tenant_id,
                                         fid,
                                         SharePermissions::View,
                                     )

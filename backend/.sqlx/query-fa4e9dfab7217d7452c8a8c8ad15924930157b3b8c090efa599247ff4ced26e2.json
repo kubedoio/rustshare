@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, file_id, folder_id, share_token, permissions as \"permissions: SharePermissions\", password_hash,\n                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,\n                   created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE recipient_user_id IS NOT NULL\n              AND file_id IS NOT DISTINCT FROM $1::uuid\n              AND folder_id IS NOT DISTINCT FROM $2::uuid\n              AND revoked_at IS NULL\n            ORDER BY created_at ASC\n            ",
+  "query": "\n            SELECT id, file_id, folder_id, share_token, permissions as \"permissions: SharePermissions\", password_hash,\n                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,\n                   created_by, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE file_id IS NOT DISTINCT FROM $1::uuid\n              AND folder_id IS NOT DISTINCT FROM $2::uuid\n              AND recipient_group_id = ANY($3)\n              AND tenant_id = $4\n              AND revoked_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,8 @@
     "parameters": {
       "Left": [
         "Uuid",
+        "Uuid",
+        "UuidArray",
         "Uuid"
       ]
     },
@@ -103,5 +105,5 @@
       false
     ]
   },
-  "hash": "13f66aea93108c08dca379771aedbb4e82594887c84de68af9e53dc33fd57bdf"
+  "hash": "fa4e9dfab7217d7452c8a8c8ad15924930157b3b8c090efa599247ff4ced26e2"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE shares\n            SET permissions = $2\n            WHERE id = $1\n            RETURNING id, file_id, folder_id, share_token, permissions as \"permissions: SharePermissions\", password_hash,\n                      expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,\n                      created_at, revoked_at, tenant_id\n            ",
+  "query": "\n            SELECT id, file_id, folder_id, share_token, permissions as \"permissions: SharePermissions\", password_hash,\n                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,\n                   created_by, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE folder_id = ANY($1)\n              AND recipient_group_id = ANY($2)\n              AND tenant_id = $3\n              AND revoked_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -81,8 +81,9 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Varchar"
+        "UuidArray",
+        "UuidArray",
+        "Uuid"
       ]
     },
     "nullable": [
@@ -103,5 +104,5 @@
       false
     ]
   },
-  "hash": "1b81e74bf0bae435a3bb06a5f7d7b30194b81c75cf35ac50404d73a696957f62"
+  "hash": "5ba7cc1658ff51d895ec56bc867c8aa53089eb3e9a73bf3a682a4fcd398c55ba"
 }

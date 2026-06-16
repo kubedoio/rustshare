@@ -196,7 +196,7 @@ where
             let resource = Resource::File(document.file_id);
             let permission = match self
                 .permission_resolver
-                .resolve_permission(user_id, resource)
+                .resolve_permission(user_id, tenant_id, resource)
                 .await
             {
                 Ok(perm) => perm,
@@ -258,7 +258,7 @@ where
         let resource = Resource::File(file_id);
         let permission = match self
             .permission_resolver
-            .resolve_permission(user_id, resource)
+            .resolve_permission(user_id, tenant_id, resource)
             .await
         {
             Ok(perm) => perm,

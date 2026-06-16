@@ -236,7 +236,12 @@ pub async fn create_upload_session(
     if let Some(folder_id) = request.folder_id {
         let has_permission = state
             .permission_resolver
-            .check_folder_permission(auth.user_id, folder_id, SharePermissions::Edit)
+            .check_folder_permission(
+                auth.user_id,
+                auth.tenant_id,
+                folder_id,
+                SharePermissions::Edit,
+            )
             .await
             .map_err(|e| AppError::internal(format!("Permission check failed: {}", e)))?;
         if !has_permission {

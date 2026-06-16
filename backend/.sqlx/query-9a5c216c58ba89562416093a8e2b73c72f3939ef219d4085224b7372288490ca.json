@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT id, user_id,\n                       notification_type as \"notification_type: _\",\n                       title, message,\n                       resource_id,\n                       resource_type as \"resource_type: _\",\n                       action_url, read, created_at, tenant_id\n                FROM notifications\n                WHERE user_id = $1\n                ORDER BY created_at DESC\n                LIMIT $2 OFFSET $3\n                ",
+  "query": "\n                SELECT id, user_id,\n                       notification_type as \"notification_type: _\",\n                       title, message,\n                       resource_id,\n                       resource_type as \"resource_type: _\",\n                       action_url, read, created_at, tenant_id\n                FROM notifications\n                WHERE user_id = $1 AND tenant_id = $2 AND read = FALSE\n                ORDER BY created_at DESC\n                LIMIT $3 OFFSET $4\n                ",
   "describe": {
     "columns": [
       {
@@ -62,6 +62,7 @@
     "parameters": {
       "Left": [
         "Uuid",
+        "Uuid",
         "Int8",
         "Int8"
       ]
@@ -80,5 +81,5 @@
       false
     ]
   },
-  "hash": "ded6fdbcda63a536622641ef708b2b2c90ac461128ef9b6cf90435b9339d10ae"
+  "hash": "9a5c216c58ba89562416093a8e2b73c72f3939ef219d4085224b7372288490ca"
 }
