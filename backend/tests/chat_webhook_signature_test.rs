@@ -35,13 +35,17 @@ impl MockMetadataStore {
 }
 
 impl ChatMetadataStoreOps for MockMetadataStore {
-    async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>> {
+    async fn get_share_by_token(
+        &self,
+        token: &str,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<Option<Share>> {
         Ok(self
             .shares
             .lock()
             .unwrap()
             .iter()
-            .find(|s| s.share_token.as_deref() == Some(token))
+            .find(|s| s.share_token.as_deref() == Some(token) && s.tenant_id == tenant_id)
             .cloned())
     }
 

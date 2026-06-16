@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added request-scoped PostgreSQL RLS context middleware that sets `app.current_tenant_id` and `app.current_user_id` for authenticated requests. Repository-level tenant filtering remains the primary isolation mechanism.
+- Added tenant scoping to public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
+- Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
+- Added `X-Tenant-ID` header support for unauthenticated public-share and public-chat-unfurl requests.
 
 ### Changed
 
@@ -23,9 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Removed the no-op PostgreSQL RLS context middleware. The middleware set `app.current_tenant_id` / `app.current_user_id` on a connection that was returned to the pool before handlers ran, so handler queries never saw the context. Repository-level tenant filtering remains the primary isolation mechanism.
+
 ### Fixed
 
 ### Security
+
+- Hardened multi-tenant isolation for share links: cross-tenant share tokens are no longer resolved.
+- Hardened chat integration webhooks:
+  - Added signature verification for incoming chat webhook events.
+  - Enforced HTTPS-only webhook registration (HTTP only allowed in debug builds or when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`).
+  - Sanitized `Content-Disposition` filename parameters to strip control characters and backslashes.
+- Enforced admin authentication on chat integration admin routes and replication admin routes.
+- Switched to secure session cookie defaults in the production Docker Compose file.
 
 - Hardened chat integration webhooks:
   - Added signature verification for incoming chat webhook events.

@@ -131,7 +131,7 @@ async fn test_public_read_link_allows_anonymous_access() {
     // Validate share and create session (simulating anonymous access)
     let token = share.share_token.unwrap();
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
 
     assert!(
@@ -182,7 +182,7 @@ async fn test_upload_only_link_allows_upload_but_not_browse() {
     // Validate share
     let token = share.share_token.unwrap();
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
 
     assert!(session.is_ok(), "Upload-only share should be validatable");
@@ -238,7 +238,7 @@ async fn test_expired_share_denies_access() {
     // Try to validate the expired share
     let token = share.share_token.unwrap();
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
 
     assert!(
@@ -291,7 +291,7 @@ async fn test_revoked_share_denies_access() {
 
     // Verify share works before revocation
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(session.is_ok(), "Share should work before revocation");
 
@@ -303,7 +303,7 @@ async fn test_revoked_share_denies_access() {
 
     // Try to validate the revoked share
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
 
     assert!(
@@ -362,7 +362,7 @@ async fn test_password_protected_share_requires_password() {
 
     // Try to access without password
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::PasswordRequired)),
@@ -371,7 +371,7 @@ async fn test_password_protected_share_requires_password() {
 
     // Try to access with wrong password
     let result = share_service
-        .validate_and_create_session(&token, Some("wrong_password".to_string()))
+        .validate_and_create_session(&token, Some("wrong_password".to_string()), tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::InvalidPassword)),
@@ -380,7 +380,7 @@ async fn test_password_protected_share_requires_password() {
 
     // Access with correct password
     let session = share_service
-        .validate_and_create_session(&token, Some("secret123".to_string()))
+        .validate_and_create_session(&token, Some("secret123".to_string()), tenant_id)
         .await;
     assert!(session.is_ok(), "Correct password should allow access");
 
@@ -486,7 +486,7 @@ async fn test_share_access_increments_count() {
     // Access share multiple times
     for _i in 1..=3 {
         let _session = share_service
-            .validate_and_create_session(&token, None)
+            .validate_and_create_session(&token, None, tenant_id)
             .await
             .expect("Share should be valid");
 
@@ -545,7 +545,7 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
 
     // Create an active session BEFORE revocation (simulating a visitor who opened the link)
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Session should be created before revocation");
     assert!(
@@ -562,7 +562,7 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
     // Verify the share is marked revoked in the database
     let revoked_share = ctx
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, tenant_id)
         .await
         .expect("DB lookup failed")
         .expect("Share should exist");
@@ -573,7 +573,7 @@ async fn test_public_share_already_issued_session_rejected_after_revoke() {
 
     // New session creation must fail after revocation
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),
@@ -691,7 +691,7 @@ async fn test_revoked_share_access_denial_is_auditable() {
 
     // Create a session before revocation
     let _session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Session should work before revocation");
 
@@ -703,7 +703,7 @@ async fn test_revoked_share_access_denial_is_auditable() {
 
     // Attempt to create a new session after revocation
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),

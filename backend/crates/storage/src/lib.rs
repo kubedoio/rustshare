@@ -391,8 +391,9 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn get_share_by_token(
         &self,
         token: &str,
+        tenant_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Share>> {
-        self.get_share_by_token(token).await
+        self.get_share_by_token(token, tenant_id).await
     }
 
     async fn get_file_shares(

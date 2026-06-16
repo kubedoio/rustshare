@@ -15,6 +15,9 @@ pub struct ShareSessionClaims {
     pub file_id: Option<FileId>,
     pub folder_id: Option<FolderId>,
     pub permissions: SharePermissions,
+    /// Tenant that owns the shared resource. Used to enforce tenant isolation
+    /// on public-share session routes.
+    pub tenant_id: uuid::Uuid,
     pub iat: i64,
     pub exp: i64,
 }
@@ -26,6 +29,7 @@ impl ShareSessionClaims {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         permissions: SharePermissions,
+        tenant_id: uuid::Uuid,
         ttl_seconds: i64,
     ) -> Self {
         let now = Utc::now();
@@ -38,6 +42,7 @@ impl ShareSessionClaims {
             file_id,
             folder_id,
             permissions,
+            tenant_id,
             iat: now.timestamp(),
             exp: exp.timestamp(),
         }
@@ -76,8 +81,15 @@ mod tests {
     fn test_share_session_claims_creation() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims =
-            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            Some(file_id),
+            None,
+            SharePermissions::View,
+            tenant_id,
+            3600,
+        );
 
         assert_eq!(claims.sub, format!("share:{}", share_id));
         assert!(!claims.session_id.is_nil());
@@ -85,6 +97,7 @@ mod tests {
         assert_eq!(claims.file_id, Some(file_id));
         assert_eq!(claims.folder_id, None);
         assert_eq!(claims.permissions, SharePermissions::View);
+        assert_eq!(claims.tenant_id, tenant_id);
         assert!(claims.exp > claims.iat);
     }
 
@@ -92,8 +105,15 @@ mod tests {
     fn test_share_session_claims_expiration() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims =
-            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, -1);
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            Some(file_id),
+            None,
+            SharePermissions::View,
+            tenant_id,
+            -1,
+        );
 
         assert!(claims.is_expired());
     }

@@ -21,6 +21,23 @@ use crate::{handlers::ShareSessionAuth, AppState};
 use super::files::FileUploadResponse;
 use crate::handlers::AppError;
 
+/// Header used to convey the tenant context for unauthenticated public-share
+/// requests. Public share links do not encode tenant in the token, so callers
+/// must supply the tenant they are acting on behalf of; requests for the wrong
+/// tenant are rejected with `ShareNotFoundByToken`.
+pub const PUBLIC_SHARE_TENANT_HEADER: &str = "X-Tenant-ID";
+
+/// Extract the tenant ID from the public-share tenant header.
+fn extract_public_tenant_id(headers: &HeaderMap) -> Result<Uuid, AppError> {
+    let header = headers
+        .get(PUBLIC_SHARE_TENANT_HEADER)
+        .ok_or_else(|| AppError::bad_request("Missing X-Tenant-ID header"))?;
+    let value = header
+        .to_str()
+        .map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))?;
+    Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionRequest {
     #[serde(default)]
@@ -109,11 +126,13 @@ pub fn build_content_disposition(file_name: &str) -> String {
 pub async fn create_session(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Response, AppError> {
+    let tenant_id = extract_public_tenant_id(&headers)?;
     let session = state
         .share_service
-        .validate_and_create_session(&token, req.password)
+        .validate_and_create_session(&token, req.password, tenant_id)
         .await?;
 
     Ok((
@@ -143,8 +162,13 @@ pub async fn create_session(
 pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let (share, file, folder) = state.share_service.get_public_share_info(&token).await?;
+    let tenant_id = extract_public_tenant_id(&headers)?;
+    let (share, file, folder) = state
+        .share_service
+        .get_public_share_info(&token, tenant_id)
+        .await?;
 
     if let Some(file) = file {
         Ok(Json(ShareInfoResponse {
@@ -361,10 +385,10 @@ pub async fn download_shared_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // Get share to verify token matches
+    // Get share to verify token matches, scoped to the session's tenant.
     let share = state
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, claims.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
@@ -477,7 +501,7 @@ pub async fn get_shared_folder_contents(
 ) -> Result<Response, AppError> {
     let share = state
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, claims.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
@@ -501,7 +525,7 @@ pub async fn get_shared_folder_contents(
 
     let (_share, current_folder, folders, files) = state
         .share_service
-        .list_public_folder_contents(&token, query.folder_id)
+        .list_public_folder_contents(&token, query.folder_id, claims.tenant_id)
         .await?;
 
     let root_folder_id = share
@@ -552,7 +576,7 @@ pub async fn download_shared_folder_file(
 ) -> Result<Response, AppError> {
     let share = state
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, claims.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {
@@ -678,7 +702,7 @@ pub async fn upload_shared_folder_file(
 ) -> Result<Response, AppError> {
     let share = state
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, claims.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
         .ok_or_else(|| {

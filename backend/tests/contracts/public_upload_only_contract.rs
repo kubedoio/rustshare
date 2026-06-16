@@ -72,7 +72,7 @@ async fn test_anonymous_can_upload_via_upload_only_link() {
     // Validate the share as an anonymous user would
     let token = share.share_token.unwrap();
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Upload-only share should be validatable");
 
@@ -131,7 +131,7 @@ async fn test_anonymous_cannot_list_files_via_upload_only() {
 
     // Get public share info
     let token = share.share_token.unwrap();
-    let public_info = share_service.get_public_share_info(&token).await;
+    let public_info = share_service.get_public_share_info(&token, tenant_id).await;
 
     // The share info should be available
     assert!(
@@ -186,7 +186,7 @@ async fn test_upload_only_with_password_requires_password() {
 
     // Try to access without password
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::PasswordRequired)),
@@ -195,7 +195,7 @@ async fn test_upload_only_with_password_requires_password() {
 
     // Try with wrong password
     let result = share_service
-        .validate_and_create_session(&token, Some("wrong_password".to_string()))
+        .validate_and_create_session(&token, Some("wrong_password".to_string()), tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::InvalidPassword)),
@@ -204,7 +204,7 @@ async fn test_upload_only_with_password_requires_password() {
 
     // Access with correct password
     let session = share_service
-        .validate_and_create_session(&token, Some("upload_password".to_string()))
+        .validate_and_create_session(&token, Some("upload_password".to_string()), tenant_id)
         .await;
     assert!(session.is_ok(), "Correct password should allow access");
 
@@ -256,7 +256,7 @@ async fn test_upload_only_link_expires() {
 
     // Try to validate expired share
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Expired)),
@@ -309,7 +309,7 @@ async fn test_upload_only_link_can_be_revoked() {
 
     // Verify share works before revocation
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(session.is_ok(), "Share should work before revocation");
 
@@ -321,7 +321,7 @@ async fn test_upload_only_link_can_be_revoked() {
 
     // Try to validate revoked share
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),
@@ -369,7 +369,7 @@ async fn test_upload_only_permissions() {
 
     let token = share.share_token.unwrap();
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Should validate");
 
@@ -412,7 +412,7 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
 
     // Create session before revocation
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Session should work before revocation");
     assert!(session.upload_only, "Session should be upload-only");
@@ -426,7 +426,7 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
     // Verify share is revoked in DB
     let revoked_share = ctx
         .metadata_store
-        .get_share_by_token(&token)
+        .get_share_by_token(&token, tenant_id)
         .await
         .expect("DB lookup failed")
         .expect("Share should exist");
@@ -437,7 +437,7 @@ async fn test_upload_only_revoke_blocks_new_sessions() {
 
     // New session creation must fail after revocation
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),
@@ -502,7 +502,7 @@ async fn test_upload_only_session_cannot_list_folder_contents() {
 
     // Create upload-only session
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Upload-only session should be created");
     assert!(session.upload_only, "Session must be upload-only");
@@ -511,7 +511,7 @@ async fn test_upload_only_session_cannot_list_folder_contents() {
     // Currently the service returns contents and the handler blocks it.
     // Once the service enforces this, uncomment the assertion below.
     let result = share_service
-        .list_public_folder_contents(&token, None)
+        .list_public_folder_contents(&token, None, tenant_id)
         .await;
     assert!(
         result.is_err(),
@@ -557,7 +557,7 @@ async fn test_upload_only_already_issued_session_rejected_after_revoke() {
 
     // Issue a session token BEFORE revocation
     let session = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await
         .expect("Should create session before revoke");
     assert!(session.upload_only);
@@ -570,7 +570,7 @@ async fn test_upload_only_already_issued_session_rejected_after_revoke() {
 
     // New session attempts must fail
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_id)
         .await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),

@@ -21,6 +21,31 @@ use rustshare_core::services::{ChatIntegrationError, IncomingChatEvent, UnfurlRe
 use crate::handlers::{AdminUser, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
+const PUBLIC_UNFURL_TENANT_HEADER: &str = "X-Tenant-ID";
+
+fn parse_unfurl_tenant_header(
+    headers: &HeaderMap,
+) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
+    let header = headers.get(PUBLIC_UNFURL_TENANT_HEADER).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Missing X-Tenant-ID header")),
+        )
+    })?;
+    let value = header.to_str().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Invalid X-Tenant-ID header")),
+        )
+    })?;
+    Uuid::parse_str(value).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Invalid X-Tenant-ID header")),
+        )
+    })
+}
+
 /// Request to unfurl a RustShare link.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlLinkRequest {
@@ -78,7 +103,7 @@ pub async fn unfurl_link(
 
     let response = state
         .chat_integration_service
-        .unfurl_link(&unfurl_req, Some(auth.user_id))
+        .unfurl_link(&unfurl_req, Some(auth.user_id), auth.tenant_id)
         .await
         .map_err(map_chat_integration_error)?;
 
@@ -116,15 +141,17 @@ pub async fn unfurl_link(
 )]
 pub async fn unfurl_link_public(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<UnfurlLinkRequest>,
 ) -> Result<Json<UnfurlLinkResponse>, (StatusCode, Json<ErrorResponse>)> {
     debug!("Public unfurl request for URL: {}", req.url);
 
+    let tenant_id = parse_unfurl_tenant_header(&headers)?;
     let unfurl_req = UnfurlRequest { url: req.url };
 
     let response = state
         .chat_integration_service
-        .unfurl_link(&unfurl_req, None)
+        .unfurl_link(&unfurl_req, None, tenant_id)
         .await
         .map_err(map_chat_integration_error)?;
 

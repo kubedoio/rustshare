@@ -92,8 +92,8 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Only use when the caller performs explicit authorization.
     async fn get_share_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<Share>>;
 
-    /// Get a share by token.
-    async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>>;
+    /// Get a share by token scoped to a tenant.
+    async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>>;
 
     /// Get all shares for a file.
     async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<Share>>;
@@ -419,11 +419,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         &self,
         share_token: &str,
         password: Option<String>,
+        tenant_id: Uuid,
     ) -> Result<ShareSession, ShareError> {
-        // Get share by token
+        // Get share by token, scoped to the requesting tenant.
         let mut share = self
             .metadata_store
-            .get_share_by_token(share_token)
+            .get_share_by_token(share_token, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
@@ -463,6 +464,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             "folder_id": share.folder_id,
             "permissions": share.permissions,
             "upload_only": share.upload_only,
+            "tenant_id": share.tenant_id,
             "iat": Utc::now().timestamp(),
             "exp": (Utc::now() + chrono::Duration::hours(1)).timestamp(),
         });
@@ -756,11 +758,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     pub async fn get_public_share_info(
         &self,
         share_token: &str,
+        tenant_id: Uuid,
     ) -> Result<(Share, Option<File>, Option<Folder>), ShareError> {
-        // Get share by token
+        // Get share by token, scoped to the requesting tenant.
         let share = self
             .metadata_store
-            .get_share_by_token(share_token)
+            .get_share_by_token(share_token, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
@@ -807,8 +810,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         &self,
         share_token: &str,
         current_folder_id: Option<uuid::Uuid>,
+        tenant_id: Uuid,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
-        let (share, _file, root_folder) = self.get_public_share_info(share_token).await?;
+        let (share, _file, root_folder) =
+            self.get_public_share_info(share_token, tenant_id).await?;
         if share.upload_only {
             return Err(ShareError::PermissionDenied {
                 file_id: share.resource_id().unwrap_or(share.id),
@@ -1535,13 +1540,13 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
+        async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>> {
             Ok(self
                 .shares
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|s| s.share_token.as_deref() == Some(token))
+                .find(|s| s.share_token.as_deref() == Some(token) && s.tenant_id == tenant_id)
                 .cloned())
         }
 
@@ -1923,7 +1928,7 @@ mod tests {
 
         // Validate share and create session
         let session = service
-            .validate_and_create_session(&share_token, None)
+            .validate_and_create_session(&share_token, None, tenant_id)
             .await
             .unwrap();
 
@@ -1935,7 +1940,7 @@ mod tests {
 
         // Verify access count was incremented
         let updated_share = metadata_store
-            .get_share_by_token(&share_token)
+            .get_share_by_token(&share_token, tenant_id)
             .await
             .unwrap()
             .unwrap();
@@ -1980,19 +1985,19 @@ mod tests {
 
         // Try to validate without password - should fail
         let result = service
-            .validate_and_create_session(&share_token, None)
+            .validate_and_create_session(&share_token, None, tenant_id)
             .await;
         assert!(matches!(result, Err(ShareError::PasswordRequired)));
 
         // Try with wrong password - should fail
         let result = service
-            .validate_and_create_session(&share_token, Some("wrongpassword".to_string()))
+            .validate_and_create_session(&share_token, Some("wrongpassword".to_string()), tenant_id)
             .await;
         assert!(matches!(result, Err(ShareError::InvalidPassword)));
 
         // Try with correct password - should succeed
         let session = service
-            .validate_and_create_session(&share_token, Some("password123".to_string()))
+            .validate_and_create_session(&share_token, Some("password123".to_string()), tenant_id)
             .await
             .unwrap();
 
@@ -2056,7 +2061,7 @@ mod tests {
 
         // Verify share can't be validated anymore
         let result = service
-            .validate_and_create_session(&share_token, None)
+            .validate_and_create_session(&share_token, None, tenant_id)
             .await;
         assert!(matches!(result, Err(ShareError::Revoked)));
     }
@@ -2145,7 +2150,7 @@ mod tests {
 
         // Verify share is accessible without password
         let session = service
-            .validate_and_create_session(&share_token, None)
+            .validate_and_create_session(&share_token, None, tenant_id)
             .await
             .unwrap();
         assert!(!session.token.is_empty());
@@ -2165,13 +2170,13 @@ mod tests {
 
         // Verify share now requires password
         let result = service
-            .validate_and_create_session(&share_token, None)
+            .validate_and_create_session(&share_token, None, tenant_id)
             .await;
         assert!(matches!(result, Err(ShareError::PasswordRequired)));
 
         // Verify share works with correct password
         let session = service
-            .validate_and_create_session(&share_token, Some("newpassword".to_string()))
+            .validate_and_create_session(&share_token, Some("newpassword".to_string()), tenant_id)
             .await
             .unwrap();
         assert!(!session.token.is_empty());
@@ -2214,8 +2219,10 @@ mod tests {
         let share_token = share.share_token.clone().unwrap();
 
         // Get public share info
-        let (returned_share, returned_file, returned_folder) =
-            service.get_public_share_info(&share_token).await.unwrap();
+        let (returned_share, returned_file, returned_folder) = service
+            .get_public_share_info(&share_token, tenant_id)
+            .await
+            .unwrap();
 
         // Verify share and file are returned correctly
         assert_eq!(returned_share.id, share.id);
@@ -2231,8 +2238,9 @@ mod tests {
         let (service, _, _) = setup_share_service();
 
         let share_token = "nonexistent_token_12345678901234";
+        let tenant_id = Uuid::new_v4();
 
-        let result = service.get_public_share_info(share_token).await;
+        let result = service.get_public_share_info(share_token, tenant_id).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -2281,7 +2289,7 @@ mod tests {
         service.revoke_share(share.id, owner_id).await.unwrap();
 
         // Try to get public share info
-        let result = service.get_public_share_info(&share_token).await;
+        let result = service.get_public_share_info(&share_token, tenant_id).await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ShareError::Revoked));
@@ -2325,7 +2333,7 @@ mod tests {
         let share_token = share.share_token.clone().unwrap();
 
         // Try to get public share info
-        let result = service.get_public_share_info(&share_token).await;
+        let result = service.get_public_share_info(&share_token, tenant_id).await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ShareError::Expired));

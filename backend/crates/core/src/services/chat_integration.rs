@@ -207,8 +207,12 @@ pub struct IncomingChatEvent {
 /// Trait for metadata store operations needed by ChatIntegrationService.
 #[allow(async_fn_in_trait)]
 pub trait MetadataStoreOps: Send + Sync {
-    /// Get a share by token.
-    async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>>;
+    /// Get a share by token scoped to a tenant.
+    async fn get_share_by_token(
+        &self,
+        token: &str,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<Option<Share>>;
 
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> anyhow::Result<Option<File>>;
@@ -476,14 +480,15 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         &self,
         request: &UnfurlRequest,
         requesting_user_id: Option<UserId>,
+        tenant_id: Uuid,
     ) -> Result<UnfurlResponse, ChatIntegrationError> {
         // Parse the URL to extract share token
         let share_token = self.extract_share_token(&request.url)?;
 
-        // Get the share
+        // Get the share, scoped to the requesting tenant.
         let share = self
             .metadata_store
-            .get_share_by_token(&share_token)
+            .get_share_by_token(&share_token, tenant_id)
             .await
             .map_err(|e| ChatIntegrationError::DispatchFailed(e.to_string()))?
             .ok_or(ChatIntegrationError::ShareNotFound)?;
@@ -697,13 +702,17 @@ mod tests {
     }
 
     impl MetadataStoreOps for MockMetadataStore {
-        async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>> {
+        async fn get_share_by_token(
+            &self,
+            token: &str,
+            tenant_id: Uuid,
+        ) -> anyhow::Result<Option<Share>> {
             Ok(self
                 .shares
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|s| s.share_token.as_deref() == Some(token))
+                .find(|s| s.share_token.as_deref() == Some(token) && s.tenant_id == tenant_id)
                 .cloned())
         }
 

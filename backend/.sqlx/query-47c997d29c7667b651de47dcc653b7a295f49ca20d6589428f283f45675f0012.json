@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as \"permissions: SharePermissions\", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE share_token = $1\n            ",
+  "query": "\n            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as \"permissions: SharePermissions\", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE share_token = $1 AND tenant_id = $2\n            ",
   "describe": {
     "columns": [
       {
@@ -81,7 +81,8 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Uuid"
       ]
     },
     "nullable": [
@@ -102,5 +103,5 @@
       false
     ]
   },
-  "hash": "cdae6ca89fddb0d16d7406ccfe5be6b7c2941c65f8e7dc55e8ca9e442c28da38"
+  "hash": "47c997d29c7667b651de47dcc653b7a295f49ca20d6589428f283f45675f0012"
 }

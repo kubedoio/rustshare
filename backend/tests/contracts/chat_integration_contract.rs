@@ -73,7 +73,7 @@ async fn test_unfurl_checks_permissions() {
 
     // Get public share info (simulating unfurl)
     let token = share.share_token.unwrap();
-    let public_info = share_service.get_public_share_info(&token).await;
+    let public_info = share_service.get_public_share_info(&token, tenant_id).await;
 
     assert!(
         public_info.is_ok(),
@@ -128,7 +128,7 @@ async fn test_revoked_share_stops_unfurl() {
     let token = share.share_token.clone().unwrap();
 
     // Verify unfurl works before revocation
-    let public_info = share_service.get_public_share_info(&token).await;
+    let public_info = share_service.get_public_share_info(&token, tenant_id).await;
     assert!(public_info.is_ok(), "Unfurl should work before revocation");
 
     // Revoke the share
@@ -138,7 +138,7 @@ async fn test_revoked_share_stops_unfurl() {
         .expect("Failed to revoke share");
 
     // Unfurl should now fail
-    let result = share_service.get_public_share_info(&token).await;
+    let result = share_service.get_public_share_info(&token, tenant_id).await;
     assert!(
         matches!(result, Err(ShareError::Revoked)),
         "Unfurl should fail for revoked share"
@@ -228,7 +228,7 @@ async fn test_unfurl_respects_tenant_boundaries() {
 
     // Get public share info
     let token = share.share_token.unwrap();
-    let public_info = share_service.get_public_share_info(&token).await;
+    let public_info = share_service.get_public_share_info(&token, tenant_a).await;
     assert!(public_info.is_ok());
 
     let (share_info, _, _) = public_info.unwrap();
@@ -284,7 +284,7 @@ async fn test_unfurl_handles_deleted_files() {
     let token = share.share_token.clone().unwrap();
 
     // Verify unfurl works
-    let public_info = share_service.get_public_share_info(&token).await;
+    let public_info = share_service.get_public_share_info(&token, tenant_id).await;
     assert!(public_info.is_ok(), "Unfurl should work before deletion");
 
     // Delete the file
@@ -340,7 +340,7 @@ async fn test_expired_share_stops_unfurl() {
     let token = share.share_token.unwrap();
 
     // Unfurl should fail for expired share
-    let result = share_service.get_public_share_info(&token).await;
+    let result = share_service.get_public_share_info(&token, tenant_id).await;
     assert!(
         matches!(result, Err(ShareError::Expired)),
         "Unfurl should fail for expired share"

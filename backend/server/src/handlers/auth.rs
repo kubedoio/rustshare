@@ -65,6 +65,12 @@ async fn validate_credentials(
     req: &LoginRequest,
     ip: Option<&str>,
 ) -> Result<User, AppError> {
+    // TODO(Workstream B residual risk): password login looks up the user by
+    // email without a tenant filter. The same email can exist in multiple
+    // tenants, so this route is not strictly tenant-scoped. Add a tenant
+    // identifier to the login request (e.g. `X-Tenant-ID` header or a
+    // `tenant_id` field) and scope `find_user_by_email` accordingly, or
+    // document that email uniqueness is enforced across tenants.
     let user = metadata_store
         .find_user_by_email(&req.email)
         .await

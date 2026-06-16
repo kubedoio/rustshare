@@ -107,7 +107,7 @@ async fn test_cross_tenant_share_link_is_denied() {
     // Attempt to access the share link from tenant B. Public share resolution
     // must be tenant-scoped, so the token should not resolve outside tenant A.
     let result = share_service
-        .validate_and_create_session(&token, None)
+        .validate_and_create_session(&token, None, tenant_b)
         .await;
 
     assert!(
@@ -674,16 +674,4 @@ async fn test_notifications_do_not_leak_across_tenants() {
 
     cleanup_tenant(&ctx.pool, tenant_b).await;
     ctx.cleanup().await;
-}
-
-/// G-01-14: RLS context is set for authenticated requests
-#[tokio::test]
-#[ignore] // Requires database
-async fn test_rls_context_is_set_for_authenticated_requests() {
-    // The tenant_context middleware acquires a dedicated connection to run
-    // `SET app.current_tenant_id` and `SET app.current_user_id`, then returns
-    // that connection to the pool before the request handler runs. The handler's
-    // queries execute on connections checked out separately, so we cannot
-    // observe the set values on the middleware's connection without additional
-    // instrumentation. This test is kept as documentation of the limitation.
 }

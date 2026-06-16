@@ -121,18 +121,16 @@ Close the highest-risk production readiness gaps identified in the 2026-06-09 pr
 
 ### B.2 Set RLS context per request
 
+**Status:** Removed — no-op middleware deleted.
+
 **Files:**
 - `backend/server/src/bootstrap.rs`
 - `backend/server/src/middleware/*.rs`
 - `backend/server/src/state.rs`
 
-**Current state:** `before_acquire` always sets `app.current_user_id` to the nil UUID.
+**Current state:** The previous `tenant_context` middleware acquired a pool connection, ran `SET app.current_tenant_id` / `SET app.current_user_id`, and returned the connection to the pool *before* the inner handler ran. Because handlers check out separate connections, the settings were never visible to handler queries, making the middleware an ineffective security control.
 
-**Required behavior:**
-- Add middleware that sets `app.current_tenant_id` and `app.current_user_id` from the authenticated request before handler execution.
-- Reset the context after the request or use per-acquisition setting.
-- Do not rely solely on RLS; repository-level tenant filtering remains the primary defense.
-- Add integration tests that verify the context is set correctly.
+**Decision:** Remove the no-op middleware and its empty integration test. Repository-level tenant filtering (added in B.1 and B.3) remains the active and primary defense against cross-tenant access. PostgreSQL RLS can be reintroduced later only if it can be applied on the same connection that executes handler queries (e.g. per-request connection pinning or explicit `SET` on every acquired connection via `before_acquire`).
 
 ### B.3 Add tenant-isolation contract tests
 

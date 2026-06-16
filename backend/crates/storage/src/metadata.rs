@@ -495,7 +495,13 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find user by email
+    /// Find user by email.
+    ///
+    /// TODO(Workstream B residual risk): this lookup is not tenant-scoped. In a
+    /// true multi-tenant system the same email can exist in different tenants,
+    /// so callers that need tenant isolation should use a tenant-scoped lookup
+    /// (e.g. `find_user_by_email_and_tenant`) once a tenant identifier is added
+    /// to the login request.
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
         let user = sqlx::query_as!(
             User,
@@ -2443,16 +2449,17 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find a share by its token
-    pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
+    /// Find a share by its token, scoped to a tenant.
+    pub async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>> {
         let share = sqlx::query_as!(
             Share,
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
-            WHERE share_token = $1
+            WHERE share_token = $1 AND tenant_id = $2
             "#,
-            token
+            token,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -4241,7 +4248,10 @@ mod tests {
         store.create_share(&share).await.unwrap();
 
         // Test: get_share_by_token
-        let found_by_token = store.get_share_by_token(&share_token).await.unwrap();
+        let found_by_token = store
+            .get_share_by_token(&share_token, tenant_id)
+            .await
+            .unwrap();
         assert!(found_by_token.is_some());
         let found_share = found_by_token.unwrap();
         assert_eq!(found_share.id, share.id);
