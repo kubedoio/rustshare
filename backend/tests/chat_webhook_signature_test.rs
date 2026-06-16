@@ -174,7 +174,9 @@ async fn chat_webhook_signature_tampered_body() {
     let mut tampered_body = original_body;
     tampered_body.push(b'\n');
 
-    let result = service.process_incoming_event(&tampered_body, &signature).await;
+    let result = service
+        .process_incoming_event(&tampered_body, &signature)
+        .await;
     assert!(
         matches!(
             result,

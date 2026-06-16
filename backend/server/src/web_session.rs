@@ -217,7 +217,10 @@ mod tests {
         // Default remains true when neither is set.
         std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
         std::env::remove_var("SESSION_COOKIE_SECURE");
-        assert!(session_cookie_secure(), "cookie_secure must default to true");
+        assert!(
+            session_cookie_secure(),
+            "cookie_secure must default to true"
+        );
     }
 
     #[test]
@@ -241,13 +244,22 @@ mod tests {
         std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "true");
 
         let session_cookie = build_session_cookie("test-token");
-        assert!(session_cookie.contains("HttpOnly"), "session cookie must be HttpOnly");
-        assert!(session_cookie.contains("Secure"), "session cookie must be Secure");
+        assert!(
+            session_cookie.contains("HttpOnly"),
+            "session cookie must be HttpOnly"
+        );
+        assert!(
+            session_cookie.contains("Secure"),
+            "session cookie must be Secure"
+        );
         assert!(
             session_cookie.contains("SameSite=Lax"),
             "session cookie must use SameSite=Lax"
         );
-        assert!(session_cookie.contains("Path=/"), "session cookie must have Path=/");
+        assert!(
+            session_cookie.contains("Path=/"),
+            "session cookie must have Path=/"
+        );
 
         let expired_session_cookie = build_expired_session_cookie();
         assert!(expired_session_cookie.contains("HttpOnly"));
@@ -260,7 +272,10 @@ mod tests {
             "CSRF cookie must not be HttpOnly so JavaScript can read it"
         );
         assert!(csrf_cookie.contains("Secure"), "CSRF cookie must be Secure");
-        assert!(csrf_cookie.contains("SameSite=Lax"), "CSRF cookie must use SameSite=Lax");
+        assert!(
+            csrf_cookie.contains("SameSite=Lax"),
+            "CSRF cookie must use SameSite=Lax"
+        );
 
         let expired_csrf_cookie = build_expired_csrf_cookie();
         assert!(expired_csrf_cookie.contains("Secure"));
@@ -283,7 +298,10 @@ mod tests {
         assert!(session_cookie.contains("SameSite=Lax"));
 
         let csrf_cookie = build_csrf_cookie("test-csrf");
-        assert!(!csrf_cookie.contains("Secure"), "CSRF cookie must not be Secure when secure=false");
+        assert!(
+            !csrf_cookie.contains("Secure"),
+            "CSRF cookie must not be Secure when secure=false"
+        );
         assert!(csrf_cookie.contains("SameSite=Lax"));
 
         std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");

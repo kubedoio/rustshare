@@ -314,17 +314,29 @@ mod tests {
         let manager = SessionManager::new(config);
 
         let session = manager
-            .create_session(Uuid::new_v4(), "test@example.com".to_string(), SessionType::Web)
+            .create_session(
+                Uuid::new_v4(),
+                "test@example.com".to_string(),
+                SessionType::Web,
+            )
             .unwrap();
-        let cookie = session.cookie_value.expect("web session must have a cookie");
+        let cookie = session
+            .cookie_value
+            .expect("web session must have a cookie");
 
-        assert!(cookie.contains("HttpOnly"), "cookie must be HttpOnly: {cookie}");
+        assert!(
+            cookie.contains("HttpOnly"),
+            "cookie must be HttpOnly: {cookie}"
+        );
         assert!(cookie.contains("Secure"), "cookie must be Secure: {cookie}");
         assert!(
             cookie.contains("SameSite=lax"),
             "cookie must have SameSite policy: {cookie}"
         );
-        assert!(cookie.contains("Path=/"), "cookie must have Path=/: {cookie}");
+        assert!(
+            cookie.contains("Path=/"),
+            "cookie must have Path=/: {cookie}"
+        );
     }
 
     #[test]
@@ -341,12 +353,24 @@ mod tests {
         let manager = SessionManager::new(config);
 
         let session = manager
-            .create_session(Uuid::new_v4(), "test@example.com".to_string(), SessionType::Web)
+            .create_session(
+                Uuid::new_v4(),
+                "test@example.com".to_string(),
+                SessionType::Web,
+            )
             .unwrap();
-        let cookie = session.cookie_value.expect("web session must have a cookie");
+        let cookie = session
+            .cookie_value
+            .expect("web session must have a cookie");
 
-        assert!(cookie.contains("HttpOnly"), "cookie must be HttpOnly: {cookie}");
-        assert!(!cookie.contains("Secure"), "cookie must not be Secure: {cookie}");
+        assert!(
+            cookie.contains("HttpOnly"),
+            "cookie must be HttpOnly: {cookie}"
+        );
+        assert!(
+            !cookie.contains("Secure"),
+            "cookie must not be Secure: {cookie}"
+        );
         assert!(
             cookie.contains("SameSite=lax"),
             "cookie must have SameSite policy: {cookie}"

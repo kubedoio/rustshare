@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use axum::{extract::State, body::Body, http::Request, Json, Router};
+use axum::{body::Body, extract::State, http::Request, Json, Router};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
     ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
@@ -25,10 +25,7 @@ use rustshare_server::{
     },
     AppState,
 };
-use rustshare_storage::{
-    repos::ShareNotificationRepoImpl,
-    EventStore, MetadataStore, ObjectStore,
-};
+use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
@@ -270,12 +267,7 @@ fn chat_admin_router() -> Router<AppState> {
     rustshare_server::routes::chat_integration_routes()
 }
 
-async fn create_test_user(
-    pool: &PgPool,
-    username: &str,
-    email: &str,
-    is_admin: bool,
-) -> Uuid {
+async fn create_test_user(pool: &PgPool, username: &str, email: &str, is_admin: bool) -> Uuid {
     let id = Uuid::new_v4();
     let tenant_id = Uuid::nil();
 
@@ -325,7 +317,11 @@ async fn admin_chat_webhook_endpoints_require_authentication() {
 
     let list_response = router
         .clone()
-        .oneshot(Request::get("/api/v1/admin/integrations/chat/webhooks").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/api/v1/admin/integrations/chat/webhooks")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -359,7 +355,8 @@ async fn admin_chat_webhook_endpoints_require_admin_role() {
     let state = setup_app_state(pool.clone()).await;
     let router = chat_admin_router().with_state(state.clone());
 
-    let non_admin_id = create_test_user(&pool, "non_admin_user", "nonadmin@test.local", false).await;
+    let non_admin_id =
+        create_test_user(&pool, "non_admin_user", "nonadmin@test.local", false).await;
     let token = bearer_token(&state, non_admin_id);
 
     let list_response = router

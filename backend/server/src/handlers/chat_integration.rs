@@ -374,7 +374,11 @@ pub fn is_valid_chat_webhook_url(url: &str, allow_http: bool) -> bool {
 /// is treated as disabled.
 fn http_webhooks_allowed() -> bool {
     cfg!(debug_assertions)
-        || parse_allow_http_webhooks(std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS").ok().as_deref())
+        || parse_allow_http_webhooks(
+            std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS")
+                .ok()
+                .as_deref(),
+        )
 }
 
 /// Parse the `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` value.
