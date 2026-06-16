@@ -11,13 +11,14 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use rustshare_core::services::{ChatIntegrationError, IncomingChatEvent, UnfurlRequest};
 
-use crate::handlers::{AuthenticatedUser, ErrorResponse};
+use crate::handlers::{AdminUser, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
 
 /// Request to unfurl a RustShare link.
@@ -145,12 +146,6 @@ pub async fn unfurl_link_public(
     }))
 }
 
-/// Request to receive a chat event from an external system.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ReceiveChatEventRequest {
-    pub event: IncomingChatEvent,
-}
-
 /// POST /api/v1/integrations/chat/events
 ///
 /// Webhook receiver for chat events from external chat systems.
@@ -159,7 +154,7 @@ pub struct ReceiveChatEventRequest {
     post,
     path = "/api/v1/integrations/chat/events",
     tag = "Chat Integration",
-    request_body = ReceiveChatEventRequest,
+    request_body = IncomingChatEvent,
     responses(
         (status = 200, description = "Event processed"),
         (status = 401, description = "Missing or invalid signature", body = crate::handlers::ErrorResponse),
@@ -168,10 +163,8 @@ pub struct ReceiveChatEventRequest {
 pub async fn receive_chat_event(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<ReceiveChatEventRequest>,
+    body: Bytes,
 ) -> impl IntoResponse {
-    info!("Received chat event: {:?}", req.event.event_type);
-
     // Extract signature from headers
     let signature = headers
         .get("X-RustShare-Signature")
@@ -192,7 +185,7 @@ pub async fn receive_chat_event(
     // Process the event
     match state
         .chat_integration_service
-        .process_incoming_event(&req.event, signature)
+        .process_incoming_event(&body, signature)
         .await
     {
         Ok(()) => {
@@ -292,18 +285,22 @@ pub struct RegisterWebhookRequest {
 )]
 pub async fn register_chat_webhook(
     State(_state): State<AppState>,
-    _admin: AuthenticatedUser, // TODO: Check for admin role
+    _admin: AdminUser,
     Json(req): Json<RegisterWebhookRequest>,
 ) -> impl IntoResponse {
     info!("Registering chat webhook: {}", req.url);
 
-    // Validate URL
-    if url::Url::parse(&req.url).is_err() {
+    // Reject non-HTTPS webhook URLs in production. HTTP is permitted in debug
+    // builds or when the RUSTSHARE_ALLOW_HTTP_WEBHOOKS environment variable is set.
+    let allow_http =
+        cfg!(debug_assertions) || std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS").is_ok();
+
+    if !is_valid_chat_webhook_url(&req.url, allow_http) {
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: "Invalid URL".to_string(),
-                details: Some("The provided URL is not valid".to_string()),
+                details: Some("Webhook URLs must use HTTPS".to_string()),
             }),
         );
     }
@@ -337,7 +334,7 @@ pub async fn register_chat_webhook(
 )]
 pub async fn list_chat_webhooks(
     State(state): State<AppState>,
-    _admin: AuthenticatedUser, // TODO: Check for admin role
+    _admin: AdminUser,
 ) -> Json<WebhookListResponse> {
     let urls: Vec<String> = state
         .chat_integration_service
@@ -353,6 +350,20 @@ pub async fn list_chat_webhooks(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WebhookListResponse {
     pub webhooks: Vec<String>,
+}
+
+/// Validate a chat webhook URL.
+///
+/// Only HTTPS URLs are accepted unless `allow_http` is `true` (used for debug
+/// builds or explicit local-development configuration).
+pub fn is_valid_chat_webhook_url(url: &str, allow_http: bool) -> bool {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let scheme = parsed.scheme();
+            scheme == "https" || (allow_http && scheme == "http")
+        }
+        Err(_) => false,
+    }
 }
 
 /// Map ChatIntegrationError to HTTP response.
@@ -419,4 +430,53 @@ fn map_chat_integration_error_tuple(err: ChatIntegrationError) -> (StatusCode, E
             details: Some(err.to_string()),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+
+    #[test]
+    fn chat_webhook_http_rejection() {
+        assert!(
+            !is_valid_chat_webhook_url("http://example.com/webhook", false),
+            "HTTP webhook URLs must be rejected in production"
+        );
+        assert!(
+            is_valid_chat_webhook_url("https://example.com/webhook", false),
+            "HTTPS webhook URLs must be accepted"
+        );
+        assert!(
+            is_valid_chat_webhook_url("http://example.com/webhook", true),
+            "HTTP webhook URLs may be allowed when explicitly enabled"
+        );
+        assert!(
+            !is_valid_chat_webhook_url("ftp://example.com/webhook", false),
+            "Non-HTTP(S) schemes must be rejected"
+        );
+        assert!(
+            !is_valid_chat_webhook_url("not-a-url", false),
+            "Malformed URLs must be rejected"
+        );
+    }
+
+    #[test]
+    fn chat_integration_admin_authorization() {
+        fn assert_list_requires_admin<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AdminUser) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_list_requires_admin(list_chat_webhooks);
+
+        fn assert_register_requires_admin<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AdminUser, Json<RegisterWebhookRequest>) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_register_requires_admin(register_chat_webhook);
+    }
 }

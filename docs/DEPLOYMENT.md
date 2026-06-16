@@ -57,11 +57,11 @@ Or generate secrets automatically with the pre-flight script:
 ./scripts/pre-flight.sh
 ```
 
-At minimum, change these values in `.env` for any non-local deployment:
+At minimum, change these values in `.env` for any non-local deployment. Generate real secret values with [`scripts/pre-flight.sh`](../../scripts/pre-flight.sh):
 
 ```bash
-JWT_SECRET=your-random-secret-here
-RUSTSHARE_SECRET_ENCRYPTION_KEY=your-32-byte-base64-key-here
+JWT_SECRET=<generate-with-scripts/pre-flight.sh>
+RUSTSHARE_SECRET_ENCRYPTION_KEY=<generate-with-scripts/pre-flight.sh>
 ```
 
 For local testing, the defaults in `docker-compose.yml` are sufficient.
@@ -300,6 +300,10 @@ logging:
 ### Internal Port Binding
 
 Internal service ports (backend 8080, postgres 5432, rustfs 9000/9001) are bound to `127.0.0.1` so they are not reachable from outside the host. Only nginx ports 80 and 443 are exposed publicly.
+
+### Secure Cookies
+
+`docker-compose.prod.yml` sets `SESSION_COOKIE_SECURE=true` and `CSRF_COOKIE_SECURE=true`. This tells the backend to emit session and CSRF cookies with the `Secure` attribute, which means browsers will only send them over HTTPS. **TLS termination is mandatory when using the production compose file.** If you terminate TLS at an upstream load balancer or CDN, ensure the backend still sees HTTPS requests (for example, via `X-Forwarded-Proto: https`) and that the `Secure` cookie setting matches your TLS topology.
 
 ### Non-Root Containers
 

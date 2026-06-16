@@ -577,24 +577,37 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
     }
 
     /// Process an incoming chat event.
+    ///
+    /// Verifies the `X-RustShare-Signature` over the raw request body before
+    /// deserializing the event. Returns [`ChatIntegrationError::SignatureVerificationFailed`]
+    /// when the signature is missing or invalid.
     pub async fn process_incoming_event(
         &self,
-        event: &IncomingChatEvent,
-        _signature: &str,
+        body: &[u8],
+        signature: &str,
     ) -> Result<(), ChatIntegrationError> {
-        // In a real implementation, we would:
-        // 1. Verify the signature
-        // 2. Process the event based on type
-        // 3. Update any relevant state
+        if signature.is_empty() {
+            return Err(ChatIntegrationError::SignatureVerificationFailed);
+        }
 
-        debug!(
+        if !self
+            .signer
+            .verify(signature, body)
+            .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?
+        {
+            return Err(ChatIntegrationError::SignatureVerificationFailed);
+        }
+
+        let event: IncomingChatEvent = serde_json::from_slice(body)
+            .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?;
+
+        info!(
             "Processing incoming chat event: {} from {}",
             event.event_type,
             event.user_id.as_deref().unwrap_or("anonymous")
         );
 
-        // For now, just log the event
-        info!("Received chat event: {:?}", event);
+        debug!("Received chat event: {:?}", event);
 
         Ok(())
     }
@@ -876,5 +889,84 @@ mod tests {
 
         service.unregister_webhook("https://chat.example.com/webhook");
         assert_eq!(service.get_webhook_urls().len(), 1);
+    }
+
+    fn sample_incoming_event() -> IncomingChatEvent {
+        IncomingChatEvent {
+            event_type: "share.revoked".to_string(),
+            timestamp: Utc::now(),
+            user_id: Some(Uuid::new_v4().to_string()),
+            data: serde_json::json!({"share_token": "abc123"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_webhook_signature_missing() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let events = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let dispatcher = Arc::new(MockWebhookDispatcher::new());
+        let service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
+
+        let event = sample_incoming_event();
+        let body = serde_json::to_vec(&event).unwrap();
+
+        let result = service.process_incoming_event(&body, "").await;
+        assert!(
+            matches!(
+                result,
+                Err(ChatIntegrationError::SignatureVerificationFailed)
+            ),
+            "Missing signature must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_webhook_signature_invalid() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let events = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let dispatcher = Arc::new(MockWebhookDispatcher::new());
+        let service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
+
+        let event = sample_incoming_event();
+        let body = serde_json::to_vec(&event).unwrap();
+
+        let signer = WebhookSigner::new("wrong-secret");
+        let signature = signer.sign(&body).unwrap();
+
+        let result = service.process_incoming_event(&body, &signature).await;
+        assert!(
+            matches!(
+                result,
+                Err(ChatIntegrationError::SignatureVerificationFailed)
+            ),
+            "Invalid signature must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_webhook_signature_valid() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let events = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let dispatcher = Arc::new(MockWebhookDispatcher::new());
+        let service =
+            ChatIntegrationService::new(metadata, events, broadcaster, "test_secret", dispatcher);
+
+        let event = sample_incoming_event();
+        let body = serde_json::to_vec(&event).unwrap();
+
+        let signer = WebhookSigner::new("test_secret");
+        let signature = signer.sign(&body).unwrap();
+
+        let result = service.process_incoming_event(&body, &signature).await;
+        assert!(
+            result.is_ok(),
+            "Valid signature must be accepted: {:?}",
+            result
+        );
     }
 }

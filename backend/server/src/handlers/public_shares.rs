@@ -64,6 +64,18 @@ pub struct SharedFolderContentsQuery {
     pub folder_id: Option<Uuid>,
 }
 
+/// Build a safe `Content-Disposition` header value for a file download.
+///
+/// Escapes quotes in the legacy `filename` parameter and adds a UTF-8
+/// `filename*` parameter for clients that support RFC 5987.
+pub fn build_content_disposition(file_name: &str) -> String {
+    format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        file_name.replace('"', "\\\""),
+        urlencoding::encode(file_name)
+    )
+}
+
 /// Create anonymous session for share access
 #[utoipa::path(
     post,
@@ -414,15 +426,14 @@ pub async fn download_shared_file(
     }
 
     // Return file with appropriate headers
+    let content_disposition = build_content_disposition(&file.name);
+    let content_length = content.len().to_string();
     Ok((
         StatusCode::OK,
         [
             ("Content-Type", file.mime_type.as_str()),
-            (
-                "Content-Disposition",
-                &format!("attachment; filename=\"{}\"", file.name),
-            ),
-            ("Content-Length", &content.len().to_string()),
+            ("Content-Disposition", content_disposition.as_str()),
+            ("Content-Length", content_length.as_str()),
         ],
         content,
     )
@@ -611,15 +622,14 @@ pub async fn download_shared_folder_file(
         tracing::warn!("Failed to log share access: {}", e);
     }
 
+    let content_disposition = build_content_disposition(&file.name);
+    let content_length = content.len().to_string();
     Ok((
         StatusCode::OK,
         [
             ("Content-Type", file.mime_type.as_str()),
-            (
-                "Content-Disposition",
-                &format!("attachment; filename=\"{}\"", file.name),
-            ),
-            ("Content-Length", &content.len().to_string()),
+            ("Content-Disposition", content_disposition.as_str()),
+            ("Content-Length", content_length.as_str()),
         ],
         content,
     )
@@ -839,5 +849,22 @@ mod tests {
         assert_eq!(json["mime_type"], "application/pdf");
         assert_eq!(json["password_protected"], true);
         assert!(json["expires_at"].is_string());
+    }
+
+    #[test]
+    fn public_share_download_header_escaped() {
+        let file_name = "report\".txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"report\\\".txt\""),
+            "legacy filename parameter must escape embedded quotes: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''report%22.txt"),
+            "RFC 5987 filename* parameter must URL-encode embedded quotes: {}",
+            header
+        );
     }
 }

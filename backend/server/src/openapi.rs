@@ -314,7 +314,7 @@ use utoipa::OpenApi;
         crate::handlers::brainstorming::SaveBoardSourceRequest,
         crate::handlers::chat_integration::DispatchWebhookRequest,
         crate::handlers::chat_integration::DispatchWebhookResponse,
-        crate::handlers::chat_integration::ReceiveChatEventRequest,
+        rustshare_core::services::IncomingChatEvent,
         crate::handlers::chat_integration::RegisterWebhookRequest,
         crate::handlers::chat_integration::UnfurlLinkRequest,
         crate::handlers::chat_integration::UnfurlLinkResponse,
