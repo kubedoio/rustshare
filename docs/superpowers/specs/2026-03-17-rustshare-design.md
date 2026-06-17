@@ -3,6 +3,8 @@
 **Date:** 2026-03-17
 **Status:** Draft - Pending Review
 
+> **Current implementation note (2026-06-18):** This historical draft mentions presigned object-store download URLs as an optimization. Current user-facing file downloads are backend-mediated streaming responses so RustShare can enforce authorization, audit behavior, headers, and SHA-256 integrity checks.
+
 ---
 
 ## Executive Summary

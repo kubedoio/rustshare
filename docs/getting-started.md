@@ -48,7 +48,7 @@ The backend image is built in one multi-stage Dockerfile: Node builds the SPA, R
    ./scripts/final-launch-smoke.sh
    ```
    All checks should pass.
-3. **(Optional) Configure a storage bucket** in the RustFS console at http://localhost:9001 (credentials are in `.env`).
+3. **Verify object storage** in the RustFS console at http://localhost:9001 (credentials are in `.env`). The default Docker Compose stack sets `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=true` for local bootstrap, so the bucket is created automatically if missing.
 
 ## Production Setup
 

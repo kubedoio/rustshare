@@ -78,7 +78,7 @@ Postgres / S3
 | Content-addressed blob storage | ✅ | `ObjectStore` → `blobs/{sha256}` |
 | SHA-256 hashing | ✅ | `calculate_sha256(&Bytes)` in `core/src/validation.rs` |
 | Deduplication | ✅ | Skips `put` if `exists("blobs/{hash}")` |
-| Presigned URLs | ✅ | `get_presigned_url` for download |
+| Presigned URLs | Superseded for user-facing file downloads | File downloads now use verified backend streaming; low-level object-store presigning remains available only for explicitly internal/object-store use cases. |
 | Path traversal prevention | ✅ | `validate_file_name`, `normalize_path` reject `..` and `/` |
 | Tenant isolation (app-layer) | ✅ | `tenant_id` in all queries |
 | Soft delete | ✅ | `deleted_at` on `files`, `folders` |

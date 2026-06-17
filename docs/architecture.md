@@ -1,7 +1,7 @@
 # RustShare System Architecture
 
 > **Status:** Production-readiness gap closure complete — Workstreams A–F  
-> **Last updated:** 2026-06-17
+> **Last updated:** 2026-06-18
 
 ---
 
@@ -15,7 +15,7 @@ RustShare is a self-hosted file-sharing and sync platform. It is designed to giv
 - **Storage-first metadata:** RustShare is moving toward a world where the object store (S3/RustFS) is the canonical system of record, making the system naturally portable and backup-friendly.
 - **Single-backend runtime:** The Axum backend serves both the API and the compiled SvelteKit SPA, keeping production deployments simple.
 - **Async by default:** Expensive operations such as cross-node replication are decoupled from the synchronous request path.
-- **Tenant-aware by default:** Metadata and share links are scoped to a tenant at the repository layer; unauthenticated public routes require an explicit `X-Tenant-ID` header.
+- **Tenant-aware by default:** Metadata and share links are scoped to a tenant at the repository layer; unauthenticated public routes derive or validate tenant context before resolving data.
 
 ---
 
@@ -108,12 +108,13 @@ The frontend is a **SvelteKit SPA** built with Svelte 5 and compiled to static a
 1. User selects file(s) in the browser.
 2. Frontend `POST /api/v1/files/upload` with multipart body.
 3. Nginx forwards to backend (no body-size limit in default config).
-4. Backend handler streams the multipart field to a temporary file, then streams the temporary file to RustFS/S3 under `files/{owner_id}/{uuid}`.
-5. Backend cleans up the temporary file on success or error.
-6. Backend writes metadata to the database (or RustFS, depending on `RUSTSHARE_METADATA_BACKEND`).
-7. Backend enqueues an async **replication job** (if replication targets are configured).
-8. Backend returns `201 Created` with file metadata.
-9. WebSocket event `file_created` is broadcast to the user's active sessions.
+4. Backend handler streams the multipart field to a temporary file and computes the SHA-256 content hash.
+5. Backend streams verified bytes to RustFS/S3 under the content-addressed key `blobs/{sha256}`.
+6. Backend cleans up the temporary file on success or error.
+7. Backend writes metadata to the database (or RustFS, depending on `RUSTSHARE_METADATA_BACKEND`).
+8. Backend enqueues an async **replication job** (if replication targets are configured).
+9. Backend returns `201 Created` with file metadata.
+10. WebSocket event `file_created` is broadcast to the user's active sessions.
 
 ### 5.2 File Download
 
@@ -121,14 +122,14 @@ The frontend is a **SvelteKit SPA** built with Svelte 5 and compiled to static a
 2. Frontend requests `GET /api/v1/files/{id}/download`.
 3. Backend validates ownership or share permissions.
 4. Backend calls `ObjectStore::get_stream` and returns a streaming body without buffering the entire object in memory.
-5. File is delivered to the client with `Content-Type` and `Content-Length` preserved where available.
+5. File is delivered to the client with `Content-Type` preserved. `Content-Length` is preserved where available except for content-addressed blob streams, where the backend omits it because SHA-256 integrity can only be confirmed at end-of-stream.
 
 ### 5.3 Share Link Flow
 
 1. Owner creates a public share: `POST /api/v1/files/{id}/share`.
 2. Backend generates a cryptographically random `share_token`, optionally with password and expiry.
 3. Recipient visits `/share/{token}`.
-4. For unauthenticated public routes, the client supplies `X-Tenant-ID`. Backend validates token, password, expiry, and tenant scope; creates a lightweight share session.
+4. For unauthenticated public share routes, `X-Tenant-ID` is optional. If present, backend verifies it matches the share's tenant; if omitted, backend derives the tenant from the globally unique share token.
 5. The share session JWT includes `tenant_id` so subsequent share-session routes remain scoped to the issuing tenant.
 6. Recipient can view, download, or upload (for upload-only folder links) without a user account.
 7. Access is logged to `share_access_log`.
@@ -182,9 +183,8 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
 
 ```text
 {bucket}/
-  files/
-    {owner_id}/
-      {file_uuid}              ← raw file content
+  blobs/
+    {sha256}                   ← content-addressed file bytes
   meta/
     notes/
       {file_id}.json           ← note sidecar metadata (kind, visibility, excerpt)
@@ -250,8 +250,9 @@ Tenant isolation is enforced as a defense-in-depth boundary at multiple layers:
 
 ### Anonymous Public Routes
 
-- Public-share and chat-unfurl endpoints that do not require a login require the `X-Tenant-ID` header.
-- The share token is resolved only within that tenant. A token from tenant A is treated as non-existent if requested with tenant B's `X-Tenant-ID`.
+- Public-share endpoints accept optional `X-Tenant-ID`: when supplied it must match the share tenant, and when omitted the tenant is derived from the globally unique share token.
+- Public chat-unfurl requests can also use `X-Tenant-ID` to scope tenant resolution.
+- The share token is resolved only within the effective tenant. A token from tenant A is treated as non-existent if requested with tenant B's `X-Tenant-ID`.
 
 ### Share-Session JWT
 
@@ -262,9 +263,9 @@ Tenant isolation is enforced as a defense-in-depth boundary at multiple layers:
 
 - The previous PostgreSQL RLS context middleware was a no-op: it set session variables on a connection that was returned to the pool before the handler ran. It has been removed. RLS may be reintroduced only with connection pinning or `before_acquire` `SET` semantics.
 
-### Residual Risk
+### Password Login Compatibility Behavior
 
-- Password login currently resolves users by email without an explicit tenant filter. Email uniqueness across tenants is an operational assumption until tenant-scoped login is implemented.
+- Password login accepts an optional `tenant_id` and uses a tenant-scoped, case-insensitive email lookup when provided. If `tenant_id` is omitted for backward compatibility, the login path rejects ambiguous emails that exist in more than one tenant.
 
 ---
 
@@ -365,7 +366,7 @@ See [docs/2026-03-27-metadata-refactor-design.md](2026-03-27-metadata-refactor-d
 - **Desktop app:** Early prototype only; not production-ready.
 - **Deep observability:** Metrics dashboards and automated alerting are partial.
 - **Virus scanning:** Out of scope for the core platform; planned as an external hook.
-- **Tenant-scoped password login:** Future enhancement to remove the current email-uniqueness assumption.
+- **PostgreSQL RLS defense-in-depth:** Repository-level tenant filtering is the active boundary. RLS can be reintroduced later only with connection pinning or per-acquire tenant context.
 
 ---
 

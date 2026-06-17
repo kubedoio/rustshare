@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — implemented in Workstream B of the production-readiness gap closure.
+Accepted — implemented in Workstream B of the production-readiness gap closure and updated by follow-up remediation tasks on 2026-06-18.
 
 ## Context
 
@@ -17,7 +17,7 @@ The production-readiness audit found two related issues in the multi-tenant isol
 
 - Added `tenant_id` to `get_share_by_token` in all `MetadataStoreOps` / `ShareMetadataStoreOps` implementations and updated the SQL to `WHERE share_token = $1 AND tenant_id = $2`.
 - Added `tenant_id` parameters to `ShareService::validate_and_create_session`, `get_public_share_info`, and `list_public_folder_contents`.
-- For unauthenticated public-share HTTP routes, the caller must supply the tenant in the `X-Tenant-ID` request header. Requests for the wrong tenant return `ShareNotFoundByToken`.
+- For unauthenticated public-share HTTP routes, `X-Tenant-ID` is optional for backward compatibility. If supplied, it must match the share's tenant; if omitted, the backend derives the tenant from the globally unique share token before continuing with tenant-scoped lookups.
 - For share-session routes (which use a JWT issued by `validate_and_create_session`), `tenant_id` was added to `ShareSessionClaims` so the session carries the tenant context and each route can scope the share lookup.
 - The chat-integration unfurl endpoints were updated analogously: the authenticated endpoint uses the authenticated user's tenant, and the public endpoint requires `X-Tenant-ID`.
 
@@ -28,11 +28,12 @@ The production-readiness audit found two related issues in the multi-tenant isol
 
 ### Login tenant scoping
 
-- Password login still uses `find_user_by_email` without a tenant filter. Adding tenant to the login request was deemed too invasive for this workstream. The residual risk is documented with TODO comments in the login handler and repository, and this ADR records the decision.
+- Password login accepts an optional `tenant_id`. When provided, credential validation uses a tenant-scoped, case-insensitive email lookup. When omitted for backward compatibility, unscoped login rejects ambiguous emails that exist in more than one tenant.
+- The users table enforces per-tenant, case-insensitive email uniqueness.
 
 ## Consequences
 
 - Cross-tenant share link access is now rejected at the repository and service layers.
-- Public share links require an `X-Tenant-ID` header. This is a breaking change for anonymous public-share clients; future work may encode tenant in the token or route path to make links self-contained again.
+- Public share links remain self-contained for existing clients: omitting `X-Tenant-ID` derives tenant from the globally unique share token, while providing the header adds an explicit tenant consistency check.
 - No ineffective security control remains in production.
-- Email uniqueness across tenants remains an implicit assumption for password login until the residual risk is addressed.
+- Password login no longer relies on global email uniqueness when clients provide `tenant_id`, and ambiguous unscoped login is rejected.

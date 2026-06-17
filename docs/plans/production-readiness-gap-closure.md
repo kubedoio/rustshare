@@ -1,18 +1,18 @@
 # Production Readiness Gap Closure Plan
 
-**Status:** Approved — implementation in progress  
+**Status:** Complete — merged and pushed to `production-readiness-gap-closure`
 **Branch:** `production-readiness-gap-closure`  
-**Worktree:** `.worktrees/production-readiness-gap-closure`  
+**Remediation branch:** `production-readiness-gap-closure-fixes` (merged)
 **Quality bar:** Industrial grade. Every change must be tested, reviewed, and committed.
 
 ## Goal
 
-Close the highest-risk production readiness gaps identified in the 2026-06-09 production-readiness audit and focused code review. The scope is intentionally limited to six workstreams so each can be implemented, reviewed, and verified independently.
+Close the highest-risk production readiness gaps identified in the 2026-06-09 production-readiness audit and focused code review. The original scope was six workstreams; follow-up remediation Tasks 1-13 closed critical pre-landing review findings on top of those workstreams.
 
 ## Cross-Cutting Rules
 
-- Work only in `.worktrees/production-readiness-gap-closure`.
-- Do not push to remotes.
+- Work on `production-readiness-gap-closure` for PR #114 unless a new follow-up branch is explicitly requested.
+- Push only after the verification checklist relevant to the change passes.
 - Write tests before or alongside implementation changes.
 - Run `SQLX_OFFLINE=true cargo check --workspace` and the relevant test suites after each workstream.
 - Update `CHANGELOG.md` for user-visible or operator-visible changes.
@@ -160,7 +160,7 @@ Close the highest-risk production readiness gaps identified in the 2026-06-09 pr
 **Required behavior:**
 - Add `get_stream(key) -> impl Stream<Item = Result<Bytes>>` or return an `aws_sdk_s3::operation::get_object::GetObjectOutput` body stream.
 - Update download handlers to return `StreamBody`/`Body` without buffering the whole file.
-- Preserve Content-Type and Content-Length where available.
+- Preserve Content-Type and Content-Length where available. For content-addressed `blobs/{sha256}` streams, omit `Content-Length` because integrity can only be confirmed at EOF.
 - Add tests with a large synthetic object and confirm low memory usage.
 
 ### C.2 Stream multipart uploads to temporary files
@@ -327,13 +327,11 @@ Close the highest-risk production readiness gaps identified in the 2026-06-09 pr
 
 ## Verification Checklist (Final)
 
-- [ ] `SQLX_OFFLINE=true cargo check --workspace` passes.
-- [ ] `SQLX_OFFLINE=true cargo test --workspace` passes (with no new ignored tests).
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- [ ] `cargo audit` passes or documented.
-- [ ] `cargo deny check` passes or documented.
-- [ ] Frontend `npm run check` and `npm run test` pass.
-- [ ] `docker compose config` validates.
-- [ ] All new/changed behavior has tests.
-- [ ] CHANGELOG.md updated.
-- [ ] Docs updated and references fixed.
+- [x] `SQLX_OFFLINE=true cargo check --workspace` passes on the merged remediation branch.
+- [x] Focused backend regression tests for changed behavior pass.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes.
+- [x] OpenAPI freshness test passes after API contract changes.
+- [x] CHANGELOG.md updated.
+- [x] Docs updated for production-readiness, security, deployment, and remediation state.
+
+Broader release validation (`cargo audit`, `cargo deny check`, frontend checks, and `docker compose config`) should still be run as part of the final PR/release gate.

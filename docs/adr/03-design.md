@@ -204,6 +204,8 @@ tenant/{tenant_id}/exports/...
 tenant/{tenant_id}/audit/...
 ```
 
+Current implementation note (2026-06-18): RustShare stores durable file bytes under global content-addressed keys `blobs/{sha256}` and keeps tenant ownership, permissions, and file-to-blob mapping in metadata. Tenant isolation is enforced by repository/service checks rather than by tenant-prefixed object keys.
+
 If RustShare prefers per-user or per-tenant buckets, that can work, but it must be justified operationally.
 AWS notes that dedicated buckets are increasingly viable thanks to higher bucket quotas, while shared buckets with prefixes or access points can offer scalability and flexibility.[^1]
 

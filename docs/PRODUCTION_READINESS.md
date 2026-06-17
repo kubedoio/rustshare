@@ -1,8 +1,8 @@
 # Production Readiness
 
-> **Status:** Production-readiness gap closure complete — Workstreams A–F  
+> **Status:** Production-readiness gap closure complete — Workstreams A–F and remediation Tasks 1–13
 > **Branch:** `production-readiness-gap-closure`  
-> **Last updated:** 2026-06-17
+> **Last updated:** 2026-06-18
 
 This document summarizes what is production-ready, what remains experimental, and what operators must do before running RustShare in production. It reflects the work completed in the `production-readiness-gap-closure` branch.
 
@@ -12,10 +12,11 @@ This document summarizes what is production-ready, what remains experimental, an
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Web file-sharing core (upload, download, share, folder CRUD) | High | Streaming upload/download for large objects; size limits enforced. |
+| Web file-sharing core (upload, download, share, folder CRUD) | High | Streaming upload/download for large objects; size limits enforced; backend-mediated downloads preserve application authorization and object integrity checks. |
 | Authentication & sessions | High | Secure cookies default to `Secure`; admin routes require `AdminUser`; session revocation APIs exist. |
 | Multi-tenant isolation | High | Repository-level `tenant_id` filtering for files, folders, shares, notifications, vaults, and share links; `X-Tenant-ID` support for anonymous public routes. |
-| Webhook security | High | HMAC-SHA256 signature verification; HTTPS-only webhook registration. |
+| Webhook security | High | HMAC-SHA256 signature verification; replay-age checks; SSRF hardening; HTTPS-only webhook registration. |
+| Object storage integrity | High | Content-addressed `blobs/{sha256}` uploads/downloads are SHA-256 verified; bucket creation is explicit and disabled by default. |
 | CI/CD & secrets hygiene | High | Hardcoded secrets removed from workflows; per-run generated secrets; `secret-scan` gate. |
 | Code quality & test coverage | High | Ignored backend tests fixed or removed; clippy clean across all targets; cargo audit advisories addressed. |
 | Backup, restore, and recovery | High | Bundled scripts for backup, restore, verification, and isolated restore drills; runbooks exist. |
@@ -49,7 +50,7 @@ This document summarizes what is production-ready, what remains experimental, an
 
 ---
 
-## 3. Workstreams A–E Summary
+## 3. Workstreams A–F and Remediation Summary
 
 | Workstream | Focus | Key Deliverables |
 |------------|-------|------------------|
@@ -58,6 +59,8 @@ This document summarizes what is production-ready, what remains experimental, an
 | **C — Large-Object Streaming** | Memory-safe transfers | `ObjectStore::get_stream` for streaming downloads; multipart uploads streamed to temporary files then to object storage; automatic temp-file cleanup; upload size limits aligned (`MAX_UPLOAD_SIZE_MB`, `MAX_PUBLIC_UPLOAD_SIZE`, `MAX_CHUNK_SIZE`); low-memory integration tests. |
 | **D — CI/CD & Deployment Hardening** | Secret hygiene in automation | Hardcoded secrets removed from GitHub Actions; per-run generated secrets via `openssl rand`; `secret-scan` job in CI and pre-commit; `docs/CI_SECRETS.md` and `docs/DEPLOYMENT.md` updated with required secrets and rotation guidance. |
 | **E — Code Quality & Test Gaps** | Reliability and coverage | Ignored backend tests re-enabled, fixed, or removed with justification; clippy clean across all targets; cargo audit advisories addressed; request-scoped correlation IDs with validation and tests. |
+| **F — Operational Recovery** | Backup, restore, and production operations | Backup/restore scripts, verification tooling, restore-drill workflow, and runbooks for backup/restore and security incidents. |
+| **Remediation Tasks 1–13** | Pre-landing critical findings | Share JWT compatibility, optional public `X-Tenant-ID`, OpenAPI 2.0, tenant-scoped login, webhook SSRF/replay hardening, upload correctness, permission resolver cache/source fixes, chat unfurl authorization, password-protected share metadata protection, tenant-scoped repository coverage, object-store integrity, and cleanup. |
 
 ---
 
@@ -66,8 +69,9 @@ This document summarizes what is production-ready, what remains experimental, an
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | No external penetration test completed | Unknown exploitable issues | Dependency auditing (`cargo audit`, `cargo deny`), secret scanning, clippy `-D warnings`, contract tests, and code review. Schedule an external pentest before a broad launch. |
-| Password login does not scope by tenant | Cross-tenant email collisions could misroute login | Documented residual risk; email uniqueness across tenants is currently an operational assumption. Future work will add explicit tenant scoping to login. |
 | RLS middleware removed | One less defense-in-depth layer | Repository-level tenant filtering is the active control and is tested by contract tests. RLS may be reintroduced only with connection pinning or `before_acquire` `SET` semantics. |
+| Legacy clients may omit `tenant_id` during password login | Ambiguous email addresses could exist across tenants | Backward-compatible login rejects ambiguous unscoped emails; tenant-aware clients should send `tenant_id` for deterministic lookup. |
+| Streaming blob integrity is confirmed at EOF | A corrupt stream may fail after response headers are sent | Backend-mediated downloads use verified streams and omit `Content-Length` for content-addressed blobs so EOF integrity errors can be surfaced by the stream. |
 | OIDC not validated against every target IdP | SSO failures in production | Follow the [OIDC Production Validation Checklist](2026-03-21-oidc-production-validation-checklist.md) with your IdP before launch. |
 | Replication health alerting not wired to a pager | Degraded replication may go unnoticed | Operator endpoints and CLI health checks exist; documented thresholds in [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md). Wire Prometheus alerts to your paging stack. |
 | Centralized Grafana dashboards absent | Slower incident response | Use `/metrics`, `/health/ready`, and application logs until dashboards are added. |
@@ -92,6 +96,7 @@ This document summarizes what is production-ready, what remains experimental, an
   - `RUSTSHARE_CHAT_WEBHOOK_SECRET` — rotate and re-register webhooks.
   - `METRICS_API_TOKEN` — rotate if `/metrics` is exposed.
 - [ ] Disable dev-only overrides such as `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` and `RUSTSHARE_METADATA_BACKEND=localfs` in production.
+- [ ] Provision the object-storage bucket out-of-band in production; keep `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=false`.
 
 See [Deployment Guide](DEPLOYMENT.md) and [Security Incident Runbook](runbooks/security-incident.md) for rotation procedures.
 

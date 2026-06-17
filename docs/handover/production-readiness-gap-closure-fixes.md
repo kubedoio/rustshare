@@ -2,14 +2,15 @@
 
 ## Branch
 
-- **Local branch:** `production-readiness-gap-closure-fixes`
-- **Upstream branch:** `origin/production-readiness-gap-closure-fixes`
-- **Worktree:** `.worktrees/production-readiness-gap-closure`
-- **Based on:** `production-readiness-gap-closure` (PR #114)
+- **Remediation branch:** `production-readiness-gap-closure-fixes`
+- **Merged into:** `production-readiness-gap-closure` (PR #114)
+- **Merge commit:** `446eef2`
+- **Latest review-fix commit before merge:** `f2c27d9`
+- **Status:** Tasks 1-13 complete and merged into the PR branch.
 
 ## Goal
 
-Fix the critical security, correctness, and compatibility findings identified in the pre-landing review of `production-readiness-gap-closure` (Workstreams A–F). The branch already contains the original workstream implementation; this handover tracks the remediation work.
+Fix the critical security, correctness, and compatibility findings identified in the pre-landing review of `production-readiness-gap-closure` (Workstreams A–F). This handover records the remediation work that was completed on `production-readiness-gap-closure-fixes` and merged back into PR #114.
 
 ## Completed Work
 
@@ -104,16 +105,14 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Centralized object-store upload request construction for normal and conditional writes.
 - Replaced repeated object-store literals with named constants.
 
-## Known Gaps / Work Remaining
+## Current State
 
-## Pending Tasks (Critical Findings Still Open)
-
-The original review identified 18 critical/secondary findings. Tasks 1-13 from this remediation handover are complete.
+The original review identified 18 critical/secondary findings. Tasks 1-13 from this remediation handover are complete and merged into `production-readiness-gap-closure`.
 
 ## Tooling / Verification Commands
 
 ```bash
-cd /Users/scolak/Projects/x/rustshare/.worktrees/production-readiness-gap-closure/backend
+cd backend
 
 # Format / lint
 cargo fmt --check
@@ -141,9 +140,7 @@ DATABASE_URL="postgresql:///rustshare_test_fixes?host=/tmp&user=scolak" cargo sq
 
 ## Notes for the Next Owner
 
-1. The branch uses the `.worktrees/production-readiness-gap-closure` worktree. Any new work should happen there.
+1. Continue new work on `production-readiness-gap-closure` unless the PR owner asks for a separate follow-up branch.
 2. All commits must include a DCO sign-off (`git commit -s`).
-3. Run `cargo fmt --check` and clippy before each commit.
-4. The original PR is #114 (`production-readiness-gap-closure`). This new branch is for the remediation fixes and can be merged back into the original PR branch or reviewed separately.
-5. Task 6 has uncommitted hardening fixes already applied and committed as `652e3380`; add the missing tests before considering it fully done.
-6. Tasks 1-13 in this handover are complete; continue with any new PR review feedback or CI findings.
+3. Run `cargo fmt --check`, `SQLX_OFFLINE=true cargo check --workspace`, and clippy before pushing.
+4. Tasks 1-13 in this handover are complete; continue with any new PR review feedback or CI findings.

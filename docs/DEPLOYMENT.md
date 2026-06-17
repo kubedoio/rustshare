@@ -461,6 +461,8 @@ curl http://localhost:9000
 
 Check the RustFS console at http://localhost:9001 (credentials are `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` from your `.env` file).
 
+In production, the backend does **not** create a missing bucket by default. Provision `RUSTFS_BUCKET` out-of-band before startup. Local Docker Compose bootstrap defaults `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=true`; keep it `false` for production unless you intentionally want the application to create the bucket.
+
 ---
 
 ## Migration Checksum Fix

@@ -1,6 +1,8 @@
 # RustShare Phase 4: Frontend Web Application Design
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Current implementation note (2026-06-18):** File download endpoints now return verified backend-streamed content, not JSON presigned download URLs.
 
 **Goal:** Build a complete SvelteKit web application for RustShare that enables users to manage files, share with others (both publicly and user-to-user), and receive real-time updates via WebSocket.
 

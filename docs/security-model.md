@@ -2,7 +2,7 @@
 
 > **Status:** Production-readiness gap closure complete — Workstreams A–F  
 > **Scope:** Backend, frontend, and deployment runtime  
-> **Last updated:** 2026-06-17
+> **Last updated:** 2026-06-18
 
 ---
 
@@ -13,7 +13,7 @@
 | Threat | Mitigation |
 |--------|------------|
 | Unauthorized file access | JWT session cookies, ACL checks on every download, share-token validation, tenant-scoped queries |
-| Cross-tenant data access | Repository-level `tenant_id` filtering; `X-Tenant-ID` header for anonymous routes; tenant-scoped share-session JWT claims |
+| Cross-tenant data access | Repository-level `tenant_id` filtering; optional `X-Tenant-ID` validation/tenant derivation for anonymous public routes; tenant-scoped share-session JWT claims |
 | Credential stuffing / brute force | Argon2id password hashing, per-IP rate limiting on login |
 | Session hijacking | HttpOnly cookies, server-side session records, CSRF tokens for mutations |
 | Data exposure at rest | AES-256-GCM encryption of sensitive fields via `RUSTSHARE_SECRET_ENCRYPTION_KEY` |
@@ -23,6 +23,7 @@
 | SQL injection | `sqlx` compile-time query checks; parameterized queries only |
 | Webhook spoofing / tampering | HMAC-SHA256 signatures over raw request bodies; HTTPS-only webhook registration |
 | Insecure session cookies | Session and CSRF cookies default to `Secure`; explicit opt-out required for HTTP development |
+| Object-store blob corruption | Content-addressed `blobs/{sha256}` uploads and app-mediated downloads are SHA-256 verified |
 
 ### What RustShare Does NOT Protect Against
 
@@ -108,8 +109,11 @@ Tenant isolation is enforced primarily at the repository and service layers:
 
 ### Anonymous Public Routes
 
-- Unauthenticated public-share and chat-unfurl routes require the `X-Tenant-ID` request header.
-- Share token resolution (`get_share_by_token`) is scoped to that tenant; a token from tenant A will not resolve when `X-Tenant-ID` specifies tenant B.
+- Unauthenticated public-share routes accept optional `X-Tenant-ID`.
+- If `X-Tenant-ID` is present, it must match the share's tenant; otherwise the request is rejected.
+- If `X-Tenant-ID` is omitted, the tenant is derived from the globally unique share token before share lookups continue.
+- Public chat-unfurl routes can use `X-Tenant-ID` to scope tenant resolution.
+- Share token resolution is scoped to the effective tenant; a token from tenant A will not resolve when `X-Tenant-ID` specifies tenant B.
 
 ### Share-Session JWT
 
@@ -121,9 +125,21 @@ Tenant isolation is enforced primarily at the repository and service layers:
 - A previous PostgreSQL RLS context middleware was removed because it set `app.current_tenant_id` / `app.current_user_id` on a connection that was returned to the pool before handler queries ran.
 - RLS may be reintroduced in the future only if it can be applied on the same connection that executes handler queries (e.g., per-request connection pinning or an explicit `SET` on every acquired connection via `before_acquire`).
 
-### Residual Risk
+### Password Login Tenant Scoping
 
-- Password login currently uses `find_user_by_email` without an explicit tenant filter. Email uniqueness across tenants is an operational assumption until tenant-scoped login is implemented.
+- Password login accepts an optional `tenant_id`.
+- When `tenant_id` is provided, lookup is tenant-scoped and case-insensitive.
+- When omitted for backward compatibility, unscoped login rejects ambiguous emails that exist in multiple tenants.
+- The users table enforces per-tenant, case-insensitive email uniqueness.
+
+### Object-Store Integrity
+
+- File bytes are stored under content-addressed keys: `blobs/{sha256}`.
+- `ObjectStore::put`, `put_if_absent`, `put_from_path`, and `put_from_path_if_absent` verify bytes against the key before upload.
+- Path uploads copy verified bytes to a private temporary source before upload, avoiding path-swap or mutable-source races.
+- `ObjectStore::get` verifies downloaded blob bytes before returning them.
+- `ObjectStore::get_stream` verifies content-addressed blob streams and reports checksum mismatches at EOF. Because integrity is only known at EOF, verified blob streams do not advertise `Content-Length`.
+- User-facing file downloads are served through backend streaming endpoints instead of presigned object-store URLs so authorization, audit behavior, response headers, and integrity checks remain enforced by RustShare.
 
 ---
 
