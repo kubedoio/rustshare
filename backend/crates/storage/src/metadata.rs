@@ -513,6 +513,38 @@ impl MetadataStore {
         Ok(user)
     }
 
+    /// Count users matching the given email (case-sensitive, matching `find_user_by_email`).
+    pub async fn count_users_by_email(&self, email: &str) -> Result<i64> {
+        let count = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM users WHERE email = $1"#,
+            email
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Find user by email scoped to a tenant (case-insensitive).
+    pub async fn find_user_by_email_and_tenant(
+        &self,
+        email: &str,
+        tenant_id: Uuid,
+    ) -> Result<Option<User>> {
+        let user = sqlx::query_as!(
+            User,
+            r#"
+            SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _"
+            FROM users
+            WHERE LOWER(email) = LOWER($1) AND tenant_id = $2
+            "#,
+            email,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(user)
+    }
+
     /// Find user by username.
     pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let user = sqlx::query_as!(
