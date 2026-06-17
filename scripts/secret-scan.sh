@@ -30,6 +30,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Scope: CI/CD, config, and shell files (workflows, Docker Compose, Dockerfiles,
+# .env*, and shell scripts). Source code and test fixtures are intentionally
+# out of scope to avoid noise; use a dedicated secret scanner for those paths.
 # Files to scan. We focus on CI/CD, config, and shell files where secrets are
 # most likely to be committed by accident.
 mapfile -t FILES < <(
@@ -228,6 +231,10 @@ while IFS=: read -r FILE LINE_NUM LINE; do
     # Skip if the password part is a GitHub Actions expression or shell variable.
     [[ "$LINE" == *'${'* ]] && continue
     [[ "$LINE" == *'${{'* ]] && continue
+
+    # Skip plain shell variables like $PASSWORD in the password segment.
+    PLAIN_SHELL_VAR_RE='postgres://[^:@]+:\$[A-Za-z_][A-Za-z0-9_]*@'
+    [[ "$LINE" =~ $PLAIN_SHELL_VAR_RE ]] && continue
 
     # Skip example comments.
     [[ "$LINE" =~ ^[[:space:]]*# ]] && continue

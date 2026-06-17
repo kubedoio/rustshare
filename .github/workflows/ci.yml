@@ -100,7 +100,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: generate-secrets
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
@@ -157,7 +157,7 @@ jobs:
   root-workspace:
     name: Root Workspace
     runs-on: ubuntu-latest
-    needs: generate-secrets
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
@@ -190,7 +190,7 @@ jobs:
   sqlx-check:
     name: SQLx Prepare Check
     runs-on: ubuntu-latest
-    needs: generate-secrets
+    needs: [generate-secrets, secret-scan]
     env:
       # Per-run cryptographically random database password. The container is
       # ephemeral and only reachable from within this job.
@@ -218,7 +218,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    needs: generate-secrets
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine

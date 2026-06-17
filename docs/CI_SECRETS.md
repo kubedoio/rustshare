@@ -44,9 +44,7 @@ secrets, but they must remain dynamic in the workflow files.
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `integration-tests.yml` | S3-compatible credentials (matches RustFS root credentials) |
 | `POSTGRES_PASSWORD` | `ci.yml`, `dependencies.yml`, `integration-tests.yml` | Ephemeral PostgreSQL password |
 
-Generation uses `openssl rand` or run-scoped GitHub context expressions
-(`github.run_id`, `github.run_attempt`, `github.job`). Do not replace these
-with hardcoded values.
+Generation uses `openssl rand`. Do not replace these with hardcoded values.
 
 ---
 
@@ -54,7 +52,7 @@ with hardcoded values.
 
 | Secret | Used by | Purpose |
 |--------|---------|---------|
-| `GITHUB_TOKEN` | `pilot-release.yml` | Authenticate to GitHub Container Registry for image publish |
+| `GITHUB_TOKEN` | `pilot-release.yml`, `release.yml` | Authenticate to GitHub Container Registry for image publish |
 
 `GITHUB_TOKEN` is automatically provided by GitHub Actions. No manual rotation
 is required; it is scoped to the workflow run.

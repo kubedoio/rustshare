@@ -6,6 +6,6 @@ repos:
       - id: secret-scan
         name: Scan for hardcoded secrets
         entry: scripts/secret-scan.sh
-        language: script
+        language: system
         pass_filenames: false
         always_run: true
