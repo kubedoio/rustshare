@@ -154,7 +154,7 @@ const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
 /// Stream an HTTP body to a temporary file and return the temp file plus size.
 /// Enforces a size limit during streaming to prevent OOM.
-async fn stream_body_to_temp_file(
+pub async fn stream_body_to_temp_file(
     body: Body,
     max_size: usize,
 ) -> Result<(tempfile::NamedTempFile, usize), AppError> {

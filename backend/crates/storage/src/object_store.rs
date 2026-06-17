@@ -157,7 +157,16 @@ impl ObjectStore {
             .await
         {
             Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Err(error) => {
+                let code = error
+                    .as_service_error()
+                    .and_then(|service_error| service_error.meta().code());
+                if matches!(code, Some("NoSuchKey") | Some("NotFound")) {
+                    Ok(false)
+                } else {
+                    Err(error.into())
+                }
+            }
         }
     }
 
@@ -223,7 +232,7 @@ where
                 buf.truncate(n);
                 Ok(Some((Bytes::from(buf), reader)))
             }
-            Err(e) => Err(std::io::Error::other(e.to_string())),
+            Err(e) => Err(e),
         }
     })
 }

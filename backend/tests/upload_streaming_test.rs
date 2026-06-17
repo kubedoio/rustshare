@@ -363,19 +363,50 @@ async fn aborted_resumable_upload_cleans_up_chunks() {
     cleanup_user(&pool, user.id).await;
 }
 
+static TMPDIR_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
-#[ignore = "requires database and S3"]
 async fn temp_file_is_cleaned_up_after_failed_stream() {
-    // This test verifies the contract used by the HTTP handlers: even when
-    // streaming fails, the NamedTempFile Drop impl removes the underlying path.
-    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+    // This test verifies the contract used by the HTTP handlers: when the
+    // streaming helper rejects the body for exceeding the size limit, the
+    // temporary file it created is removed automatically by NamedTempFile's
+    // Drop impl. We redirect tempfile creation into an isolated directory so
+    // we can assert no files are left behind.
+    let _guard = TMPDIR_LOCK.lock().await;
+    let temp_dir = tempfile::tempdir().expect("create isolated temp dir");
+
+    let previous_tmpdir = std::env::var("TMPDIR").ok();
+    std::env::set_var("TMPDIR", temp_dir.path());
+
+    let chunks: Vec<Bytes> = (0..4).map(|_| Bytes::from_static(b"chunk")).collect();
+    let body = axum::body::Body::from_stream(
+        futures_util::stream::iter(chunks).map(Ok::<_, std::convert::Infallible>),
+    );
+
+    let err = rustshare_server::handlers::upload::stream_body_to_temp_file(body, 10)
         .await
-        .expect("spawn temp file")
-        .expect("create temp file");
+        .expect_err("should reject body over max size");
 
-    let path = temp_file.path().to_path_buf();
-    assert!(path.exists());
+    match err {
+        rustshare_server::handlers::AppError::PayloadTooLarge(_) => {}
+        other => panic!("expected PayloadTooLarge, got {other:?}"),
+    }
 
-    drop(temp_file);
-    assert!(!path.exists(), "temp file path should be removed on drop");
+    match previous_tmpdir {
+        Some(prev) => std::env::set_var("TMPDIR", prev),
+        None => std::env::remove_var("TMPDIR"),
+    }
+
+    let leftovers: Vec<_> = std::fs::read_dir(temp_dir.path())
+        .expect("read isolated temp dir")
+        .filter_map(|entry| entry.ok())
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "streaming helper should clean up temp files on size error, found {:?}",
+        leftovers
+            .iter()
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>()
+    );
 }

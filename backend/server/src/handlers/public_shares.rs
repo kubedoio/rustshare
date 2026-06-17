@@ -6,7 +6,7 @@
 use axum::{
     body::Body,
     extract::{ConnectInfo, Multipart, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -430,26 +430,30 @@ pub async fn download_shared_file(
         tracing::warn!("Failed to log share access: {}", e);
     }
 
-    // Return file with appropriate headers
+    // Return file with appropriate headers. Only set Content-Length when the
+    // object store reports one; falling back to the metadata size could send a
+    // stale value if the stored object has changed.
     let content_disposition = build_content_disposition(&file.name);
-    let content_length = content_length
-        .map(|len| len.to_string())
-        .unwrap_or_else(|| file.size.to_string());
-    Ok((
-        StatusCode::OK,
-        [
-            (
-                "Content-Type",
-                content_type
-                    .unwrap_or_else(|| file.mime_type.clone())
-                    .as_str(),
-            ),
-            ("Content-Disposition", content_disposition.as_str()),
-            ("Content-Length", content_length.as_str()),
-        ],
-        Body::from_stream(stream),
-    )
-        .into_response())
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type.unwrap_or_else(|| file.mime_type.clone()))
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+    );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
+
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// List contents of a shared folder.
@@ -636,24 +640,26 @@ pub async fn download_shared_folder_file(
     }
 
     let content_disposition = build_content_disposition(&file.name);
-    let content_length = content_length
-        .map(|len| len.to_string())
-        .unwrap_or_else(|| file.size.to_string());
-    Ok((
-        StatusCode::OK,
-        [
-            (
-                "Content-Type",
-                content_type
-                    .unwrap_or_else(|| file.mime_type.clone())
-                    .as_str(),
-            ),
-            ("Content-Disposition", content_disposition.as_str()),
-            ("Content-Length", content_length.as_str()),
-        ],
-        Body::from_stream(stream),
-    )
-        .into_response())
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type.unwrap_or_else(|| file.mime_type.clone()))
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+    );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
+
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// Maximum file size for public share uploads (100 MB).

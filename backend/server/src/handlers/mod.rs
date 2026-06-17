@@ -152,11 +152,24 @@ impl PaginationQuery {
 ///
 /// Defaults to 5000 MB and can be overridden with `MAX_UPLOAD_SIZE_MB`.
 /// The value is parsed once on first use and converted from megabytes to bytes.
+/// Values above 50 GB are clamped and logged to prevent a malformed or
+/// malicious environment variable from disabling size limits.
 pub fn max_upload_size_bytes() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *MAX.get_or_init(|| match std::env::var("MAX_UPLOAD_SIZE_MB") {
         Ok(value) => match value.parse::<usize>() {
-            Ok(mb) => mb.saturating_mul(1024 * 1024),
+            Ok(mb) => {
+                const MAX_MB: usize = 50 * 1024; // 50 GB in MB
+                let clamped_mb = mb.min(MAX_MB);
+                if clamped_mb != mb {
+                    tracing::warn!(
+                        value = %value,
+                        max_mb = %MAX_MB,
+                        "MAX_UPLOAD_SIZE_MB exceeds the maximum allowed size; clamping to 50 GB"
+                    );
+                }
+                clamped_mb.saturating_mul(1024 * 1024)
+            }
             Err(_) => {
                 tracing::warn!(
                     value = %value,
