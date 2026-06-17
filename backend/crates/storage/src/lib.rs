@@ -718,10 +718,6 @@ impl CoreObjectStoreOps for ObjectStore {
         self.exists(key).await
     }
 
-    async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
-        self.get_presigned_url(key, expires_in_secs).await
-    }
-
     async fn get(&self, key: &str) -> Result<bytes::Bytes> {
         self.get(key).await
     }

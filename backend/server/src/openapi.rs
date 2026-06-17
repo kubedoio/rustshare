@@ -332,7 +332,6 @@ use utoipa::OpenApi;
         crate::handlers::devices::DeviceListResponse,
         crate::handlers::devices::ListDevicesResponse,
         crate::handlers::features::FeaturesResponse,
-        crate::handlers::files::DownloadUrlResponse,
         crate::handlers::files::EditFileRequest,
         crate::handlers::files::EditFileResponse,
         crate::handlers::files::FileRestoreResponse,

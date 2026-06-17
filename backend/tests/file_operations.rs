@@ -3,7 +3,7 @@
 //! Tests the complete end-to-end flow:
 //! 1. Upload a file
 //! 2. Get file metadata
-//! 3. Get download URL
+//! 3. Verify stored content can be read through the object store
 //! 4. Delete file
 //!
 //! These tests require a running database and S3-compatible storage.
@@ -387,18 +387,13 @@ async fn test_file_upload_download_flow() {
     assert_eq!(retrieved_file.content_hash, uploaded_file.content_hash);
     assert_eq!(retrieved_file.size, file_content.len() as i64);
 
-    // Step 3: Get download URL
-    let download_url = file_service
-        .get_download_url(uploaded_file.id, user.id)
+    // Step 3: Verify content can be read through the app-mediated object-store path.
+    let downloaded = object_store
+        .get(&uploaded_file.storage_key())
         .await
-        .expect("Failed to get download URL");
+        .expect("Failed to read uploaded object");
 
-    // Verify URL is generated (should be a non-empty string with http/https)
-    assert!(!download_url.is_empty());
-    assert!(
-        download_url.starts_with("http://") || download_url.starts_with("https://"),
-        "Download URL should be a valid HTTP(S) URL"
-    );
+    assert_eq!(downloaded, file_content);
 
     // Step 4: Delete file
     file_service

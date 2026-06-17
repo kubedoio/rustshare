@@ -222,10 +222,6 @@ impl ObjectStoreOps for MockObjectStore {
         Ok(false)
     }
 
-    async fn get_presigned_url(&self, _key: &str, _expiry_secs: u64) -> Result<String> {
-        unreachable!()
-    }
-
     async fn get(&self, _key: &str) -> Result<Bytes> {
         unreachable!()
     }
