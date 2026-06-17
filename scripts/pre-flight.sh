@@ -73,6 +73,22 @@ env_set() {
 	printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
 }
 
+# Update an existing key=value pair in .env, or append it if absent.
+# Uses a temp file to avoid duplicate keys.
+env_update_or_set() {
+	local key="$1"
+	local value="$2"
+	local tmp_file
+	tmp_file="$(mktemp)"
+	if grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null; then
+		awk -v k="${key}=" -v v="${key}=${value}" 'index($0, k) == 1 {print v; next} {print}' "${ENV_FILE}" > "${tmp_file}"
+		mv "${tmp_file}" "${ENV_FILE}"
+	else
+		printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+		rm -f "${tmp_file}"
+	fi
+}
+
 # Generate a strong secret (machine-only)
 generate_secret() {
 	openssl rand -base64 32
@@ -80,7 +96,12 @@ generate_secret() {
 
 # Generate a strong password (URL-safe hex — avoids / and + that break DATABASE_URL)
 generate_password() {
-	openssl rand -hex 24
+	openssl rand -hex 32
+}
+
+# Generate an S3-compatible access key (alphanumeric, <=20 chars)
+generate_access_key() {
+	openssl rand -base64 15 | tr -d '/+=' | cut -c1-20
 }
 
 # ---------------------------------------------------------------------------
@@ -95,13 +116,9 @@ SECRET_SPECS=(
 	"RUSTSHARE_SECRET_ENCRYPTION_KEY|secret|32|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	"RUSTSHARE_CHAT_WEBHOOK_SECRET|secret|32|change-me-in-production"
 	"POSTGRES_PASSWORD|password|16|changeme"
-	"RUSTFS_ROOT_USER|password|4|rustfsadmin"
+	"RUSTFS_ROOT_USER|access_key|4|rustfsadmin"
 	"RUSTFS_ROOT_PASSWORD|password|16|rustfsadmin"
 	"RUSTSHARE_DEMO_VIEWER_PASSWORD|password|12|"
-	"STORAGE_ACCESS_KEY|password|4|rustfsadmin"
-	"STORAGE_SECRET_KEY|password|16|rustfsadmin"
-	"AWS_ACCESS_KEY_ID|password|4|"
-	"AWS_SECRET_ACCESS_KEY|secret|16|"
 )
 
 # Variables that docker-compose requires but are not secrets (we just check presence)
@@ -182,6 +199,8 @@ for spec in "${SECRET_SPECS[@]}"; do
 		new_value=""
 		if [[ "${var_type}" == "secret" ]]; then
 			new_value="$(generate_secret)"
+		elif [[ "${var_type}" == "access_key" ]]; then
+			new_value="$(generate_access_key)"
 		else
 			new_value="$(generate_password)"
 		fi
@@ -192,6 +211,8 @@ for spec in "${SECRET_SPECS[@]}"; do
 		new_value=""
 		if [[ "${var_type}" == "secret" ]]; then
 			new_value="$(generate_secret)"
+		elif [[ "${var_type}" == "access_key" ]]; then
+			new_value="$(generate_access_key)"
 		else
 			new_value="$(generate_password)"
 		fi
@@ -206,6 +227,44 @@ for spec in "${SECRET_SPECS[@]}"; do
 	# Export for docker-compose use
 	export "${var_name}=$(env_get "${var_name}")"
 done
+
+# ---------------------------------------------------------------------------
+# Derive S3/RustFS credentials from RustFS root credentials
+# ---------------------------------------------------------------------------
+# STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY and AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY must match RustFS root credentials.
+RUSTFS_ROOT_USER_VALUE="$(env_get "RUSTFS_ROOT_USER")"
+RUSTFS_ROOT_PASSWORD_VALUE="$(env_get "RUSTFS_ROOT_PASSWORD")"
+
+if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
+	for derived_var in STORAGE_ACCESS_KEY AWS_ACCESS_KEY_ID; do
+		current_derived=""
+		if env_get "${derived_var}" >/dev/null 2>&1; then
+			current_derived="$(env_get "${derived_var}")"
+		fi
+		if [[ "${current_derived}" != "${RUSTFS_ROOT_USER_VALUE}" ]]; then
+			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_USER_VALUE}"
+			warn "${derived_var} did not match RUSTFS_ROOT_USER — updated in .env"
+			WEAK_COUNT=$((WEAK_COUNT + 1))
+		fi
+		export "${derived_var}=${RUSTFS_ROOT_USER_VALUE}"
+		ok "${derived_var}"
+	done
+
+	for derived_var in STORAGE_SECRET_KEY AWS_SECRET_ACCESS_KEY; do
+		current_derived=""
+		if env_get "${derived_var}" >/dev/null 2>&1; then
+			current_derived="$(env_get "${derived_var}")"
+		fi
+		if [[ "${current_derived}" != "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
+			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_PASSWORD_VALUE}"
+			warn "${derived_var} did not match RUSTFS_ROOT_PASSWORD — updated in .env"
+			WEAK_COUNT=$((WEAK_COUNT + 1))
+		fi
+		export "${derived_var}=${RUSTFS_ROOT_PASSWORD_VALUE}"
+		ok "${derived_var}"
+	done
+fi
 
 # ---------------------------------------------------------------------------
 # Auto-construct DATABASE_URL if empty

@@ -24,9 +24,18 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustshare-backend
 
 jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh
+
   pilot-compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 80
+    needs: secret-scan
     permissions:
       contents: read
     steps:
@@ -42,7 +51,7 @@ jobs:
           JWT_SECRET=$(openssl rand -base64 32 | tr -d '\n')
           ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
           POSTGRES_PASSWORD=$(openssl rand -hex 32)
-          RUSTFS_ROOT_USER=$(openssl rand -hex 16)
+          RUSTFS_ROOT_USER=$(openssl rand -base64 15 | tr -d '/+=' | cut -c1-20)
           RUSTFS_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
           CHAT_WEBHOOK_SECRET=$(openssl rand -base64 24 | tr -d '\n')
           ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
