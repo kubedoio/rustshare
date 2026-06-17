@@ -720,7 +720,7 @@ pub async fn upload_shared_folder_file(
         .folder_id
         .ok_or_else(|| AppError::bad_request("This share is not for a folder"))?;
 
-    if !share.upload_only && claims.permissions < SharePermissions::Edit {
+    if !share.upload_only && share.permissions < SharePermissions::Edit {
         return Err(AppError::forbidden("This share does not allow uploads"));
     }
 

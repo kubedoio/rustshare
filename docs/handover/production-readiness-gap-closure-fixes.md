@@ -60,6 +60,16 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Documented env var in `backend/.env.example`, `docs/security-model.md`, and `CHANGELOG.md`.
 - Commits: `2adf79b4`, `652e3380`
 
+### ✅ Task 7 — Upload service correctness
+- Replaced resumable upload completion's full-file `Vec` assembly with object-store adapter streaming through a temporary file while computing the final SHA-256.
+- Changed final chunk assembly to write once to the content-addressed `blobs/{sha256}` key.
+- Fixed `Content-MD5` handling in the upload handler so MD5 headers are verified as MD5 before the SHA-256 chunk path runs.
+- Re-verified current folder write permission before authenticated resumable upload completion.
+- Changed public folder upload authorization to use the current share record's permissions instead of stale share-session JWT permissions.
+- Added conditional chunk object writes and conditional chunk-info writes for duplicate `(session_id, chunk_index)` protection.
+- Merged upload-session chunk bitmasks on repository updates so concurrent uploads of different chunks do not drop progress.
+- Added targeted MD5 handler tests.
+
 ## Known Gaps / Work Remaining
 
 Task 6 fixes were committed, but the quality reviewer noted missing test coverage for the latest hardening additions. The next owner should add tests for:
@@ -72,15 +82,6 @@ Task 6 fixes were committed, but the quality reviewer noted missing test coverag
 ## Pending Tasks (Critical Findings Still Open)
 
 The original review identified 18 critical/secondary findings. The following have not been started:
-
-### 🔴 Task 7 — Upload service correctness
-**Files:** `backend/crates/core/src/services/upload_service.rs`, `backend/server/src/handlers/upload.rs`
-**Issues:**
-- Upload completion materializes the whole file into memory (`assemble_chunks` builds a `Vec` sized by `total_size`). Should stream chunks directly to object store.
-- Content-MD5 check is broken: handler sends MD5, service computes SHA-256, so all MD5 uploads fail.
-- Public-share upload checks stale JWT permissions instead of querying the current share record.
-- Upload completion does not re-verify folder write permission.
-- Concurrent chunk uploads race on `(session_id, chunk_index)`; needs unique constraint or optimistic lock.
 
 ### 🔴 Task 8 — Permission resolver cache source and folder ancestry
 **Files:** `backend/crates/core/src/services/permission_resolver.rs`

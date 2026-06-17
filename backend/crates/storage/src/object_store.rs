@@ -70,6 +70,20 @@ impl ObjectStore {
         Ok(())
     }
 
+    /// Put object only if the key does not already exist.
+    pub async fn put_if_absent(&self, key: &str, data: Bytes) -> Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .if_none_match("*")
+            .body(ByteStream::from(data))
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
     /// Put object in storage by streaming from a local file.
     ///
     /// This avoids loading the file into memory and is used for large uploads
@@ -80,6 +94,21 @@ impl ObjectStore {
             .put_object()
             .bucket(&self.bucket)
             .key(key)
+            .body(body)
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
+    /// Put object from a local file only if the key does not already exist.
+    pub async fn put_from_path_if_absent(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let body = ByteStream::from_path(path).await?;
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .if_none_match("*")
             .body(body)
             .send()
             .await?;

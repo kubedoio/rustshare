@@ -3738,6 +3738,7 @@ dependencies = [
  "image",
  "lettre",
  "libc",
+ "md5",
  "metrics",
  "metrics-exporter-prometheus",
  "mime_guess",

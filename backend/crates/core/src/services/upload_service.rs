@@ -173,13 +173,13 @@ pub trait UploadObjectStore: Send + Sync {
     /// Check if a chunk exists
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError>;
 
-    /// Assemble chunks into a final file
-    async fn assemble_chunks(
+    /// Assemble chunks into a content-addressed final file and return the final SHA-256 hash.
+    async fn assemble_chunks_to_prefix(
         &self,
         session_id: Uuid,
         total_chunks: u32,
-        final_key: &str,
-    ) -> Result<(), UploadError>;
+        final_key_prefix: &str,
+    ) -> Result<String, UploadError>;
 }
 
 /// Metadata store operations for upload service
@@ -332,6 +332,28 @@ where
         Ok(SessionStatusResponse::from_session(&session))
     }
 
+    /// Return the target folder for an upload session after verifying ownership.
+    pub async fn get_session_target_folder(
+        &self,
+        session_id: Uuid,
+        user_id: UserId,
+    ) -> Result<Option<FolderId>, UploadError> {
+        let session = self
+            .repository
+            .get_session(session_id)
+            .await?
+            .ok_or(UploadError::SessionNotFound(session_id))?;
+
+        if session.owner_id != user_id {
+            return Err(UploadError::PermissionDenied {
+                user_id,
+                session_id,
+            });
+        }
+
+        Ok(session.folder_id)
+    }
+
     /// Upload a chunk from in-memory bytes.
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_chunk(
@@ -467,18 +489,30 @@ where
             }
         }
 
-        // Store chunk
-        match source {
+        let store_result = match source {
             ChunkSource::Bytes(data) => {
                 self.object_store
                     .put_chunk(session_id, chunk_index, data)
-                    .await?;
+                    .await
             }
             ChunkSource::Path(path) => {
                 self.object_store
                     .put_chunk_from_path(session_id, chunk_index, &path)
-                    .await?;
+                    .await
             }
+        };
+
+        if let Err(err) = store_result {
+            if matches!(err, UploadError::ChunkAlreadyReceived(_)) {
+                return Ok(ChunkUploadResponse {
+                    session_id,
+                    chunk_index,
+                    verified: true,
+                    progress_percent: session.progress_percent(),
+                    is_complete: session.is_complete(),
+                });
+            }
+            return Err(err);
         }
 
         // Update session
@@ -486,9 +520,22 @@ where
         session.mark_chunk_received(chunk_index);
         session.add_uploaded_bytes(actual_size);
 
-        self.repository
+        if let Err(err) = self
+            .repository
             .update_chunk_received(session_id, chunk_index, &chunk_hash, actual_size)
-            .await?;
+            .await
+        {
+            if matches!(err, UploadError::ChunkAlreadyReceived(_)) {
+                return Ok(ChunkUploadResponse {
+                    session_id,
+                    chunk_index,
+                    verified: true,
+                    progress_percent: session.progress_percent(),
+                    is_complete: session.is_complete(),
+                });
+            }
+            return Err(err);
+        }
         self.repository.update_session(&session).await?;
 
         Ok(ChunkUploadResponse {
@@ -578,9 +625,13 @@ where
             )));
         }
 
-        // Assemble chunks and calculate final hash
-        let final_content = self.assemble_content(&session).await?;
-        let final_hash = crate::validation::calculate_sha256(&final_content);
+        // Assemble chunks into the final object without materializing the full
+        // file in memory. The object store computes the final SHA-256 while
+        // streaming the chunks.
+        let final_hash = self
+            .object_store
+            .assemble_chunks_to_prefix(session_id, session.total_chunks(), "blobs/")
+            .await?;
 
         // Verify final hash if expected
         if let Some(expected_hash) = &session.file_hash {
@@ -610,11 +661,7 @@ where
             format!("{}/{}", parent_path, session.file_name)
         };
 
-        // Store final file
         let storage_key = format!("blobs/{}", final_hash);
-        self.object_store
-            .assemble_chunks(session_id, session.total_chunks(), &storage_key)
-            .await?;
 
         let file = if let Some(mut existing) = self
             .metadata_store
@@ -847,24 +894,6 @@ where
 
         Ok(cleaned)
     }
-
-    /// Assemble content from chunks for verification
-    async fn assemble_content(&self, session: &UploadSession) -> Result<Bytes, UploadError> {
-        let mut content = Vec::with_capacity(session.total_size as usize);
-
-        for chunk_index in 0..session.total_chunks() {
-            let chunk_data = self
-                .object_store
-                .get_chunk(session.id, chunk_index)
-                .await?
-                .ok_or_else(|| {
-                    UploadError::Storage(format!("Chunk {} missing during assembly", chunk_index))
-                })?;
-            content.extend_from_slice(&chunk_data);
-        }
-
-        Ok(Bytes::from(content))
-    }
 }
 
 #[cfg(test)]
@@ -1023,17 +1052,18 @@ mod tests {
             Ok(true)
         }
 
-        async fn assemble_chunks(
+        async fn assemble_chunks_to_prefix(
             &self,
             session_id: Uuid,
             total_chunks: u32,
-            final_key: &str,
-        ) -> Result<(), UploadError> {
-            self.assembled
-                .lock()
-                .unwrap()
-                .push((session_id, total_chunks, final_key.to_string()));
-            Ok(())
+            final_key_prefix: &str,
+        ) -> Result<String, UploadError> {
+            self.assembled.lock().unwrap().push((
+                session_id,
+                total_chunks,
+                final_key_prefix.to_string(),
+            ));
+            Ok(crate::validation::calculate_sha256(&Bytes::new()))
         }
     }
 

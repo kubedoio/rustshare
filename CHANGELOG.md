@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Sanitized `Content-Disposition` filename parameters to strip control characters, backslashes, and quotes.
+- Fixed resumable upload chunk integrity validation so `Content-MD5` is verified as MD5 instead of being compared to SHA-256 chunk hashes.
+- Fixed resumable upload completion to assemble chunks through streaming temporary files instead of materializing full files in memory.
+- Fixed concurrent resumable chunk uploads by using conditional chunk object writes and merging upload-session chunk state.
 - Fixed ignored backend tests by re-enabling, replacing, or removing them with documented justifications.
 - Resolved clippy warnings across all targets.
 - Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
@@ -58,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented required production secrets and rotation guidance in `docs/DEPLOYMENT.md`, `docs/CI_SECRETS.md`, and `.env.example`.
 - Hardened chat webhook URLs against SSRF: registration and dispatch now reject loopback, private IPv4, link-local, multicast, CGNAT, localhost, and IPv4-mapped IPv6 addresses, with a 5-second DNS timeout and re-validation at dispatch time to mitigate DNS rebinding.
 - Added replay-age checks for incoming chat webhook events: timestamps outside `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` (default 300) are rejected without revealing that the failure was a replay.
+- Re-verify current folder write permission when completing resumable uploads, and use current public-share permissions instead of stale JWT permission claims for public folder uploads.
 
 ## [0.5.1] - 2026-06-12
 
