@@ -313,7 +313,7 @@ async fn parse_upload_multipart(
                     }
                 }
                 file_temp = Some(
-                    stream_multipart_field_to_temp_file(&mut field, super::max_upload_size_bytes())
+                    stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
                         .await?
                         .0,
                 );
@@ -699,6 +699,9 @@ pub async fn download_shared_folder_file(
     )
         .into_response())
 }
+
+/// Maximum file size for public share uploads (100 MB).
+const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 /// Upload a file into a shared folder using an authenticated share session.
 #[utoipa::path(

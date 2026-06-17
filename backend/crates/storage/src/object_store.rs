@@ -267,8 +267,35 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt;
+    use futures::{StreamExt, TryStreamExt};
+    use std::hash::{DefaultHasher, Hasher};
     use uuid::Uuid;
+
+    /// Return the current peak resident set size (RSS) in bytes.
+    ///
+    /// On Unix this uses `getrusage(RUSAGE_SELF)`. macOS reports `ru_maxrss`
+    /// in bytes; other Unix platforms typically report it in kilobytes.
+    #[cfg(unix)]
+    fn peak_rss_bytes() -> usize {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        let usage = unsafe {
+            libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
+            usage.assume_init()
+        };
+        #[cfg(target_os = "macos")]
+        {
+            usage.ru_maxrss as usize
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            usage.ru_maxrss as usize * 1024
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn peak_rss_bytes() -> usize {
+        0
+    }
 
     async fn setup_object_store() -> Option<ObjectStore> {
         let endpoint = std::env::var("S3_ENDPOINT")
@@ -341,5 +368,79 @@ mod tests {
         let key = format!("streaming-test/missing-{}", Uuid::new_v4());
         let result = store.get_stream(&key).await;
         assert!(result.is_err(), "streaming a missing object should fail");
+    }
+
+    /// Stream a large object through a small fixed buffer and verify that peak
+    /// RSS does not grow proportionally to the object size.
+    ///
+    /// This test exercises the streaming path as a low-memory guarantee: the
+    /// implementation must not materialize the entire object. We record peak
+    /// RSS before and after streaming; an increase close to the object size
+    /// would indicate full buffering.
+    #[tokio::test]
+    #[ignore = "requires S3-compatible object storage"]
+    async fn get_stream_does_not_materialize_full_object() {
+        let store = match setup_object_store().await {
+            Some(store) => store,
+            None => return,
+        };
+
+        let chunk_size = 64 * 1024usize;
+        let chunk_count = 128usize; // 8 MiB total
+        let total_size = chunk_size * chunk_count;
+
+        let mut content = Vec::with_capacity(total_size);
+        let mut expected_hash = DefaultHasher::new();
+        for i in 0..chunk_count {
+            let byte = (i % 256) as u8;
+            let chunk = vec![byte; chunk_size];
+            expected_hash.write_u8(byte);
+            content.extend_from_slice(&chunk);
+        }
+        let expected_hash = expected_hash.finish();
+
+        let key = format!("streaming-test/low-memory-{}", Uuid::new_v4());
+        store.put(&key, Bytes::from(content)).await.unwrap();
+        // `content` is consumed by `Bytes::from` and dropped by `put`. Peak RSS
+        // is sampled after the upload finishes so the measurement reflects the
+        // download streaming phase, not the upload buffer.
+        let rss_before = peak_rss_bytes();
+
+        let (content_type, content_length, stream) = store.get_stream(&key).await.unwrap();
+        assert!(content_type.is_none());
+        assert_eq!(content_length, Some(total_size as i64));
+
+        let mut received_bytes = 0usize;
+        let mut received_hash = DefaultHasher::new();
+        stream
+            .try_for_each(|chunk| {
+                received_bytes += chunk.len();
+                for byte in chunk.iter() {
+                    received_hash.write_u8(*byte);
+                }
+                std::future::ready(Ok(()))
+            })
+            .await
+            .expect("stream chunk");
+
+        let rss_after = peak_rss_bytes();
+        let rss_increase = rss_after.saturating_sub(rss_before);
+
+        assert_eq!(received_bytes, total_size, "streamed byte count mismatch");
+        assert_eq!(
+            received_hash.finish(),
+            expected_hash,
+            "streamed content checksum mismatch"
+        );
+        // The implementation uses a 64 KiB per-chunk buffer. Allow a generous
+        // margin for runtime/allocator overhead, but require the RSS growth to
+        // remain well below the 8 MiB object size.
+        assert!(
+            rss_increase < 2 * 1024 * 1024,
+            "peak RSS grew by {rss_increase} bytes during streaming; \
+             this suggests the object was fully materialized"
+        );
+
+        store.delete(&key).await.unwrap();
     }
 }

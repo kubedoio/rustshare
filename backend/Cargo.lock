@@ -3788,6 +3788,7 @@ dependencies = [
  "futures",
  "hex",
  "jsonwebtoken",
+ "libc",
  "md5",
  "redis",
  "rustshare-core",

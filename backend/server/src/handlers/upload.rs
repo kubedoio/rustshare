@@ -149,10 +149,11 @@ pub struct CompleteUploadResponse {
     pub file_size: u64,
 }
 
-/// Maximum chunk size (defaults to 2 GiB and can be overridden with
-/// `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES`).
+/// Maximum chunk size for resumable uploads (100 MB).
+const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
+
 fn max_chunk_size() -> usize {
-    super::max_upload_size_bytes()
+    MAX_CHUNK_SIZE
 }
 
 /// Stream an HTTP body to a temporary file and return the temp file plus size.

@@ -289,6 +289,13 @@ async fn aborted_resumable_upload_cleans_up_chunks() {
         .await
         .expect("upload first chunk");
 
+    // Verify the chunk landed in object storage before abort.
+    let chunk_key = format!("temp/uploads/{}/0", session.session_id);
+    assert!(
+        object_store.exists(&chunk_key).await.unwrap(),
+        "uploaded chunk should exist in object storage before abort"
+    );
+
     // Abort the session; chunks should be cleaned up.
     upload_service
         .abort_session(session.session_id, user.id)
@@ -304,6 +311,11 @@ async fn aborted_resumable_upload_cleans_up_chunks() {
             Err(rustshare_core::services::UploadError::SessionAborted(_))
         ),
         "session should be marked aborted"
+    );
+
+    assert!(
+        !object_store.exists(&chunk_key).await.unwrap(),
+        "uploaded chunk should be deleted from object storage after abort"
     );
 
     cleanup_user(&pool, user.id).await;

@@ -16,9 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added streaming download support for object storage via `ObjectStore::get_stream`, with Content-Type and Content-Length preserved. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
-- Added `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES` configuration for the maximum upload body size (defaults to 2 GiB). Applied to authenticated file uploads, file updates, public-share uploads, and resumable chunk uploads.
+- Aligned maximum upload size configuration with the existing `MAX_UPLOAD_SIZE_MB` environment variable (default 5000 MB), used for authenticated file uploads and file updates.
+- Restored distinct trust-boundary limits for public-share uploads (`MAX_PUBLIC_UPLOAD_SIZE`, 100 MB) and resumable chunk uploads (`MAX_CHUNK_SIZE`, 100 MB).
 - Added unit tests for streaming HTTP bodies to temporary files, including large chunked payloads, size-limit enforcement, and automatic temp-file cleanup.
 - Added integration tests for large-object streaming upload/download and resumable-upload abort/cleanup in `backend/tests/upload_streaming_test.rs`.
+- Added a low-memory streaming test for `ObjectStore::get_stream` that verifies a large object can be consumed through a small fixed buffer without materializing the full object in memory.
+- Strengthened the resumable-upload abort integration test to assert that uploaded chunks are removed from object storage, not just that the session is marked aborted.
 - Added tenant scoping to public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
 - Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
 - Added `X-Tenant-ID` header support for unauthenticated public-share and public-chat-unfurl requests.

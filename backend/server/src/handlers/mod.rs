@@ -147,17 +147,18 @@ impl PaginationQuery {
     }
 }
 
-/// Maximum upload size in bytes.
+/// Maximum authenticated upload size in bytes.
 ///
-/// Defaults to 2 GiB and can be overridden with `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES`.
-/// The value is parsed once on first use.
+/// Defaults to 5000 MB and can be overridden with `MAX_UPLOAD_SIZE_MB`.
+/// The value is parsed once on first use and converted from megabytes to bytes.
 pub fn max_upload_size_bytes() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *MAX.get_or_init(|| {
-        std::env::var("RUSTSHARE_MAX_UPLOAD_SIZE_BYTES")
+        std::env::var("MAX_UPLOAD_SIZE_MB")
             .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(2 * 1024 * 1024 * 1024)
+            .and_then(|value| value.parse::<usize>().ok())
+            .map(|mb| mb.saturating_mul(1024 * 1024))
+            .unwrap_or(5000 * 1024 * 1024)
     })
 }
 
