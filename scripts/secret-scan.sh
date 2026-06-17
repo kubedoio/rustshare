@@ -83,7 +83,7 @@ is_allowlisted() {
 }
 
 # Secret variable names whose values we care about.
-SECRET_VARS="JWT_SECRET|RUSTSHARE_SECRET_ENCRYPTION_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|RUSTFS_ROOT_USER|RUSTFS_ROOT_PASSWORD|RUSTSHARE_ADMIN_PASSWORD|STORAGE_ACCESS_KEY|STORAGE_SECRET_KEY|POSTGRES_PASSWORD|RUSTSHARE_CHAT_WEBHOOK_SECRET|METRICS_API_TOKEN"
+SECRET_VARS="JWT_SECRET|RUSTSHARE_SECRET_ENCRYPTION_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|RUSTFS_ROOT_USER|RUSTFS_ROOT_PASSWORD|RUSTSHARE_ADMIN_PASSWORD|STORAGE_ACCESS_KEY|STORAGE_SECRET_KEY|POSTGRES_PASSWORD|RUSTSHARE_CHAT_WEBHOOK_SECRET|METRICS_API_TOKEN|OIDC_CLIENT_SECRET|RUSTSHARE_DEMO_VIEWER_PASSWORD"
 
 # Weak/default values that must never be used as real credentials.
 BAD_VALUES="rustfsadmin|admin123|viewer123|changeme|password123|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -136,14 +136,16 @@ is_high_entropy_secret() {
 }
 
 # Assignment regex: captures lines that look like they are setting one of the
-# explicitly tracked secret variables. We strip the key side later to inspect
-# the value.
-ASSIGN_RE="^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?(${SECRET_VARS})[[:space:]]*[:=][[:space:]]*(.+)$"
+# explicitly tracked secret variables. The variable may appear after an
+# arbitrary command prefix (e.g. `docker run -e VAR=...`) and may be preceded
+# by shell/YAML/Docker prefixes (`- `, `-e `, `export `, `ENV `). We strip the
+# key side and capture only the first value token for inspection.
+ASSIGN_RE="(^|[[:space:]]+)(ENV[[:space:]]+)?(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?(${SECRET_VARS})[[:space:]]*[:=][[:space:]]*([^[:space:]#]+)"
 
 # Generic assignment regex used to detect high-entropy strings assigned to
 # variables that are not in the explicit secret list (e.g. API_KEY, *_TOKEN,
-# or unknown variable names).
-GENERIC_ASSIGN_RE="^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(.+)$"
+# or unknown variable names). Same prefix/value semantics as ASSIGN_RE.
+GENERIC_ASSIGN_RE="(^|[[:space:]]+)(ENV[[:space:]]+)?(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*([^[:space:]#]+)"
 
 # Extract the first value token after an assignment-like sequence for a
 # variable matching VAR_RE. Uses Python when available for robust quote/command-
@@ -173,8 +175,10 @@ print(m.group(3) or m.group(4) or m.group(5) or m.group(6) or m.group(7))
 PY
     )
   else
-    # Fallback: remove everything up to and including the first assignment.
-    VALUE="$(echo "$RAW" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*//')"
+    # Fallback: remove everything up to and including the first assignment,
+    # including optional shell/YAML/Docker prefixes, then keep only the first
+    # value token.
+    VALUE="$(echo "$RAW" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?(ENV[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*//' | sed -E 's/^([^[:space:]#]+).*/\1/')"
   fi
   # Trim trailing YAML line continuations and whitespace, then remove
   # surrounding quotes for further inspection.

@@ -104,3 +104,11 @@ public configuration values and may remain as plain text in workflow files.
 - Do **not** add real secrets to test fixtures or documentation. Use
   deterministic fake values and add them to `.secret-scan-allowlist` if the
   scanner flags them.
+
+## Scanner scope
+
+`scripts/secret-scan.sh` intentionally scopes its scans to CI/CD, configuration,
+and shell files (`.github/workflows/*.yml`, `.env*`, `docker-compose*.yml`,
+`Dockerfile`s, and `*.sh`). Source code and test fixtures are out of scope to
+avoid noise. For broader coverage—including source files and test fixtures—use a
+dedicated secret scanner such as GitHub secret scanning or TruffleHog.

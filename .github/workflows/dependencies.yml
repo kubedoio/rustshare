@@ -16,6 +16,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh
+
   generate-secrets:
     name: Generate Secrets
     runs-on: ubuntu-latest
