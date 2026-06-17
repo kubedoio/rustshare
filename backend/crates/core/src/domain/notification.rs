@@ -10,7 +10,7 @@ pub type NotificationId = Uuid;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
 )]
-#[sqlx(type_name = "TEXT")]
+#[sqlx(type_name = "varchar", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationType {
     ShareReceived,
@@ -47,7 +47,7 @@ impl std::str::FromStr for NotificationType {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
 )]
-#[sqlx(type_name = "TEXT")]
+#[sqlx(type_name = "varchar", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceType {
     File,

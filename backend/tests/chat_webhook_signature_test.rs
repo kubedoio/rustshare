@@ -190,3 +190,28 @@ async fn chat_webhook_signature_tampered_body() {
         result
     );
 }
+
+#[tokio::test]
+async fn chat_webhook_signature_malformed() {
+    let service = build_service("test_secret");
+    let event = sample_event();
+    let body = serde_json::to_vec(&event).unwrap();
+
+    let malformed_signatures = vec![
+        "v1=not-hex-chars!",
+        "invalid-prefix=123",
+        "random-junk-string",
+    ];
+
+    for sig in malformed_signatures {
+        let result = service.process_incoming_event(&body, sig).await;
+        assert!(
+            matches!(
+                result,
+                Err(ChatIntegrationError::SignatureVerificationFailed)
+            ),
+            "Malformed signature '{}' must be rejected with SignatureVerificationFailed",
+            sig
+        );
+    }
+}

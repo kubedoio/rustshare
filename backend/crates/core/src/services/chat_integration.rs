@@ -752,11 +752,11 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
-        if !self
+        let verified = self
             .signer
             .verify(signature, body)
-            .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?
-        {
+            .map_err(|_| ChatIntegrationError::SignatureVerificationFailed)?;
+        if !verified {
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
