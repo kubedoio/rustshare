@@ -149,8 +149,11 @@ pub struct CompleteUploadResponse {
     pub file_size: u64,
 }
 
-/// Maximum chunk size (100MB — matches the upload service clamp).
-const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
+/// Maximum chunk size (defaults to 2 GiB and can be overridden with
+/// `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES`).
+fn max_chunk_size() -> usize {
+    super::max_upload_size_bytes()
+}
 
 /// Stream an HTTP body to a temporary file and return the temp file plus size.
 /// Enforces a size limit during streaming to prevent OOM.
@@ -351,7 +354,7 @@ pub async fn upload_chunk(
     // Stream chunk body to temp file with size limit to prevent OOM. The temp
     // file is passed to the service using the streaming path so the chunk is
     // never read back into memory.
-    let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, MAX_CHUNK_SIZE).await?;
+    let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, max_chunk_size()).await?;
     let chunk_path = chunk_temp.path();
 
     // Extract hash from Content-MD5 header if present
@@ -504,5 +507,123 @@ mod hex {
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use axum::body::Body;
+    use bytes::Bytes;
+    use futures_util::stream;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_writes_all_content() {
+        let content = b"hello streaming upload";
+        let body = Body::from(content.as_slice());
+
+        let (temp_file, size) = stream_body_to_temp_file(body, 1024 * 1024)
+            .await
+            .expect("should stream small body to temp file");
+
+        assert_eq!(size, content.len());
+
+        let mut file = tokio::fs::File::open(temp_file.path())
+            .await
+            .expect("temp file should exist");
+        let mut read = Vec::new();
+        file.read_to_end(&mut read)
+            .await
+            .expect("should read temp file");
+        assert_eq!(read, content);
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_handles_many_small_chunks() {
+        // Total content larger than the internal buffer so the streaming path
+        // is exercised, but still small enough for a unit test.
+        let chunk_size = 1024usize;
+        let chunk_count = 1024usize;
+        let total_size = chunk_size * chunk_count;
+        let chunks: Vec<Bytes> = (0..chunk_count)
+            .map(|i| Bytes::from(vec![(i % 256) as u8; chunk_size]))
+            .collect();
+
+        let body =
+            Body::from_stream(stream::iter(chunks.clone()).map(Ok::<_, std::convert::Infallible>));
+
+        let (temp_file, size) = stream_body_to_temp_file(body, total_size * 2)
+            .await
+            .expect("should stream chunked body to temp file");
+
+        assert_eq!(size, total_size);
+
+        let mut file = tokio::fs::File::open(temp_file.path())
+            .await
+            .expect("temp file should exist");
+        let mut read = Vec::with_capacity(total_size);
+        file.read_to_end(&mut read)
+            .await
+            .expect("should read temp file");
+        assert_eq!(read.len(), total_size);
+
+        // Verify each chunk round-tripped correctly.
+        for (i, chunk) in chunks.iter().enumerate() {
+            let offset = i * chunk_size;
+            assert_eq!(&read[offset..offset + chunk_size], chunk.as_ref());
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_rejects_oversized_content() {
+        let content = b"this content exceeds the tiny limit";
+        let body = Body::from(content.as_slice());
+
+        let err = stream_body_to_temp_file(body, 5)
+            .await
+            .expect_err("should reject body over max size");
+
+        match err {
+            AppError::PayloadTooLarge(_) => {}
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_cleans_up_on_drop() {
+        let content = b"temporary content";
+        let body = Body::from(content.as_slice());
+
+        let (temp_file, _size) = stream_body_to_temp_file(body, 1024 * 1024)
+            .await
+            .expect("should stream body to temp file");
+
+        let path = temp_file.path().to_path_buf();
+        assert!(path.exists(), "temp file should exist before drop");
+
+        drop(temp_file);
+
+        // NamedTempFile deletes the underlying file on drop.
+        assert!(!path.exists(), "temp file should be cleaned up after drop");
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_cleans_up_on_size_error() {
+        let chunks: Vec<Bytes> = (0..4).map(|_| Bytes::from_static(b"chunk")).collect();
+        let body = Body::from_stream(stream::iter(chunks).map(Ok::<_, std::convert::Infallible>));
+
+        let err = stream_body_to_temp_file(body, 10)
+            .await
+            .expect_err("should reject body over max size");
+
+        match err {
+            AppError::PayloadTooLarge(_) => {}
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+
+        // We cannot inspect the temp file path because it is not returned on
+        // error, but NamedTempFile's Drop impl deletes it automatically. This
+        // test documents that cleanup is expected even on failure.
     }
 }

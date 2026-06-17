@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added streaming download support for object storage via `ObjectStore::get_stream`, with Content-Type and Content-Length preserved. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
+- Added `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES` configuration for the maximum upload body size (defaults to 2 GiB). Applied to authenticated file uploads, file updates, public-share uploads, and resumable chunk uploads.
+- Added unit tests for streaming HTTP bodies to temporary files, including large chunked payloads, size-limit enforcement, and automatic temp-file cleanup.
+- Added integration tests for large-object streaming upload/download and resumable-upload abort/cleanup in `backend/tests/upload_streaming_test.rs`.
 - Added tenant scoping to public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
 - Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
 - Added `X-Tenant-ID` header support for unauthenticated public-share and public-chat-unfurl requests.

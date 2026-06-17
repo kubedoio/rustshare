@@ -172,6 +172,10 @@ name = "public_share_download_header_test"
 path = "../tests/public_share_download_header_test.rs"
 
 [[test]]
+name = "upload_streaming_test"
+path = "../tests/upload_streaming_test.rs"
+
+[[test]]
 name = "chat_webhook_http_rejection_test"
 path = "../tests/chat_webhook_http_rejection_test.rs"
 

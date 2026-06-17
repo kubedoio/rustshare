@@ -1,6 +1,7 @@
 //! HTTP handlers for file operations.
 
 use axum::{
+    body::Body,
     extract::{Multipart, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -30,9 +31,6 @@ fn is_hidden_kanban_file(name: &str) -> bool {
             | "__primary__.md"
     ) || name.ends_with(".editor.json")
 }
-
-/// Maximum file size for uploads (2GB).
-const MAX_UPLOAD_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
 /// Stream a multipart field to a temporary file and return the temp file plus size.
 /// Enforces a per-field size limit during streaming to prevent OOM.
@@ -119,7 +117,7 @@ pub async fn upload_file(
         match field_name.as_str() {
             "file" => {
                 file_temp = Some(
-                    stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                    stream_multipart_field_to_temp_file(&mut field, super::max_upload_size_bytes())
                         .await?
                         .0,
                 );
@@ -307,10 +305,14 @@ pub async fn download_file_content(
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
-    let bytes = state.object_store.get(&storage_key).await.map_err(|e| {
-        tracing::error!("Failed to read file content: {}", e);
-        AppError::internal("Failed to read file content")
-    })?;
+    let (content_type, content_length, stream) = state
+        .object_store
+        .get_stream(&storage_key)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read file content: {}", e);
+            AppError::internal("Failed to read file content")
+        })?;
 
     let content_disposition = format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
@@ -321,7 +323,7 @@ pub async fn download_file_content(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&file.mime_type)
+        HeaderValue::from_str(&content_type.unwrap_or(file.mime_type))
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(
@@ -329,8 +331,15 @@ pub async fn download_file_content(
         HeaderValue::from_str(&content_disposition)
             .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
 
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// Preview file content (inline disposition for browser viewing).
@@ -364,23 +373,34 @@ pub async fn preview_file(
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
-    let bytes = state.object_store.get(&storage_key).await.map_err(|e| {
-        tracing::error!("Failed to read file content: {}", e);
-        AppError::internal("Failed to read file content")
-    })?;
+    let (content_type, content_length, stream) = state
+        .object_store
+        .get_stream(&storage_key)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read file content: {}", e);
+            AppError::internal("Failed to read file content")
+        })?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&file.mime_type)
+        HeaderValue::from_str(&content_type.unwrap_or(file.mime_type))
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("inline"),
     );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
 
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// Delete a file.
@@ -459,7 +479,7 @@ pub async fn update_file(
     {
         if field.name() == Some("file") {
             file_temp = Some(
-                stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
+                stream_multipart_field_to_temp_file(&mut field, super::max_upload_size_bytes())
                     .await?
                     .0,
             );

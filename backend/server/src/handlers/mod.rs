@@ -146,6 +146,21 @@ impl PaginationQuery {
         ((self.page.saturating_sub(1)) as i64) * self.limit()
     }
 }
+
+/// Maximum upload size in bytes.
+///
+/// Defaults to 2 GiB and can be overridden with `RUSTSHARE_MAX_UPLOAD_SIZE_BYTES`.
+/// The value is parsed once on first use.
+pub fn max_upload_size_bytes() -> usize {
+    static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| {
+        std::env::var("RUSTSHARE_MAX_UPLOAD_SIZE_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2 * 1024 * 1024 * 1024)
+    })
+}
+
 use rustshare_core::services::{
     AiError, FileError, FolderError, NotificationError, ShareError, UploadError, VaultSyncError,
 };

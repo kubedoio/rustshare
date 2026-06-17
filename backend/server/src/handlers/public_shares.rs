@@ -4,6 +4,7 @@
 //! It includes session creation with password validation and file download.
 
 use axum::{
+    body::Body,
     extract::{ConnectInfo, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -312,7 +313,7 @@ async fn parse_upload_multipart(
                     }
                 }
                 file_temp = Some(
-                    stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
+                    stream_multipart_field_to_temp_file(&mut field, super::max_upload_size_bytes())
                         .await?
                         .0,
                 );
@@ -434,10 +435,11 @@ pub async fn download_shared_file(
         ));
     }
 
-    // Get file content from storage
-    let content = state
+    // Stream file content from storage without loading it into memory.
+    let storage_key = file.storage_key();
+    let (content_type, content_length, stream) = state
         .object_store
-        .get(&file.storage_key())
+        .get_stream(&storage_key)
         .await
         .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
@@ -474,15 +476,22 @@ pub async fn download_shared_file(
 
     // Return file with appropriate headers
     let content_disposition = build_content_disposition(&file.name);
-    let content_length = content.len().to_string();
+    let content_length = content_length
+        .map(|len| len.to_string())
+        .unwrap_or_else(|| file.size.to_string());
     Ok((
         StatusCode::OK,
         [
-            ("Content-Type", file.mime_type.as_str()),
+            (
+                "Content-Type",
+                content_type
+                    .unwrap_or_else(|| file.mime_type.clone())
+                    .as_str(),
+            ),
             ("Content-Disposition", content_disposition.as_str()),
             ("Content-Length", content_length.as_str()),
         ],
-        content,
+        Body::from_stream(stream),
     )
         .into_response())
 }
@@ -635,9 +644,10 @@ pub async fn download_shared_folder_file(
         return Err(AppError::forbidden("File is not inside the shared folder"));
     }
 
-    let content = state
+    let storage_key = file.storage_key();
+    let (content_type, content_length, stream) = state
         .object_store
-        .get(&file.storage_key())
+        .get_stream(&storage_key)
         .await
         .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
@@ -670,21 +680,25 @@ pub async fn download_shared_folder_file(
     }
 
     let content_disposition = build_content_disposition(&file.name);
-    let content_length = content.len().to_string();
+    let content_length = content_length
+        .map(|len| len.to_string())
+        .unwrap_or_else(|| file.size.to_string());
     Ok((
         StatusCode::OK,
         [
-            ("Content-Type", file.mime_type.as_str()),
+            (
+                "Content-Type",
+                content_type
+                    .unwrap_or_else(|| file.mime_type.clone())
+                    .as_str(),
+            ),
             ("Content-Disposition", content_disposition.as_str()),
             ("Content-Length", content_length.as_str()),
         ],
-        content,
+        Body::from_stream(stream),
     )
         .into_response())
 }
-
-/// Maximum file size for public share uploads (100MB).
-const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 /// Upload a file into a shared folder using an authenticated share session.
 #[utoipa::path(
