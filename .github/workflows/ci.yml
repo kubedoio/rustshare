@@ -70,7 +70,6 @@ jobs:
         id: secrets
         run: |
           PG_PASSWORD=$(openssl rand -hex 32)
-          echo "::add-mask::${PG_PASSWORD}"
           echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
 
   fmt:

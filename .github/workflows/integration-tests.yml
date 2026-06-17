@@ -48,22 +48,16 @@ jobs:
           # outputs so subsequent jobs can reference them without hardcoding
           # anything in this file.
           PG_PASSWORD="$(openssl rand -hex 32)"
-          echo "::add-mask::${PG_PASSWORD}"
           echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
           JWT_SECRET="$(openssl rand -base64 32 | tr -d '\n')"
-          echo "::add-mask::${JWT_SECRET}"
           echo "jwt_secret=${JWT_SECRET}" >> "$GITHUB_OUTPUT"
           ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"
-          echo "::add-mask::${ENCRYPTION_KEY}"
           echo "encryption_key=${ENCRYPTION_KEY}" >> "$GITHUB_OUTPUT"
           ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
-          echo "::add-mask::${ADMIN_PASSWORD}"
           echo "admin_password=${ADMIN_PASSWORD}" >> "$GITHUB_OUTPUT"
           RUSTFS_ROOT_USER="$(openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20)"
-          echo "::add-mask::${RUSTFS_ROOT_USER}"
           echo "rustfs_root_user=${RUSTFS_ROOT_USER}" >> "$GITHUB_OUTPUT"
           RUSTFS_ROOT_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
-          echo "::add-mask::${RUSTFS_ROOT_PASSWORD}"
           echo "rustfs_root_password=${RUSTFS_ROOT_PASSWORD}" >> "$GITHUB_OUTPUT"
 
   integration-tests:
