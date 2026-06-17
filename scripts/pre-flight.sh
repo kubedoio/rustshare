@@ -101,7 +101,7 @@ generate_password() {
 
 # Generate an S3-compatible access key (alphanumeric, <=20 chars)
 generate_access_key() {
-	openssl rand -base64 15 | tr -d '/+=' | cut -c1-20
+	openssl rand -base64 30 | tr -dc 'A-Za-z0-9' | head -c 20
 }
 
 # ---------------------------------------------------------------------------

@@ -18,40 +18,56 @@ Usage: $(basename "$0") [options]
 Options:
   -h, --help     Show this help message
   -v, --verbose  Print matched lines
+      --full     Scan source code and test fixtures in addition to CI/config/shell
 EOF
 }
 
 VERBOSE=0
+FULL_SCAN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     -v|--verbose) VERBOSE=1; shift ;;
+    --full) FULL_SCAN=1; shift ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
 
 # Scope: CI/CD, config, and shell files (workflows, Docker Compose, Dockerfiles,
-# .env*, and shell scripts). Source code and test fixtures are intentionally
-# out of scope to avoid noise; use a dedicated secret scanner for those paths.
+# .env*, and shell scripts). Source code and test fixtures are out of scope by
+# default to avoid noise; pass --full to scan those paths as well.
 # Files to scan. We focus on CI/CD, config, and shell files where secrets are
-# most likely to be committed by accident.
+# most likely to be committed by accident. In --full mode we also scan source
+# code, frontend code, and common fixture/config file types.
+SCAN_EXPRS=(
+  -path "*/.github/workflows/*.yml"
+  -o -path "*/.github/workflows/*.yaml"
+  -o -name ".env.example"
+  -o -name "docker-compose*.yml"
+  -o -name "docker-compose*.yaml"
+  -o -path "*/docker/*.Dockerfile"
+  -o -name "*.sh"
+)
+if [[ "${FULL_SCAN}" -eq 1 ]]; then
+  SCAN_EXPRS+=(
+    -o -name "*.rs"
+    -o -name "*.ts"
+    -o -name "*.js"
+    -o -name "*.svelte"
+    -o -name "*.json"
+    -o -name "*.toml"
+    -o -name "*.sql"
+  )
+fi
+
 mapfile -t FILES < <(
   find "${REPO_ROOT}" \
+    \( -path "*/node_modules" -o -path "*/target" -o -path "*/.git" \
+       -o -path "*/frontend/.svelte-kit" -o -path "*/frontend/build" \
+       -o -path "*/dist" -o -path "*/.sqlx" \) -prune -o \
     -type f \
-    \( \
-      -path "*/.github/workflows/*.yml" -o \
-      -path "*/.github/workflows/*.yaml" -o \
-      -name ".env.example" -o \
-      -name "docker-compose*.yml" -o \
-      -name "docker-compose*.yaml" -o \
-      -path "*/docker/*.Dockerfile" -o \
-      -name "*.sh" \
-    \) \
-    ! -path "*/node_modules/*" \
-    ! -path "*/target/*" \
-    ! -path "*/.git/*" \
-    ! -path "*/frontend/.svelte-kit/*" \
-    ! -path "*/frontend/build/*" \
+    \( "${SCAN_EXPRS[@]}" \) \
+    ! -name "package-lock.json" \
     ! -name "secret-scan.sh" \
     ! -name ".secret-scan-allowlist" \
     -print 2>/dev/null | sort -u
