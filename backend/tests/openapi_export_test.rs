@@ -29,6 +29,23 @@ fn spec_path() -> PathBuf {
 }
 
 #[test]
+fn openapi_spec_version_is_2_0_0() {
+    let spec = rustshare_server::openapi::to_pretty_json()
+        .expect("failed to serialize OpenAPI spec to JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(&spec).expect("failed to parse generated OpenAPI spec as JSON");
+    let version = value
+        .get("info")
+        .and_then(|info| info.get("version"))
+        .and_then(|v| v.as_str())
+        .expect("missing info.version in OpenAPI spec");
+    assert_eq!(
+        version, "2.0.0",
+        "OpenAPI spec version must be 2.0.0 to signal breaking contract changes"
+    );
+}
+
+#[test]
 fn openapi_spec_is_fresh() {
     let generated = rustshare_server::openapi::to_pretty_json()
         .expect("failed to serialize OpenAPI spec to JSON");

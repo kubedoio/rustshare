@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Switched session and CSRF cookie defaults to `Secure=true`. Opting out requires explicitly setting `RUSTSHARE_SESSION_COOKIE_SECURE=false` (or the legacy `SESSION_COOKIE_SECURE=false`).
 - CI/CD workflows now generate per-run secrets via `openssl rand` instead of using hardcoded values.
 - Updated `docs/security-model.md` and `docs/architecture.md` to document tenant isolation, secret rotation, webhook security, and request correlation IDs.
+- Bumped the OpenAPI specification version from `1.0.0` to `2.0.0` to signal breaking contract changes (tenant-scoped share sessions, optional `X-Tenant-ID` on public endpoints, new admin/security response fields).
 
 ### Deprecated
 

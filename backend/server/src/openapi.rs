@@ -22,7 +22,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(
         title = "RustShare REST API",
-        version = "1.0.0",
+        version = "2.0.0",
         description = "Auto-generated OpenAPI specification for the RustShare file-sharing and sync platform.",
     ),
     servers(
