@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added tenant scoping to public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
 - Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
 - Added `X-Tenant-ID` header support for unauthenticated public-share and public-chat-unfurl requests.
+- Added request-scoped correlation IDs. Every HTTP request is assigned a `X-Request-ID` (preserved from the client when valid, otherwise generated), propagated into tracing spans as `request_id`, and returned in the response headers.
 
 ### Changed
 
