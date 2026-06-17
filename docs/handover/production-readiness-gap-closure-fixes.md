@@ -94,6 +94,8 @@ Fix the critical security, correctness, and compatibility findings identified in
 ### ✅ Task 12 — Object store integrity and bucket creation
 - Added SHA-256 verification for content-addressed `blobs/{sha256}` object uploads from memory and paths.
 - Added SHA-256 verification for `get` downloads and streamed `get_stream` downloads, with stream integrity mismatches reported after EOF.
+- Path uploads now hash and upload the same opened file handle, avoiding path-swap races between verification and upload.
+- Verified blob streams omit `Content-Length` because integrity can only be confirmed at EOF.
 - Made startup bucket creation explicit through `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET`; default is disabled for production safety.
 - Kept Docker Compose local bootstrap opted in by default.
 - Added object-store unit tests for matching/mismatched blob hashes and streamed mismatch reporting.

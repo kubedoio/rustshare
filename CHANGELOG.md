@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and Content-Length. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
+- Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and preserving Content-Length when integrity verification does not require EOF validation. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
 - Added multipart upload streaming to temporary files, with automatic cleanup on success and error, and configurable size limits.
 - Added unit and integration tests for large-object streaming upload/download, resumable-upload abort/cleanup, and low-memory `ObjectStore::get_stream` consumption.
 - Added request-scoped correlation IDs. Every HTTP request receives an `X-Request-ID` (preserved from the client when valid, otherwise generated), propagated into tracing spans as `request_id`, and returned in response headers.

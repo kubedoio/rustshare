@@ -44,7 +44,14 @@ async fn setup_test_env() -> (PgPool, Arc<EventStore>, Arc<MetadataStore>, Arc<O
         .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
-        ObjectStore::new(s3_endpoint, s3_region, s3_bucket)
+        ObjectStore::new_with_options(
+            s3_endpoint,
+            s3_region,
+            s3_bucket,
+            rustshare_storage::ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
             .await
             .expect("Failed to create object store"),
     );
