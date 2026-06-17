@@ -90,7 +90,6 @@ async fn reset_smtp_config(pool: &sqlx::PgPool) {
 
 /// Update SMTP config with encrypted password, verify password_enc is stored (not plaintext).
 #[tokio::test]
-#[ignore]
 async fn test_smtp_config_update_stores_encrypted_password() {
     let _guard = SMTP_TEST_LOCK.lock().await;
 
@@ -176,7 +175,6 @@ async fn test_smtp_config_update_stores_encrypted_password() {
 
 /// Second update must change updated_at.
 #[tokio::test]
-#[ignore]
 async fn test_smtp_config_update_changes_updated_at() {
     let _guard = SMTP_TEST_LOCK.lock().await;
 

@@ -230,7 +230,6 @@ async fn cleanup_group_share_fixture(
 
 /// Test creating a group share and verifying member access
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_create_group_share_success() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -272,7 +271,6 @@ async fn test_create_group_share_success() {
 
 /// Test that non-members cannot share with group
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_non_member_cannot_share_with_group() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -307,7 +305,6 @@ async fn test_non_member_cannot_share_with_group() {
 
 /// Test that resource owners can share with any group in their tenant
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_admin_can_share_with_any_group() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -333,7 +330,6 @@ async fn test_admin_can_share_with_any_group() {
 
 /// Test cross-tenant sharing is blocked
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_cross_tenant_sharing_blocked() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -393,7 +389,6 @@ async fn test_cross_tenant_sharing_blocked() {
 
 /// Test duplicate group share prevention
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_duplicate_group_share_prevented() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -430,7 +425,6 @@ async fn test_duplicate_group_share_prevented() {
 
 /// Test that group share access fails after share revoke
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_revoke_group_share() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -481,7 +475,6 @@ async fn test_revoke_group_share() {
 
 /// Test that group share access fails after membership removal
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_group_share_access_fails_after_membership_removal() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -534,7 +527,6 @@ async fn test_group_share_access_fails_after_membership_removal() {
 
 /// Test updating group share permission
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_update_group_share_permission() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -584,7 +576,6 @@ async fn test_update_group_share_permission() {
 
 /// Test that revoking a group share emits an auditable ShareRevoked event
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_group_share_revoke_emits_audit_event() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;
@@ -634,7 +625,6 @@ async fn test_group_share_revoke_emits_audit_event() {
 
 /// Test that folder group shares are revoked correctly
 #[tokio::test]
-#[ignore] // Requires database
 async fn test_group_folder_share_revoke_denies_access() {
     let pool = test_pool().await;
     let f = setup_group_share_fixture(&pool).await;

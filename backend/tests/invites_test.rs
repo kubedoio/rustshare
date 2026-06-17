@@ -33,7 +33,6 @@ async fn get_invite_workflow_id(pool: &sqlx::PgPool) -> Uuid {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_invite_token_crud() {
     let pool = test_pool().await;
     let suffix = Uuid::new_v4().to_string();
@@ -78,7 +77,6 @@ async fn test_invite_token_crud() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_accept_invite_creates_user() {
     let pool = test_pool().await;
     let suffix = Uuid::new_v4().to_string();
@@ -140,7 +138,6 @@ async fn test_accept_invite_creates_user() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_invite_token_expired() {
     let pool = test_pool().await;
     let suffix = Uuid::new_v4().to_string();

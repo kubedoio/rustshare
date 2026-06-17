@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 #[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn test_health_endpoint() {
     let (state, _url) = common::setup_test_server().await;
     let app = rustshare_server::routes::health_routes().with_state(state);

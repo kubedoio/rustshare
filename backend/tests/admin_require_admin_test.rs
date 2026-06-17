@@ -38,7 +38,6 @@ async fn cleanup(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
 
 /// A user with is_admin = false must not pass the admin check.
 #[tokio::test]
-#[ignore]
 async fn test_non_admin_user_is_rejected() {
     let pool = test_pool().await;
     let id = Uuid::new_v4();
@@ -78,7 +77,6 @@ async fn test_non_admin_user_is_rejected() {
 
 /// A user with is_admin = true but disabled_at IS NOT NULL must not pass the admin check.
 #[tokio::test]
-#[ignore]
 async fn test_disabled_admin_is_rejected() {
     let pool = test_pool().await;
     let id = Uuid::new_v4();
@@ -118,7 +116,6 @@ async fn test_disabled_admin_is_rejected() {
 
 /// A user with is_admin = true and disabled_at IS NULL must pass the admin check.
 #[tokio::test]
-#[ignore]
 async fn test_active_admin_is_accepted() {
     let pool = test_pool().await;
     let id = Uuid::new_v4();

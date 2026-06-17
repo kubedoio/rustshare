@@ -103,7 +103,6 @@ async fn cleanup_modules_and_folders(pool: &PgPool, tenant_id: Uuid, user_id: Uu
 }
 
 #[tokio::test]
-#[ignore] // Requires database
 async fn contract_ensure_default_modules_creates_canonical_roots() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -153,7 +152,6 @@ async fn contract_ensure_default_modules_creates_canonical_roots() {
 }
 
 #[tokio::test]
-#[ignore] // Requires database
 async fn contract_ensure_default_modules_is_idempotent_no_duplicate_roots() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -215,7 +213,6 @@ async fn contract_ensure_default_modules_is_idempotent_no_duplicate_roots() {
 }
 
 #[tokio::test]
-#[ignore] // Requires database
 async fn contract_enable_module_ensures_canonical_root_without_duplicates() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -275,7 +272,6 @@ async fn contract_enable_module_ensures_canonical_root_without_duplicates() {
 }
 
 #[tokio::test]
-#[ignore] // Requires database
 async fn contract_module_summary_reads_from_canonical_root() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -313,7 +309,6 @@ async fn contract_module_summary_reads_from_canonical_root() {
 }
 
 #[tokio::test]
-#[ignore] // Requires database
 async fn contract_kanban_summary_includes_directly_shared_board_without_shared_root() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();

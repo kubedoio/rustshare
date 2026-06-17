@@ -97,7 +97,6 @@ async fn reset_oidc_config(pool: &sqlx::PgPool) {
 /// Encryption round-trip: encrypt then decrypt returns the original plaintext.
 /// This test does not touch the DB — it validates the crypto primitives directly.
 #[tokio::test]
-#[ignore]
 async fn test_secret_encryption_roundtrip() {
     let key = test_encryption_key();
     let plaintext = "super-secret-oidc-client-secret-value";
@@ -120,7 +119,6 @@ async fn test_secret_encryption_roundtrip() {
 
 /// Each call to encrypt_secret must produce a different ciphertext (random nonce).
 #[tokio::test]
-#[ignore]
 async fn test_encryption_produces_different_ciphertexts() {
     let key = test_encryption_key();
     let plaintext = "same-plaintext";
@@ -141,7 +139,6 @@ async fn test_encryption_produces_different_ciphertexts() {
 /// Update the pre-seeded oidc_config row, verify client_secret_enc is set (not plaintext),
 /// and verify admin_actions row is written.
 #[tokio::test]
-#[ignore]
 async fn test_oidc_config_update_stores_encrypted_secret() {
     let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;
@@ -261,7 +258,6 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
 /// Update the issuer_url on the oidc_config row, verify the change persists,
 /// and confirm an admin_actions row is written for config.oidc_updated.
 #[tokio::test]
-#[ignore]
 async fn test_oidc_config_update() {
     let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;
@@ -335,7 +331,6 @@ async fn test_oidc_config_update() {
 
 /// Runtime-only fields for the login path should persist alongside the identity provider values.
 #[tokio::test]
-#[ignore]
 async fn test_oidc_runtime_fields_persist() {
     let _guard = OIDC_CONFIG_TEST_LOCK.lock().await;
     let pool = test_pool().await;

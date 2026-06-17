@@ -88,7 +88,6 @@ async fn cleanup_group(pool: &sqlx::PgPool, group_id: Uuid) {
 
 /// Create a group and verify it appears in user_groups.
 #[tokio::test]
-#[ignore]
 async fn test_create_group() {
     let pool = test_pool().await;
     let actor_id = create_test_admin(&pool, &Uuid::new_v4().to_string()[..8]).await;
@@ -129,7 +128,6 @@ async fn test_create_group() {
 
 /// Add a member to a group and verify member count increases.
 #[tokio::test]
-#[ignore]
 async fn test_add_member_to_group() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -172,7 +170,6 @@ async fn test_add_member_to_group() {
 
 /// Inserting the same user twice into a group must fail with a unique constraint violation.
 #[tokio::test]
-#[ignore]
 async fn test_duplicate_member_violates_unique_constraint() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -224,7 +221,6 @@ async fn test_duplicate_member_violates_unique_constraint() {
 
 /// Remove a member from a group and verify they are gone.
 #[tokio::test]
-#[ignore]
 async fn test_remove_member_from_group() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -270,7 +266,6 @@ async fn test_remove_member_from_group() {
 
 /// Deleting a group must CASCADE-delete all group_members rows.
 #[tokio::test]
-#[ignore]
 async fn test_delete_group_cascades_members() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];

@@ -28,7 +28,7 @@ async fn connect_websocket(
 }
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_connect_with_valid_jwt() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);
@@ -38,7 +38,7 @@ async fn test_connect_with_valid_jwt() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_connect_without_jwt() {
     let (_state, base_url) = common::setup_test_server().await;
 
@@ -49,7 +49,7 @@ async fn test_connect_without_jwt() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_receive_notification_on_upload() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);
@@ -92,7 +92,7 @@ async fn test_receive_notification_on_upload() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_multiple_devices_receive_notification() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);
