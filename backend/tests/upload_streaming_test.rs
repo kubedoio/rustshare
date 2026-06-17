@@ -23,6 +23,33 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Return the current peak resident set size (RSS) in bytes.
+///
+/// This is a duplicate of the helper in `backend/crates/storage/src/object_store.rs`
+/// so integration tests can assert low-memory behavior without exposing the
+/// helper in the public crate API.
+#[cfg(unix)]
+fn peak_rss_bytes() -> usize {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let usage = unsafe {
+        libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
+        usage.assume_init()
+    };
+    #[cfg(target_os = "macos")]
+    {
+        usage.ru_maxrss as usize
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        usage.ru_maxrss as usize * 1024
+    }
+}
+
+#[cfg(not(unix))]
+fn peak_rss_bytes() -> usize {
+    0
+}
+
 async fn setup_test_env() -> (
     PgPool,
     Arc<EventStore>,
@@ -207,9 +234,11 @@ async fn large_file_upload_uses_streaming_path_and_matches_on_download() {
         &pool,
     );
 
-    // Use a 4 MiB file so the streaming path is exercised while keeping tests fast.
-    let file_size = 4 * 1024 * 1024;
+    // Use an 8 MiB file so the streaming path is exercised while keeping tests fast.
+    let file_size = 8 * 1024 * 1024;
     let (temp_file, expected_content) = create_large_temp_file(file_size).await;
+
+    let rss_before = peak_rss_bytes();
 
     let uploaded_file = file_service
         .upload_file_from_path(
@@ -223,7 +252,17 @@ async fn large_file_upload_uses_streaming_path_and_matches_on_download() {
         .await
         .expect("should upload large file from path");
 
+    let rss_after = peak_rss_bytes();
+    let rss_increase = rss_after.saturating_sub(rss_before);
+
     assert_eq!(uploaded_file.size, file_size as i64);
+    // The upload path must stream from disk; an RSS growth close to the file
+    // size would mean the server held the entire object in memory.
+    assert!(
+        rss_increase < 2 * 1024 * 1024,
+        "peak RSS grew by {rss_increase} bytes during upload; \
+         this suggests the file was fully materialized in memory"
+    );
 
     // Stream the file back from object storage and verify every byte.
     let (_content_type, content_length, stream) = object_store

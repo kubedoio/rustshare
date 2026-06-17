@@ -3736,6 +3736,7 @@ dependencies = [
  "hmac 0.13.0",
  "image",
  "lettre",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "mime_guess",
