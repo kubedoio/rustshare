@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
 - Fixed permission resolver caching so source-aware lookups preserve owner, direct-share, group-share, inherited, and no-permission sources.
 - Fixed inherited folder permission aggregation to select the highest active user share instead of an arbitrary share.
+- Added object-store integrity checks for content-addressed `blobs/{sha256}` uploads and downloads.
 
 ### Security
 
@@ -67,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented password-protected public share info from exposing filename, size, MIME type, or folder name before password-backed session creation.
 - Restricted private user-share chat unfurls to the share recipient in the requesting tenant.
 - Added explicit wrong-tenant regression coverage for infrastructure file and folder repository lookups.
+- Disabled implicit object-store bucket creation by default; local/dev deployments can opt in with `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=true`.
 
 ## [0.5.1] - 2026-06-12
 

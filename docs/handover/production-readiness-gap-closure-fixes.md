@@ -91,23 +91,22 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Verified `PermissionResolverRepository` delegates file/folder lookups through those tenant-scoped repository methods.
 - Added explicit wrong-tenant regression assertions to the infrastructure file and folder repository tests.
 
+### ✅ Task 12 — Object store integrity and bucket creation
+- Added SHA-256 verification for content-addressed `blobs/{sha256}` object uploads from memory and paths.
+- Added SHA-256 verification for `get` downloads and streamed `get_stream` downloads, with stream integrity mismatches reported after EOF.
+- Made startup bucket creation explicit through `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET`; default is disabled for production safety.
+- Kept Docker Compose local bootstrap opted in by default.
+- Added object-store unit tests for matching/mismatched blob hashes and streamed mismatch reporting.
+
+### ✅ Task 13 — Code cleanup
+- Centralized object-store upload request construction for normal and conditional writes.
+- Replaced repeated object-store literals with named constants.
+
 ## Known Gaps / Work Remaining
 
 ## Pending Tasks (Critical Findings Still Open)
 
-The original review identified 18 critical/secondary findings. The following have not been started:
-
-### 🟡 Task 12 — Object store integrity and bucket creation
-**Files:** `backend/crates/infrastructure/src/object_store.rs` (or equivalent)
-**Issues:**
-- Uploads/downloads lack integrity checksum verification against object store.
-- Object store auto-creates bucket on startup; this should be configurable or removed.
-
-### 🟡 Task 13 — Code cleanup
-**Files:** Various handlers
-**Issues:**
-- Duplicated helper code and bare literals across handlers.
-- Extract shared helpers and constants.
+The original review identified 18 critical/secondary findings. Tasks 1-13 from this remediation handover are complete.
 
 ## Tooling / Verification Commands
 
@@ -145,4 +144,4 @@ DATABASE_URL="postgresql:///rustshare_test_fixes?host=/tmp&user=scolak" cargo sq
 3. Run `cargo fmt --check` and clippy before each commit.
 4. The original PR is #114 (`production-readiness-gap-closure`). This new branch is for the remediation fixes and can be merged back into the original PR branch or reviewed separately.
 5. Task 6 has uncommitted hardening fixes already applied and committed as `652e3380`; add the missing tests before considering it fully done.
-6. The most impactful remaining work is Task 12 (object store integrity and bucket creation).
+6. Tasks 1-13 in this handover are complete; continue with any new PR review feedback or CI findings.

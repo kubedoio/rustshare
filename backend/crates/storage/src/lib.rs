@@ -21,7 +21,7 @@ pub use metadata::{
     MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig,
     ShareAccessLogEntry, UserSecurityEvent, UserSecurityEventRecord,
 };
-pub use object_store::ObjectStore;
+pub use object_store::{ObjectStore, ObjectStoreOptions};
 
 // Implement service layer traits for storage types
 use anyhow::Result;
