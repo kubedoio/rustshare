@@ -221,6 +221,9 @@ value_is_expression_or_substitution() {
 while IFS=: read -r FILE LINE_NUM LINE; do
   is_allowlisted "${FILE}:${LINE_NUM}:${LINE}" && continue
 
+  # Skip commented-out lines (e.g. examples in .env.example).
+  [[ "$LINE" =~ ^[[:space:]]*# ]] && continue
+
   # Flag known bad credential values.
   if echo "$LINE" | grep -qiE "${BAD_VALUES}"; then
     echo "${FILE}:${LINE_NUM}:${LINE}" >> "${MATCHES_FILE}"

@@ -59,7 +59,7 @@ jobs:
           ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
           echo "::add-mask::${ADMIN_PASSWORD}"
           echo "admin_password=${ADMIN_PASSWORD}" >> "$GITHUB_OUTPUT"
-          RUSTFS_ROOT_USER="$(openssl rand -base64 30 | tr -dc 'A-Za-z0-9' | head -c 20)"
+          RUSTFS_ROOT_USER="$(openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20)"
           echo "::add-mask::${RUSTFS_ROOT_USER}"
           echo "rustfs_root_user=${RUSTFS_ROOT_USER}" >> "$GITHUB_OUTPUT"
           RUSTFS_ROOT_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"

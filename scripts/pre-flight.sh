@@ -113,7 +113,7 @@ generate_password() {
 
 # Generate an S3-compatible access key (alphanumeric, <=20 chars)
 generate_access_key() {
-	openssl rand -base64 30 | tr -dc 'A-Za-z0-9' | head -c 20
+	openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20
 }
 
 # ---------------------------------------------------------------------------
@@ -247,8 +247,17 @@ done
 # and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must match RustFS root
 # credentials. If you are using real AWS S3, override these variables in .env
 # instead of relying on this derivation.
+#
+# We only overwrite the derived variables when they are empty or still set to a
+# known weak default ("rustfsadmin"). Any non-empty, non-default value is treated
+# as user-supplied and is preserved so that real S3 credentials are not clobbered.
 RUSTFS_ROOT_USER_VALUE="$(env_get "RUSTFS_ROOT_USER")"
 RUSTFS_ROOT_PASSWORD_VALUE="$(env_get "RUSTFS_ROOT_PASSWORD")"
+
+is_derived_weak_default() {
+	local value="$1"
+	[[ -z "${value}" || "${value}" == "rustfsadmin" ]]
+}
 
 if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
 	for derived_var in STORAGE_ACCESS_KEY AWS_ACCESS_KEY_ID; do
@@ -256,12 +265,14 @@ if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; t
 		if env_get "${derived_var}" >/dev/null 2>&1; then
 			current_derived="$(env_get "${derived_var}")"
 		fi
-		if [[ "${current_derived}" != "${RUSTFS_ROOT_USER_VALUE}" ]]; then
+		if is_derived_weak_default "${current_derived}"; then
 			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_USER_VALUE}"
-			warn "${derived_var} did not match RUSTFS_ROOT_USER — updated in .env"
+			warn "${derived_var} was empty/weak — derived from RUSTFS_ROOT_USER in .env"
 			WEAK_COUNT=$((WEAK_COUNT + 1))
+			export "${derived_var}=${RUSTFS_ROOT_USER_VALUE}"
+		else
+			export "${derived_var}=${current_derived}"
 		fi
-		export "${derived_var}=${RUSTFS_ROOT_USER_VALUE}"
 		ok "${derived_var}"
 	done
 
@@ -270,12 +281,14 @@ if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; t
 		if env_get "${derived_var}" >/dev/null 2>&1; then
 			current_derived="$(env_get "${derived_var}")"
 		fi
-		if [[ "${current_derived}" != "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
+		if is_derived_weak_default "${current_derived}"; then
 			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_PASSWORD_VALUE}"
-			warn "${derived_var} did not match RUSTFS_ROOT_PASSWORD — updated in .env"
+			warn "${derived_var} was empty/weak — derived from RUSTFS_ROOT_PASSWORD in .env"
 			WEAK_COUNT=$((WEAK_COUNT + 1))
+			export "${derived_var}=${RUSTFS_ROOT_PASSWORD_VALUE}"
+		else
+			export "${derived_var}=${current_derived}"
 		fi
-		export "${derived_var}=${RUSTFS_ROOT_PASSWORD_VALUE}"
 		ok "${derived_var}"
 	done
 fi

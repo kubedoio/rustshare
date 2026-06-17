@@ -54,7 +54,7 @@ jobs:
           echo "::add-mask::${ENCRYPTION_KEY}"
           POSTGRES_PASSWORD=$(openssl rand -hex 32)
           echo "::add-mask::${POSTGRES_PASSWORD}"
-          RUSTFS_ROOT_USER=$(openssl rand -base64 30 | tr -dc 'A-Za-z0-9' | head -c 20)
+          RUSTFS_ROOT_USER=$(openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20)
           echo "::add-mask::${RUSTFS_ROOT_USER}"
           RUSTFS_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
           echo "::add-mask::${RUSTFS_ROOT_PASSWORD}"
