@@ -175,16 +175,6 @@ pub trait ObjectStoreOps: Send + Sync {
     /// Check if an object exists.
     async fn exists(&self, key: &str) -> Result<bool>;
 
-    /// Get a presigned URL for downloading an object.
-    ///
-    /// # Arguments
-    /// * `key` - The object key
-    /// * `expiry_secs` - URL expiration time in seconds
-    ///
-    /// # Returns
-    /// A presigned URL string valid for the specified duration.
-    async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String>;
-
     /// Download content from object storage.
     ///
     /// # Arguments
@@ -690,38 +680,6 @@ where
             .await?;
 
         Ok(file)
-    }
-
-    /// Get a presigned download URL for a file.
-    ///
-    /// # Arguments
-    /// * `file_id` - The ID of the file to download
-    /// * `user_id` - The ID of the user requesting the download
-    ///
-    /// # Returns
-    /// A presigned object-storage URL valid for 1 hour.
-    ///
-    /// # Errors
-    /// - `FileError::NotFound` if the file doesn't exist
-    /// - `FileError::PermissionDenied` if the user doesn't own the file
-    /// - `FileError::Storage` if URL generation fails
-    pub async fn get_download_url(
-        &self,
-        file_id: uuid::Uuid,
-        user_id: UserId,
-    ) -> Result<String, FileError> {
-        // Use get_file for permission check
-        let file = self.get_file(file_id, user_id).await?;
-
-        // Generate presigned URL (1 hour = 3600 seconds)
-        let storage_key = file.storage_key();
-        let url = self
-            .object_store
-            .get_presigned_url(&storage_key, 3600)
-            .await
-            .map_err(|e| FileError::Storage(format!("Failed to generate presigned URL: {}", e)))?;
-
-        Ok(url)
     }
 
     /// Update a file's content with optimistic locking.
@@ -1935,14 +1893,6 @@ mod tests {
             Ok(self.objects.lock().unwrap().contains_key(key))
         }
 
-        async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String> {
-            // Mock presigned URL generation
-            Ok(format!(
-                "https://mock-s3.example.com/{}?expiry={}",
-                key, expiry_secs
-            ))
-        }
-
         async fn get(&self, key: &str) -> Result<Bytes> {
             let objects = self.objects.lock().unwrap();
             objects
@@ -2355,67 +2305,6 @@ mod tests {
             assert_eq!(file_id, file.id);
             assert_eq!(user_id, other_user);
         }
-    }
-
-    // Tests for get_download_url
-
-    #[tokio::test]
-    async fn test_get_download_url_success() {
-        let (service, _, metadata_store, _) = setup_file_service();
-        let owner_id = uuid::Uuid::new_v4();
-
-        let file = File::new(
-            "download.pdf".to_string(),
-            "/download.pdf".to_string(),
-            "hash789".to_string(),
-            500,
-            "application/pdf".to_string(),
-            None,
-            owner_id,
-        );
-        metadata_store.add_file(file.clone());
-
-        let result = service.get_download_url(file.id, owner_id).await;
-        assert!(result.is_ok());
-
-        let url = result.unwrap();
-        // Verify URL contains the storage key and expiry
-        assert!(url.contains("blobs/hash789"));
-        assert!(url.contains("expiry=3600"));
-    }
-
-    #[tokio::test]
-    async fn test_get_download_url_not_found() {
-        let (service, _, _, _) = setup_file_service();
-        let user_id = uuid::Uuid::new_v4();
-        let non_existent_file_id = uuid::Uuid::new_v4();
-
-        let result = service
-            .get_download_url(non_existent_file_id, user_id)
-            .await;
-        assert!(matches!(result, Err(FileError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_get_download_url_permission_denied() {
-        let (service, _, metadata_store, _) = setup_file_service();
-        let owner_id = uuid::Uuid::new_v4();
-        let other_user = uuid::Uuid::new_v4();
-
-        let file = File::new(
-            "secret.docx".to_string(),
-            "/secret.docx".to_string(),
-            "secrethash".to_string(),
-            1000,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
-            None,
-            owner_id,
-        );
-        metadata_store.add_file(file.clone());
-
-        // Try to get download URL as different user
-        let result = service.get_download_url(file.id, other_user).await;
-        assert!(matches!(result, Err(FileError::PermissionDenied { .. })));
     }
 
     // Tests for update_file with optimistic locking

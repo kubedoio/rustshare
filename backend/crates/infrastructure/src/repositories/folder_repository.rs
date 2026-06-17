@@ -140,6 +140,22 @@ mod tests {
         assert_eq!(folder.deleted_at, None);
         assert_eq!(folder.ancestor_ids, None);
 
+        let other_tenant_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(other_tenant_id)
+            .bind(format!("other-tenant-{test_id}"))
+            .execute(&pool)
+            .await
+            .expect("create other tenant");
+
+        assert!(
+            repo.get_by_id(folder_id, other_tenant_id)
+                .await
+                .expect("query folder with wrong tenant")
+                .is_none(),
+            "folder lookup leaked across tenants"
+        );
+
         sqlx::query("DELETE FROM folders WHERE id = $1")
             .bind(folder_id)
             .execute(&pool)
@@ -147,6 +163,11 @@ mod tests {
             .ok();
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user_id)
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(other_tenant_id)
             .execute(&pool)
             .await
             .ok();

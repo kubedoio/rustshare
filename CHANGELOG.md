@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and Content-Length. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
+- Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and preserving Content-Length when integrity verification does not require EOF validation. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
 - Added multipart upload streaming to temporary files, with automatic cleanup on success and error, and configurable size limits.
 - Added unit and integration tests for large-object streaming upload/download, resumable-upload abort/cleanup, and low-memory `ObjectStore::get_stream` consumption.
 - Added request-scoped correlation IDs. Every HTTP request receives an `X-Request-ID` (preserved from the client when valid, otherwise generated), propagated into tracing spans as `request_id`, and returned in response headers.
@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Switched session and CSRF cookie defaults to `Secure=true`. Opting out requires explicitly setting `RUSTSHARE_SESSION_COOKIE_SECURE=false` (or the legacy `SESSION_COOKIE_SECURE=false`).
 - CI/CD workflows now generate per-run secrets via `openssl rand` instead of using hardcoded values.
 - Updated `docs/security-model.md` and `docs/architecture.md` to document tenant isolation, secret rotation, webhook security, and request correlation IDs.
+- Bumped the OpenAPI specification version from `1.0.0` to `2.0.0` to signal breaking contract changes (tenant-scoped share sessions, optional `X-Tenant-ID` on public endpoints, new admin/security response fields).
 
 ### Deprecated
 
@@ -44,9 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Sanitized `Content-Disposition` filename parameters to strip control characters, backslashes, and quotes.
+- Fixed resumable upload chunk integrity validation so `Content-MD5` is verified as MD5 instead of being compared to SHA-256 chunk hashes.
+- Fixed resumable upload completion to assemble chunks through streaming temporary files instead of materializing full files in memory.
+- Fixed concurrent resumable chunk uploads by using conditional chunk object writes and merging upload-session chunk state.
 - Fixed ignored backend tests by re-enabling, replacing, or removing them with documented justifications.
 - Resolved clippy warnings across all targets.
 - Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
+- Fixed permission resolver caching so source-aware lookups preserve owner, direct-share, group-share, inherited, and no-permission sources.
+- Fixed inherited folder permission aggregation to select the highest active user share instead of an arbitrary share.
+- Added object-store integrity checks for content-addressed `blobs/{sha256}` uploads and downloads.
 
 ### Security
 
@@ -55,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced admin authentication on all `/api/v1/admin/*` routes, including chat integration and replication admin endpoints.
 - Removed hardcoded credentials from GitHub Actions workflows.
 - Documented required production secrets and rotation guidance in `docs/DEPLOYMENT.md`, `docs/CI_SECRETS.md`, and `.env.example`.
+- Hardened chat webhook URLs against SSRF: registration and dispatch now reject loopback, private IPv4, link-local, multicast, CGNAT, localhost, and IPv4-mapped IPv6 addresses, with a 5-second DNS timeout and re-validation at dispatch time to mitigate DNS rebinding.
+- Added replay-age checks for incoming chat webhook events: timestamps outside `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` (default 300) are rejected without revealing that the failure was a replay.
+- Re-verify current folder write permission when completing resumable uploads, and use current public-share permissions instead of stale JWT permission claims for public folder uploads.
+- Prevented password-protected public share info from exposing filename, size, MIME type, or folder name before password-backed session creation.
+- Restricted private user-share chat unfurls to the share recipient in the requesting tenant.
+- Added explicit wrong-tenant regression coverage for infrastructure file and folder repository lookups.
+- Disabled implicit object-store bucket creation by default; local/dev deployments can opt in with `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=true`.
 
 ## [0.5.1] - 2026-06-12
 

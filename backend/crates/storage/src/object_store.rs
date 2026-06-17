@@ -2,8 +2,15 @@ use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
-use futures::Stream;
-use tokio::io::AsyncReadExt;
+use futures::{Stream, StreamExt};
+use sha2::{Digest, Sha256};
+use std::pin::Pin;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+
+const BLOB_KEY_PREFIX: &str = "blobs/";
+const SHA256_HEX_LEN: usize = 64;
+const STREAM_BUFFER_SIZE: usize = 64 * 1024;
+const OBJECT_STORE_AUTO_CREATE_BUCKET_ENV: &str = "RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET";
 
 /// Object storage abstraction for RustFS/S3
 pub struct ObjectStore {
@@ -12,9 +19,29 @@ pub struct ObjectStore {
     public_endpoint: Option<S3Client>,
 }
 
+/// Object store startup options.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ObjectStoreOptions {
+    /// Create the bucket on startup when it is missing.
+    ///
+    /// Production deployments should provision buckets outside the application
+    /// and leave this disabled.
+    pub auto_create_bucket: bool,
+}
+
 impl ObjectStore {
     /// Create new object store
     pub async fn new(endpoint: String, region: String, bucket: String) -> Result<Self> {
+        Self::new_with_options(endpoint, region, bucket, ObjectStoreOptions::default()).await
+    }
+
+    /// Create new object store with explicit startup options.
+    pub async fn new_with_options(
+        endpoint: String,
+        region: String,
+        bucket: String,
+        options: ObjectStoreOptions,
+    ) -> Result<Self> {
         // Check if there's a public endpoint for presigned URLs
         let public_endpoint = std::env::var("RUSTFS_PUBLIC_ENDPOINT").ok();
 
@@ -34,7 +61,7 @@ impl ObjectStore {
 
         let client = S3Client::from_conf(s3_config);
 
-        ensure_bucket_exists(&client, &bucket).await?;
+        ensure_bucket_exists(&client, &bucket, options.auto_create_bucket).await?;
 
         // Create a second client for presigned URLs with public endpoint
         let region_str = config.region().map(|r| r.to_string()).unwrap_or(region);
@@ -59,15 +86,14 @@ impl ObjectStore {
 
     /// Put object in storage
     pub async fn put(&self, key: &str, data: Bytes) -> Result<()> {
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(ByteStream::from(data))
-            .send()
-            .await?;
+        verify_blob_bytes(key, &data)?;
+        self.put_body(key, ByteStream::from(data), false).await
+    }
 
-        Ok(())
+    /// Put object only if the key does not already exist.
+    pub async fn put_if_absent(&self, key: &str, data: Bytes) -> Result<()> {
+        verify_blob_bytes(key, &data)?;
+        self.put_body(key, ByteStream::from(data), true).await
     }
 
     /// Put object in storage by streaming from a local file.
@@ -75,16 +101,14 @@ impl ObjectStore {
     /// This avoids loading the file into memory and is used for large uploads
     /// that have already been buffered to disk.
     pub async fn put_from_path(&self, key: &str, path: &std::path::Path) -> Result<()> {
-        let body = ByteStream::from_path(path).await?;
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(body)
-            .send()
-            .await?;
+        let body = verified_byte_stream_from_path(key, path).await?;
+        self.put_body(key, body, false).await
+    }
 
-        Ok(())
+    /// Put object from a local file only if the key does not already exist.
+    pub async fn put_from_path_if_absent(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let body = verified_byte_stream_from_path(key, path).await?;
+        self.put_body(key, body, true).await
     }
 
     /// Get object from storage
@@ -98,7 +122,9 @@ impl ObjectStore {
             .await?;
 
         let data = output.body.collect().await?;
-        Ok(data.into_bytes())
+        let bytes = data.into_bytes();
+        verify_blob_bytes(key, &bytes)?;
+        Ok(bytes)
     }
 
     /// Stream an object from storage.
@@ -123,13 +149,19 @@ impl ObjectStore {
             .await?;
 
         let content_type = output.content_type().map(|s| s.to_string());
-        let content_length = output.content_length;
+        let mut content_length = output.content_length;
 
         // Convert the ByteStream into an AsyncRead and then into a futures
         // Stream so callers can pipe it into an HTTP response body without
         // buffering the entire object in memory.
         let reader = output.body.into_async_read();
-        let stream = byte_stream_from_reader(reader);
+        let stream = verify_blob_stream(key, byte_stream_from_reader(reader));
+        if expected_blob_sha256(key).is_some() {
+            // Blob streams can only prove integrity after EOF. Avoid a fixed
+            // length response so callers can surface a final stream error
+            // instead of advertising a complete byte count up front.
+            content_length = None;
+        }
 
         Ok((content_type, content_length, stream))
     }
@@ -214,6 +246,161 @@ impl ObjectStore {
 
         Ok(presigned_request.uri().to_string())
     }
+
+    async fn put_body(&self, key: &str, body: ByteStream, if_absent: bool) -> Result<()> {
+        let mut request = self
+            .client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(body);
+
+        if if_absent {
+            request = request.if_none_match("*");
+        }
+
+        request.send().await?;
+        Ok(())
+    }
+}
+
+fn expected_blob_sha256(key: &str) -> Option<&str> {
+    let hash = key.strip_prefix(BLOB_KEY_PREFIX)?;
+    (hash.len() == SHA256_HEX_LEN && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
+}
+
+fn calculate_sha256(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn verify_blob_bytes(key: &str, data: &[u8]) -> Result<()> {
+    if let Some(expected) = expected_blob_sha256(key) {
+        let actual = calculate_sha256(data);
+        anyhow::ensure!(
+            actual.eq_ignore_ascii_case(expected),
+            "object integrity check failed for `{key}`: expected sha256 {expected}, got {actual}"
+        );
+    }
+
+    Ok(())
+}
+
+async fn verified_byte_stream_from_path(key: &str, path: &std::path::Path) -> Result<ByteStream> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("failed to open object source file `{}`", path.display()))?;
+
+    let Some(expected) = expected_blob_sha256(key) else {
+        return ByteStream::read_from()
+            .file(file)
+            .buffer_size(STREAM_BUFFER_SIZE)
+            .build()
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to build object source stream from `{}`",
+                    path.display()
+                )
+            });
+    };
+
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+    let mut size = 0_u64;
+    let temp_file = tempfile::tempfile()
+        .with_context(|| "failed to create verified object source temp file")?;
+    let mut verified_file = tokio::fs::File::from_std(temp_file);
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .with_context(|| format!("failed to read object source file `{}`", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        hasher.update(&buffer[..read]);
+        verified_file
+            .write_all(&buffer[..read])
+            .await
+            .with_context(|| "failed to write verified object source temp file")?;
+    }
+
+    let actual = hex::encode(hasher.finalize());
+    anyhow::ensure!(
+        actual.eq_ignore_ascii_case(expected),
+        "object integrity check failed for `{key}`: expected sha256 {expected}, got {actual}"
+    );
+
+    verified_file
+        .flush()
+        .await
+        .with_context(|| "failed to flush verified object source temp file")?;
+    verified_file
+        .seek(std::io::SeekFrom::Start(0))
+        .await
+        .with_context(|| "failed to rewind verified object source temp file")?;
+
+    ByteStream::read_from()
+        .file(verified_file)
+        .length(aws_smithy_types::byte_stream::Length::Exact(size))
+        .buffer_size(STREAM_BUFFER_SIZE)
+        .build()
+        .await
+        .with_context(|| {
+            format!(
+                "failed to build object source stream from `{}`",
+                path.display()
+            )
+        })
+}
+
+fn verify_blob_stream<S>(key: &str, stream: S) -> impl Stream<Item = std::io::Result<Bytes>>
+where
+    S: Stream<Item = std::io::Result<Bytes>> + Send + 'static,
+{
+    let Some(expected) = expected_blob_sha256(key).map(str::to_ascii_lowercase) else {
+        return futures::future::Either::Left(stream);
+    };
+
+    struct VerifyState<S> {
+        stream: Pin<Box<S>>,
+        hasher: Sha256,
+        expected: String,
+    }
+
+    let state = VerifyState {
+        stream: Box::pin(stream),
+        hasher: Sha256::new(),
+        expected,
+    };
+
+    let stream = futures::stream::try_unfold(state, |mut state| async move {
+        match state.stream.next().await {
+            Some(Ok(chunk)) => {
+                state.hasher.update(&chunk);
+                Ok(Some((chunk, state)))
+            }
+            Some(Err(error)) => Err(error),
+            None => {
+                let actual = hex::encode(state.hasher.finalize());
+                if actual == state.expected {
+                    Ok(None)
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "object integrity check failed: expected sha256 {}, got {}",
+                            state.expected, actual
+                        ),
+                    ))
+                }
+            }
+        }
+    });
+
+    futures::future::Either::Right(stream)
 }
 
 /// Convert an [`AsyncRead`] into a stream of `Bytes` chunks.
@@ -225,7 +412,7 @@ where
     R: tokio::io::AsyncRead + Unpin,
 {
     futures::stream::try_unfold(reader, |mut reader| async move {
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; STREAM_BUFFER_SIZE];
         match reader.read(&mut buf).await {
             Ok(0) => Ok(None),
             Ok(n) => {
@@ -237,13 +424,22 @@ where
     })
 }
 
-async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
+async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool) -> Result<()> {
     match client.head_bucket().bucket(bucket).send().await {
         Ok(_) => {
             tracing::info!(bucket = %bucket, "Object storage bucket is ready");
             Ok(())
         }
         Err(error) => {
+            if !auto_create {
+                return Err(error).with_context(|| {
+                    format!(
+                        "object storage bucket `{bucket}` is missing or inaccessible; \
+                         provision it before startup or set {OBJECT_STORE_AUTO_CREATE_BUCKET_ENV}=true"
+                    )
+                });
+            }
+
             tracing::warn!(
                 bucket = %bucket,
                 error = %error,
@@ -328,7 +524,16 @@ mod tests {
             .or_else(|_| std::env::var("RUSTFS_BUCKET"))
             .unwrap_or_else(|_| "rustshare".to_string());
 
-        match ObjectStore::new(endpoint, region, bucket).await {
+        match ObjectStore::new_with_options(
+            endpoint,
+            region,
+            bucket,
+            ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
+        .await
+        {
             Ok(store) => Some(store),
             Err(e) => {
                 eprintln!("Skipping object-store streaming test: {e}");
@@ -493,5 +698,107 @@ mod tests {
             results[0].is_err(),
             "the single yielded item should be an error"
         );
+    }
+
+    #[test]
+    fn verify_blob_bytes_accepts_matching_sha256_key() {
+        let content = b"rustshare";
+        let key = format!("blobs/{}", super::calculate_sha256(content));
+
+        super::verify_blob_bytes(&key, content).expect("matching blob hash should pass");
+    }
+
+    #[test]
+    fn verify_blob_bytes_rejects_mismatched_sha256_key() {
+        let key = "blobs/0000000000000000000000000000000000000000000000000000000000000000";
+
+        let result = super::verify_blob_bytes(key, b"rustshare");
+
+        assert!(result.is_err(), "mismatched blob hash should fail");
+    }
+
+    #[test]
+    fn verify_blob_bytes_ignores_non_content_addressed_keys() {
+        super::verify_blob_bytes("meta/notes/file.json", br#"{"ok":true}"#)
+            .expect("metadata sidecar keys are not content-addressed blobs");
+    }
+
+    #[tokio::test]
+    async fn verified_byte_stream_from_path_rejects_mismatched_blob_key() {
+        let temp = tempfile::NamedTempFile::new().expect("temp file");
+        tokio::fs::write(temp.path(), b"rustshare")
+            .await
+            .expect("write temp file");
+
+        let key = "blobs/0000000000000000000000000000000000000000000000000000000000000000";
+        let result = super::verified_byte_stream_from_path(key, temp.path()).await;
+
+        assert!(result.is_err(), "mismatched file hash should fail");
+    }
+
+    #[tokio::test]
+    async fn verified_byte_stream_from_path_uploads_private_verified_bytes() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_path = temp_dir.path().join("source");
+        let replacement_path = temp_dir.path().join("replacement");
+
+        tokio::fs::write(&source_path, b"verified")
+            .await
+            .expect("write source file");
+        tokio::fs::write(&replacement_path, b"changed")
+            .await
+            .expect("write replacement file");
+        let key = format!("blobs/{}", super::calculate_sha256(b"verified"));
+
+        let stream = super::verified_byte_stream_from_path(&key, &source_path)
+            .await
+            .expect("verified stream");
+
+        tokio::fs::rename(&replacement_path, &source_path)
+            .await
+            .expect("replace source path after verification");
+
+        let data = stream.collect().await.expect("collect byte stream");
+
+        assert_eq!(data.into_bytes(), Bytes::from_static(b"verified"));
+    }
+
+    #[tokio::test]
+    async fn verify_blob_stream_reports_mismatch_at_end() {
+        let chunks = futures::stream::iter([
+            Ok(Bytes::from_static(b"rust")),
+            Ok(Bytes::from_static(b"share")),
+        ]);
+        let key = "blobs/0000000000000000000000000000000000000000000000000000000000000000";
+        let mut stream = Box::pin(super::verify_blob_stream(key, chunks));
+
+        assert!(stream.next().await.expect("first chunk").is_ok());
+        assert!(stream.next().await.expect("second chunk").is_ok());
+        assert!(
+            stream.next().await.expect("integrity result").is_err(),
+            "stream should report checksum mismatch after EOF"
+        );
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn verify_blob_stream_passes_matching_hash() {
+        let expected = super::calculate_sha256(b"rustshare");
+        let key = format!("blobs/{expected}");
+        let chunks = futures::stream::iter([
+            Ok(Bytes::from_static(b"rust")),
+            Ok(Bytes::from_static(b"share")),
+        ]);
+        let mut stream = Box::pin(super::verify_blob_stream(&key, chunks));
+
+        assert_eq!(
+            stream.next().await.expect("first chunk").unwrap(),
+            Bytes::from_static(b"rust")
+        );
+        assert_eq!(
+            stream.next().await.expect("second chunk").unwrap(),
+            Bytes::from_static(b"share")
+        );
+        assert!(stream.next().await.is_none());
     }
 }

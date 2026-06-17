@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use rustshare_core::services::{ChatIntegrationError, IncomingChatEvent, UnfurlRequest};
+use rustshare_core::services::{
+    validate_chat_webhook_url, ChatIntegrationError, IncomingChatEvent, UnfurlRequest,
+};
 
 use crate::handlers::{AdminUser, AuthenticatedUser, ErrorResponse};
 use crate::AppState;
@@ -322,15 +324,17 @@ pub async fn register_chat_webhook(
 
     // Reject non-HTTPS webhook URLs in production. HTTP is permitted in debug
     // builds or when the RUSTSHARE_ALLOW_HTTP_WEBHOOKS environment variable is
-    // set to "true" or "1" (case-insensitive).
+    // set to "true" or "1" (case-insensitive). Internal/private addresses are
+    // always rejected to mitigate SSRF.
     let allow_http = http_webhooks_allowed();
 
-    if !is_valid_chat_webhook_url(&req.url, allow_http) {
+    if let Err(e) = validate_chat_webhook_url(&req.url, allow_http).await {
+        warn!(url = %req.url, error = %e, "Rejected invalid webhook URL registration");
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: "Invalid URL".to_string(),
-                details: Some("Webhook URLs must use HTTPS".to_string()),
+                error: "Invalid webhook URL".to_string(),
+                details: Some("Invalid webhook URL".to_string()),
             }),
         );
     }
@@ -382,20 +386,6 @@ pub struct WebhookListResponse {
     pub webhooks: Vec<String>,
 }
 
-/// Validate a chat webhook URL.
-///
-/// Only HTTPS URLs are accepted unless `allow_http` is `true` (used for debug
-/// builds or explicit local-development configuration).
-pub fn is_valid_chat_webhook_url(url: &str, allow_http: bool) -> bool {
-    match url::Url::parse(url) {
-        Ok(parsed) => {
-            let scheme = parsed.scheme();
-            scheme == "https" || (allow_http && scheme == "http")
-        }
-        Err(_) => false,
-    }
-}
-
 /// Determine whether HTTP webhook URLs are allowed.
 ///
 /// HTTP is always permitted in debug builds. In release builds it is only
@@ -433,7 +423,9 @@ fn map_chat_integration_error(err: ChatIntegrationError) -> (StatusCode, Json<Er
         ChatIntegrationError::PermissionDenied => {
             (StatusCode::FORBIDDEN, "Permission denied".to_string())
         }
-        ChatIntegrationError::InvalidWebhookUrl(ref msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        ChatIntegrationError::InvalidWebhookUrl => {
+            (StatusCode::BAD_REQUEST, "Invalid webhook URL".to_string())
+        }
         ChatIntegrationError::SignatureVerificationFailed => (
             StatusCode::UNAUTHORIZED,
             "Signature verification failed".to_string(),
@@ -447,8 +439,8 @@ fn map_chat_integration_error(err: ChatIntegrationError) -> (StatusCode, Json<Er
     (
         status,
         Json(ErrorResponse {
-            error: message,
-            details: Some(err.to_string()),
+            error: message.clone(),
+            details: Some(message),
         }),
     )
 }
@@ -466,7 +458,9 @@ fn map_chat_integration_error_tuple(err: ChatIntegrationError) -> (StatusCode, E
         ChatIntegrationError::PermissionDenied => {
             (StatusCode::FORBIDDEN, "Permission denied".to_string())
         }
-        ChatIntegrationError::InvalidWebhookUrl(ref msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        ChatIntegrationError::InvalidWebhookUrl => {
+            (StatusCode::BAD_REQUEST, "Invalid webhook URL".to_string())
+        }
         ChatIntegrationError::SignatureVerificationFailed => (
             StatusCode::UNAUTHORIZED,
             "Signature verification failed".to_string(),
@@ -480,8 +474,8 @@ fn map_chat_integration_error_tuple(err: ChatIntegrationError) -> (StatusCode, E
     (
         status,
         ErrorResponse {
-            error: message,
-            details: Some(err.to_string()),
+            error: message.clone(),
+            details: Some(message),
         },
     )
 }
@@ -491,27 +485,174 @@ mod tests {
     use super::*;
     use std::future::Future;
 
-    #[test]
-    fn chat_webhook_http_rejection() {
+    #[tokio::test]
+    async fn chat_webhook_http_rejection() {
         assert!(
-            !is_valid_chat_webhook_url("http://example.com/webhook", false),
+            validate_chat_webhook_url("http://1.1.1.1/webhook", false)
+                .await
+                .is_err(),
             "HTTP webhook URLs must be rejected in production"
         );
         assert!(
-            is_valid_chat_webhook_url("https://example.com/webhook", false),
+            validate_chat_webhook_url("https://1.1.1.1/webhook", false)
+                .await
+                .is_ok(),
             "HTTPS webhook URLs must be accepted"
         );
         assert!(
-            is_valid_chat_webhook_url("http://example.com/webhook", true),
+            validate_chat_webhook_url("http://1.1.1.1/webhook", true)
+                .await
+                .is_ok(),
             "HTTP webhook URLs may be allowed when explicitly enabled"
         );
         assert!(
-            !is_valid_chat_webhook_url("ftp://example.com/webhook", false),
+            validate_chat_webhook_url("ftp://1.1.1.1/webhook", false)
+                .await
+                .is_err(),
             "Non-HTTP(S) schemes must be rejected"
         );
         assert!(
-            !is_valid_chat_webhook_url("not-a-url", false),
+            validate_chat_webhook_url("not-a-url", false).await.is_err(),
             "Malformed URLs must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_https_public_ip_accepted() {
+        assert!(validate_chat_webhook_url("https://1.1.1.1/webhook", false)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_http_public_ip_rejected_without_allow_http() {
+        assert!(validate_chat_webhook_url("http://1.1.1.1/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_http_public_ip_accepted_with_allow_http() {
+        assert!(validate_chat_webhook_url("http://1.1.1.1/webhook", true)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_localhost_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://localhost/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_192_168_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://192.168.1.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_10_rejected() {
+        assert!(validate_chat_webhook_url("https://10.0.0.1/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_172_16_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://172.16.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_172_31_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://172.31.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_link_local_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://169.254.1.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv6_loopback_rejected() {
+        assert!(validate_chat_webhook_url("https://[::1]/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv6_link_local_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[fe80::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv6_multicast_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[ff02::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv6_unique_local_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[fc00::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv4_mapped_ipv6_loopback_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[::ffff:127.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_ipv4_mapped_ipv6_private_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[::ffff:10.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_valid_chat_webhook_url_cgnat_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://100.64.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://100.127.255.255/webhook", false)
+                .await
+                .is_err()
         );
     }
 

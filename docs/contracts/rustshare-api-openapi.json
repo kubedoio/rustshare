@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "servers": [
     {
@@ -2488,7 +2488,7 @@
         "tags": [
           "Files"
         ],
-        "summary": "Get file download URL.",
+        "summary": "Download file content directly with proper filename.",
         "description": "GET /api/files/{id}/download",
         "operationId": "download_file",
         "parameters": [
@@ -2505,14 +2505,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Download URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloadUrlResponse"
-                }
-              }
-            }
+            "description": "File content"
           },
           "401": {
             "description": "Unauthorized",
@@ -7780,10 +7773,13 @@
           {
             "name": "X-Tenant-ID",
             "in": "header",
-            "description": "Tenant identifier for the public share link",
-            "required": true,
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
             "schema": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "format": "uuid"
             }
           },
@@ -7842,10 +7838,13 @@
           {
             "name": "X-Tenant-ID",
             "in": "header",
-            "description": "Tenant identifier for the public share link",
-            "required": true,
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
             "schema": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "format": "uuid"
             }
           },
@@ -11497,17 +11496,6 @@
           }
         }
       },
-      "DownloadUrlResponse": {
-        "type": "object",
-        "required": [
-          "url"
-        ],
-        "properties": {
-          "url": {
-            "type": "string"
-          }
-        }
-      },
       "DuplicateNoteResponse": {
         "type": "object",
         "required": [
@@ -14233,6 +14221,14 @@
           },
           "password": {
             "type": "string"
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Optional tenant ID. When provided, login is scoped to that tenant.\nExisting clients may omit this field for backward compatibility."
           }
         }
       },

@@ -132,14 +132,22 @@ async fn init_stores(
     let rustfs_endpoint = config.rustfs_endpoint.clone();
     let rustfs_region = config.rustfs_region.clone();
     let rustfs_bucket = config.rustfs_bucket.clone();
+    let object_store_options = rustshare_storage::ObjectStoreOptions {
+        auto_create_bucket: config.object_store_auto_create_bucket,
+    };
 
     let (metadata_store, event_store, object_store) = tokio::join!(
         async { Arc::new(MetadataStore::new(db_pool.clone())) },
         async { Arc::new(EventStore::new(db_pool.clone())) },
         async {
-            ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket)
-                .await
-                .map(Arc::new)
+            ObjectStore::new_with_options(
+                rustfs_endpoint,
+                rustfs_region,
+                rustfs_bucket,
+                object_store_options,
+            )
+            .await
+            .map(Arc::new)
         }
     );
 

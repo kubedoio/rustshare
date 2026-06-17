@@ -76,9 +76,16 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
-        ObjectStore::new(s3_endpoint, s3_region, s3_bucket)
-            .await
-            .expect("Failed to create object store"),
+        ObjectStore::new_with_options(
+            s3_endpoint,
+            s3_region,
+            s3_bucket,
+            rustshare_storage::ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
+        .await
+        .expect("Failed to create object store"),
     );
 
     let jwt_manager = Arc::new(rustshare_auth::JwtManager::new(

@@ -1030,10 +1030,6 @@ mod tests {
             Ok(blobs.contains_key(key))
         }
 
-        async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> anyhow::Result<String> {
-            Ok(format!("http://mock/{}?expiry={}", key, expiry_secs))
-        }
-
         async fn get(&self, key: &str) -> anyhow::Result<Bytes> {
             let blobs = self.blobs.lock().await;
             blobs

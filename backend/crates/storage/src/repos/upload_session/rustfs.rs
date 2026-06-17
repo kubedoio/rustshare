@@ -259,7 +259,21 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
     }
 
     async fn update_session(&self, session: &UploadSession) -> Result<(), UploadError> {
-        let doc: UploadSessionDocument = session.clone().into();
+        let mut merged = session.clone();
+        if let Some(existing) = self.get_session(session.id).await? {
+            merged.merge_received_chunks_from(&existing);
+            if matches!(
+                existing.status,
+                UploadSessionStatus::Completed | UploadSessionStatus::Aborted
+            ) {
+                merged.status = existing.status;
+                merged.completed_at = existing.completed_at;
+                merged.file_id = existing.file_id;
+            }
+            merged.version = merged.version.max(existing.version + 1);
+        }
+
+        let doc: UploadSessionDocument = merged.into();
         let path = self.session_path(session.id);
 
         self.doc_store
@@ -281,10 +295,37 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
         let doc: ChunkInfoDocument = chunk_info.into();
         let path = self.chunk_path(session_id, chunk_index);
 
-        self.doc_store
-            .put(&path, &doc, PutOptions::default())
+        if self
+            .doc_store
+            .head(&path)
             .await
-            .map_err(|e| UploadError::Storage(e.to_string()))?;
+            .map_err(|e| UploadError::Storage(e.to_string()))?
+            .is_some()
+        {
+            return Err(UploadError::ChunkAlreadyReceived(chunk_index));
+        }
+
+        self.doc_store
+            .put(
+                &path,
+                &doc,
+                PutOptions {
+                    if_none_match: Some("*".to_string()),
+                    ..PutOptions::default()
+                },
+            )
+            .await
+            .map_err(|e| {
+                let message = e.to_string();
+                if message.contains("Precondition")
+                    || message.contains("PreconditionFailed")
+                    || message.contains("412")
+                {
+                    UploadError::ChunkAlreadyReceived(chunk_index)
+                } else {
+                    UploadError::Storage(message)
+                }
+            })?;
 
         Ok(())
     }

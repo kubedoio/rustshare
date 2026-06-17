@@ -9,6 +9,7 @@
 //! - ST-06: Cross-replica consistency
 
 use crate::common::*;
+use bytes::Bytes;
 
 /// ST-01: Metadata/blob consistency can be verified
 #[tokio::test]
@@ -347,15 +348,15 @@ async fn test_storage_key_format() {
     ctx.cleanup().await;
 }
 
-/// Additional: Blob download URL generation
+/// Additional: Blob download through verified object-store path
 #[tokio::test]
 #[ignore] // Requires database and S3
-async fn test_blob_download_url() {
+async fn test_blob_download_uses_verified_object_store_path() {
     let ctx = setup_test_env().await;
     let tenant_id = ctx.tenant_id;
 
     // Create user
-    let user = create_test_user(&ctx.metadata_store, "download_url_user", tenant_id).await;
+    let user = create_test_user(&ctx.metadata_store, "download_user", tenant_id).await;
 
     // Create file service
     let file_service = ctx.file_service();
@@ -371,18 +372,15 @@ async fn test_blob_download_url() {
     )
     .await;
 
-    // Get download URL
-    let url = file_service
-        .get_download_url(file.id, user.id)
+    // Verify the blob can be downloaded through the object store abstraction,
+    // which performs content-addressed integrity checks for blobs/{sha256}.
+    let downloaded = ctx
+        .object_store
+        .get(&file.storage_key())
         .await
-        .expect("Failed to get download URL");
+        .expect("Failed to download blob");
 
-    // Verify URL is non-empty and valid format
-    assert!(!url.is_empty(), "Download URL should not be empty");
-    assert!(
-        url.starts_with("http://") || url.starts_with("https://"),
-        "Download URL should be HTTP(S)"
-    );
+    assert_eq!(downloaded, Bytes::from_static(b"Download test content"));
 
     // Cleanup
     ctx.cleanup().await;

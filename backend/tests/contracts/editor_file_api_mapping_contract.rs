@@ -484,7 +484,7 @@ async fn test_stub_editor_attachment_upload_route() {
 #[ignore = "Pending: dedicated editor API not yet implemented (deferred per ADR-0023)"]
 async fn test_stub_editor_attachment_list_route() {
     // When implemented, this route should return only visible attachments,
-    // excluding hidden metadata files, with pre-signed download URLs if needed.
+    // excluding hidden metadata files, with verified backend download endpoints if needed.
 }
 
 /// Stub for future `DELETE /api/editor/documents/{id}/attachments/{attachment_id}` route.

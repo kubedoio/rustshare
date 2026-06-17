@@ -135,6 +135,22 @@ mod tests {
         assert!(file.starred_at.is_some());
         assert_eq!(file.deleted_at, None);
 
+        let other_tenant_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(other_tenant_id)
+            .bind(format!("other-tenant-{test_id}"))
+            .execute(&pool)
+            .await
+            .expect("create other tenant");
+
+        assert!(
+            repo.get_by_id(file_id, other_tenant_id)
+                .await
+                .expect("query file with wrong tenant")
+                .is_none(),
+            "file lookup leaked across tenants"
+        );
+
         sqlx::query("DELETE FROM files WHERE id = $1")
             .bind(file_id)
             .execute(&pool)
@@ -142,6 +158,11 @@ mod tests {
             .ok();
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user_id)
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(other_tenant_id)
             .execute(&pool)
             .await
             .ok();

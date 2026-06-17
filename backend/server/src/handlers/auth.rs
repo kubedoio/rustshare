@@ -30,6 +30,10 @@ pub struct LoginRequest {
     pub email: String,
     #[validate(length(min = 1, message = "Password must not be empty"))]
     pub password: String,
+    /// Optional tenant ID. When provided, login is scoped to that tenant.
+    /// Existing clients may omit this field for backward compatibility.
+    #[serde(default)]
+    pub tenant_id: Option<uuid::Uuid>,
 }
 
 /// Login response
@@ -65,16 +69,48 @@ async fn validate_credentials(
     req: &LoginRequest,
     ip: Option<&str>,
 ) -> Result<User, AppError> {
-    // TODO(Workstream B residual risk): password login looks up the user by
-    // email without a tenant filter. The same email can exist in multiple
-    // tenants, so this route is not strictly tenant-scoped. Add a tenant
-    // identifier to the login request (e.g. `X-Tenant-ID` header or a
-    // `tenant_id` field) and scope `find_user_by_email` accordingly, or
-    // document that email uniqueness is enforced across tenants.
-    let user = metadata_store
-        .find_user_by_email(&req.email)
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    let user = match req.tenant_id {
+        Some(tenant_id) => metadata_store
+            .find_user_by_email_and_tenant(&req.email, tenant_id)
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))?,
+        None => {
+            tracing::warn!(
+                email = %req.email,
+                "Password login performed without tenant scoping; falling back to unscoped email lookup"
+            );
+            let user = metadata_store
+                .find_user_by_email(&req.email)
+                .await
+                .map_err(|e| AppError::internal(e.to_string()))?;
+
+            // After dropping the global email unique constraint, an unscoped
+            // lookup could return an arbitrary user when the same email exists
+            // in multiple tenants. Reject ambiguous emails to preserve isolation.
+            if user.is_some() {
+                let count = metadata_store
+                    .count_users_by_email(&req.email)
+                    .await
+                    .map_err(|e| AppError::internal(e.to_string()))?;
+                if count > 1 {
+                    tracing::warn!(
+                        email = %req.email,
+                        count,
+                        "Rejecting unscoped login because email is ambiguous across tenants"
+                    );
+                    // Constant-time path: keep timing indistinguishable.
+                    drop(PasswordHasher::verify("dummy", DUMMY_HASH));
+                    if let Some(ip) = ip {
+                        if let Err(e) = metadata_store.record_login_failure(ip).await {
+                            tracing::warn!("Failed to record login failure: {}", e);
+                        }
+                    }
+                    return Err(AppError::Unauthorized);
+                }
+            }
+            user
+        }
+    };
 
     let user = match user {
         Some(u) => u,
@@ -314,7 +350,11 @@ pub async fn ensure_optional_seed_user(
     let email = email.with_context(|| format!("Missing required env {}", email_env))?;
     let password = password.with_context(|| format!("Missing required env {}", password_env))?;
 
-    if metadata_store.find_user_by_email(&email).await?.is_some() {
+    if metadata_store
+        .find_user_by_email_and_tenant(&email, default_tenant_id)
+        .await?
+        .is_some()
+    {
         return Ok(());
     }
 
@@ -376,7 +416,12 @@ mod tests {
             .expect("Failed to connect to test database")
     }
 
-    async fn insert_test_user(pool: &sqlx::PgPool, email: &str, password_hash: &str) -> uuid::Uuid {
+    async fn insert_test_user(
+        pool: &sqlx::PgPool,
+        email: &str,
+        password_hash: &str,
+        tenant_id: uuid::Uuid,
+    ) -> uuid::Uuid {
         let user_id = uuid::Uuid::new_v4();
         sqlx::query(
             r#"
@@ -393,7 +438,7 @@ mod tests {
         .bind(password_hash)
         .bind("Timing Test User")
         .bind(10_737_418_240_i64)
-        .bind(uuid::Uuid::nil())
+        .bind(tenant_id)
         .execute(pool)
         .await
         .expect("Failed to insert test user");
@@ -409,6 +454,147 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn login_scopes_to_tenant_when_provided() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let email = "shared@example.com".to_string();
+        let password = "tenant_scoped_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+
+        let tenant_a = uuid::Uuid::new_v4();
+        let tenant_b = uuid::Uuid::new_v4();
+
+        let user_a_id = insert_test_user(&pool, &email, &hash, tenant_a).await;
+        let user_b_id = insert_test_user(&pool, &email, &hash, tenant_b).await;
+
+        let req = LoginRequest {
+            email: email.clone(),
+            password: password.to_string(),
+            tenant_id: Some(tenant_a),
+        };
+        let user = validate_credentials(&metadata_store, &req, None)
+            .await
+            .expect("login should succeed");
+        assert_eq!(user.id, user_a_id);
+        assert_eq!(user.tenant_id, tenant_a);
+
+        cleanup_test_user(&pool, user_a_id).await;
+        cleanup_test_user(&pool, user_b_id).await;
+    }
+
+    #[tokio::test]
+    async fn login_without_tenant_id_still_works() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let email = "legacy@example.com".to_string();
+        let password = "legacy_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+        let tenant_id = uuid::Uuid::new_v4();
+
+        let user_id = insert_test_user(&pool, &email, &hash, tenant_id).await;
+
+        let req = LoginRequest {
+            email: email.clone(),
+            password: password.to_string(),
+            tenant_id: None,
+        };
+        let user = validate_credentials(&metadata_store, &req, None)
+            .await
+            .expect("login should succeed without tenant_id");
+        assert_eq!(user.id, user_id);
+
+        cleanup_test_user(&pool, user_id).await;
+    }
+
+    #[tokio::test]
+    async fn login_with_wrong_tenant_id_returns_unauthorized() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let email = "scoped@example.com".to_string();
+        let password = "scoped_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+
+        let user_tenant = uuid::Uuid::new_v4();
+        let other_tenant = uuid::Uuid::new_v4();
+
+        let user_id = insert_test_user(&pool, &email, &hash, user_tenant).await;
+
+        let req = LoginRequest {
+            email: email.clone(),
+            password: password.to_string(),
+            tenant_id: Some(other_tenant),
+        };
+        let result = validate_credentials(&metadata_store, &req, None).await;
+        assert!(
+            matches!(result, Err(AppError::Unauthorized)),
+            "expected Unauthorized for wrong tenant, got {:?}",
+            result
+        );
+
+        cleanup_test_user(&pool, user_id).await;
+    }
+
+    #[tokio::test]
+    async fn login_without_tenant_id_rejects_ambiguous_email() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let email = "ambiguous@example.com".to_string();
+        let password = "ambiguous_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+
+        let tenant_a = uuid::Uuid::new_v4();
+        let tenant_b = uuid::Uuid::new_v4();
+
+        let user_a_id = insert_test_user(&pool, &email, &hash, tenant_a).await;
+        let user_b_id = insert_test_user(&pool, &email, &hash, tenant_b).await;
+
+        let req = LoginRequest {
+            email: email.clone(),
+            password: password.to_string(),
+            tenant_id: None,
+        };
+        let result = validate_credentials(&metadata_store, &req, None).await;
+        assert!(
+            matches!(result, Err(AppError::Unauthorized)),
+            "expected Unauthorized for ambiguous email without tenant_id, got {:?}",
+            result
+        );
+
+        cleanup_test_user(&pool, user_a_id).await;
+        cleanup_test_user(&pool, user_b_id).await;
+    }
+
+    #[tokio::test]
+    async fn login_with_tenant_id_is_case_insensitive() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let canonical_email = "Mixed.Case@Example.COM";
+        let login_email = "mixed.case@example.com";
+        let password = "case_insensitive_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+        let tenant_id = uuid::Uuid::new_v4();
+
+        let user_id = insert_test_user(&pool, canonical_email, &hash, tenant_id).await;
+
+        let req = LoginRequest {
+            email: login_email.to_string(),
+            password: password.to_string(),
+            tenant_id: Some(tenant_id),
+        };
+        let user = validate_credentials(&metadata_store, &req, None)
+            .await
+            .expect("login with differently-cased email should succeed");
+        assert_eq!(user.id, user_id);
+
+        cleanup_test_user(&pool, user_id).await;
+    }
+
+    #[tokio::test]
     async fn login_timing_attack_resistance() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -417,7 +603,7 @@ mod tests {
         let correct_password = "correct_password_123";
         let hash = PasswordHasher::hash(correct_password).unwrap();
         let existing_email = format!("timing_{}@example.com", uuid::Uuid::new_v4());
-        let user_id = insert_test_user(&pool, &existing_email, &hash).await;
+        let user_id = insert_test_user(&pool, &existing_email, &hash, uuid::Uuid::nil()).await;
 
         let non_existent_email = format!("timing_{}@example.com", uuid::Uuid::new_v4());
 
@@ -430,6 +616,7 @@ mod tests {
             let req = LoginRequest {
                 email: non_existent_email.clone(),
                 password: "wrong_password".to_string(),
+                tenant_id: None,
             };
             let start = Instant::now();
             let _ = validate_credentials(&metadata_store, &req, None).await;
@@ -442,6 +629,7 @@ mod tests {
             let req = LoginRequest {
                 email: existing_email.clone(),
                 password: "wrong_password".to_string(),
+                tenant_id: None,
             };
             let start = Instant::now();
             let _ = validate_credentials(&metadata_store, &req, None).await;

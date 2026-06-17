@@ -274,6 +274,7 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `RUSTFS_ENDPOINT` | `http://rustfs:9000` | Internal S3-compatible object storage |
 | `RUSTFS_PUBLIC_ENDPOINT` | `http://localhost:9000` | Public-facing object storage URL |
 | `RUSTFS_BUCKET` | `rustshare-files` | Object storage bucket |
+| `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` | `false` | Whether the backend should create a missing object-storage bucket at startup. Keep disabled in production and provision buckets out-of-band. |
 | `RUSTSHARE_METADATA_BACKEND` | `postgres` | Metadata store backend (`postgres`, `rustfs`, `dual_write`, `rustfs_reads`, `localfs`) |
 | `PASSWORD_LOGIN_ENABLED` | `true` | Whether password login is available |
 | `OIDC_ISSUER_URL` | — | OIDC provider URL |
