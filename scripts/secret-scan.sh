@@ -85,15 +85,116 @@ SECRET_VARS="JWT_SECRET|RUSTSHARE_SECRET_ENCRYPTION_KEY|AWS_ACCESS_KEY_ID|AWS_SE
 # Weak/default values that must never be used as real credentials.
 BAD_VALUES="rustfsadmin|admin123|viewer123|changeme|password123|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
+# Long hex/base64 strings that could be secrets assigned to unknown variables.
+HIGH_ENTROPY_RE='[A-Fa-f0-9]{32,}|[A-Za-z0-9+/=]{32,}'
+
 # Candidate patterns. These are intentionally broad: we filter false positives below.
-CANDIDATE_RE="(${SECRET_VARS})[[:space:]]*[:=]|${BAD_VALUES}|postgres://[^:]+:[^@]+@"
+CANDIDATE_RE="(${SECRET_VARS})[[:space:]]*[:=]|${BAD_VALUES}|postgres://[^:]+:[^@]+@|${HIGH_ENTROPY_RE}"
 
 # Collect all candidate lines in one pass.
 grep -Hn -i -E "${CANDIDATE_RE}" "${FILES[@]}" 2>/dev/null > "${CANDIDATES_FILE}" || true
 
+# Shannon entropy over the characters in a string (returns a float).
+shannon_entropy() {
+  local S="$1"
+  if [[ -z "$S" ]]; then
+    echo "0"
+    return
+  fi
+  printf '%s' "$S" | awk '{
+    len = length($0)
+    if (len == 0) { print 0; exit }
+    for (i = 1; i <= len; i++) {
+      c = substr($0, i, 1)
+      freq[c]++
+    }
+    entropy = 0
+    for (c in freq) {
+      p = freq[c] / len
+      entropy -= p * (log(p) / log(2))
+    }
+    print entropy
+  }'
+}
+
+# True if the value looks like a high-entropy secret (hex/base64, length >= 32).
+is_high_entropy_secret() {
+  local VALUE="$1"
+  local ENT THRESHOLD
+  if [[ "$VALUE" =~ ^[A-Fa-f0-9]{32,}$ ]]; then
+    THRESHOLD=3.0
+  elif [[ "$VALUE" =~ ^[A-Za-z0-9+/=]{32,}$ ]]; then
+    THRESHOLD=4.0
+  else
+    return 1
+  fi
+  ENT=$(shannon_entropy "$VALUE")
+  awk -v e="$ENT" -v t="$THRESHOLD" 'BEGIN { exit (e >= t) ? 0 : 1 }'
+}
+
 # Assignment regex: captures lines that look like they are setting one of the
-# secret variables. We strip the key side later to inspect the value.
+# explicitly tracked secret variables. We strip the key side later to inspect
+# the value.
 ASSIGN_RE="^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?(${SECRET_VARS})[[:space:]]*[:=][[:space:]]*(.+)$"
+
+# Generic assignment regex used to detect high-entropy strings assigned to
+# variables that are not in the explicit secret list (e.g. API_KEY, *_TOKEN,
+# or unknown variable names).
+GENERIC_ASSIGN_RE="^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[:=][[:space:]]*(.+)$"
+
+# Extract the first value token after an assignment-like sequence for a
+# variable matching VAR_RE. Uses Python when available for robust quote/command-
+# substitution handling and falls back to sed otherwise.
+strip_assignment_value() {
+  local RAW="$1"
+  local VAR_RE="$2"
+  local VALUE
+  if command -v python3 >/dev/null 2>&1; then
+    VALUE=$(python3 - "$RAW" "$VAR_RE" <<'PY'
+import re, sys
+line = sys.argv[1]
+var_re = sys.argv[2]
+# Match VAR = value or VAR: value, then capture the first value token.
+# The value token may be double-quoted, single-quoted, a $(...) command
+# substitution, or an unquoted word.
+m = re.search(
+    r'(?<![A-Za-z0-9_])(' + var_re + r')\s*[:=]\s*'
+    r'("([^"]*)"|\x27([^\x27]*)\x27|(\$\([^)]*\))|(\$\{\{[^}]*\}\})|([^ \t]+))',
+    line,
+    re.IGNORECASE,
+)
+if not m:
+    print('')
+    sys.exit(0)
+print(m.group(3) or m.group(4) or m.group(5) or m.group(6) or m.group(7))
+PY
+    )
+  else
+    # Fallback: remove everything up to and including the first assignment.
+    VALUE="$(echo "$RAW" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*//')"
+  fi
+  # Trim trailing YAML line continuations and whitespace, then remove
+  # surrounding quotes for further inspection.
+  VALUE="$(echo "$VALUE" | sed -e 's/[[:space:]]*\\$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  VALUE="${VALUE#\"}"
+  VALUE="${VALUE%\"}"
+  VALUE="${VALUE#\'}"
+  VALUE="${VALUE%\'}"
+  printf '%s' "$VALUE"
+}
+
+value_is_expression_or_substitution() {
+  local VALUE="$1"
+  # Skip GitHub Actions expressions.
+  [[ "$VALUE" =~ \$\{\{.*\}\} ]] && return 0
+  # Skip shell env references like ${VAR} or ${VAR:-default}.
+  [[ "$VALUE" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\}$ ]] && return 0
+  # Skip plain shell variables like $VAR.
+  [[ "$VALUE" =~ ^\$[A-Za-z_][A-Za-z0-9_]*$ ]] && return 0
+  # Skip command substitutions (e.g. $(openssl rand ...)).
+  [[ "$VALUE" =~ \$\( ]] && return 0
+  return 1
+}
 
 while IFS=: read -r FILE LINE_NUM LINE; do
   is_allowlisted "${FILE}:${LINE_NUM}:${LINE}" && continue
@@ -106,32 +207,12 @@ while IFS=: read -r FILE LINE_NUM LINE; do
 
   # Check for secret variable assignments.
   if echo "$LINE" | grep -qiE "${ASSIGN_RE}"; then
-    # Strip the key side and any surrounding whitespace to leave the value.
-    VALUE="$(echo "$LINE" | sed -E "s/^[[:space:]]*(-[[:space:]]+)?(-e[[:space:]]+)?(export[[:space:]]+)?(${SECRET_VARS})[[:space:]]*[:=][[:space:]]*//")"
-
-    # Trim trailing YAML line continuations and whitespace, then remove
-    # surrounding quotes for further inspection.
-    VALUE="$(echo "$VALUE" | sed -e 's/[[:space:]]*\\$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    VALUE="${VALUE#\"}"
-    VALUE="${VALUE%\"}"
-    VALUE="${VALUE#\'}"
-    VALUE="${VALUE%\'}"
+    VALUE=$(strip_assignment_value "$LINE" "${SECRET_VARS}")
 
     # Skip empty values.
     [[ -z "${VALUE// }" ]] && continue
 
-    # Skip GitHub Actions expressions.
-    [[ "$VALUE" == *'${{'*'}}'* ]] && continue
-
-    # Skip shell env references like ${VAR} or ${VAR:-default}.
-    [[ "$VALUE" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*(:-.*)?\}$ ]] && continue
-
-    # Skip plain shell variables like $VAR.
-    [[ "$VALUE" =~ ^\$[A-Za-z_][A-Za-z0-9_]*$ ]] && continue
-
-    # Skip command substitutions.
-    [[ "$VALUE" == *'$(openssl rand'* ]] && continue
-    [[ "$VALUE" == *'$(uuidgen'* ]] && continue
+    value_is_expression_or_substitution "$VALUE" && continue
 
     # Skip placeholder-looking values in .env.example.
     if [[ "$FILE" == *".env.example" && -z "${VALUE//[<>:/]}" ]]; then
@@ -152,6 +233,28 @@ while IFS=: read -r FILE LINE_NUM LINE; do
     [[ "$LINE" =~ ^[[:space:]]*# ]] && continue
 
     echo "${FILE}:${LINE_NUM}:${LINE}" >> "${MATCHES_FILE}"
+    continue
+  fi
+
+  # High-entropy heuristic: flag long base64/hex strings assigned to any
+  # variable, including unknown variable names. This catches secrets that use
+  # naming conventions outside the explicit SECRET_VARS list.
+  if echo "$LINE" | grep -qiE "${GENERIC_ASSIGN_RE}"; then
+    VALUE=$(strip_assignment_value "$LINE" "[A-Za-z_][A-Za-z0-9_]*")
+
+    # Skip empty values.
+    [[ -z "${VALUE// }" ]] && continue
+
+    value_is_expression_or_substitution "$VALUE" && continue
+
+    # Skip placeholder-looking values in .env.example.
+    if [[ "$FILE" == *".env.example" && -z "${VALUE//[<>:/]}" ]]; then
+      continue
+    fi
+
+    if is_high_entropy_secret "$VALUE"; then
+      echo "${FILE}:${LINE_NUM}:${LINE}" >> "${MATCHES_FILE}"
+    fi
   fi
 done < "${CANDIDATES_FILE}"
 
