@@ -58,6 +58,7 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Changed `ChatIntegrationError::InvalidWebhookUrl` to an opaque unit variant to prevent information leakage.
 - Added replay-age check with configurable `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` (default 300s); rejects future and stale timestamps as `SignatureVerificationFailed`.
 - Documented env var in `backend/.env.example`, `docs/security-model.md`, and `CHANGELOG.md`.
+- Added coverage for no-redirect webhook client behavior, IPv4-compatible IPv6 addresses, unspecified addresses, and invalid `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` values.
 - Commits: `2adf79b4`, `652e3380`
 
 ### ✅ Task 7 — Upload service correctness
@@ -70,14 +71,16 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Merged upload-session chunk bitmasks on repository updates so concurrent uploads of different chunks do not drop progress.
 - Added targeted MD5 handler tests.
 
+### ✅ Task 9 — Chat unfurl authorization
+- Changed private user-share unfurl authorization to require the requesting user to match `recipient_user_id` on a share scoped to the requesting tenant.
+- Added tests proving non-recipients are denied and recipients are allowed.
+
+### ✅ Task 10 — Password-protected share metadata leak
+- Stopped `get_public_share_info` from loading file/folder metadata for password-protected shares before session creation.
+- Public share `/info` now returns a generic protected-share response for protected links with no filename, folder name, size, or MIME type.
+- Added regression coverage for protected public share info.
+
 ## Known Gaps / Work Remaining
-
-Task 6 fixes were committed, but the quality reviewer noted missing test coverage for the latest hardening additions. The next owner should add tests for:
-
-- Redirect-based SSRF bypass (public IP redirecting to `127.0.0.1` is rejected by no-redirect client).
-- IPv4-compatible IPv6 addresses (`::127.0.0.1`, `::10.0.0.1`, etc.).
-- Unspecified addresses (`0.0.0.0`, `::`).
-- `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` validation (negative / zero rejected).
 
 ## Pending Tasks (Critical Findings Still Open)
 
@@ -88,14 +91,6 @@ The original review identified 18 critical/secondary findings. The following hav
 **Issues:**
 - Cached permission results always return `PermissionSource::DirectShare`.
 - Folder ancestry aggregation uses `.find` and picks an arbitrary user share instead of aggregating the highest permission across all shares.
-
-### 🔴 Task 9 — Chat unfurl authorization
-**File:** `backend/crates/core/src/services/chat_integration.rs`
-**Issue:** Link unfurl authorizes by share creator (`share.created_by`). It should check `recipient_user_id` and `tenant_id` for private/user shares.
-
-### 🔴 Task 10 — Password-protected share metadata leak
-**Files:** `backend/server/src/handlers/public_shares.rs`, `backend/crates/core/src/services/share_service.rs`
-**Issue:** `/api/v1/public/share/{token}/info` returns filename, size, and MIME without requiring the password.
 
 ### 🔴 Task 11 — Repository tenant_id filtering
 **Files:** `backend/crates/infrastructure/src/repositories/*`

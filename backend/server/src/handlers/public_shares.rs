@@ -213,6 +213,19 @@ pub async fn get_share_info(
             expires_at: share.expires_at,
         })
         .into_response())
+    } else if share.password_hash.is_some() {
+        Ok(Json(ShareInfoResponse {
+            resource_id: share.id,
+            resource_type: "protected".to_string(),
+            name: "Protected share".to_string(),
+            permissions: share.permissions,
+            upload_only: share.upload_only,
+            file_size: None,
+            mime_type: None,
+            password_protected: true,
+            expires_at: share.expires_at,
+        })
+        .into_response())
     } else {
         Err(AppError::internal("Share resource is missing"))
     }

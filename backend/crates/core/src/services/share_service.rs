@@ -805,6 +805,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             }
         }
 
+        if share.password_hash.is_some() {
+            return Ok((share, None, None));
+        }
+
         if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
@@ -2278,6 +2282,49 @@ mod tests {
         let returned_file = returned_file.expect("file share should include file");
         assert_eq!(returned_file.id, file_id);
         assert_eq!(returned_file.name, "document.pdf");
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_password_protected_does_not_return_metadata() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file = File::new(
+            "secret.pdf".to_string(),
+            "/documents/secret.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file);
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                Some("password123".to_string()),
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_file, returned_folder) = service
+            .get_public_share_info(&share_token, Some(tenant_id))
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert!(returned_share.password_hash.is_some());
+        assert!(returned_file.is_none());
+        assert!(returned_folder.is_none());
     }
 
     #[tokio::test]

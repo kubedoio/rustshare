@@ -415,6 +415,23 @@ impl WebhookDispatcher for HttpWebhookDispatcher {
 /// Default maximum age for incoming webhook events (seconds).
 const DEFAULT_WEBHOOK_MAX_AGE_SECONDS: i64 = 300;
 
+fn parse_webhook_max_age_seconds(value: Option<&str>) -> i64 {
+    value
+        .map(|s| {
+            s.parse::<i64>()
+                .ok()
+                .filter(|&v| v >= 1)
+                .unwrap_or_else(|| {
+                    warn!(
+                        value = %s,
+                        "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS must be a positive integer; using default"
+                    );
+                    DEFAULT_WEBHOOK_MAX_AGE_SECONDS
+                })
+        })
+        .unwrap_or(DEFAULT_WEBHOOK_MAX_AGE_SECONDS)
+}
+
 /// Chat integration service for managing webhook events and link unfurls.
 pub struct ChatIntegrationService<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> {
     metadata_store: Arc<M>,
@@ -435,20 +452,11 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         webhook_secret: impl AsRef<[u8]>,
         dispatcher: Arc<W>,
     ) -> Self {
-        let webhook_max_age_seconds = std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
-            .map(|s| {
-                s.parse::<i64>()
-                    .ok()
-                    .filter(|&v| v >= 1)
-                    .unwrap_or_else(|| {
-                        warn!(
-                            value = %s,
-                            "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS must be a positive integer; using default"
-                        );
-                        DEFAULT_WEBHOOK_MAX_AGE_SECONDS
-                    })
-            })
-            .unwrap_or(DEFAULT_WEBHOOK_MAX_AGE_SECONDS);
+        let webhook_max_age_seconds = parse_webhook_max_age_seconds(
+            std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
+                .ok()
+                .as_deref(),
+        );
 
         Self {
             metadata_store,
@@ -659,23 +667,14 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             return Err(ChatIntegrationError::ShareNotFound);
         }
 
-        // For private/user shares, check if requesting user has permission
-        if let Some(user_id) = requesting_user_id {
-            if share.is_user_share() {
-                // Check if user is the recipient
-                let user_shares = self
-                    .metadata_store
-                    .get_user_shares(user_id)
-                    .await
-                    .map_err(ChatIntegrationError::Internal)?;
+        if share.is_user_share() {
+            let Some(user_id) = requesting_user_id else {
+                return Err(ChatIntegrationError::PermissionDenied);
+            };
 
-                let has_access = user_shares.iter().any(|s| s.id == share.id);
-
-                if !has_access {
-                    return Err(ChatIntegrationError::PermissionDenied);
-                }
+            if share.tenant_id != tenant_id || share.recipient_user_id != Some(user_id) {
+                return Err(ChatIntegrationError::PermissionDenied);
             }
-            // For public shares, anyone can view (but may need password)
         }
 
         // Get resource metadata
@@ -1041,6 +1040,117 @@ mod tests {
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
     }
 
+    fn test_chat_service(
+        metadata: Arc<MockMetadataStore>,
+    ) -> ChatIntegrationService<MockMetadataStore, MockEventStore, MockWebhookDispatcher> {
+        ChatIntegrationService::new(
+            metadata,
+            Arc::new(MockEventStore::new()),
+            Arc::new(EventBroadcaster::new(100)),
+            "test_secret",
+            Arc::new(MockWebhookDispatcher::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_unfurl_user_share_requires_recipient() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let other_user_id = Uuid::new_v4();
+        let file = File::new(
+            "private.pdf".to_string(),
+            "/private.pdf".to_string(),
+            "hash".to_string(),
+            42,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: Some("private-token".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(recipient_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        metadata.files.lock().unwrap().push(file);
+        metadata.shares.lock().unwrap().push(share);
+        let service = test_chat_service(metadata);
+        let request = UnfurlRequest {
+            url: "https://rustshare.example.com/share/private-token".to_string(),
+        };
+
+        let result = service
+            .unfurl_link(&request, Some(other_user_id), tenant_id)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ChatIntegrationError::PermissionDenied)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_unfurl_user_share_allows_recipient() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let recipient_id = Uuid::new_v4();
+        let file = File::new(
+            "private.pdf".to_string(),
+            "/private.pdf".to_string(),
+            "hash".to_string(),
+            42,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: Some("recipient-token".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(recipient_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        metadata.files.lock().unwrap().push(file);
+        metadata.shares.lock().unwrap().push(share);
+        let service = test_chat_service(metadata);
+        let request = UnfurlRequest {
+            url: "https://rustshare.example.com/share/recipient-token".to_string(),
+        };
+
+        let response = service
+            .unfurl_link(&request, Some(recipient_id), tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(response.metadata.title, "private.pdf");
+    }
+
     #[test]
     fn test_webhook_registration() {
         let metadata = Arc::new(MockMetadataStore::new());
@@ -1062,6 +1172,18 @@ mod tests {
 
         service.unregister_webhook("https://chat.example.com/webhook");
         assert_eq!(service.get_webhook_urls().len(), 1);
+    }
+
+    #[test]
+    fn test_parse_webhook_max_age_invalid_values_use_default() {
+        assert_eq!(parse_webhook_max_age_seconds(Some("0")), 300);
+        assert_eq!(parse_webhook_max_age_seconds(Some("-1")), 300);
+        assert_eq!(parse_webhook_max_age_seconds(Some("not-a-number")), 300);
+    }
+
+    #[test]
+    fn test_parse_webhook_max_age_positive_value_is_used() {
+        assert_eq!(parse_webhook_max_age_seconds(Some("60")), 60);
     }
 
     fn sample_incoming_event() -> IncomingChatEvent {
@@ -1286,6 +1408,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_validate_chat_webhook_url_unspecified_addresses_rejected() {
+        assert!(validate_chat_webhook_url("https://0.0.0.0/webhook", false)
+            .await
+            .is_err());
+        assert!(validate_chat_webhook_url("https://[::]/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn test_validate_chat_webhook_url_multicast_ipv4_rejected() {
         assert!(
             validate_chat_webhook_url("https://224.0.0.1/webhook", false)
@@ -1369,6 +1501,53 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv4_compatible_ipv6_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[::127.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://[::10.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_webhook_client_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("failed to bind redirect test listener: {error}"),
+        };
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/internal\r\nContent-Length: 0\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        let response = build_webhook_client()
+            .post(format!("http://{addr}/webhook"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.await.unwrap();
     }
 
     #[tokio::test]

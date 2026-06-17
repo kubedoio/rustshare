@@ -62,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened chat webhook URLs against SSRF: registration and dispatch now reject loopback, private IPv4, link-local, multicast, CGNAT, localhost, and IPv4-mapped IPv6 addresses, with a 5-second DNS timeout and re-validation at dispatch time to mitigate DNS rebinding.
 - Added replay-age checks for incoming chat webhook events: timestamps outside `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` (default 300) are rejected without revealing that the failure was a replay.
 - Re-verify current folder write permission when completing resumable uploads, and use current public-share permissions instead of stale JWT permission claims for public folder uploads.
+- Prevented password-protected public share info from exposing filename, size, MIME type, or folder name before password-backed session creation.
+- Restricted private user-share chat unfurls to the share recipient in the requesting tenant.
 
 ## [0.5.1] - 2026-06-12
 
