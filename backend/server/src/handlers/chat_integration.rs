@@ -133,6 +133,9 @@ pub async fn unfurl_link(
     post,
     path = "/api/v1/integrations/chat/unfurl/public",
     tag = "Chat Integration",
+    params(
+        ("X-Tenant-ID" = Uuid, Header, description = "Tenant identifier for the public chat unfurl request"),
+    ),
     request_body = UnfurlLinkRequest,
     responses(
         (status = 200, description = "Unfurled link metadata", body = UnfurlLinkResponse),

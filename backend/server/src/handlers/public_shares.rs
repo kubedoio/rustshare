@@ -115,7 +115,10 @@ pub fn build_content_disposition(file_name: &str) -> String {
     post,
     path = "/api/v1/public/share/{token}/session",
     tag = "Public Shares",
-    params(("token" = String, Path, description = "Share token")),
+    params(
+        ("X-Tenant-ID" = Uuid, Header, description = "Tenant identifier for the public share link"),
+        ("token" = String, Path, description = "Share token"),
+    ),
     request_body = CreateSessionRequest,
     responses(
         (status = 200, description = "Session created", body = SessionResponse),
@@ -152,7 +155,10 @@ pub async fn create_session(
     get,
     path = "/api/v1/public/share/{token}/info",
     tag = "Public Shares",
-    params(("token" = String, Path, description = "Share token")),
+    params(
+        ("X-Tenant-ID" = Uuid, Header, description = "Tenant identifier for the public share link"),
+        ("token" = String, Path, description = "Share token"),
+    ),
     responses(
         (status = 200, description = "Share information", body = ShareInfoResponse),
         (status = 404, description = "Share not found or revoked", body = crate::handlers::ErrorResponse),
