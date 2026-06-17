@@ -197,10 +197,22 @@ Tenant isolation is enforced primarily at the repository and service layers:
 - Webhook URLs must use HTTPS in production.
 - HTTP URLs are rejected unless the deployment is a debug build or `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is explicitly set to `"true"` or `"1"` (dev-only).
 
-### Webhook Registration
+### Webhook Registration and SSRF Hardening
 
 - Registration is restricted to admin users via `/api/v1/admin/integrations/chat/webhooks`.
 - The endpoint validates the URL scheme and rejects non-HTTPS URLs in production.
+- URLs are validated against SSRF payloads before registration:
+  - Rejected hosts: `localhost`, loopback (`127.0.0.0/8`, `::1`), private IPv4 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local (`169.254.0.0/16`, `fe80::/64`), multicast (`224.0.0.0/4`, `ff00::/8`), CGNAT (`100.64.0.0/10`), and IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`, `::ffff:10.0.0.1`, etc.).
+  - Hostnames are resolved and every resolved IP address is checked; DNS lookups time out after 5 seconds.
+  - DNS failures and internal IP resolutions are logged server-side but surfaced to API clients only as a generic "Invalid webhook URL" error.
+- To mitigate DNS rebinding, the same SSRF validation is re-run immediately before every outgoing webhook dispatch.
+
+### Replay Protection
+
+- Incoming chat webhook events must include a timestamped HMAC-SHA256 signature (`t=<timestamp>,v1=<hex>`).
+- After signature verification, the event timestamp is checked against the current time.
+- `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` controls the allowed window (default: 300 seconds).
+- Events with timestamps in the future or older than the configured window are rejected with `401 Unauthorized` so that replay failures are not distinguishable from signature failures.
 
 ---
 

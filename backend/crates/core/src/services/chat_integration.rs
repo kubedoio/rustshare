@@ -6,6 +6,7 @@
 //! - Link unfurl requests with permission checking
 //! - Dispatching events to registered chat webhook URLs
 
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -231,6 +232,108 @@ pub trait EventStoreOps: Send + Sync {
     async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> anyhow::Result<()>;
 }
 
+/// Returns true if the IPv4 address is loopback, private, link-local, multicast,
+/// or part of the CGNAT range (100.64.0.0/10).
+fn is_internal_ipv4(v4: &Ipv4Addr) -> bool {
+    let octets = v4.octets();
+    // CGNAT 100.64.0.0/10
+    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+        return true;
+    }
+    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_multicast()
+}
+
+/// Returns true if the IP address is loopback, private, link-local, multicast,
+/// or an IPv4-mapped IPv6 address that resolves to an internal IPv4 address.
+fn is_internal_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_internal_ipv4(v4),
+        IpAddr::V6(v6) => {
+            if let Some(mapped_v4) = v6.to_ipv4_mapped() {
+                return is_internal_ipv4(&mapped_v4);
+            }
+            v6.is_loopback()
+                || v6.is_unicast_link_local()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+        }
+    }
+}
+
+/// Validate a chat webhook URL for SSRF safety.
+///
+/// Rejects non-HTTPS URLs (unless `allow_http` is true) and any URL whose host
+/// resolves to an internal/private IP address. DNS resolution is bounded by a
+/// 5-second timeout. DNS failures are logged server-side and surfaced to the
+/// caller as a generic invalid URL error.
+pub async fn validate_chat_webhook_url(
+    url: &str,
+    allow_http: bool,
+) -> Result<(), ChatIntegrationError> {
+    let parsed =
+        url::Url::parse(url).map_err(|e| ChatIntegrationError::InvalidWebhookUrl(e.to_string()))?;
+
+    // Scheme check.
+    match parsed.scheme() {
+        "https" => {}
+        "http" if allow_http => {}
+        _ => {
+            return Err(ChatIntegrationError::InvalidWebhookUrl(
+                "URL scheme must be HTTPS".to_string(),
+            ))
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ChatIntegrationError::InvalidWebhookUrl("URL has no host".to_string()))?;
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return Err(ChatIntegrationError::InvalidWebhookUrl(
+            "localhost is not allowed".to_string(),
+        ));
+    }
+
+    // Check IP literals first; these can bypass DNS-based defences.
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_internal_ip(&ip) {
+            return Err(ChatIntegrationError::InvalidWebhookUrl(
+                "internal IP addresses are not allowed".to_string(),
+            ));
+        }
+        return Ok(());
+    }
+
+    // Resolve the hostname and verify none of the addresses are internal.
+    // Cap DNS lookup at 5 seconds to avoid hanging on slow/unresponsive resolvers.
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    let lookup = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::net::lookup_host((host, port)),
+    )
+    .await
+    .map_err(|_| ChatIntegrationError::InvalidWebhookUrl("DNS lookup timed out".to_string()))?;
+
+    match lookup {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_internal_ip(&addr.ip()) {
+                    return Err(ChatIntegrationError::InvalidWebhookUrl(
+                        "resolved IP is an internal address".to_string(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            warn!(url = %url, error = %e, "DNS lookup failed for webhook URL");
+            Err(ChatIntegrationError::InvalidWebhookUrl(
+                "Invalid webhook URL".to_string(),
+            ))
+        }
+    }
+}
+
 /// Trait for webhook dispatch operations.
 #[async_trait::async_trait]
 pub trait WebhookDispatcher: Send + Sync {
@@ -272,6 +375,13 @@ impl Default for HttpWebhookDispatcher {
 #[async_trait::async_trait]
 impl WebhookDispatcher for HttpWebhookDispatcher {
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
+        // Re-validate the URL at dispatch time to mitigate DNS rebinding attacks.
+        // HTTP is never allowed at dispatch time regardless of debug configuration.
+        if let Err(e) = validate_chat_webhook_url(url, false).await {
+            warn!(url = %url, error = %e, "Webhook URL failed SSRF validation at dispatch time");
+            return Err("Invalid webhook URL".to_string());
+        }
+
         let response = self
             .client
             .post(url)
@@ -297,6 +407,9 @@ impl WebhookDispatcher for HttpWebhookDispatcher {
     }
 }
 
+/// Default maximum age for incoming webhook events (seconds).
+const DEFAULT_WEBHOOK_MAX_AGE_SECONDS: i64 = 300;
+
 /// Chat integration service for managing webhook events and link unfurls.
 pub struct ChatIntegrationService<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> {
     metadata_store: Arc<M>,
@@ -305,6 +418,7 @@ pub struct ChatIntegrationService<M: MetadataStoreOps, E: EventStoreOps, W: Webh
     signer: WebhookSigner,
     dispatcher: Arc<W>,
     webhook_urls: Vec<String>,
+    webhook_max_age_seconds: i64,
 }
 
 impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegrationService<M, E, W> {
@@ -316,6 +430,18 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         webhook_secret: impl AsRef<[u8]>,
         dispatcher: Arc<W>,
     ) -> Self {
+        let webhook_max_age_seconds = std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
+            .map(|s| {
+                s.parse::<i64>().unwrap_or_else(|_| {
+                    warn!(
+                        value = %s,
+                        "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS is malformed; using default"
+                    );
+                    DEFAULT_WEBHOOK_MAX_AGE_SECONDS
+                })
+            })
+            .unwrap_or(DEFAULT_WEBHOOK_MAX_AGE_SECONDS);
+
         Self {
             metadata_store,
             event_store,
@@ -323,6 +449,28 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             signer: WebhookSigner::new(webhook_secret),
             dispatcher,
             webhook_urls: Vec::new(),
+            webhook_max_age_seconds,
+        }
+    }
+
+    /// Create a new chat integration service with an explicit max age (tests only).
+    #[cfg(test)]
+    pub fn new_with_max_age(
+        metadata_store: Arc<M>,
+        event_store: Arc<E>,
+        broadcaster: Arc<EventBroadcaster>,
+        webhook_secret: impl AsRef<[u8]>,
+        dispatcher: Arc<W>,
+        webhook_max_age_seconds: i64,
+    ) -> Self {
+        Self {
+            metadata_store,
+            event_store,
+            broadcaster,
+            signer: WebhookSigner::new(webhook_secret),
+            dispatcher,
+            webhook_urls: Vec::new(),
+            webhook_max_age_seconds,
         }
     }
 
@@ -583,9 +731,11 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
 
     /// Process an incoming chat event.
     ///
-    /// Verifies the `X-RustShare-Signature` over the raw request body before
-    /// deserializing the event. Returns [`ChatIntegrationError::SignatureVerificationFailed`]
-    /// when the signature is missing or invalid.
+    /// Verifies the `X-RustShare-Signature` over the raw request body, deserializes
+    /// the event, and enforces a maximum age on the event timestamp to prevent
+    /// replay attacks. Returns [`ChatIntegrationError::SignatureVerificationFailed`]
+    /// when the signature is missing, invalid, or when the event timestamp is
+    /// outside the allowed window.
     pub async fn process_incoming_event(
         &self,
         body: &[u8],
@@ -605,6 +755,15 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
 
         let event: IncomingChatEvent = serde_json::from_slice(body)
             .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?;
+
+        // Enforce maximum age to prevent replay attacks.
+        // Return SignatureVerificationFailed to avoid leaking that the failure
+        // was due to replay.
+        let now = Utc::now();
+        let age_seconds = (now - event.timestamp).num_seconds().abs();
+        if event.timestamp > now || age_seconds > self.webhook_max_age_seconds {
+            return Err(ChatIntegrationError::SignatureVerificationFailed);
+        }
 
         info!(
             "Processing incoming chat event: {} from {}",
@@ -976,6 +1135,253 @@ mod tests {
             result.is_ok(),
             "Valid signature must be accepted: {:?}",
             result
+        );
+    }
+
+    fn test_service_with_max_age(
+        max_age_seconds: i64,
+    ) -> ChatIntegrationService<MockMetadataStore, MockEventStore, MockWebhookDispatcher> {
+        ChatIntegrationService::new_with_max_age(
+            Arc::new(MockMetadataStore::new()),
+            Arc::new(MockEventStore::new()),
+            Arc::new(EventBroadcaster::new(100)),
+            "test_secret",
+            Arc::new(MockWebhookDispatcher::new()),
+            max_age_seconds,
+        )
+    }
+
+    fn sign_incoming_event(event: &IncomingChatEvent) -> (Vec<u8>, String) {
+        let body = serde_json::to_vec(event).unwrap();
+        let signer = WebhookSigner::new("test_secret");
+        let signature = signer
+            .sign_with_timestamp(event.timestamp.timestamp(), &body)
+            .unwrap();
+        (body, signature)
+    }
+
+    #[tokio::test]
+    async fn test_process_incoming_event_within_age_accepted() {
+        let service = test_service_with_max_age(300);
+        let mut event = sample_incoming_event();
+        event.timestamp = Utc::now() - chrono::Duration::seconds(10);
+        let (body, signature) = sign_incoming_event(&event);
+
+        assert!(service
+            .process_incoming_event(&body, &signature)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_process_incoming_event_exact_boundary_accepted() {
+        let max_age = 300;
+        let service = test_service_with_max_age(max_age);
+        let mut event = sample_incoming_event();
+        event.timestamp = Utc::now() - chrono::Duration::seconds(max_age);
+        let (body, signature) = sign_incoming_event(&event);
+
+        assert!(service
+            .process_incoming_event(&body, &signature)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_process_incoming_event_too_old_rejected() {
+        let service = test_service_with_max_age(300);
+        let mut event = sample_incoming_event();
+        event.timestamp = Utc::now() - chrono::Duration::seconds(301);
+        let (body, signature) = sign_incoming_event(&event);
+
+        let result = service.process_incoming_event(&body, &signature).await;
+        assert!(matches!(
+            result,
+            Err(ChatIntegrationError::SignatureVerificationFailed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_incoming_event_future_timestamp_rejected() {
+        let service = test_service_with_max_age(300);
+        let mut event = sample_incoming_event();
+        event.timestamp = Utc::now() + chrono::Duration::seconds(10);
+        let (body, signature) = sign_incoming_event(&event);
+
+        let result = service.process_incoming_event(&body, &signature).await;
+        assert!(matches!(
+            result,
+            Err(ChatIntegrationError::SignatureVerificationFailed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_public_ip_accepted() {
+        assert!(validate_chat_webhook_url("https://1.1.1.1/webhook", false)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_http_rejected_without_allow_http() {
+        assert!(validate_chat_webhook_url("http://1.1.1.1/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_http_accepted_with_allow_http() {
+        assert!(validate_chat_webhook_url("http://1.1.1.1/webhook", true)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_localhost_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://localhost/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_private_ipv4_rejected() {
+        assert!(validate_chat_webhook_url("https://10.0.0.1/webhook", false)
+            .await
+            .is_err());
+        assert!(
+            validate_chat_webhook_url("https://172.16.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://192.168.1.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_link_local_ipv4_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://169.254.1.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_loopback_ipv4_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://127.0.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_multicast_ipv4_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://224.0.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_cgnat_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://100.64.0.1/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://100.127.255.255/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://100.63.0.1/webhook", false)
+                .await
+                .is_ok()
+        );
+        assert!(
+            validate_chat_webhook_url("https://100.128.0.1/webhook", false)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv6_loopback_rejected() {
+        assert!(validate_chat_webhook_url("https://[::1]/webhook", false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv6_link_local_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[fe80::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv6_multicast_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[ff02::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv6_unique_local_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[fc00::1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_ipv4_mapped_ipv6_rejected() {
+        assert!(
+            validate_chat_webhook_url("https://[::ffff:127.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://[::ffff:10.0.0.1]/webhook", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_chat_webhook_url("https://[::ffff:192.168.1.1]/webhook", false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_chat_webhook_url_dns_failure_is_generic_error() {
+        // This invalid TLD should not resolve, producing a generic invalid URL error.
+        let result =
+            validate_chat_webhook_url("https://invalid-tld-for-test.invalid/webhook", false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("DNS"),
+            "DNS failure should not be exposed: {}",
+            err
+        );
+        assert!(
+            !err.contains("internal IP"),
+            "Internal reason should not be exposed: {}",
+            err
         );
     }
 }

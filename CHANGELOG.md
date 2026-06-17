@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced admin authentication on all `/api/v1/admin/*` routes, including chat integration and replication admin endpoints.
 - Removed hardcoded credentials from GitHub Actions workflows.
 - Documented required production secrets and rotation guidance in `docs/DEPLOYMENT.md`, `docs/CI_SECRETS.md`, and `.env.example`.
+- Hardened chat webhook URLs against SSRF: registration and dispatch now reject loopback, private IPv4, link-local, multicast, CGNAT, localhost, and IPv4-mapped IPv6 addresses, with a 5-second DNS timeout and re-validation at dispatch time to mitigate DNS rebinding.
+- Added replay-age checks for incoming chat webhook events: timestamps outside `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS` (default 300) are rejected without revealing that the failure was a replay.
 
 ## [0.5.1] - 2026-06-12
 
