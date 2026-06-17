@@ -237,6 +237,7 @@ async fn large_file_upload_uses_streaming_path_and_matches_on_download() {
     // Use an 8 MiB file so the streaming path is exercised while keeping tests fast.
     let file_size = 8 * 1024 * 1024;
     let (temp_file, expected_content) = create_large_temp_file(file_size).await;
+    let temp_path = temp_file.path().to_path_buf();
 
     let rss_before = peak_rss_bytes();
 
@@ -280,9 +281,11 @@ async fn large_file_upload_uses_streaming_path_and_matches_on_download() {
     assert_eq!(received.len(), file_size);
     assert_eq!(received, expected_content);
 
-    // The temporary upload file is deleted automatically when dropped.
+    // The service consumes and deletes the temporary upload file. Drop our
+    // reference before checking that cleanup happened.
+    drop(temp_file);
     assert!(
-        !temp_file.path().exists(),
+        !temp_path.exists(),
         "temporary upload file should be cleaned up"
     );
 

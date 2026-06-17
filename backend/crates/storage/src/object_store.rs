@@ -129,17 +129,7 @@ impl ObjectStore {
         // Stream so callers can pipe it into an HTTP response body without
         // buffering the entire object in memory.
         let reader = output.body.into_async_read();
-        let stream = futures::stream::unfold(reader, |mut reader| async move {
-            let mut buf = vec![0u8; 64 * 1024];
-            match reader.read(&mut buf).await {
-                Ok(0) => None,
-                Ok(n) => {
-                    buf.truncate(n);
-                    Some((Ok(Bytes::from(buf)), reader))
-                }
-                Err(e) => Some((Err(std::io::Error::other(e.to_string())), reader)),
-            }
-        });
+        let stream = byte_stream_from_reader(reader);
 
         Ok((content_type, content_length, stream))
     }
@@ -215,6 +205,27 @@ impl ObjectStore {
 
         Ok(presigned_request.uri().to_string())
     }
+}
+
+/// Convert an [`AsyncRead`] into a stream of `Bytes` chunks.
+///
+/// The stream terminates after the first read error instead of yielding an
+/// endless sequence of errors.
+fn byte_stream_from_reader<R>(reader: R) -> impl Stream<Item = std::io::Result<Bytes>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    futures::stream::try_unfold(reader, |mut reader| async move {
+        let mut buf = vec![0u8; 64 * 1024];
+        match reader.read(&mut buf).await {
+            Ok(0) => Ok(None),
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(Some((Bytes::from(buf), reader)))
+            }
+            Err(e) => Err(std::io::Error::other(e.to_string())),
+        }
+    })
 }
 
 async fn ensure_bucket_exists(client: &S3Client, bucket: &str) -> Result<()> {
@@ -359,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires S3-compatible object storage"]
-    async fn get_stream_reports_zero_length_for_missing_object() {
+    async fn get_stream_errors_for_missing_object() {
         let store = match setup_object_store().await {
             Some(store) => store,
             None => return,
@@ -390,12 +401,15 @@ mod tests {
         let total_size = chunk_size * chunk_count;
 
         let mut content = Vec::with_capacity(total_size);
-        let mut expected_hash = DefaultHasher::new();
         for i in 0..chunk_count {
             let byte = (i % 256) as u8;
             let chunk = vec![byte; chunk_size];
-            expected_hash.write_u8(byte);
             content.extend_from_slice(&chunk);
+        }
+
+        let mut expected_hash = DefaultHasher::new();
+        for byte in &content {
+            expected_hash.write_u8(*byte);
         }
         let expected_hash = expected_hash.finish();
 
@@ -442,5 +456,33 @@ mod tests {
         );
 
         store.delete(&key).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_stream_terminates_after_read_error() {
+        struct ErrorReader(&'static str);
+
+        impl tokio::io::AsyncRead for ErrorReader {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                _buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::Error::other(self.0)))
+            }
+        }
+
+        let stream = super::byte_stream_from_reader(ErrorReader("simulated read failure"));
+        let results: Vec<std::io::Result<Bytes>> = stream.collect().await;
+
+        assert_eq!(
+            results.len(),
+            1,
+            "stream should yield exactly one error and terminate"
+        );
+        assert!(
+            results[0].is_err(),
+            "the single yielded item should be an error"
+        );
     }
 }

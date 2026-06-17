@@ -119,6 +119,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use tokio::io::AsyncWriteExt;
 
 /// Standard pagination query parameters.
 #[derive(Deserialize, Debug, Clone, utoipa::ToSchema)]
@@ -153,13 +154,62 @@ impl PaginationQuery {
 /// The value is parsed once on first use and converted from megabytes to bytes.
 pub fn max_upload_size_bytes() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *MAX.get_or_init(|| {
-        std::env::var("MAX_UPLOAD_SIZE_MB")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .map(|mb| mb.saturating_mul(1024 * 1024))
-            .unwrap_or(5000 * 1024 * 1024)
+    *MAX.get_or_init(|| match std::env::var("MAX_UPLOAD_SIZE_MB") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(mb) => mb.saturating_mul(1024 * 1024),
+            Err(_) => {
+                tracing::warn!(
+                    value = %value,
+                    "MAX_UPLOAD_SIZE_MB is malformed; using default 5000 MB"
+                );
+                5000 * 1024 * 1024
+            }
+        },
+        Err(_) => 5000 * 1024 * 1024,
     })
+}
+
+/// Stream a multipart field to a temporary file and return the temp file plus size.
+/// Enforces a per-field size limit during streaming to prevent OOM.
+pub(super) async fn stream_multipart_field_to_temp_file(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_size: usize,
+) -> Result<(tempfile::NamedTempFile, usize), AppError> {
+    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
+        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
+
+    let mut async_file = tokio::fs::File::from_std(
+        temp_file
+            .reopen()
+            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
+    );
+
+    let mut total_size: usize = 0;
+
+    while let Some(chunk) = field.chunk().await.map_err(|e| {
+        tracing::error!("Failed to read chunk: {e}");
+        AppError::internal(format!("Failed to read chunk: {e}"))
+    })? {
+        total_size += chunk.len();
+        if total_size > max_size {
+            return Err(AppError::payload_too_large(format!(
+                "File size exceeds maximum allowed {max_size} bytes"
+            )));
+        }
+        async_file.write_all(&chunk).await.map_err(|e| {
+            tracing::error!("Failed to write to temp file: {e}");
+            AppError::internal(format!("Failed to write to temp file: {e}"))
+        })?;
+    }
+
+    async_file
+        .flush()
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
+
+    Ok((temp_file, total_size))
 }
 
 use rustshare_core::services::{

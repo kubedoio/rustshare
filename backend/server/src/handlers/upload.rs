@@ -152,10 +152,6 @@ pub struct CompleteUploadResponse {
 /// Maximum chunk size for resumable uploads (100 MB).
 const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
-fn max_chunk_size() -> usize {
-    MAX_CHUNK_SIZE
-}
-
 /// Stream an HTTP body to a temporary file and return the temp file plus size.
 /// Enforces a size limit during streaming to prevent OOM.
 async fn stream_body_to_temp_file(
@@ -355,7 +351,7 @@ pub async fn upload_chunk(
     // Stream chunk body to temp file with size limit to prevent OOM. The temp
     // file is passed to the service using the streaming path so the chunk is
     // never read back into memory.
-    let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, max_chunk_size()).await?;
+    let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, MAX_CHUNK_SIZE).await?;
     let chunk_path = chunk_temp.path();
 
     // Extract hash from Content-MD5 header if present
