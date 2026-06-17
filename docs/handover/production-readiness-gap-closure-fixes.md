@@ -80,21 +80,22 @@ Fix the critical security, correctness, and compatibility findings identified in
 - Public share `/info` now returns a generic protected-share response for protected links with no filename, folder name, size, or MIME type.
 - Added regression coverage for protected public share info.
 
+### ✅ Task 8 — Permission resolver cache source and folder ancestry
+- Changed the permission resolver cache to store full `PermissionResult` values instead of permissions only.
+- Source-aware permission resolution now preserves cached `Owner`, `DirectShare`, `GroupShare`, `Inherited`, and `None` sources with share IDs where applicable.
+- Folder ancestry aggregation now selects the highest active user share instead of the first matching share.
+- Added regression coverage for cached group-share sources and highest inherited user-share selection.
+
+### ✅ Task 11 — Repository tenant_id filtering
+- Verified infrastructure file and folder repositories already scope `get_by_id` queries by `tenant_id`.
+- Verified `PermissionResolverRepository` delegates file/folder lookups through those tenant-scoped repository methods.
+- Added explicit wrong-tenant regression assertions to the infrastructure file and folder repository tests.
+
 ## Known Gaps / Work Remaining
 
 ## Pending Tasks (Critical Findings Still Open)
 
 The original review identified 18 critical/secondary findings. The following have not been started:
-
-### 🔴 Task 8 — Permission resolver cache source and folder ancestry
-**Files:** `backend/crates/core/src/services/permission_resolver.rs`
-**Issues:**
-- Cached permission results always return `PermissionSource::DirectShare`.
-- Folder ancestry aggregation uses `.find` and picks an arbitrary user share instead of aggregating the highest permission across all shares.
-
-### 🔴 Task 11 — Repository tenant_id filtering
-**Files:** `backend/crates/infrastructure/src/repositories/*`
-**Issue:** Some file/folder lookups filter by `owner_id` instead of `tenant_id`, breaking multi-tenant isolation.
 
 ### 🟡 Task 12 — Object store integrity and bucket creation
 **Files:** `backend/crates/infrastructure/src/object_store.rs` (or equivalent)
@@ -144,4 +145,4 @@ DATABASE_URL="postgresql:///rustshare_test_fixes?host=/tmp&user=scolak" cargo sq
 3. Run `cargo fmt --check` and clippy before each commit.
 4. The original PR is #114 (`production-readiness-gap-closure`). This new branch is for the remediation fixes and can be merged back into the original PR branch or reviewed separately.
 5. Task 6 has uncommitted hardening fixes already applied and committed as `652e3380`; add the missing tests before considering it fully done.
-6. The most impactful remaining work is Task 7 (upload service) and Task 8 (permission resolver), both of which affect data integrity and security.
+6. The most impactful remaining work is Task 12 (object store integrity and bucket creation).

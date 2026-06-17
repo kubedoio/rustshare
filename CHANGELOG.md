@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed ignored backend tests by re-enabling, replacing, or removing them with documented justifications.
 - Resolved clippy warnings across all targets.
 - Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
+- Fixed permission resolver caching so source-aware lookups preserve owner, direct-share, group-share, inherited, and no-permission sources.
+- Fixed inherited folder permission aggregation to select the highest active user share instead of an arbitrary share.
 
 ### Security
 
@@ -64,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-verify current folder write permission when completing resumable uploads, and use current public-share permissions instead of stale JWT permission claims for public folder uploads.
 - Prevented password-protected public share info from exposing filename, size, MIME type, or folder name before password-backed session creation.
 - Restricted private user-share chat unfurls to the share recipient in the requesting tenant.
+- Added explicit wrong-tenant regression coverage for infrastructure file and folder repository lookups.
 
 ## [0.5.1] - 2026-06-12
 
