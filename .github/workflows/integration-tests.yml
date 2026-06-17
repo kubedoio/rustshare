@@ -32,7 +32,7 @@ jobs:
         env:
           POSTGRES_DB: rustshare
           POSTGRES_USER: rustshare
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         options: >-
           --health-cmd "pg_isready -U rustshare"
           --health-interval 10s
@@ -43,16 +43,13 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
-      DATABASE_URL: postgres://rustshare:postgres@localhost:5432/rustshare
-      JWT_SECRET: test-jwt-secret-that-is-32-chars-long-for-ci-run
-      RUSTSHARE_SECRET_ENCRYPTION_KEY: c2VjcmV0LWVuY3J5cHRpb24ta2V5LWhlcmUtMzItYnl0ZXM=
-      AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      # Ephemeral, run-scoped database password. Not a real secret.
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+      DATABASE_URL: postgres://rustshare:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/rustshare
       RUSTFS_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
-      RUSTSHARE_ADMIN_PASSWORD: ci-admin-password-123
       RUSTSHARE_ADMIN_EMAIL: admin@localhost
       RUSTSHARE_ADMIN_USERNAME: admin
       PASSWORD_LOGIN_ENABLED: true
@@ -67,12 +64,31 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Generate ephemeral secrets
+        run: |
+          # Per-run cryptographically random secrets. These are written to GITHUB_ENV
+          # so subsequent steps can reference them without hardcoding anything in this file.
+          JWT_SECRET=$(openssl rand -base64 32 | tr -d '\n')
+          ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '\n')
+          ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+          RUSTFS_ROOT_USER="rustfs-${{ github.run_id }}"
+          RUSTFS_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+
+          echo "JWT_SECRET=${JWT_SECRET}" >> "$GITHUB_ENV"
+          echo "RUSTSHARE_SECRET_ENCRYPTION_KEY=${ENCRYPTION_KEY}" >> "$GITHUB_ENV"
+          echo "RUSTSHARE_ADMIN_PASSWORD=${ADMIN_PASSWORD}" >> "$GITHUB_ENV"
+          echo "RUSTFS_ROOT_USER=${RUSTFS_ROOT_USER}" >> "$GITHUB_ENV"
+          echo "RUSTFS_ROOT_PASSWORD=${RUSTFS_ROOT_PASSWORD}" >> "$GITHUB_ENV"
+          # RustFS root credentials must match the S3 credentials used by the backend.
+          echo "AWS_ACCESS_KEY_ID=${RUSTFS_ROOT_USER}" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=${RUSTFS_ROOT_PASSWORD}" >> "$GITHUB_ENV"
+
       - name: Start RustFS
         run: |
           docker run -d --name rustfs \
             -p 9000:9000 -p 9001:9001 \
-            -e RUSTFS_ROOT_USER=rustfsadmin \
-            -e RUSTFS_ROOT_PASSWORD=rustfsadmin \
+            -e RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER}" \
+            -e RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD}" \
             -e RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS=true \
             -e RUSTFS_DATA_DIR=/data \
             -e RUSTFS_LOGS_DIR=/logs \
@@ -95,8 +111,8 @@ jobs:
         run: |
           set +e
           docker run --rm --network host \
-            -e AWS_ACCESS_KEY_ID=rustfsadmin \
-            -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
+            -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+            -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
             amazon/aws-cli:2.34.59 \
             --endpoint-url http://127.0.0.1:9000 \
             s3 mb s3://rustshare-files > /tmp/bucket-create.log 2>&1

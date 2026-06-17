@@ -52,6 +52,14 @@ jobs:
           fi
           echo "All commits have DCO sign-off"
 
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -84,7 +92,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -94,7 +102,10 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Run-scoped, non-secret database password. The container is ephemeral and
+      # only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -137,7 +148,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -147,7 +158,8 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -164,6 +176,11 @@ jobs:
   sqlx-check:
     name: SQLx Prepare Check
     runs-on: ubuntu-latest
+    env:
+      # Run-scoped, non-secret database password. The container is ephemeral and
+      # only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -172,16 +189,16 @@ jobs:
         run: cargo install sqlx-cli --features postgres
       - name: Start PostgreSQL
         run: |
-          docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+          docker run -d -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" -p 5432:5432 postgres:16-alpine
           sleep 5
       - name: Run migrations
         run: cd backend && sqlx migrate run
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: ${{ env.DATABASE_URL }}
       - name: Check sqlx prepare
         run: cd backend && cargo sqlx prepare --workspace --check
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: ${{ env.DATABASE_URL }}
 
   coverage:
     name: Code Coverage
@@ -190,7 +207,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -200,7 +217,8 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust

@@ -241,6 +241,29 @@ docker compose up -d --build
 
 ## Environment Variables
 
+### Required production secrets
+
+The following values **must** be set for any production deployment. Generate
+them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
+
+| Variable | How to generate | Rotation |
+|----------|-----------------|----------|
+| `JWT_SECRET` | `openssl rand -base64 32` | Rotate on suspected compromise or at least quarterly. After rotation, existing sessions are invalidated and users must log in again. |
+| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `openssl rand -base64 32` | Rotate on suspected compromise. **Back up the old key** until all data encrypted with it has been re-encrypted, or you will lose access to stored secrets. |
+| `POSTGRES_PASSWORD` | `openssl rand -base64 24` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
+| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `openssl rand -base64 24` for password | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
+| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
+| `RUSTSHARE_ADMIN_PASSWORD` | `openssl rand -base64 24` | Rotate after first login and whenever the admin credential is suspected to be exposed. |
+| `RUSTSHARE_DEMO_VIEWER_PASSWORD` | `openssl rand -base64 24` | Rotate if demo mode is enabled in production (not recommended). |
+
+### Optional secrets
+
+| Variable | Purpose | Rotation |
+|----------|---------|----------|
+| `OIDC_CLIENT_SECRET` | OIDC provider client secret | Follow your IdP's rotation policy; update this value and restart the backend. |
+| `RUSTSHARE_CHAT_WEBHOOK_SECRET` | Webhook signing secret | Rotate on suspected compromise. |
+| `METRICS_API_TOKEN` | Bearer token for Prometheus `/metrics` endpoint | Rotate periodically if the endpoint is exposed. |
+
 ### Backend / runtime
 
 | Variable | Default | Purpose |
@@ -266,6 +289,12 @@ These are passed as `ARG` values in `docker/backend.Dockerfile`:
 |----------|---------|---------|
 | `VITE_API_URL` | `/api/v1` | API base path |
 | `VITE_WS_URL` | `/api/ws` | WebSocket endpoint path |
+
+### Dev-only overrides
+
+Values marked `[dev-only]` in `.env.example` are safe defaults for local
+development. They must be reviewed and changed before any production or
+shared-environment deployment.
 
 ---
 

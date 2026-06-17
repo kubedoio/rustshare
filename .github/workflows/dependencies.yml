@@ -23,7 +23,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -33,7 +33,10 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Run-scoped, non-secret database password. The container is ephemeral and
+      # only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      DATABASE_URL: postgres://postgres:${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
 
