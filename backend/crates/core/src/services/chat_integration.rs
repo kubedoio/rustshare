@@ -43,8 +43,8 @@ pub enum ChatIntegrationError {
     PermissionDenied,
 
     /// Invalid webhook URL.
-    #[error("Invalid webhook URL: {0}")]
-    InvalidWebhookUrl(String),
+    #[error("Invalid webhook URL")]
+    InvalidWebhookUrl,
 
     /// Signature verification failed.
     #[error("Signature verification failed")]
@@ -232,27 +232,33 @@ pub trait EventStoreOps: Send + Sync {
     async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> anyhow::Result<()>;
 }
 
-/// Returns true if the IPv4 address is loopback, private, link-local, multicast,
-/// or part of the CGNAT range (100.64.0.0/10).
+/// Returns true if the IPv4 address is unspecified, loopback, private, link-local,
+/// multicast, or part of the CGNAT range (100.64.0.0/10).
 fn is_internal_ipv4(v4: &Ipv4Addr) -> bool {
     let octets = v4.octets();
     // CGNAT 100.64.0.0/10
     if octets[0] == 100 && (64..=127).contains(&octets[1]) {
         return true;
     }
-    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_multicast()
+    v4.is_unspecified()
+        || v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_multicast()
 }
 
-/// Returns true if the IP address is loopback, private, link-local, multicast,
-/// or an IPv4-mapped IPv6 address that resolves to an internal IPv4 address.
+/// Returns true if the IP address is unspecified, loopback, private, link-local,
+/// multicast, unique-local, or an IPv4-mapped/compatible IPv6 address that
+/// resolves to an internal IPv4 address.
 fn is_internal_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_internal_ipv4(v4),
         IpAddr::V6(v6) => {
-            if let Some(mapped_v4) = v6.to_ipv4_mapped() {
+            if let Some(mapped_v4) = v6.to_ipv4() {
                 return is_internal_ipv4(&mapped_v4);
             }
-            v6.is_loopback()
+            v6.is_unspecified()
+                || v6.is_loopback()
                 || v6.is_unicast_link_local()
                 || v6.is_multicast()
                 || v6.is_unique_local()
@@ -270,36 +276,27 @@ pub async fn validate_chat_webhook_url(
     url: &str,
     allow_http: bool,
 ) -> Result<(), ChatIntegrationError> {
-    let parsed =
-        url::Url::parse(url).map_err(|e| ChatIntegrationError::InvalidWebhookUrl(e.to_string()))?;
+    let parsed = url::Url::parse(url).map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
 
     // Scheme check.
     match parsed.scheme() {
         "https" => {}
         "http" if allow_http => {}
-        _ => {
-            return Err(ChatIntegrationError::InvalidWebhookUrl(
-                "URL scheme must be HTTPS".to_string(),
-            ))
-        }
+        _ => return Err(ChatIntegrationError::InvalidWebhookUrl),
     }
 
     let host = parsed
         .host_str()
-        .ok_or_else(|| ChatIntegrationError::InvalidWebhookUrl("URL has no host".to_string()))?;
+        .ok_or(ChatIntegrationError::InvalidWebhookUrl)?;
 
     if host.eq_ignore_ascii_case("localhost") {
-        return Err(ChatIntegrationError::InvalidWebhookUrl(
-            "localhost is not allowed".to_string(),
-        ));
+        return Err(ChatIntegrationError::InvalidWebhookUrl);
     }
 
     // Check IP literals first; these can bypass DNS-based defences.
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_internal_ip(&ip) {
-            return Err(ChatIntegrationError::InvalidWebhookUrl(
-                "internal IP addresses are not allowed".to_string(),
-            ));
+            return Err(ChatIntegrationError::InvalidWebhookUrl);
         }
         return Ok(());
     }
@@ -312,24 +309,20 @@ pub async fn validate_chat_webhook_url(
         tokio::net::lookup_host((host, port)),
     )
     .await
-    .map_err(|_| ChatIntegrationError::InvalidWebhookUrl("DNS lookup timed out".to_string()))?;
+    .map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
 
     match lookup {
         Ok(addrs) => {
             for addr in addrs {
                 if is_internal_ip(&addr.ip()) {
-                    return Err(ChatIntegrationError::InvalidWebhookUrl(
-                        "resolved IP is an internal address".to_string(),
-                    ));
+                    return Err(ChatIntegrationError::InvalidWebhookUrl);
                 }
             }
             Ok(())
         }
         Err(e) => {
             warn!(url = %url, error = %e, "DNS lookup failed for webhook URL");
-            Err(ChatIntegrationError::InvalidWebhookUrl(
-                "Invalid webhook URL".to_string(),
-            ))
+            Err(ChatIntegrationError::InvalidWebhookUrl)
         }
     }
 }
@@ -352,7 +345,7 @@ impl HttpWebhookDispatcher {
     /// Create a new HTTP webhook dispatcher.
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: build_webhook_client(),
             timeout: Duration::from_secs(30),
         }
     }
@@ -360,10 +353,22 @@ impl HttpWebhookDispatcher {
     /// Create with custom timeout.
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: build_webhook_client(),
             timeout,
         }
     }
+}
+
+/// Build a reqwest client that does not follow redirects, preventing SSRF
+/// payloads from redirecting to internal addresses after validation.
+fn build_webhook_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to build no-redirect webhook client; falling back to default");
+            reqwest::Client::new()
+        })
 }
 
 impl Default for HttpWebhookDispatcher {
@@ -432,13 +437,16 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
     ) -> Self {
         let webhook_max_age_seconds = std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
             .map(|s| {
-                s.parse::<i64>().unwrap_or_else(|_| {
-                    warn!(
-                        value = %s,
-                        "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS is malformed; using default"
-                    );
-                    DEFAULT_WEBHOOK_MAX_AGE_SECONDS
-                })
+                s.parse::<i64>()
+                    .ok()
+                    .filter(|&v| v >= 1)
+                    .unwrap_or_else(|| {
+                        warn!(
+                            value = %s,
+                            "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS must be a positive integer; using default"
+                        );
+                        DEFAULT_WEBHOOK_MAX_AGE_SECONDS
+                    })
             })
             .unwrap_or(DEFAULT_WEBHOOK_MAX_AGE_SECONDS);
 
@@ -783,8 +791,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         // - https://example.com/s/TOKEN
         // - https://example.com/public/share/TOKEN
 
-        let parsed = url::Url::parse(url)
-            .map_err(|_| ChatIntegrationError::InvalidWebhookUrl(url.to_string()))?;
+        let parsed = url::Url::parse(url).map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
 
         let path_segments: Vec<&str> = parsed
             .path_segments()
@@ -798,9 +805,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             }
         }
 
-        Err(ChatIntegrationError::InvalidWebhookUrl(
-            "No share token found in URL".to_string(),
-        ))
+        Err(ChatIntegrationError::InvalidWebhookUrl)
     }
 
     fn create_internal_share_revoked_event(

@@ -423,7 +423,7 @@ fn map_chat_integration_error(err: ChatIntegrationError) -> (StatusCode, Json<Er
         ChatIntegrationError::PermissionDenied => {
             (StatusCode::FORBIDDEN, "Permission denied".to_string())
         }
-        ChatIntegrationError::InvalidWebhookUrl(_) => {
+        ChatIntegrationError::InvalidWebhookUrl => {
             (StatusCode::BAD_REQUEST, "Invalid webhook URL".to_string())
         }
         ChatIntegrationError::SignatureVerificationFailed => (
@@ -458,7 +458,7 @@ fn map_chat_integration_error_tuple(err: ChatIntegrationError) -> (StatusCode, E
         ChatIntegrationError::PermissionDenied => {
             (StatusCode::FORBIDDEN, "Permission denied".to_string())
         }
-        ChatIntegrationError::InvalidWebhookUrl(_) => {
+        ChatIntegrationError::InvalidWebhookUrl => {
             (StatusCode::BAD_REQUEST, "Invalid webhook URL".to_string())
         }
         ChatIntegrationError::SignatureVerificationFailed => (
