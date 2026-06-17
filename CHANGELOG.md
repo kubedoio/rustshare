@@ -8,26 +8,32 @@ All notable changes to this project will be documented in this file.
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ### Added
 
-- Added streaming download support for object storage via `ObjectStore::get_stream`, with Content-Type and Content-Length preserved. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
-- Aligned maximum upload size configuration with the existing `MAX_UPLOAD_SIZE_MB` environment variable (default 5000 MB), used for authenticated file uploads and file updates.
-- Restored distinct trust-boundary limits for public-share uploads (`MAX_PUBLIC_UPLOAD_SIZE`, 100 MB) and resumable chunk uploads (`MAX_CHUNK_SIZE`, 100 MB).
-- Added unit tests for streaming HTTP bodies to temporary files, including large chunked payloads, size-limit enforcement, and automatic temp-file cleanup.
-- Added integration tests for large-object streaming upload/download and resumable-upload abort/cleanup in `backend/tests/upload_streaming_test.rs`.
-- Added a low-memory streaming test for `ObjectStore::get_stream` that verifies a large object can be consumed through a small fixed buffer without materializing the full object in memory.
-- Strengthened the resumable-upload abort integration test to assert that uploaded chunks are removed from object storage, not just that the session is marked aborted.
-- Added tenant scoping to public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
-- Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
+- Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and Content-Length. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
+- Added multipart upload streaming to temporary files, with automatic cleanup on success and error, and configurable size limits.
+- Added unit and integration tests for large-object streaming upload/download, resumable-upload abort/cleanup, and low-memory `ObjectStore::get_stream` consumption.
+- Added request-scoped correlation IDs. Every HTTP request receives an `X-Request-ID` (preserved from the client when valid, otherwise generated), propagated into tracing spans as `request_id`, and returned in response headers.
 - Added `X-Tenant-ID` header support for unauthenticated public-share and public-chat-unfurl requests.
-- Added request-scoped correlation IDs. Every HTTP request is assigned a `X-Request-ID` (preserved from the client when valid, otherwise generated), propagated into tracing spans as `request_id`, and returned in the response headers.
+- Added tenant-scoped public share link resolution. `get_share_by_token`, `validate_and_create_session`, and `get_public_share_info` now require a `tenant_id` and reject cross-tenant share tokens with `ShareNotFoundByToken`.
+- Added `tenant_id` to share-session JWT claims so share-session routes can scope share lookups to the issuing tenant.
+- Added HMAC-SHA256 signature verification for incoming chat webhook events.
+- Added operational runbooks for backup/restore and security incidents.
+- Added production-readiness documentation (`docs/PRODUCTION_READINESS.md`) summarizing completed workstreams, residual risks, and operator checklists.
 
 ### Changed
+
+- Aligned maximum upload size configuration with the existing `MAX_UPLOAD_SIZE_MB` environment variable (default 5000 MB) for authenticated file uploads and file updates.
+- Restored distinct trust-boundary limits for public-share uploads (`MAX_PUBLIC_UPLOAD_SIZE`, 100 MB) and resumable chunk uploads (`MAX_CHUNK_SIZE`, 100 MB).
+- Enforced HTTPS-only webhook registration; HTTP URLs are allowed only in debug builds or when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`.
+- Switched session and CSRF cookie defaults to `Secure=true`. Opting out requires explicitly setting `RUSTSHARE_SESSION_COOKIE_SECURE=false` (or the legacy `SESSION_COOKIE_SECURE=false`).
+- CI/CD workflows now generate per-run secrets via `openssl rand` instead of using hardcoded values.
+- Updated `docs/security-model.md` and `docs/architecture.md` to document tenant isolation, secret rotation, webhook security, and request correlation IDs.
 
 ### Deprecated
 
@@ -37,17 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sanitized `Content-Disposition` filename parameters to strip control characters, backslashes, and quotes.
+- Fixed ignored backend tests by re-enabling, replacing, or removing them with documented justifications.
+- Resolved clippy warnings across all targets.
+- Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
+
 ### Security
 
 - Added pre-commit/CI secret-scan gate to block hardcoded secrets in CI/CD, config, and shell files.
 - Hardened multi-tenant isolation for share links: cross-tenant share tokens are no longer resolved.
-- Hardened chat integration webhooks:
-  - Added signature verification for incoming chat webhook events.
-  - Enforced HTTPS-only webhook registration (HTTP only allowed in debug builds or when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`).
-  - Sanitized `Content-Disposition` filename parameters to strip control characters and backslashes.
-- Enforced admin authentication on chat integration admin routes and replication admin routes.
-- Switched to secure session cookie defaults in the production Docker Compose file.
-
+- Enforced admin authentication on all `/api/v1/admin/*` routes, including chat integration and replication admin endpoints.
+- Removed hardcoded credentials from GitHub Actions workflows.
+- Documented required production secrets and rotation guidance in `docs/DEPLOYMENT.md`, `docs/CI_SECRETS.md`, and `.env.example`.
 
 ## [0.5.1] - 2026-06-12
 
@@ -178,7 +185,9 @@ Stable release for the `0.3.0` release line.
 - **Backend tests:** Hardened integration tests for cross-user isolation, validated JSON doctests, and brainstorming handler formatting.
 - **CI:** Added `RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS` to integration test workflow; fixed DCO sign-off checks.
 
-[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/kubedoio/rustshare/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/kubedoio/rustshare/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/kubedoio/rustshare/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kubedoio/rustshare/compare/v0.3.0-rc.1...v0.3.0
 [0.3.0-rc.1]: https://github.com/kubedoio/rustshare/compare/v0.2.0...v0.3.0-rc.1
