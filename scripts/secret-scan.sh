@@ -42,7 +42,6 @@ mapfile -t FILES < <(
       -path "*/.github/workflows/*.yml" -o \
       -path "*/.github/workflows/*.yaml" -o \
       -name ".env.example" -o \
-      -name ".env" -o \
       -name "docker-compose*.yml" -o \
       -name "docker-compose*.yaml" -o \
       -path "*/docker/*.Dockerfile" -o \

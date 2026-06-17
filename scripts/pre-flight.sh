@@ -204,8 +204,8 @@ for spec in "${SECRET_SPECS[@]}"; do
 		else
 			new_value="$(generate_password)"
 		fi
-		env_set "${var_name}" "${new_value}"
-		warn "${var_name} was missing — generated and appended to .env"
+		env_update_or_set "${var_name}" "${new_value}"
+		warn "${var_name} was missing — generated and added to .env"
 		GENERATED_COUNT=$((GENERATED_COUNT + 1))
 	elif [[ "${is_weak}" -eq 1 ]]; then
 		new_value=""
@@ -216,8 +216,8 @@ for spec in "${SECRET_SPECS[@]}"; do
 		else
 			new_value="$(generate_password)"
 		fi
-		env_set "${var_name}" "${new_value}"
-		warn "${var_name} was weak (too short or known default) — generated and appended to .env"
+		env_update_or_set "${var_name}" "${new_value}"
+		warn "${var_name} was weak (too short or known default) — generated and updated in .env"
 		WEAK_COUNT=$((WEAK_COUNT + 1))
 	else
 		ok "${var_name}"
@@ -275,7 +275,7 @@ if env_get "DATABASE_URL" >/dev/null 2>&1; then
 	db_url="$(env_get "DATABASE_URL")"
 fi
 if [[ -z "${db_url}" ]]; then
-	env_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
+	env_update_or_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
 	warn "DATABASE_URL was empty — auto-constructed from POSTGRES_PASSWORD"
 fi
 
@@ -320,8 +320,9 @@ echo
 echo
 warn "Admin password is NOT stored in .env"
 echo "  On first boot, the backend will generate a random admin password"
-echo "  and print it to the container logs. Retrieve it with:"
-echo "    docker logs rustshare-backend-1 | grep 'Bootstrap admin password'"
+echo "  and write it to a secure file inside the container. Retrieve it with:"
+echo "    docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt"
+echo "  The path is configurable via RUSTSHARE_BOOTSTRAP_PASSWORD_FILE."
 echo "  Log in, then change the password immediately."
 echo
 

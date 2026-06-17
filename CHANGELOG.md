@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Added pre-commit/CI secret-scan gate to block hardcoded secrets in CI/CD, config, and shell files.
 - Hardened multi-tenant isolation for share links: cross-tenant share tokens are no longer resolved.
 - Hardened chat integration webhooks:
   - Added signature verification for incoming chat webhook events.

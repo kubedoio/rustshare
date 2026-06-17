@@ -64,7 +64,7 @@ JWT_SECRET=<generate-with-scripts/pre-flight.sh>
 RUSTSHARE_SECRET_ENCRYPTION_KEY=<generate-with-scripts/pre-flight.sh>
 ```
 
-For local testing, the defaults in `docker-compose.yml` are sufficient.
+For local testing, fill in the secret values in `.env` (or run `scripts/pre-flight.sh`); the compose stack will not start without them.
 
 ### 3. Build and start the stack
 
@@ -90,7 +90,7 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 - Admin: `admin@localhost` — password from `RUSTSHARE_ADMIN_PASSWORD` in `.env`
 - Demo viewer: `viewer@localhost` — password from `RUSTSHARE_DEMO_VIEWER_PASSWORD` in `.env`
 
-> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve them from the backend container logs: `docker logs rustshare-backend-1 | grep "Bootstrap admin password"`
+> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve the admin password from the secure bootstrap file inside the backend container: `docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt` (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`).
 
 ---
 
@@ -253,7 +253,7 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
 | `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `openssl rand -base64 24` for password | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
 | `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
-| `RUSTSHARE_ADMIN_PASSWORD` | `openssl rand -base64 24` | Rotate after first login and whenever the admin credential is suspected to be exposed. |
+| `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file. | Rotate after first login and whenever the admin credential is suspected to be exposed. |
 | `RUSTSHARE_DEMO_VIEWER_PASSWORD` | `openssl rand -base64 24` | Rotate if demo mode is enabled in production (not recommended). |
 
 ### Optional secrets
