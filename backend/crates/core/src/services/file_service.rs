@@ -2998,27 +2998,3 @@ mod tests {
         assert!(matches!(result, Err(FileError::FolderNotFound(_))));
     }
 }
-
-// Integration test (requires DB + S3)
-#[cfg(test)]
-mod integration_tests {
-    #[tokio::test]
-    #[ignore = "Requires DB + S3"]
-    async fn test_upload_file_integration() {
-        // This test requires:
-        // 1. Running PostgreSQL database with schema
-        // 2. Running RustFS/S3 compatible storage
-        //
-        // To run:
-        // docker-compose up -d postgres rustfs
-        // cargo test test_upload_file_integration -- --ignored
-        //
-        // The actual implementation would use:
-        // - rustshare_storage::EventStore
-        // - rustshare_storage::MetadataStore
-        // - rustshare_storage::ObjectStore
-        //
-        // For now, this is a placeholder that documents the expected behavior.
-        println!("Integration test placeholder - requires DB + S3 setup");
-    }
-}

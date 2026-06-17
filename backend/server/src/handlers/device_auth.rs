@@ -899,7 +899,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore] // Requires database
     async fn expired_device_code_cannot_be_approved() {
         let pool = test_db_pool().await;
         let device_code = "expired-device-code-123";
@@ -937,7 +937,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore] // Requires database
     async fn approval_does_not_mint_token_until_poll() {
         let pool = test_db_pool().await;
         let device_code = "poll-device-code-123";
@@ -992,7 +992,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore] // Requires database
     async fn approved_pair_request_is_removed_after_poll_completion() {
         let pool = test_db_pool().await;
         let device_code = "cleanup-device-code-123";
