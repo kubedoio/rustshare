@@ -329,6 +329,10 @@ where
             });
         }
 
+        if session.status == UploadSessionStatus::Aborted {
+            return Err(UploadError::SessionAborted(session_id));
+        }
+
         Ok(SessionStatusResponse::from_session(&session))
     }
 

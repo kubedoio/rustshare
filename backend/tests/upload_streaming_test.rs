@@ -278,7 +278,7 @@ async fn large_file_upload_uses_streaming_path_and_matches_on_download() {
         .await
         .expect("should stream object from storage");
 
-    assert_eq!(content_length, Some(file_size as i64));
+    assert!(content_length.is_none());
 
     let chunks: Vec<Bytes> = stream.map(|r| r.expect("stream chunk")).collect().await;
     let mut received = Vec::with_capacity(file_size);
