@@ -78,13 +78,6 @@ env_get() {
 	printf '%s' "${value}"
 }
 
-# Append a key=value pair to .env
-env_set() {
-	local key="$1"
-	local value="$2"
-	printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
-}
-
 # Update an existing key=value pair in .env, or append it if absent.
 # Uses a temp file to avoid duplicate keys.
 env_update_or_set() {
@@ -99,6 +92,42 @@ env_update_or_set() {
 		printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
 		rm -f "${tmp_file}"
 	fi
+}
+
+# Rebuild a postgres(ql):// URL with a new password, preserving user, host,
+# port, database, and query parameters. Prints the updated URL on stdout and
+# returns 0 on success. If the URL cannot be parsed safely, prints nothing and
+# returns 1.
+rebuild_database_url_password() {
+	local url="$1"
+	local new_password="$2"
+
+	# Prefer Python's urllib.parse for robust handling of special characters,
+	# percent-encoding, query parameters, IPv6 hosts, and non-standard ports.
+	if command -v python3 >/dev/null 2>&1; then
+		python3 - "$url" "$new_password" <<'PY'
+import sys
+from urllib.parse import urlparse, urlunparse
+url, password = sys.argv[1], sys.argv[2]
+parsed = urlparse(url)
+if parsed.scheme not in ("postgres", "postgresql"):
+    sys.exit(1)
+user = parsed.username or ""
+host = parsed.hostname or ""
+port = f":{parsed.port}" if parsed.port is not None else ""
+netloc = f"{user}:{password}@{host}{port}"
+print(urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)))
+PY
+		return 0
+	fi
+
+	# Bash fallback for the common case: postgres://user:password@host:port/db?params
+	if [[ "${url}" =~ ^postgres(ql)?://([^:@]+):[^@]+@(.+)$ ]]; then
+		printf 'postgres%s://%s:%s@%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${new_password}" "${BASH_REMATCH[3]}"
+		return 0
+	fi
+
+	return 1
 }
 
 # Generate a strong secret (machine-only)
@@ -171,6 +200,13 @@ fi
 BACKUP_FILE="${ENV_FILE}.backup.$(date +%Y%m%d%H%M%S)"
 cp "${ENV_FILE}" "${BACKUP_FILE}"
 info ".env backed up to ${BACKUP_FILE}"
+
+# Remember the original POSTGRES_PASSWORD so we can detect whether it was
+# regenerated later and keep DATABASE_URL in sync.
+ORIGINAL_POSTGRES_PASSWORD=""
+if env_get "POSTGRES_PASSWORD" >/dev/null 2>&1; then
+	ORIGINAL_POSTGRES_PASSWORD="$(env_get "POSTGRES_PASSWORD")"
+fi
 
 # ---------------------------------------------------------------------------
 # Check / generate secrets
@@ -294,16 +330,30 @@ if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; t
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-construct DATABASE_URL if empty
+# Auto-construct or sync DATABASE_URL
 # ---------------------------------------------------------------------------
 
 db_url=""
 if env_get "DATABASE_URL" >/dev/null 2>&1; then
 	db_url="$(env_get "DATABASE_URL")"
 fi
+
 if [[ -z "${db_url}" ]]; then
 	env_update_or_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
 	warn "DATABASE_URL was empty — auto-constructed from POSTGRES_PASSWORD"
+elif [[ "${ORIGINAL_POSTGRES_PASSWORD}" != "${POSTGRES_PASSWORD}" ]]; then
+	# POSTGRES_PASSWORD was regenerated; keep DATABASE_URL in sync while
+	# preserving host, port, database, and query parameters.
+	updated_url=""
+	if updated_url="$(rebuild_database_url_password "${db_url}" "${POSTGRES_PASSWORD}")"; then
+		if [[ "${updated_url}" != "${db_url}" ]]; then
+			env_update_or_set "DATABASE_URL" "${updated_url}"
+			warn "DATABASE_URL password updated to match regenerated POSTGRES_PASSWORD"
+		fi
+	else
+		warn "POSTGRES_PASSWORD was regenerated but DATABASE_URL could not be parsed automatically"
+		warn "Update DATABASE_URL manually to use the new POSTGRES_PASSWORD"
+	fi
 fi
 
 # ---------------------------------------------------------------------------

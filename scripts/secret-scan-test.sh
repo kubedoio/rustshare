@@ -16,7 +16,7 @@ fail() {
 make_repo() {
   local repo
   repo="$(mktemp -d "${TMPDIR}/secret-scan-test.XXXXXX")"
-  mkdir -p "${repo}/scripts" "${repo}/.github/workflows" "${repo}/docker"
+  mkdir -p "${repo}/scripts" "${repo}/.github/workflows" "${repo}/docker" "${repo}/src"
   cp "${SCANNER}" "${repo}/scripts/secret-scan.sh"
   {
     echo "# Test allowlist"
@@ -34,6 +34,9 @@ cleanup() {
   fi
   if [[ -n "${REPO_OK:-}" && -d "${REPO_OK}" ]]; then
     rm -rf "${REPO_OK}"
+  fi
+  if [[ -n "${REPO_FULL:-}" && -d "${REPO_FULL}" ]]; then
+    rm -rf "${REPO_FULL}"
   fi
 }
 trap cleanup EXIT
@@ -129,6 +132,40 @@ set -e
 
 if [[ "${OK_FULL_EXIT}" -ne 0 ]]; then
   fail "expected full scanner to pass on allowed fixtures (exit 0), got exit ${OK_FULL_EXIT}"
+fi
+
+# ---------------------------------------------------------------------------
+# --full mode regression: source-code fixtures are out of scope by default
+# but must be scanned when --full is passed.
+# ---------------------------------------------------------------------------
+REPO_FULL="$(make_repo)"
+
+# Source fixture containing a hardcoded secret. The default scan ignores .ts
+# files, so this should only be caught in --full mode.
+cat > "${REPO_FULL}/src/config.ts" <<'EOF'
+export const API_KEY = "a1b2c3d4e5f6789012345678abcdef0011223344";
+EOF
+
+set +e
+bash "${REPO_FULL}/scripts/secret-scan.sh" >"${REPO_FULL}/scan-output-default.txt" 2>&1
+FULL_DEFAULT_EXIT=$?
+set -e
+
+if [[ "${FULL_DEFAULT_EXIT}" -ne 0 ]]; then
+  fail "expected default scanner to ignore source-code fixture (exit 0), got exit ${FULL_DEFAULT_EXIT}"
+fi
+
+set +e
+bash "${REPO_FULL}/scripts/secret-scan.sh" --full >"${REPO_FULL}/scan-output-full.txt" 2>&1
+FULL_SCAN_EXIT=$?
+set -e
+
+if [[ "${FULL_SCAN_EXIT}" -eq 0 ]]; then
+  fail "expected full scanner to detect source-code fixture (exit 1), got exit ${FULL_SCAN_EXIT}"
+fi
+
+if ! grep -q "config.ts" "${REPO_FULL}/scan-output-full.txt"; then
+  fail "missing expected --full match: config.ts"
 fi
 
 echo "All secret-scan tests passed."

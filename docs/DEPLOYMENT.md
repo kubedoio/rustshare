@@ -251,10 +251,10 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `JWT_SECRET` | `openssl rand -base64 32` | Rotate on suspected compromise or at least quarterly. After rotation, existing sessions are invalidated and users must log in again. |
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `openssl rand -base64 32` | Rotate on suspected compromise. **Back up the old key** until all data encrypted with it has been re-encrypted, or you will lose access to stored secrets. |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
-| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `openssl rand -base64 24` for password | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
+| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Run `scripts/pre-flight.sh` (user: alphanumeric access key; password: `openssl rand -hex 32`) | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
 | `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
 | `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file. | Rotate after first login and whenever the admin credential is suspected to be exposed. |
-| `RUSTSHARE_DEMO_VIEWER_PASSWORD` | `openssl rand -base64 24` | Rotate if demo mode is enabled in production (not recommended). |
+| `RUSTSHARE_DEMO_VIEWER_PASSWORD` | Run `scripts/pre-flight.sh` (`openssl rand -hex 32`) | Rotate if demo mode is enabled in production (not recommended). |
 
 ### Optional secrets
 
