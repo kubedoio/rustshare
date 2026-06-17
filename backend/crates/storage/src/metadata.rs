@@ -2466,6 +2466,24 @@ impl MetadataStore {
         Ok(share)
     }
 
+    /// Find a share by its token without tenant scoping.
+    ///
+    /// Public share tokens are globally unique, so this is safe to use for
+    /// public-share endpoints that perform their own tenant verification.
+    pub async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>> {
+        let share = sqlx::query_as::<_, Share>(
+            r#"
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions::text AS permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE share_token = $1
+            "#,
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(share)
+    }
+
     /// Find a share by ID
     pub async fn get_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<Option<Share>> {
         let share = sqlx::query_as!(

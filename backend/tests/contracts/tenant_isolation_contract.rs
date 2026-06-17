@@ -107,7 +107,7 @@ async fn test_cross_tenant_share_link_is_denied() {
     // Attempt to access the share link from tenant B. Public share resolution
     // must be tenant-scoped, so the token should not resolve outside tenant A.
     let result = share_service
-        .validate_and_create_session(&token, None, tenant_b)
+        .validate_and_create_session(&token, None, Some(tenant_b))
         .await;
 
     assert!(

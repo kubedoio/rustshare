@@ -23,20 +23,30 @@ use super::files::FileUploadResponse;
 use crate::handlers::AppError;
 
 /// Header used to convey the tenant context for unauthenticated public-share
-/// requests. Public share links do not encode tenant in the token, so callers
-/// must supply the tenant they are acting on behalf of; requests for the wrong
-/// tenant are rejected with `ShareNotFoundByToken`.
+/// requests. Public share links do not encode tenant in the token. The tenant
+/// is normally derived from the globally unique token; callers may supply this
+/// header as defense-in-depth, and requests for the wrong tenant are rejected
+/// with `ShareNotFoundByToken`.
 pub const PUBLIC_SHARE_TENANT_HEADER: &str = "X-Tenant-ID";
 
-/// Extract the tenant ID from the public-share tenant header.
-fn extract_public_tenant_id(headers: &HeaderMap) -> Result<Uuid, AppError> {
-    let header = headers
-        .get(PUBLIC_SHARE_TENANT_HEADER)
-        .ok_or_else(|| AppError::bad_request("Missing X-Tenant-ID header"))?;
+/// Extract an optional tenant ID from the public-share tenant header.
+///
+/// A missing header or a nil UUID is treated as "derive tenant from the
+/// token". A syntactically invalid value is rejected with a 400 Bad Request.
+fn extract_public_tenant_id(headers: &HeaderMap) -> Result<Option<Uuid>, AppError> {
+    let Some(header) = headers.get(PUBLIC_SHARE_TENANT_HEADER) else {
+        return Ok(None);
+    };
     let value = header
         .to_str()
         .map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))?;
-    Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))
+    let tenant_id =
+        Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))?;
+    if tenant_id.is_nil() {
+        Ok(None)
+    } else {
+        Ok(Some(tenant_id))
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -117,7 +127,7 @@ pub fn build_content_disposition(file_name: &str) -> String {
     path = "/api/v1/public/share/{token}/session",
     tag = "Public Shares",
     params(
-        ("X-Tenant-ID" = Uuid, Header, description = "Tenant identifier for the public share link"),
+        ("X-Tenant-ID" = Option<Uuid>, Header, description = "Optional tenant identifier for the public share link"),
         ("token" = String, Path, description = "Share token"),
     ),
     request_body = CreateSessionRequest,
@@ -157,7 +167,7 @@ pub async fn create_session(
     path = "/api/v1/public/share/{token}/info",
     tag = "Public Shares",
     params(
-        ("X-Tenant-ID" = Uuid, Header, description = "Tenant identifier for the public share link"),
+        ("X-Tenant-ID" = Option<Uuid>, Header, description = "Optional tenant identifier for the public share link"),
         ("token" = String, Path, description = "Share token"),
     ),
     responses(
@@ -231,6 +241,51 @@ fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), A
         ));
     }
     Ok(())
+}
+
+/// Resolve the effective tenant for a public-share session.
+///
+/// Legacy share session JWTs may have `tenant_id` set to nil. When that
+/// happens the tenant is derived from the share itself. If the JWT contains a
+/// non-nil tenant, it must match the share's actual tenant (defense in depth).
+fn resolve_public_share_tenant(
+    token: &str,
+    claims_tenant_id: Uuid,
+    share_tenant_id: Uuid,
+) -> Result<Uuid, AppError> {
+    if claims_tenant_id.is_nil() || claims_tenant_id == share_tenant_id {
+        Ok(share_tenant_id)
+    } else {
+        Err(AppError::from(
+            rustshare_core::services::ShareError::ShareNotFoundByToken(token.to_string()),
+        ))
+    }
+}
+
+/// Load a public share for a session-authenticated request and resolve the
+/// effective tenant.
+async fn resolve_share_for_public_session(
+    state: &AppState,
+    token: &str,
+    claims: &rustshare_auth::ShareSessionClaims,
+) -> Result<(rustshare_core::domain::Share, Uuid), AppError> {
+    let share = state
+        .metadata_store
+        .get_share_by_token_unscoped(token)
+        .await
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
+        .ok_or_else(|| {
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.to_string(),
+            ))
+        })?;
+
+    ensure_share_session_matches(&share, claims)?;
+    ensure_share_is_active(&share)?;
+
+    let effective_tenant = resolve_public_share_tenant(token, claims.tenant_id, share.tenant_id)?;
+
+    Ok((share, effective_tenant))
 }
 
 async fn parse_upload_multipart(
@@ -348,23 +403,13 @@ pub async fn download_shared_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // Get share to verify token matches, scoped to the session's tenant.
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token, claims.tenant_id)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    // Verify JWT share_id matches the share we're accessing
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches. Legacy tokens may have a nil tenant,
+    // so derive the effective tenant from the share itself.
+    let (share, _effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
+    // `_effective_tenant` is not needed for the download itself (the file is
+    // looked up by ID and owner), but resolving it validates the JWT against
+    // the share and ensures legacy nil-tenant tokens still resolve correctly.
 
     // Get file metadata
     let file_id = share
@@ -474,21 +519,10 @@ pub async fn get_shared_folder_contents(
     ShareSessionAuth(claims): ShareSessionAuth,
     Query(query): Query<SharedFolderContentsQuery>,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token, claims.tenant_id)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
 
     if share.folder_id.is_none() {
         return Err(AppError::bad_request("This share is not for a folder"));
@@ -500,7 +534,7 @@ pub async fn get_shared_folder_contents(
 
     let (_share, current_folder, folders, files) = state
         .share_service
-        .list_public_folder_contents(&token, query.folder_id, claims.tenant_id)
+        .list_public_folder_contents(&token, query.folder_id, Some(effective_tenant))
         .await?;
 
     let root_folder_id = share
@@ -549,21 +583,13 @@ pub async fn download_shared_folder_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token, claims.tenant_id)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, _effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
+    // `_effective_tenant` is not needed for the download itself (access is
+    // verified by checking the file is inside the shared folder tree), but
+    // resolving it validates the JWT and supports legacy nil-tenant tokens.
 
     let root_folder_id = share
         .folder_id
@@ -685,21 +711,10 @@ pub async fn upload_shared_folder_file(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token, claims.tenant_id)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
 
     let root_folder_id = share
         .folder_id
@@ -764,7 +779,7 @@ pub async fn upload_shared_folder_file(
             Some(target_folder_id),
             file_path,
             mime_type,
-            share.tenant_id,
+            effective_tenant,
         )
         .await?;
 
@@ -992,5 +1007,83 @@ mod tests {
             "RFC 5987 filename* must percent-encode unicode: {}",
             header
         );
+    }
+
+    #[test]
+    fn extract_public_tenant_id_missing_returns_none() {
+        let headers = HeaderMap::new();
+        let result = extract_public_tenant_id(&headers);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn extract_public_tenant_id_invalid_returns_bad_request() {
+        let mut headers = HeaderMap::new();
+        headers.insert(PUBLIC_SHARE_TENANT_HEADER, "not-a-uuid".parse().unwrap());
+        let result = extract_public_tenant_id(&headers);
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn extract_public_tenant_id_nil_returns_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            Uuid::nil().to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn extract_public_tenant_id_matching_tenant_returns_some() {
+        let tenant_id = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            tenant_id.to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), Some(tenant_id));
+    }
+
+    #[test]
+    fn extract_public_tenant_id_mismatched_tenant_value_returns_some() {
+        // The extractor itself does not compare against the share; it just
+        // parses the header. The downstream service rejects a mismatch.
+        let other_tenant_id = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            other_tenant_id.to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), Some(other_tenant_id));
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_nil_claims_uses_share_tenant() {
+        let share_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", Uuid::nil(), share_tenant_id);
+        assert_eq!(result.unwrap(), share_tenant_id);
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_matching_claims_succeeds() {
+        let share_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", share_tenant_id, share_tenant_id);
+        assert_eq!(result.unwrap(), share_tenant_id);
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_mismatched_claims_fails() {
+        let share_tenant_id = Uuid::new_v4();
+        let other_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", other_tenant_id, share_tenant_id);
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::NotFound(_) | AppError::BadRequest(_)
+        ));
     }
 }

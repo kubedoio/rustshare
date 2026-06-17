@@ -95,6 +95,13 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Get a share by token scoped to a tenant.
     async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>>;
 
+    /// Get a share by token without tenant scoping.
+    ///
+    /// Public share tokens are globally unique, so the tenant can be derived
+    /// from the token itself. This should only be used for public-share
+    /// endpoints that perform their own tenant verification.
+    async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>>;
+
     /// Get all shares for a file.
     async fn get_file_shares(&self, file_id: uuid::Uuid) -> Result<Vec<Share>>;
 
@@ -231,6 +238,32 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         } else {
             Ok(None)
         }
+    }
+
+    /// Resolve a public share by its token and optional tenant assertion.
+    ///
+    /// Looks up the share without tenant scoping. If `tenant_id` is provided, it
+    /// must match the share's actual tenant (defense in depth). If it is omitted,
+    /// the share's own tenant is used.
+    async fn resolve_public_share(
+        &self,
+        share_token: &str,
+        tenant_id: Option<Uuid>,
+    ) -> Result<Share, ShareError> {
+        let share = self
+            .metadata_store
+            .get_share_by_token_unscoped(share_token)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
+
+        if let Some(tenant_id) = tenant_id {
+            if share.tenant_id != tenant_id {
+                return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
+            }
+        }
+
+        Ok(share)
     }
 
     /// Create a new share link for a file.
@@ -419,15 +452,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         &self,
         share_token: &str,
         password: Option<String>,
-        tenant_id: Uuid,
+        tenant_id: Option<Uuid>,
     ) -> Result<ShareSession, ShareError> {
-        // Get share by token, scoped to the requesting tenant.
-        let mut share = self
-            .metadata_store
-            .get_share_by_token(share_token, tenant_id)
-            .await
-            .map_err(|e| ShareError::Database(e.to_string()))?
-            .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
+        // Look up the share by token without tenant scoping. Public share tokens
+        // are globally unique; if a tenant is supplied, verify it matches.
+        let mut share = self.resolve_public_share(share_token, tenant_id).await?;
 
         // Check if revoked
         if share.revoked_at.is_some() {
@@ -758,15 +787,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     pub async fn get_public_share_info(
         &self,
         share_token: &str,
-        tenant_id: Uuid,
+        tenant_id: Option<Uuid>,
     ) -> Result<(Share, Option<File>, Option<Folder>), ShareError> {
-        // Get share by token, scoped to the requesting tenant.
-        let share = self
-            .metadata_store
-            .get_share_by_token(share_token, tenant_id)
-            .await
-            .map_err(|e| ShareError::Database(e.to_string()))?
-            .ok_or_else(|| ShareError::ShareNotFoundByToken(share_token.to_string()))?;
+        // Look up the share by token without tenant scoping and verify the
+        // caller's tenant assertion if one was provided.
+        let share = self.resolve_public_share(share_token, tenant_id).await?;
 
         // Check if revoked
         if share.revoked_at.is_some() {
@@ -810,7 +835,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         &self,
         share_token: &str,
         current_folder_id: Option<uuid::Uuid>,
-        tenant_id: Uuid,
+        tenant_id: Option<Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
         let (share, _file, root_folder) =
             self.get_public_share_info(share_token, tenant_id).await?;
@@ -1550,6 +1575,16 @@ mod tests {
                 .cloned())
         }
 
+        async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>> {
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.share_token.as_deref() == Some(token))
+                .cloned())
+        }
+
         async fn get_file_shares(&self, file_id: Uuid) -> Result<Vec<Share>> {
             Ok(self
                 .shares
@@ -1928,7 +1963,7 @@ mod tests {
 
         // Validate share and create session
         let session = service
-            .validate_and_create_session(&share_token, None, tenant_id)
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
             .await
             .unwrap();
 
@@ -1985,19 +2020,27 @@ mod tests {
 
         // Try to validate without password - should fail
         let result = service
-            .validate_and_create_session(&share_token, None, tenant_id)
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
             .await;
         assert!(matches!(result, Err(ShareError::PasswordRequired)));
 
         // Try with wrong password - should fail
         let result = service
-            .validate_and_create_session(&share_token, Some("wrongpassword".to_string()), tenant_id)
+            .validate_and_create_session(
+                &share_token,
+                Some("wrongpassword".to_string()),
+                Some(tenant_id),
+            )
             .await;
         assert!(matches!(result, Err(ShareError::InvalidPassword)));
 
         // Try with correct password - should succeed
         let session = service
-            .validate_and_create_session(&share_token, Some("password123".to_string()), tenant_id)
+            .validate_and_create_session(
+                &share_token,
+                Some("password123".to_string()),
+                Some(tenant_id),
+            )
             .await
             .unwrap();
 
@@ -2061,7 +2104,7 @@ mod tests {
 
         // Verify share can't be validated anymore
         let result = service
-            .validate_and_create_session(&share_token, None, tenant_id)
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
             .await;
         assert!(matches!(result, Err(ShareError::Revoked)));
     }
@@ -2150,7 +2193,7 @@ mod tests {
 
         // Verify share is accessible without password
         let session = service
-            .validate_and_create_session(&share_token, None, tenant_id)
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
             .await
             .unwrap();
         assert!(!session.token.is_empty());
@@ -2170,13 +2213,17 @@ mod tests {
 
         // Verify share now requires password
         let result = service
-            .validate_and_create_session(&share_token, None, tenant_id)
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
             .await;
         assert!(matches!(result, Err(ShareError::PasswordRequired)));
 
         // Verify share works with correct password
         let session = service
-            .validate_and_create_session(&share_token, Some("newpassword".to_string()), tenant_id)
+            .validate_and_create_session(
+                &share_token,
+                Some("newpassword".to_string()),
+                Some(tenant_id),
+            )
             .await
             .unwrap();
         assert!(!session.token.is_empty());
@@ -2220,7 +2267,7 @@ mod tests {
 
         // Get public share info
         let (returned_share, returned_file, returned_folder) = service
-            .get_public_share_info(&share_token, tenant_id)
+            .get_public_share_info(&share_token, Some(tenant_id))
             .await
             .unwrap();
 
@@ -2240,7 +2287,9 @@ mod tests {
         let share_token = "nonexistent_token_12345678901234";
         let tenant_id = Uuid::new_v4();
 
-        let result = service.get_public_share_info(share_token, tenant_id).await;
+        let result = service
+            .get_public_share_info(share_token, Some(tenant_id))
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -2289,7 +2338,9 @@ mod tests {
         service.revoke_share(share.id, owner_id).await.unwrap();
 
         // Try to get public share info
-        let result = service.get_public_share_info(&share_token, tenant_id).await;
+        let result = service
+            .get_public_share_info(&share_token, Some(tenant_id))
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ShareError::Revoked));
@@ -2333,9 +2384,365 @@ mod tests {
         let share_token = share.share_token.clone().unwrap();
 
         // Try to get public share info
-        let result = service.get_public_share_info(&share_token, tenant_id).await;
+        let result = service
+            .get_public_share_info(&share_token, Some(tenant_id))
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ShareError::Expired));
+    }
+
+    #[tokio::test]
+    async fn test_validate_session_without_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let session = service
+            .validate_and_create_session(&share_token, None, None::<Uuid>)
+            .await
+            .unwrap();
+
+        assert_eq!(session.share_id, share.id);
+    }
+
+    #[tokio::test]
+    async fn test_validate_session_with_matching_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let session = service
+            .validate_and_create_session(&share_token, None, Some(tenant_id))
+            .await
+            .unwrap();
+
+        assert_eq!(session.share_id, share.id);
+    }
+
+    #[tokio::test]
+    async fn test_validate_session_with_mismatched_tenant_fails() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let other_tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let result = service
+            .validate_and_create_session(&share_token, None, Some(other_tenant_id))
+            .await;
+
+        assert!(matches!(result, Err(ShareError::ShareNotFoundByToken(_))));
+    }
+
+    #[tokio::test]
+    async fn test_public_share_info_without_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_file, _) = service
+            .get_public_share_info(&share_token, None::<Uuid>)
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert!(returned_file.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_public_share_info_with_mismatched_tenant_fails() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let other_tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let result = service
+            .get_public_share_info(&share_token, Some(other_tenant_id))
+            .await;
+
+        assert!(matches!(result, Err(ShareError::ShareNotFoundByToken(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_public_share_info_matching_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "document.pdf".to_string(),
+            "/documents/document.pdf".to_string(),
+            "abc123".to_string(),
+            1024,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file.clone());
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_file, returned_folder) = service
+            .get_public_share_info(&share_token, Some(tenant_id))
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert!(returned_file.is_some());
+        assert!(returned_folder.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_public_folder_contents_without_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
+        let folder_id = folder.id;
+        metadata_store.add_folder(folder);
+
+        let share = service
+            .create_folder_share(
+                folder_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                false,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_folder, folders, files) = service
+            .list_public_folder_contents(&share_token, None, None::<Uuid>)
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert_eq!(returned_folder.id, folder_id);
+        assert!(folders.is_empty());
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_public_folder_contents_with_matching_tenant_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
+        let folder_id = folder.id;
+        metadata_store.add_folder(folder);
+
+        let share = service
+            .create_folder_share(
+                folder_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                false,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_folder, folders, files) = service
+            .list_public_folder_contents(&share_token, None, Some(tenant_id))
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert_eq!(returned_folder.id, folder_id);
+        assert!(folders.is_empty());
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_public_folder_contents_with_mismatched_tenant_fails() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let other_tenant_id = Uuid::new_v4();
+
+        let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
+        let folder_id = folder.id;
+        metadata_store.add_folder(folder);
+
+        let share = service
+            .create_folder_share(
+                folder_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                false,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        let result = service
+            .list_public_folder_contents(&share_token, None, Some(other_tenant_id))
+            .await;
+
+        assert!(matches!(result, Err(ShareError::ShareNotFoundByToken(_))));
     }
 }

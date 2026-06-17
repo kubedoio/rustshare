@@ -7780,10 +7780,13 @@
           {
             "name": "X-Tenant-ID",
             "in": "header",
-            "description": "Tenant identifier for the public share link",
-            "required": true,
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
             "schema": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "format": "uuid"
             }
           },
@@ -7842,10 +7845,13 @@
           {
             "name": "X-Tenant-ID",
             "in": "header",
-            "description": "Tenant identifier for the public share link",
-            "required": true,
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
             "schema": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "format": "uuid"
             }
           },
