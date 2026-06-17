@@ -14239,6 +14239,14 @@
           },
           "password": {
             "type": "string"
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Optional tenant ID. When provided, login is scoped to that tenant.\nExisting clients may omit this field for backward compatibility."
           }
         }
       },
