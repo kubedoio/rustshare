@@ -37,12 +37,13 @@ secrets, but they must remain dynamic in the workflow files.
 
 | Variable | Generated in | Purpose |
 |----------|--------------|---------|
-| `JWT_SECRET` | `integration-tests.yml` | JWT signing key for integration tests |
-| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `integration-tests.yml` | Encryption key for integration tests |
-| `RUSTSHARE_ADMIN_PASSWORD` | `integration-tests.yml` | Bootstrap admin password for integration tests |
-| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `integration-tests.yml` | RustFS root credentials for integration tests |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `integration-tests.yml` | S3-compatible credentials (matches RustFS root credentials) |
-| `POSTGRES_PASSWORD` | `ci.yml`, `dependencies.yml`, `integration-tests.yml` | Ephemeral PostgreSQL password |
+| `JWT_SECRET` | `integration-tests.yml`, `pilot-release.yml` | JWT signing key for integration/pilot tests |
+| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `integration-tests.yml`, `pilot-release.yml` | Encryption key for integration/pilot tests |
+| `RUSTSHARE_ADMIN_PASSWORD` | `integration-tests.yml`, `pilot-release.yml` | Bootstrap admin password for integration/pilot tests |
+| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `integration-tests.yml`, `pilot-release.yml` | RustFS root credentials for integration/pilot tests |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `integration-tests.yml`, `pilot-release.yml` | S3-compatible credentials (matches RustFS root credentials) |
+| `POSTGRES_PASSWORD` | `ci.yml`, `dependencies.yml`, `integration-tests.yml`, `pilot-release.yml` | Ephemeral PostgreSQL password |
+| `RUSTSHARE_CHAT_WEBHOOK_SECRET` | `pilot-release.yml` | Chat webhook signing secret for pilot tests |
 
 Generation uses `openssl rand`. Do not replace these with hardcoded values.
 
@@ -101,6 +102,8 @@ public configuration values and may remain as plain text in workflow files.
 - The `secret-scan` job in `ci.yml` runs `scripts/secret-scan.sh` on every PR
   and push to `main`. It blocks merges if it detects hardcoded secrets in
   workflow files, Docker Compose files, environment examples, or shell scripts.
+- To actually block merges, mark the `secret-scan` job as required in the
+  repository's branch protection rules for `main`.
 - Do **not** add real secrets to test fixtures or documentation. Use
   deterministic fake values and add them to `.secret-scan-allowlist` if the
   scanner flags them.

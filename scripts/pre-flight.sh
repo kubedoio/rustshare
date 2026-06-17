@@ -49,7 +49,8 @@ error() {
 	printf "\033[1;31m✗\033[0m %s\n" "$1" >&2
 }
 
-# Read a variable from .env (ignores comments, handles simple KEY=VAL lines)
+# Read a variable from .env (ignores comments, handles simple KEY=VAL lines,
+# strips inline comments and surrounding quotes).
 env_get() {
 	local key="$1"
 	local file="${2:-${ENV_FILE}}"
@@ -62,8 +63,19 @@ env_get() {
 	if [[ -z "${line}" ]]; then
 		return 1
 	fi
-	# Strip everything before =
-	printf '%s' "${line#*=}"
+	local value
+	value="${line#*=}"
+	# Strip inline shell comments and surrounding whitespace.
+	value="$(printf '%s' "${value}" | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+	# Strip matching surrounding quotes.
+	if [[ "${value}" == \"*\" ]]; then
+		value="${value#\"}"
+		value="${value%\"}"
+	elif [[ "${value}" == \'*\' ]]; then
+		value="${value#\'}"
+		value="${value%\'}"
+	fi
+	printf '%s' "${value}"
 }
 
 # Append a key=value pair to .env
@@ -231,8 +243,10 @@ done
 # ---------------------------------------------------------------------------
 # Derive S3/RustFS credentials from RustFS root credentials
 # ---------------------------------------------------------------------------
-# STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY and AWS_ACCESS_KEY_ID /
-# AWS_SECRET_ACCESS_KEY must match RustFS root credentials.
+# For the default RustFS deployment, STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY
+# and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must match RustFS root
+# credentials. If you are using real AWS S3, override these variables in .env
+# instead of relying on this derivation.
 RUSTFS_ROOT_USER_VALUE="$(env_get "RUSTFS_ROOT_USER")"
 RUSTFS_ROOT_PASSWORD_VALUE="$(env_get "RUSTFS_ROOT_PASSWORD")"
 
