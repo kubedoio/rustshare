@@ -203,12 +203,6 @@ pub struct UploadUrlResponse {
     pub file_id: Uuid,
 }
 
-/// Download URL response
-#[derive(Debug, Deserialize)]
-pub struct DownloadUrlResponse {
-    pub url: String,
-}
-
 impl ApiClient {
     /// Create a new API client from configuration
     pub fn new(config: &Config) -> Result<Self> {
@@ -312,34 +306,27 @@ impl ApiClient {
         self.handle_response(response).await
     }
 
-    /// Get file download URL
-    pub async fn get_download_url(&self, file_id: Uuid) -> std::result::Result<String, ApiError> {
+    /// Download file content
+    pub async fn download_file(&self, file_id: Uuid) -> std::result::Result<bytes::Bytes, ApiError> {
         let response = self
             .build_request(Method::GET, &format!("/api/files/{}/download", file_id))
             .send()
             .await?;
 
-        let resp: DownloadUrlResponse = self.handle_response(response).await?;
-        Ok(resp.url)
-    }
-
-    /// Download file content
-    pub async fn download_file(&self, file_id: Uuid) -> std::result::Result<bytes::Bytes, ApiError> {
-        let url = self.get_download_url(file_id).await?;
-        
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(ApiError::ServerError(
-                format!("Download failed: {}", response.status())
-            ));
+        match response.status() {
+            StatusCode::OK => response.bytes().await.map_err(ApiError::Network),
+            StatusCode::UNAUTHORIZED => Err(ApiError::Unauthorized),
+            StatusCode::FORBIDDEN => Err(ApiError::Forbidden),
+            StatusCode::NOT_FOUND => Err(ApiError::NotFound),
+            status if status.is_server_error() => {
+                let text = response.text().await.unwrap_or_default();
+                Err(ApiError::ServerError(text))
+            }
+            status => {
+                let text = response.text().await.unwrap_or_default();
+                Err(ApiError::Other(format!("HTTP {}: {}", status, text)))
+            }
         }
-
-        response.bytes().await.map_err(ApiError::Network)
     }
 
     /// Delete a file
