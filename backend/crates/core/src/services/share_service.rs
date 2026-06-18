@@ -841,17 +841,30 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         current_folder_id: Option<uuid::Uuid>,
         tenant_id: Option<Uuid>,
     ) -> Result<(Share, Folder, Vec<Folder>, Vec<File>), ShareError> {
-        let (share, _file, root_folder) =
-            self.get_public_share_info(share_token, tenant_id).await?;
+        let share = self.resolve_public_share(share_token, tenant_id).await?;
+        if share.revoked_at.is_some() {
+            return Err(ShareError::Revoked);
+        }
+        if let Some(expires_at) = share.expires_at {
+            if expires_at < chrono::Utc::now() {
+                return Err(ShareError::Expired);
+            }
+        }
         if share.upload_only {
             return Err(ShareError::PermissionDenied {
                 file_id: share.resource_id().unwrap_or(share.id),
                 user_id: share.created_by,
             });
         }
-        let root_folder = root_folder.ok_or(ShareError::InvalidState(
+        let root_folder_id = share.folder_id.ok_or(ShareError::InvalidState(
             "share is not linked to a folder".to_string(),
         ))?;
+        let root_folder = self
+            .metadata_store
+            .find_folder_by_id(root_folder_id, share.created_by)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .ok_or(ShareError::FolderNotFound(root_folder_id))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
@@ -2748,6 +2761,51 @@ mod tests {
             .await
             .unwrap();
         let share_token = share.share_token.clone().unwrap();
+
+        let (returned_share, returned_folder, folders, files) = service
+            .list_public_folder_contents(&share_token, None, Some(tenant_id))
+            .await
+            .unwrap();
+
+        assert_eq!(returned_share.id, share.id);
+        assert_eq!(returned_folder.id, folder_id);
+        assert!(folders.is_empty());
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_public_folder_contents_password_protected_folder_succeeds() {
+        let (service, _, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let folder = Folder::new_root_with_name("Protected Folder", owner_id, tenant_id);
+        let folder_id = folder.id;
+        metadata_store.add_folder(folder);
+
+        let share = service
+            .create_folder_share(
+                folder_id,
+                owner_id,
+                SharePermissions::View,
+                Some("secret123".to_string()),
+                None,
+                false,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+        let share_token = share.share_token.clone().unwrap();
+
+        service
+            .validate_and_create_session(
+                &share_token,
+                Some("secret123".to_string()),
+                Some(tenant_id),
+            )
+            .await
+            .unwrap();
 
         let (returned_share, returned_folder, folders, files) = service
             .list_public_folder_contents(&share_token, None, Some(tenant_id))

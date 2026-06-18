@@ -508,15 +508,14 @@ where
 
         if let Err(err) = store_result {
             if matches!(err, UploadError::ChunkAlreadyReceived(_)) {
-                return Ok(ChunkUploadResponse {
-                    session_id,
+                tracing::debug!(
+                    session_id = %session_id,
                     chunk_index,
-                    verified: true,
-                    progress_percent: session.progress_percent(),
-                    is_complete: session.is_complete(),
-                });
+                    "chunk object already exists; repairing upload session metadata"
+                );
+            } else {
+                return Err(err);
             }
-            return Err(err);
         }
 
         // Update session
@@ -911,6 +910,7 @@ mod tests {
 
     struct MockUploadRepo {
         session: Mutex<Option<UploadSession>>,
+        chunk_updates: Mutex<Vec<(Uuid, u32, String, u64)>>,
         completed: Mutex<Vec<(Uuid, Uuid)>>,
     }
 
@@ -918,6 +918,7 @@ mod tests {
         fn new(session: UploadSession) -> Self {
             Self {
                 session: Mutex::new(Some(session)),
+                chunk_updates: Mutex::new(Vec::new()),
                 completed: Mutex::new(Vec::new()),
             }
         }
@@ -940,12 +941,18 @@ mod tests {
 
         async fn update_chunk_received(
             &self,
-            _session_id: Uuid,
-            _chunk_index: u32,
-            _chunk_hash: &str,
-            _size: u64,
+            session_id: Uuid,
+            chunk_index: u32,
+            chunk_hash: &str,
+            size: u64,
         ) -> Result<(), UploadError> {
-            unreachable!()
+            self.chunk_updates.lock().unwrap().push((
+                session_id,
+                chunk_index,
+                chunk_hash.to_string(),
+                size,
+            ));
+            Ok(())
         }
 
         async fn get_chunk_info(
@@ -994,12 +1001,14 @@ mod tests {
 
     struct MockUploadObjectStore {
         assembled: Mutex<Vec<(Uuid, u32, String)>>,
+        put_chunk_from_path_result: Mutex<Option<UploadError>>,
     }
 
     impl MockUploadObjectStore {
         fn new() -> Self {
             Self {
                 assembled: Mutex::new(Vec::new()),
+                put_chunk_from_path_result: Mutex::new(None),
             }
         }
     }
@@ -1021,7 +1030,10 @@ mod tests {
             _chunk_index: u32,
             _path: &std::path::Path,
         ) -> Result<(), UploadError> {
-            unreachable!()
+            if let Some(err) = self.put_chunk_from_path_result.lock().unwrap().take() {
+                return Err(err);
+            }
+            Ok(())
         }
 
         async fn get_chunk(
@@ -1176,6 +1188,63 @@ mod tests {
     #[test]
     fn test_validate_file_name() {
         // Placeholder for future validation tests
+    }
+
+    #[tokio::test]
+    async fn upload_chunk_retry_repairs_metadata_when_object_already_exists() {
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        let session = UploadSession::new(
+            session_id,
+            tenant_id,
+            owner_id,
+            None,
+            "retry.bin".to_string(),
+            "application/octet-stream".to_string(),
+            4,
+            1024 * 1024,
+            None,
+        );
+
+        let repo = Arc::new(MockUploadRepo::new(session));
+        let object_store = Arc::new(MockUploadObjectStore::new());
+        *object_store.put_chunk_from_path_result.lock().unwrap() =
+            Some(UploadError::ChunkAlreadyReceived(0));
+        let metadata_store = Arc::new(MockUploadMetadataStore::new(None));
+        let event_store = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(16));
+
+        let service = UploadService::new(
+            repo.clone(),
+            object_store,
+            metadata_store,
+            event_store,
+            broadcaster,
+        );
+
+        let chunk_path = std::env::temp_dir().join(format!("rustshare-{session_id}-chunk"));
+        std::fs::write(&chunk_path, b"data").unwrap();
+
+        let response = service
+            .upload_chunk_from_path(session_id, 0, &chunk_path, None, owner_id)
+            .await
+            .unwrap();
+        std::fs::remove_file(&chunk_path).unwrap();
+
+        assert!(response.verified);
+        assert!(response.is_complete);
+
+        let updates = repo.chunk_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, session_id);
+        assert_eq!(updates[0].1, 0);
+        assert_eq!(updates[0].3, 4);
+
+        let session = repo.session.lock().unwrap().clone().unwrap();
+        assert!(session.has_chunk(0));
+        assert_eq!(session.uploaded_bytes, 4);
     }
 
     #[tokio::test]
