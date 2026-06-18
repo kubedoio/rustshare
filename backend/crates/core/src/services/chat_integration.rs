@@ -283,6 +283,26 @@ pub async fn validate_chat_webhook_url(
     Ok(())
 }
 
+/// Determine whether HTTP webhook URLs are allowed for dispatch validation.
+///
+/// HTTP is always permitted in debug builds. In release builds it is only
+/// permitted when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`
+/// (case-insensitive). Keep this policy aligned with webhook registration.
+fn http_webhooks_allowed() -> bool {
+    cfg!(debug_assertions)
+        || parse_allow_http_webhooks(
+            std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS")
+                .ok()
+                .as_deref(),
+        )
+}
+
+fn parse_allow_http_webhooks(value: Option<&str>) -> bool {
+    value
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false)
+}
+
 async fn checked_webhook_socket_addrs(
     url: &str,
     allow_http: bool,
@@ -407,11 +427,12 @@ impl Default for HttpWebhookDispatcher {
 impl WebhookDispatcher for HttpWebhookDispatcher {
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
         // Re-validate and pin the vetted socket addresses at dispatch time.
-        // HTTP is never allowed at dispatch time regardless of debug configuration.
-        let (host, addrs) = checked_webhook_socket_addrs(url, false).await.map_err(|e| {
-            warn!(url = %url, error = %e, "Webhook URL failed SSRF validation at dispatch time");
-            "Invalid webhook URL".to_string()
-        })?;
+        let (host, addrs) = checked_webhook_socket_addrs(url, http_webhooks_allowed())
+            .await
+            .map_err(|e| {
+                warn!(url = %url, error = %e, "Webhook URL failed SSRF validation at dispatch time");
+                "Invalid webhook URL".to_string()
+            })?;
         let client = build_pinned_webhook_client(&host, &addrs)?;
 
         let response = client
@@ -1462,6 +1483,32 @@ mod tests {
         assert!(validate_chat_webhook_url("http://1.1.1.1/webhook", true)
             .await
             .is_ok());
+    }
+
+    #[test]
+    fn test_parse_allow_http_webhooks_is_value_sensitive() {
+        assert!(parse_allow_http_webhooks(Some("true")));
+        assert!(parse_allow_http_webhooks(Some("TRUE")));
+        assert!(parse_allow_http_webhooks(Some("1")));
+        assert!(!parse_allow_http_webhooks(Some("false")));
+        assert!(!parse_allow_http_webhooks(Some("0")));
+        assert!(!parse_allow_http_webhooks(Some("yes")));
+        assert!(!parse_allow_http_webhooks(None));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_http_validation_uses_allow_http_policy() {
+        if !http_webhooks_allowed() {
+            return;
+        }
+
+        let (host, addrs) =
+            checked_webhook_socket_addrs("http://1.1.1.1/webhook", http_webhooks_allowed())
+                .await
+                .expect("dispatch policy should allow HTTP webhooks when enabled");
+
+        assert_eq!(host, "1.1.1.1");
+        assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 80))]);
     }
 
     #[tokio::test]
