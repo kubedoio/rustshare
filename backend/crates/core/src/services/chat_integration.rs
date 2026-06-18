@@ -6,7 +6,7 @@
 //! - Link unfurl requests with permission checking
 //! - Dispatching events to registered chat webhook URLs
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -276,6 +276,14 @@ pub async fn validate_chat_webhook_url(
     url: &str,
     allow_http: bool,
 ) -> Result<(), ChatIntegrationError> {
+    checked_webhook_socket_addrs(url, allow_http).await?;
+    Ok(())
+}
+
+async fn checked_webhook_socket_addrs(
+    url: &str,
+    allow_http: bool,
+) -> Result<(String, Vec<SocketAddr>), ChatIntegrationError> {
     let parsed = url::Url::parse(url).map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
 
     // Scheme check.
@@ -293,17 +301,18 @@ pub async fn validate_chat_webhook_url(
         return Err(ChatIntegrationError::InvalidWebhookUrl);
     }
 
+    let port = parsed.port_or_known_default().unwrap_or(80);
+
     // Check IP literals first; these can bypass DNS-based defences.
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_internal_ip(&ip) {
             return Err(ChatIntegrationError::InvalidWebhookUrl);
         }
-        return Ok(());
+        return Ok((host.to_string(), vec![SocketAddr::new(ip, port)]));
     }
 
     // Resolve the hostname and verify none of the addresses are internal.
     // Cap DNS lookup at 5 seconds to avoid hanging on slow/unresponsive resolvers.
-    let port = parsed.port_or_known_default().unwrap_or(80);
     let lookup = tokio::time::timeout(
         Duration::from_secs(5),
         tokio::net::lookup_host((host, port)),
@@ -313,12 +322,16 @@ pub async fn validate_chat_webhook_url(
 
     match lookup {
         Ok(addrs) => {
-            for addr in addrs {
+            let addrs: Vec<SocketAddr> = addrs.collect();
+            if addrs.is_empty() {
+                return Err(ChatIntegrationError::InvalidWebhookUrl);
+            }
+            for addr in &addrs {
                 if is_internal_ip(&addr.ip()) {
                     return Err(ChatIntegrationError::InvalidWebhookUrl);
                 }
             }
-            Ok(())
+            Ok((host.to_string(), addrs))
         }
         Err(e) => {
             warn!(url = %url, error = %e, "DNS lookup failed for webhook URL");
@@ -337,7 +350,6 @@ pub trait WebhookDispatcher: Send + Sync {
 /// Default HTTP webhook dispatcher.
 #[derive(Debug, Clone)]
 pub struct HttpWebhookDispatcher {
-    client: reqwest::Client,
     timeout: Duration,
 }
 
@@ -345,30 +357,41 @@ impl HttpWebhookDispatcher {
     /// Create a new HTTP webhook dispatcher.
     pub fn new() -> Self {
         Self {
-            client: build_webhook_client(),
             timeout: Duration::from_secs(30),
         }
     }
 
     /// Create with custom timeout.
     pub fn with_timeout(timeout: Duration) -> Self {
-        Self {
-            client: build_webhook_client(),
-            timeout,
-        }
+        Self { timeout }
     }
+}
+
+fn webhook_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
 }
 
 /// Build a reqwest client that does not follow redirects, preventing SSRF
 /// payloads from redirecting to internal addresses after validation.
+#[cfg(test)]
 fn build_webhook_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+    webhook_client_builder().build().unwrap_or_else(|e| {
+        warn!(error = %e, "Failed to build no-redirect webhook client; falling back to default");
+        reqwest::Client::new()
+    })
+}
+
+/// Build a webhook client whose DNS resolution is pinned to the socket
+/// addresses that passed SSRF validation. This prevents a separate client DNS
+/// lookup from resolving the same hostname to an internal address.
+fn build_pinned_webhook_client(
+    host: &str,
+    addrs: &[SocketAddr],
+) -> Result<reqwest::Client, String> {
+    webhook_client_builder()
+        .resolve_to_addrs(host, addrs)
         .build()
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "Failed to build no-redirect webhook client; falling back to default");
-            reqwest::Client::new()
-        })
+        .map_err(|e| format!("Failed to build webhook client: {e}"))
 }
 
 impl Default for HttpWebhookDispatcher {
@@ -380,15 +403,15 @@ impl Default for HttpWebhookDispatcher {
 #[async_trait::async_trait]
 impl WebhookDispatcher for HttpWebhookDispatcher {
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
-        // Re-validate the URL at dispatch time to mitigate DNS rebinding attacks.
+        // Re-validate and pin the vetted socket addresses at dispatch time.
         // HTTP is never allowed at dispatch time regardless of debug configuration.
-        if let Err(e) = validate_chat_webhook_url(url, false).await {
+        let (host, addrs) = checked_webhook_socket_addrs(url, false).await.map_err(|e| {
             warn!(url = %url, error = %e, "Webhook URL failed SSRF validation at dispatch time");
-            return Err("Invalid webhook URL".to_string());
-        }
+            "Invalid webhook URL".to_string()
+        })?;
+        let client = build_pinned_webhook_client(&host, &addrs)?;
 
-        let response = self
-            .client
+        let response = client
             .post(url)
             .header("Content-Type", "application/json")
             .header("X-RustShare-Event", format!("{:?}", event.event_type))
@@ -1347,6 +1370,23 @@ mod tests {
         assert!(validate_chat_webhook_url("https://1.1.1.1/webhook", false)
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_checked_webhook_socket_addrs_pins_public_ip_literal() {
+        let (host, addrs) = checked_webhook_socket_addrs("https://1.1.1.1/webhook", false)
+            .await
+            .expect("public IP literal should pass validation");
+
+        assert_eq!(host, "1.1.1.1");
+        assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 443))]);
+    }
+
+    #[tokio::test]
+    async fn test_pinned_webhook_client_uses_validated_addresses() {
+        let addrs = [SocketAddr::from(([1, 1, 1, 1], 443))];
+        build_pinned_webhook_client("example.com", &addrs)
+            .expect("pinned webhook client should build");
     }
 
     #[tokio::test]

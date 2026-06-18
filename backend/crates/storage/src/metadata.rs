@@ -495,30 +495,28 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find user by email.
+    /// Find user by email using the same case-insensitive semantics as the
+    /// tenant-scoped email uniqueness index.
     ///
-    /// TODO(Workstream B residual risk): this lookup is not tenant-scoped. In a
-    /// true multi-tenant system the same email can exist in different tenants,
-    /// so callers that need tenant isolation should use a tenant-scoped lookup
-    /// (e.g. `find_user_by_email_and_tenant`) once a tenant identifier is added
-    /// to the login request.
+    /// This lookup is intentionally unscoped for legacy password-login
+    /// fallback only. Callers must reject ambiguous cross-tenant matches before
+    /// authenticating the returned user.
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as!(
-            User,
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _" FROM users WHERE email = $1"#,
-            email
+        let user = sqlx::query_as::<_, User>(
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1"#,
         )
+        .bind(email)
         .fetch_optional(&self.pool)
         .await?;
         Ok(user)
     }
 
-    /// Count users matching the given email (case-sensitive, matching `find_user_by_email`).
+    /// Count users matching the given email using case-insensitive semantics.
     pub async fn count_users_by_email(&self, email: &str) -> Result<i64> {
-        let count = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "count!" FROM users WHERE email = $1"#,
-            email
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER($1)"#,
         )
+        .bind(email)
         .fetch_one(&self.pool)
         .await?;
         Ok(count)

@@ -79,35 +79,34 @@ async fn validate_credentials(
                 email = %req.email,
                 "Password login performed without tenant scoping; falling back to unscoped email lookup"
             );
+            // After dropping the global email unique constraint, an unscoped
+            // lookup could return an arbitrary user when the same email exists
+            // in multiple tenants. Count first and reject ambiguous
+            // case-insensitive matches before selecting a user.
+            let count = metadata_store
+                .count_users_by_email(&req.email)
+                .await
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            if count > 1 {
+                tracing::warn!(
+                    email = %req.email,
+                    count,
+                    "Rejecting unscoped login because email is ambiguous across tenants"
+                );
+                // Constant-time path: keep timing indistinguishable.
+                drop(PasswordHasher::verify("dummy", DUMMY_HASH));
+                if let Some(ip) = ip {
+                    if let Err(e) = metadata_store.record_login_failure(ip).await {
+                        tracing::warn!("Failed to record login failure: {}", e);
+                    }
+                }
+                return Err(AppError::Unauthorized);
+            }
+
             let user = metadata_store
                 .find_user_by_email(&req.email)
                 .await
                 .map_err(|e| AppError::internal(e.to_string()))?;
-
-            // After dropping the global email unique constraint, an unscoped
-            // lookup could return an arbitrary user when the same email exists
-            // in multiple tenants. Reject ambiguous emails to preserve isolation.
-            if user.is_some() {
-                let count = metadata_store
-                    .count_users_by_email(&req.email)
-                    .await
-                    .map_err(|e| AppError::internal(e.to_string()))?;
-                if count > 1 {
-                    tracing::warn!(
-                        email = %req.email,
-                        count,
-                        "Rejecting unscoped login because email is ambiguous across tenants"
-                    );
-                    // Constant-time path: keep timing indistinguishable.
-                    drop(PasswordHasher::verify("dummy", DUMMY_HASH));
-                    if let Some(ip) = ip {
-                        if let Err(e) = metadata_store.record_login_failure(ip).await {
-                            tracing::warn!("Failed to record login failure: {}", e);
-                        }
-                    }
-                    return Err(AppError::Unauthorized);
-                }
-            }
             user
         }
     };
@@ -561,6 +560,38 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Unauthorized)),
             "expected Unauthorized for ambiguous email without tenant_id, got {:?}",
+            result
+        );
+
+        cleanup_test_user(&pool, user_a_id).await;
+        cleanup_test_user(&pool, user_b_id).await;
+    }
+
+    #[tokio::test]
+    async fn login_without_tenant_id_rejects_case_insensitive_ambiguous_email() {
+        let pool = test_db_pool().await;
+        let metadata_store = MetadataStore::new(pool.clone());
+
+        let password = "ambiguous_case_password";
+        let hash = PasswordHasher::hash(password).unwrap();
+
+        let tenant_a = uuid::Uuid::new_v4();
+        let tenant_b = uuid::Uuid::new_v4();
+
+        let user_a_id =
+            insert_test_user(&pool, "Case.Ambiguous@example.com", &hash, tenant_a).await;
+        let user_b_id =
+            insert_test_user(&pool, "case.ambiguous@example.com", &hash, tenant_b).await;
+
+        let req = LoginRequest {
+            email: "case.ambiguous@example.com".to_string(),
+            password: password.to_string(),
+            tenant_id: None,
+        };
+        let result = validate_credentials(&metadata_store, &req, None).await;
+        assert!(
+            matches!(result, Err(AppError::Unauthorized)),
+            "expected Unauthorized for case-insensitive ambiguous email without tenant_id, got {:?}",
             result
         );
 
