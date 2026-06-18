@@ -1,6 +1,8 @@
 # RustShare Phase 2: File Operations Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Current implementation note (2026-06-18):** This historical plan references `get_download_url` and presigned S3 download URLs. Current file downloads are served through verified backend streaming endpoints.
 
 **Goal:** Implement service layer and HTTP API for file upload/download, folder management, versioning, and conflict detection with event-sourced architecture.
 

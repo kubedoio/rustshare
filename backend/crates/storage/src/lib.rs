@@ -21,7 +21,7 @@ pub use metadata::{
     MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig,
     ShareAccessLogEntry, UserSecurityEvent, UserSecurityEventRecord,
 };
-pub use object_store::ObjectStore;
+pub use object_store::{ObjectStore, ObjectStoreOptions};
 
 // Implement service layer traits for storage types
 use anyhow::Result;
@@ -391,8 +391,16 @@ impl ShareMetadataStoreOps for MetadataStore {
     async fn get_share_by_token(
         &self,
         token: &str,
+        tenant_id: uuid::Uuid,
     ) -> Result<Option<rustshare_core::domain::Share>> {
-        self.get_share_by_token(token).await
+        self.get_share_by_token(token, tenant_id).await
+    }
+
+    async fn get_share_by_token_unscoped(
+        &self,
+        token: &str,
+    ) -> Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_by_token_unscoped(token).await
     }
 
     async fn get_file_shares(
@@ -708,10 +716,6 @@ impl CoreObjectStoreOps for ObjectStore {
 
     async fn exists(&self, key: &str) -> Result<bool> {
         self.exists(key).await
-    }
-
-    async fn get_presigned_url(&self, key: &str, expires_in_secs: u64) -> Result<String> {
-        self.get_presigned_url(key, expires_in_secs).await
     }
 
     async fn get(&self, key: &str) -> Result<bytes::Bytes> {

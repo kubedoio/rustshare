@@ -626,7 +626,7 @@ async fn find_or_create_oidc_user(
 ) -> Result<User, (StatusCode, String)> {
     if let Some(user) = state
         .metadata_store
-        .find_user_by_email(email)
+        .find_user_by_email_and_tenant(email, state.default_tenant_id)
         .await
         .map_err(|error| {
             (

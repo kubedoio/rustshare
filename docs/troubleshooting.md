@@ -200,6 +200,8 @@ docker compose exec backend curl -s http://rustfs:9000/rustshare-files
 aws --endpoint-url http://localhost:9000 s3 mb s3://rustshare-files
 ```
 
+For local Docker Compose bootstrap, `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` defaults to `true`. For production, keep it `false` and provision the bucket before starting the backend.
+
 ---
 
 ## 4. Frontend Not Loading
@@ -430,8 +432,8 @@ services:
 
 **Solution:**
 
-1. Check if the backend is proxying the entire file stream. For large files, presigned-URL redirects are faster.
-2. Verify Nginx `sendfile` and `tcp_nopush` are enabled.
+1. Check backend CPU, memory, and network throughput. RustShare intentionally serves user-facing downloads through backend streaming endpoints so authorization and object integrity checks stay enforced.
+2. Verify Nginx buffering is disabled or tuned for streaming responses.
 3. Check RustFS disk I/O:
    ```bash
    docker compose exec rustfs iostat -x 1

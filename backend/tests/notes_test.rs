@@ -41,9 +41,16 @@ async fn setup_test_env() -> (
         .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
-        ObjectStore::new(s3_endpoint, s3_region, s3_bucket)
-            .await
-            .expect("Failed to create object store"),
+        ObjectStore::new_with_options(
+            s3_endpoint,
+            s3_region,
+            s3_bucket,
+            rustshare_storage::ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
+        .await
+        .expect("Failed to create object store"),
     );
 
     (pool, event_store, metadata_store, object_store)
@@ -249,7 +256,7 @@ async fn contract_create_note_uses_collision_safe_naming() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_read_note_returns_content_and_metadata_unified() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -279,7 +286,7 @@ async fn contract_read_note_returns_content_and_metadata_unified() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_save_note_updates_content_excerpt_and_updated_at() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -319,7 +326,7 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -369,7 +376,7 @@ async fn contract_rename_note_renames_file_and_sidecar_and_preserves_share_id() 
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_delete_note_invalidates_public_access() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -410,7 +417,7 @@ async fn contract_delete_note_invalidates_public_access() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -448,7 +455,7 @@ async fn contract_list_recent_notes_ordered_by_updated_at_desc() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -488,7 +495,7 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_toggle_visibility_public_to_private_disables_access() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -526,7 +533,7 @@ async fn contract_toggle_visibility_public_to_private_disables_access() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_anonymous_request_to_private_note_returns_not_found() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -548,7 +555,7 @@ async fn contract_anonymous_request_to_private_note_returns_not_found() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_public_note_page_does_not_leak_internal_paths() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();

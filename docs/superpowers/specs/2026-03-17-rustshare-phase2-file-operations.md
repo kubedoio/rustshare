@@ -3,6 +3,8 @@
 **Date:** 2026-03-17
 **Status:** Draft - Pending Review
 
+> **Current implementation note (2026-06-18):** This historical draft describes `get_download_url` and presigned S3 URLs. Current user-facing file downloads use verified backend streaming through `/api/v1/files/{id}/download` and `/api/v1/files/{id}/content`.
+
 ---
 
 ## Executive Summary

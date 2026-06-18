@@ -96,9 +96,14 @@ async fn init_database(config: &AppConfig) -> Result<PgPool> {
         .max_lifetime(Some(Duration::from_secs(max_lifetime_secs)))
         .before_acquire(|conn, _meta| {
             Box::pin(async move {
-                // Set a default restrictive user context.
-                // This will be overridden per-request by middleware.
-                sqlx::query!("SET app.current_user_id = '00000000-0000-0000-0000-000000000000'")
+                // Reset RLS context variables to restrictive nil-UUID defaults on
+                // every pool checkout. The per-request tenant context middleware
+                // was removed; repository-level tenant filtering is the active
+                // isolation mechanism.
+                sqlx::query("SET app.current_tenant_id = '00000000-0000-0000-0000-000000000000'")
+                    .execute(&mut *conn)
+                    .await?;
+                sqlx::query("SET app.current_user_id = '00000000-0000-0000-0000-000000000000'")
                     .execute(&mut *conn)
                     .await?;
                 Ok(true)
@@ -127,14 +132,22 @@ async fn init_stores(
     let rustfs_endpoint = config.rustfs_endpoint.clone();
     let rustfs_region = config.rustfs_region.clone();
     let rustfs_bucket = config.rustfs_bucket.clone();
+    let object_store_options = rustshare_storage::ObjectStoreOptions {
+        auto_create_bucket: config.object_store_auto_create_bucket,
+    };
 
     let (metadata_store, event_store, object_store) = tokio::join!(
         async { Arc::new(MetadataStore::new(db_pool.clone())) },
         async { Arc::new(EventStore::new(db_pool.clone())) },
         async {
-            ObjectStore::new(rustfs_endpoint, rustfs_region, rustfs_bucket)
-                .await
-                .map(Arc::new)
+            ObjectStore::new_with_options(
+                rustfs_endpoint,
+                rustfs_region,
+                rustfs_bucket,
+                object_store_options,
+            )
+            .await
+            .map(Arc::new)
         }
     );
 
@@ -566,21 +579,7 @@ pub async fn init_app() -> Result<AppState> {
             info!("Bootstrap admin user created with user-provided password.");
         } else {
             let password_file = config.bootstrap_password_file.clone();
-
-            {
-                use std::io::Write;
-                let mut file = std::fs::File::create(&password_file)?;
-                file.write_all(admin_password.as_bytes())?;
-            }
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut permissions = std::fs::metadata(&password_file)?.permissions();
-                permissions.set_mode(0o600);
-                std::fs::set_permissions(&password_file, permissions)?;
-            }
-
+            write_bootstrap_password_file(std::path::Path::new(&password_file), &admin_password)?;
             info!(path = %password_file, "Bootstrap admin password written to secure file. Change immediately.");
         }
     }
@@ -677,9 +676,78 @@ pub async fn init_app() -> Result<AppState> {
     Ok(state)
 }
 
+/// Write the generated bootstrap admin password to a secure file.
+///
+/// The file is created with restrictive permissions (0600 on Unix) and the
+/// password bytes are never logged to stdout/stderr by this helper.
+pub fn write_bootstrap_password_file(path: &std::path::Path, password: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(password.as_bytes())?;
+    file.sync_all()?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path)?.permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(path, permissions)?;
+    }
+
+    Ok(())
+}
+
 pub fn default_storage_quota_bytes() -> i64 {
     std::env::var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(10_737_418_240)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_password_file_is_written_with_restrictive_permissions() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("bootstrap-password.txt");
+        let password = "super-secret-generated-password-12345";
+
+        write_bootstrap_password_file(&path, password).expect("write password file");
+
+        let contents = std::fs::read_to_string(&path).expect("read password file");
+        assert_eq!(
+            contents, password,
+            "password file must contain the generated password"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("get password file metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "password file must be readable only by the owner"
+            );
+        }
+    }
+
+    #[test]
+    fn bootstrap_password_file_overwrites_existing_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("bootstrap-password.txt");
+        std::fs::write(&path, "old-password").expect("write old password");
+
+        let new_password = "new-super-secret-password";
+        write_bootstrap_password_file(&path, new_password).expect("write password file");
+
+        let contents = std::fs::read_to_string(&path).expect("read password file");
+        assert_eq!(contents, new_password);
+    }
 }

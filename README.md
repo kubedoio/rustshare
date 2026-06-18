@@ -112,8 +112,8 @@ RustShare is being shaped around the following core ideas:
 2. **Auditability beats hidden magic**  
    Users and administrators must be able to understand what happened, who accessed what, and why.
 
-3. **Object storage is for durable content**  
-   Durable blobs and immutable versions belong in S3-compatible storage.
+3. **Object storage is for durable, verifiable content**
+   Durable blobs and immutable versions belong in S3-compatible storage under content-addressed `blobs/{sha256}` keys, with backend-mediated integrity checks.
 
 4. **Metadata and permissions stay explicit**  
    Namespace, grants, shares, public links, and effective access cannot be left implicit.
@@ -152,7 +152,7 @@ RustShare is moving toward a **hybrid, object-store-centered, service-oriented a
 
 ### Core model
 
-- **S3-compatible object storage** for durable file content and immutable versions
+- **S3-compatible object storage** for content-addressed durable file content and immutable versions
 - **explicit metadata and permission authority** for namespace, shares, and access decisions
 - **event-driven projections** for search, previews, notifications, and AI indexing
 - **shared identity + bounded integration** with RustChat

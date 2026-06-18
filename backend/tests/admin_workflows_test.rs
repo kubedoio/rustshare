@@ -62,7 +62,6 @@ async fn reset_workflow_state(pool: &sqlx::PgPool, workflow_id: Uuid) {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_list_workflows() {
     let pool = test_pool().await;
     let wf_id = get_invite_workflow_id(&pool).await;
@@ -70,7 +69,6 @@ async fn test_list_workflows() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_enable_workflow_requires_smtp() {
     let _guard = WORKFLOW_TEST_LOCK.lock().await;
     let pool = test_pool().await;
@@ -89,7 +87,6 @@ async fn test_enable_workflow_requires_smtp() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_enable_workflow_with_smtp() {
     let _guard = WORKFLOW_TEST_LOCK.lock().await;
     let pool = test_pool().await;
@@ -114,7 +111,6 @@ async fn test_enable_workflow_with_smtp() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_disable_workflow() {
     let _guard = WORKFLOW_TEST_LOCK.lock().await;
     let pool = test_pool().await;

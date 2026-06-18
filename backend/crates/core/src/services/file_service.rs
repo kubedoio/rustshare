@@ -175,16 +175,6 @@ pub trait ObjectStoreOps: Send + Sync {
     /// Check if an object exists.
     async fn exists(&self, key: &str) -> Result<bool>;
 
-    /// Get a presigned URL for downloading an object.
-    ///
-    /// # Arguments
-    /// * `key` - The object key
-    /// * `expiry_secs` - URL expiration time in seconds
-    ///
-    /// # Returns
-    /// A presigned URL string valid for the specified duration.
-    async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String>;
-
     /// Download content from object storage.
     ///
     /// # Arguments
@@ -257,12 +247,13 @@ where
     async fn require_file_permission(
         &self,
         user_id: UserId,
+        tenant_id: uuid::Uuid,
         file_id: FileId,
         required: SharePermissions,
     ) -> Result<(), FileError> {
         let has = self
             .permission_resolver
-            .check_file_permission(user_id, file_id, required)
+            .check_file_permission(user_id, tenant_id, file_id, required)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
         if !has {
@@ -441,7 +432,7 @@ where
             // Verify permissions: user must own the folder or have Edit permission
             let has_permission = self
                 .permission_resolver
-                .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+                .check_folder_permission(owner_id, tenant_id, folder_id, SharePermissions::Edit)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
 
@@ -685,42 +676,10 @@ where
 
         // 2. Check permissions. Access was verified above, so this must not be
         // owner-filtered; shared recipients are allowed to read non-owned files.
-        self.require_file_permission(user_id, file_id, SharePermissions::View)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::View)
             .await?;
 
         Ok(file)
-    }
-
-    /// Get a presigned download URL for a file.
-    ///
-    /// # Arguments
-    /// * `file_id` - The ID of the file to download
-    /// * `user_id` - The ID of the user requesting the download
-    ///
-    /// # Returns
-    /// A presigned object-storage URL valid for 1 hour.
-    ///
-    /// # Errors
-    /// - `FileError::NotFound` if the file doesn't exist
-    /// - `FileError::PermissionDenied` if the user doesn't own the file
-    /// - `FileError::Storage` if URL generation fails
-    pub async fn get_download_url(
-        &self,
-        file_id: uuid::Uuid,
-        user_id: UserId,
-    ) -> Result<String, FileError> {
-        // Use get_file for permission check
-        let file = self.get_file(file_id, user_id).await?;
-
-        // Generate presigned URL (1 hour = 3600 seconds)
-        let storage_key = file.storage_key();
-        let url = self
-            .object_store
-            .get_presigned_url(&storage_key, 3600)
-            .await
-            .map_err(|e| FileError::Storage(format!("Failed to generate presigned URL: {}", e)))?;
-
-        Ok(url)
     }
 
     /// Update a file's content with optimistic locking.
@@ -798,7 +757,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Check optimistic lock (current_version == expected_version)
@@ -975,7 +934,7 @@ where
         let old_version = file.current_version;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Find the old version
@@ -1090,7 +1049,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. If target folder is specified, verify it exists
@@ -1172,7 +1131,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         if file.name == new_name {
@@ -1263,7 +1222,7 @@ where
         let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Admin permission for deletion
-        self.require_file_permission(user_id, file_id, SharePermissions::Admin)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Admin)
             .await?;
 
         // 2. Create FileDeleted event
@@ -1342,7 +1301,7 @@ where
         let mut file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
-        self.require_file_permission(user_id, file_id, SharePermissions::Edit)
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
         // 2. Validate file is editable based on mime type and extension
@@ -1934,14 +1893,6 @@ mod tests {
             Ok(self.objects.lock().unwrap().contains_key(key))
         }
 
-        async fn get_presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String> {
-            // Mock presigned URL generation
-            Ok(format!(
-                "https://mock-s3.example.com/{}?expiry={}",
-                key, expiry_secs
-            ))
-        }
-
         async fn get(&self, key: &str) -> Result<Bytes> {
             let objects = self.objects.lock().unwrap();
             objects
@@ -2354,67 +2305,6 @@ mod tests {
             assert_eq!(file_id, file.id);
             assert_eq!(user_id, other_user);
         }
-    }
-
-    // Tests for get_download_url
-
-    #[tokio::test]
-    async fn test_get_download_url_success() {
-        let (service, _, metadata_store, _) = setup_file_service();
-        let owner_id = uuid::Uuid::new_v4();
-
-        let file = File::new(
-            "download.pdf".to_string(),
-            "/download.pdf".to_string(),
-            "hash789".to_string(),
-            500,
-            "application/pdf".to_string(),
-            None,
-            owner_id,
-        );
-        metadata_store.add_file(file.clone());
-
-        let result = service.get_download_url(file.id, owner_id).await;
-        assert!(result.is_ok());
-
-        let url = result.unwrap();
-        // Verify URL contains the storage key and expiry
-        assert!(url.contains("blobs/hash789"));
-        assert!(url.contains("expiry=3600"));
-    }
-
-    #[tokio::test]
-    async fn test_get_download_url_not_found() {
-        let (service, _, _, _) = setup_file_service();
-        let user_id = uuid::Uuid::new_v4();
-        let non_existent_file_id = uuid::Uuid::new_v4();
-
-        let result = service
-            .get_download_url(non_existent_file_id, user_id)
-            .await;
-        assert!(matches!(result, Err(FileError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_get_download_url_permission_denied() {
-        let (service, _, metadata_store, _) = setup_file_service();
-        let owner_id = uuid::Uuid::new_v4();
-        let other_user = uuid::Uuid::new_v4();
-
-        let file = File::new(
-            "secret.docx".to_string(),
-            "/secret.docx".to_string(),
-            "secrethash".to_string(),
-            1000,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
-            None,
-            owner_id,
-        );
-        metadata_store.add_file(file.clone());
-
-        // Try to get download URL as different user
-        let result = service.get_download_url(file.id, other_user).await;
-        assert!(matches!(result, Err(FileError::PermissionDenied { .. })));
     }
 
     // Tests for update_file with optimistic locking
@@ -2995,29 +2885,5 @@ mod tests {
             .move_file(file.id, Some(nonexistent_folder), owner_id)
             .await;
         assert!(matches!(result, Err(FileError::FolderNotFound(_))));
-    }
-}
-
-// Integration test (requires DB + S3)
-#[cfg(test)]
-mod integration_tests {
-    #[tokio::test]
-    #[ignore = "Requires DB + S3"]
-    async fn test_upload_file_integration() {
-        // This test requires:
-        // 1. Running PostgreSQL database with schema
-        // 2. Running RustFS/S3 compatible storage
-        //
-        // To run:
-        // docker-compose up -d postgres rustfs
-        // cargo test test_upload_file_integration -- --ignored
-        //
-        // The actual implementation would use:
-        // - rustshare_storage::EventStore
-        // - rustshare_storage::MetadataStore
-        // - rustshare_storage::ObjectStore
-        //
-        // For now, this is a placeholder that documents the expected behavior.
-        println!("Integration test placeholder - requires DB + S3 setup");
     }
 }

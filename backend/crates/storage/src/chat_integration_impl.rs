@@ -23,8 +23,12 @@ fn permission_from_db_value(value: &str) -> SharePermissions {
 
 #[allow(async_fn_in_trait)]
 impl MetadataStoreOps for MetadataStore {
-    async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
-        self.get_share_by_token(token).await
+    async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>> {
+        self.get_share_by_token(token, tenant_id).await
+    }
+
+    async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>> {
+        self.get_share_by_token_unscoped(token).await
     }
 
     async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<File>> {

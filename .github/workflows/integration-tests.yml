@@ -22,8 +22,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh --full
+
+  generate-secrets:
+    name: Generate Secrets
+    runs-on: ubuntu-latest
+    outputs:
+      pg_password: ${{ steps.secrets.outputs.pg_password }}
+      jwt_secret: ${{ steps.secrets.outputs.jwt_secret }}
+      encryption_key: ${{ steps.secrets.outputs.encryption_key }}
+      admin_password: ${{ steps.secrets.outputs.admin_password }}
+      rustfs_root_user: ${{ steps.secrets.outputs.rustfs_root_user }}
+      rustfs_root_password: ${{ steps.secrets.outputs.rustfs_root_password }}
+    steps:
+      - name: Generate ephemeral secrets
+        id: secrets
+        run: |
+          # Per-run cryptographically random secrets. These are passed as job
+          # outputs so subsequent jobs can reference them without hardcoding
+          # anything in this file.
+          PG_PASSWORD="$(openssl rand -hex 32)"
+          echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
+          JWT_SECRET="$(openssl rand -base64 32 | tr -d '\n')"
+          echo "jwt_secret=${JWT_SECRET}" >> "$GITHUB_OUTPUT"
+          ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+          echo "encryption_key=${ENCRYPTION_KEY}" >> "$GITHUB_OUTPUT"
+          ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
+          echo "admin_password=${ADMIN_PASSWORD}" >> "$GITHUB_OUTPUT"
+          RUSTFS_ROOT_USER="$(openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20)"
+          echo "rustfs_root_user=${RUSTFS_ROOT_USER}" >> "$GITHUB_OUTPUT"
+          RUSTFS_ROOT_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
+          echo "rustfs_root_password=${RUSTFS_ROOT_PASSWORD}" >> "$GITHUB_OUTPUT"
+
   integration-tests:
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
     timeout-minutes: 30
 
     services:
@@ -32,7 +71,7 @@ jobs:
         env:
           POSTGRES_DB: rustshare
           POSTGRES_USER: rustshare
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
           --health-cmd "pg_isready -U rustshare"
           --health-interval 10s
@@ -43,16 +82,21 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
-      DATABASE_URL: postgres://rustshare:postgres@localhost:5432/rustshare
-      JWT_SECRET: test-jwt-secret-that-is-32-chars-long-for-ci-run
-      RUSTSHARE_SECRET_ENCRYPTION_KEY: c2VjcmV0LWVuY3J5cHRpb24ta2V5LWhlcmUtMzItYnl0ZXM=
-      AWS_ACCESS_KEY_ID: rustfsadmin
-      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      # Per-run cryptographically random secrets. These are not real secrets;
+      # they are generated for each run and discarded afterwards.
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare
+      JWT_SECRET: ${{ needs.generate-secrets.outputs.jwt_secret }}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ needs.generate-secrets.outputs.encryption_key }}
+      RUSTSHARE_ADMIN_PASSWORD: ${{ needs.generate-secrets.outputs.admin_password }}
+      RUSTFS_ROOT_USER: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
+      RUSTFS_ROOT_PASSWORD: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
+      AWS_ACCESS_KEY_ID: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
+      AWS_SECRET_ACCESS_KEY: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
       RUSTFS_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
-      RUSTSHARE_ADMIN_PASSWORD: ci-admin-password-123
       RUSTSHARE_ADMIN_EMAIL: admin@localhost
       RUSTSHARE_ADMIN_USERNAME: admin
       PASSWORD_LOGIN_ENABLED: true
@@ -62,7 +106,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -71,9 +115,8 @@ jobs:
         run: |
           docker run -d --name rustfs \
             -p 9000:9000 -p 9001:9001 \
-            -e RUSTFS_ROOT_USER=rustfsadmin \
-            -e RUSTFS_ROOT_PASSWORD=rustfsadmin \
-            -e RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS=true \
+            -e RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER}" \
+            -e RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD}" \
             -e RUSTFS_DATA_DIR=/data \
             -e RUSTFS_LOGS_DIR=/logs \
             rustfs/rustfs:1.0.0-beta.6
@@ -95,8 +138,8 @@ jobs:
         run: |
           set +e
           docker run --rm --network host \
-            -e AWS_ACCESS_KEY_ID=rustfsadmin \
-            -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
+            -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+            -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
             amazon/aws-cli:2.34.59 \
             --endpoint-url http://127.0.0.1:9000 \
             s3 mb s3://rustshare-files > /tmp/bucket-create.log 2>&1

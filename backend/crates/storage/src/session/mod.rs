@@ -113,6 +113,13 @@ pub struct SessionConfig {
     pub cookie_same_site: String,
 }
 
+/// Parse a truthy environment variable value.
+///
+/// Accepts `"true"` or `"1"` (case-insensitive) as true; everything else is false.
+fn parse_env_bool(value: &str) -> bool {
+    value.eq_ignore_ascii_case("true") || value == "1"
+}
+
 impl SessionConfig {
     /// Create default configuration.
     ///
@@ -139,11 +146,12 @@ impl SessionConfig {
             .unwrap_or(24 * 3600);
         let use_revocation_cache = std::env::var("SESSION_USE_REVOCATION_CACHE")
             .ok()
-            .map(|s| s == "true" || s == "1")
+            .map(|s| parse_env_bool(&s))
             .unwrap_or(true);
-        let cookie_secure = std::env::var("SESSION_COOKIE_SECURE")
+        let cookie_secure = std::env::var("RUSTSHARE_SESSION_COOKIE_SECURE")
             .ok()
-            .map(|s| s == "true" || s == "1")
+            .or_else(|| std::env::var("SESSION_COOKIE_SECURE").ok())
+            .map(|s| parse_env_bool(&s))
             .unwrap_or(true);
 
         Ok(Self {
@@ -244,6 +252,129 @@ mod tests {
         let config = SessionConfig::from_env().unwrap();
         assert_eq!(config.jwt_secret, "test-secret");
         assert!(config.use_revocation_cache);
+    }
+
+    #[test]
+    fn test_session_config_secure_env_var_precedence_and_fallback() {
+        // Env vars are process-global, so keep all assertions in one test to
+        // avoid races with other tests that may mutate them.
+        std::env::set_var("JWT_SECRET", "test-secret");
+
+        // Prefixed name takes precedence when both are set.
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "false");
+        std::env::set_var("SESSION_COOKIE_SECURE", "true");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(
+            !config.cookie_secure,
+            "RUSTSHARE_SESSION_COOKIE_SECURE must take precedence over SESSION_COOKIE_SECURE"
+        );
+
+        // Fall back to legacy name when prefixed name is absent.
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
+        std::env::set_var("SESSION_COOKIE_SECURE", "false");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(
+            !config.cookie_secure,
+            "SESSION_COOKIE_SECURE must be used when RUSTSHARE_SESSION_COOKIE_SECURE is unset"
+        );
+
+        // Default remains true when neither is set.
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
+        std::env::remove_var("SESSION_COOKIE_SECURE");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(config.cookie_secure, "cookie_secure must default to true");
+
+        // Case-insensitive and numeric truthy values are accepted.
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "TRUE");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(config.cookie_secure, "TRUE must be treated as true");
+
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "1");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(config.cookie_secure, "1 must be treated as true");
+
+        std::env::set_var("RUSTSHARE_SESSION_COOKIE_SECURE", "False");
+        let config = SessionConfig::from_env().unwrap();
+        assert!(!config.cookie_secure, "False must be treated as false");
+
+        std::env::remove_var("RUSTSHARE_SESSION_COOKIE_SECURE");
+    }
+
+    #[test]
+    fn test_secure_session_cookie_flags() {
+        let config = SessionConfig {
+            jwt_secret: "test-secret-key-that-is-long-enough".to_string(),
+            session_ttl: Duration::from_secs(3600),
+            use_revocation_cache: false,
+            revocation_cache_ttl: Duration::from_secs(3600),
+            cookie_name: "test_session".to_string(),
+            cookie_secure: true,
+            cookie_same_site: "lax".to_string(),
+        };
+        let manager = SessionManager::new(config);
+
+        let session = manager
+            .create_session(
+                Uuid::new_v4(),
+                "test@example.com".to_string(),
+                SessionType::Web,
+            )
+            .unwrap();
+        let cookie = session
+            .cookie_value
+            .expect("web session must have a cookie");
+
+        assert!(
+            cookie.contains("HttpOnly"),
+            "cookie must be HttpOnly: {cookie}"
+        );
+        assert!(cookie.contains("Secure"), "cookie must be Secure: {cookie}");
+        assert!(
+            cookie.contains("SameSite=lax"),
+            "cookie must have SameSite policy: {cookie}"
+        );
+        assert!(
+            cookie.contains("Path=/"),
+            "cookie must have Path=/: {cookie}"
+        );
+    }
+
+    #[test]
+    fn test_insecure_session_cookie_flags() {
+        let config = SessionConfig {
+            jwt_secret: "test-secret-key-that-is-long-enough".to_string(),
+            session_ttl: Duration::from_secs(3600),
+            use_revocation_cache: false,
+            revocation_cache_ttl: Duration::from_secs(3600),
+            cookie_name: "test_session".to_string(),
+            cookie_secure: false,
+            cookie_same_site: "lax".to_string(),
+        };
+        let manager = SessionManager::new(config);
+
+        let session = manager
+            .create_session(
+                Uuid::new_v4(),
+                "test@example.com".to_string(),
+                SessionType::Web,
+            )
+            .unwrap();
+        let cookie = session
+            .cookie_value
+            .expect("web session must have a cookie");
+
+        assert!(
+            cookie.contains("HttpOnly"),
+            "cookie must be HttpOnly: {cookie}"
+        );
+        assert!(
+            !cookie.contains("Secure"),
+            "cookie must not be Secure: {cookie}"
+        );
+        assert!(
+            cookie.contains("SameSite=lax"),
+            "cookie must have SameSite policy: {cookie}"
+        );
     }
 
     #[test]

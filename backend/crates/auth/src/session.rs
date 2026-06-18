@@ -15,6 +15,10 @@ pub struct ShareSessionClaims {
     pub file_id: Option<FileId>,
     pub folder_id: Option<FolderId>,
     pub permissions: SharePermissions,
+    /// Tenant that owns the shared resource. Used to enforce tenant isolation
+    /// on public-share session routes.
+    #[serde(default)]
+    pub tenant_id: uuid::Uuid,
     pub iat: i64,
     pub exp: i64,
 }
@@ -26,6 +30,7 @@ impl ShareSessionClaims {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         permissions: SharePermissions,
+        tenant_id: uuid::Uuid,
         ttl_seconds: i64,
     ) -> Self {
         let now = Utc::now();
@@ -38,6 +43,7 @@ impl ShareSessionClaims {
             file_id,
             folder_id,
             permissions,
+            tenant_id,
             iat: now.timestamp(),
             exp: exp.timestamp(),
         }
@@ -76,8 +82,15 @@ mod tests {
     fn test_share_session_claims_creation() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims =
-            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            Some(file_id),
+            None,
+            SharePermissions::View,
+            tenant_id,
+            3600,
+        );
 
         assert_eq!(claims.sub, format!("share:{}", share_id));
         assert!(!claims.session_id.is_nil());
@@ -85,6 +98,7 @@ mod tests {
         assert_eq!(claims.file_id, Some(file_id));
         assert_eq!(claims.folder_id, None);
         assert_eq!(claims.permissions, SharePermissions::View);
+        assert_eq!(claims.tenant_id, tenant_id);
         assert!(claims.exp > claims.iat);
     }
 
@@ -92,9 +106,126 @@ mod tests {
     fn test_share_session_claims_expiration() {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
-        let claims =
-            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, -1);
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            Some(file_id),
+            None,
+            SharePermissions::View,
+            tenant_id,
+            -1,
+        );
 
+        assert!(claims.is_expired());
+    }
+
+    #[test]
+    fn test_deserialize_share_session_claims_without_tenant_id() {
+        let share_id = uuid::Uuid::new_v4();
+        let session_id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "sub": "share:{}",
+                "session_id": "{}",
+                "share_id": "{}",
+                "file_id": null,
+                "folder_id": null,
+                "permissions": "View",
+                "iat": 1,
+                "exp": 9999999999
+            }}"#,
+            share_id, session_id, share_id
+        );
+
+        let result = serde_json::from_str::<ShareSessionClaims>(&json);
+        assert!(
+            result.is_ok(),
+            "token without tenant_id should deserialize: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_missing_tenant_id_defaults_to_nil() {
+        let share_id = uuid::Uuid::new_v4();
+        let session_id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "sub": "share:{}",
+                "session_id": "{}",
+                "share_id": "{}",
+                "file_id": null,
+                "folder_id": null,
+                "permissions": "View",
+                "iat": 1,
+                "exp": 9999999999
+            }}"#,
+            share_id, session_id, share_id
+        );
+
+        let claims = serde_json::from_str::<ShareSessionClaims>(&json).unwrap();
+        assert!(claims.tenant_id.is_nil());
+    }
+
+    #[test]
+    fn test_present_tenant_id_round_trips() {
+        let share_id = uuid::Uuid::new_v4();
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            None,
+            None,
+            SharePermissions::Edit,
+            tenant_id,
+            3600,
+        );
+
+        let value = serde_json::to_value(&claims).unwrap();
+        assert_eq!(
+            value["tenant_id"].as_str(),
+            Some(tenant_id.to_string()).as_deref()
+        );
+
+        let decoded: ShareSessionClaims = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.tenant_id, tenant_id);
+    }
+
+    #[test]
+    fn test_new_share_session_claims_serializes_tenant_id() {
+        let share_id = uuid::Uuid::new_v4();
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            None,
+            None,
+            SharePermissions::Admin,
+            tenant_id,
+            3600,
+        );
+
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"tenant_id\""));
+    }
+
+    #[test]
+    fn test_expired_token_without_tenant_id_is_rejected() {
+        let share_id = uuid::Uuid::new_v4();
+        let session_id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "sub": "share:{}",
+                "session_id": "{}",
+                "share_id": "{}",
+                "file_id": null,
+                "folder_id": null,
+                "permissions": "View",
+                "iat": 1,
+                "exp": 2
+            }}"#,
+            share_id, session_id, share_id
+        );
+
+        let claims = serde_json::from_str::<ShareSessionClaims>(&json).unwrap();
         assert!(claims.is_expired());
     }
 }

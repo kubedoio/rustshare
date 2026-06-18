@@ -80,7 +80,6 @@ const COLS: &str = "id, name, url, secret_enc, enabled, events, created_by, crea
 
 /// Create a webhook with an encrypted secret and verify it appears in the list.
 #[tokio::test]
-#[ignore]
 async fn test_create_webhook_and_list() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -140,7 +139,6 @@ async fn test_create_webhook_and_list() {
 
 /// Update webhook events and verify the new events are stored.
 #[tokio::test]
-#[ignore]
 async fn test_update_webhook_events() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -198,7 +196,6 @@ async fn test_update_webhook_events() {
 /// Note: Sending the actual HTTP request to an external URL is not tested here
 /// — that requires a live server and is outside the scope of DB integration tests.
 #[tokio::test]
-#[ignore]
 async fn test_webhook_hmac_signature_computation() {
     // Known test vector
     let key = b"test-secret";
@@ -242,7 +239,6 @@ async fn test_webhook_hmac_signature_computation() {
 
 /// Verify that the encrypted webhook secret round-trips through encrypt/decrypt.
 #[tokio::test]
-#[ignore]
 async fn test_webhook_secret_roundtrip() {
     let key = test_encryption_key();
     let plaintext = "my-webhook-signing-secret";
@@ -258,7 +254,6 @@ async fn test_webhook_secret_roundtrip() {
 
 /// Delete a webhook and verify it is gone from the DB.
 #[tokio::test]
-#[ignore]
 async fn test_delete_webhook() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];

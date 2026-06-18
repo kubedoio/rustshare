@@ -199,6 +199,35 @@ impl UploadSession {
         self.uploaded_bytes = (self.uploaded_bytes + bytes).min(self.total_size);
     }
 
+    /// Recompute uploaded bytes from the received chunk bitmask.
+    pub fn recompute_uploaded_bytes(&mut self) {
+        let mut uploaded = 0u64;
+        for chunk_index in self.received_chunks() {
+            uploaded += if chunk_index == self.total_chunks() - 1 {
+                let remainder = self.total_size % self.chunk_size;
+                if remainder == 0 {
+                    self.chunk_size
+                } else {
+                    remainder
+                }
+            } else {
+                self.chunk_size
+            };
+        }
+        self.uploaded_bytes = uploaded.min(self.total_size);
+    }
+
+    /// Merge received chunk state from another copy of this session.
+    pub fn merge_received_chunks_from(&mut self, other: &Self) {
+        if self.chunks_received.len() < other.chunks_received.len() {
+            self.chunks_received.resize(other.chunks_received.len(), 0);
+        }
+        for (idx, bits) in other.chunks_received.iter().enumerate() {
+            self.chunks_received[idx] |= bits;
+        }
+        self.recompute_uploaded_bytes();
+    }
+
     /// Mark the session as in progress
     pub fn mark_in_progress(&mut self) {
         if self.status == UploadSessionStatus::Pending {

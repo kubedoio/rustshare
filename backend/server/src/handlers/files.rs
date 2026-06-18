@@ -1,6 +1,7 @@
 //! HTTP handlers for file operations.
 
 use axum::{
+    body::Body,
     extract::{Multipart, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -29,53 +30,6 @@ fn is_hidden_kanban_file(name: &str) -> bool {
             | "index.md"
             | "__primary__.md"
     ) || name.ends_with(".editor.json")
-}
-
-/// Maximum file size for uploads (2GB).
-const MAX_UPLOAD_SIZE: usize = 2 * 1024 * 1024 * 1024;
-
-/// Stream a multipart field to a temporary file and return the temp file plus size.
-/// Enforces a per-field size limit during streaming to prevent OOM.
-async fn stream_multipart_field_to_temp_file(
-    field: &mut axum::extract::multipart::Field<'_>,
-    max_size: usize,
-) -> Result<(tempfile::NamedTempFile, usize), AppError> {
-    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
-        .await
-        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
-        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
-
-    let mut async_file = tokio::fs::File::from_std(
-        temp_file
-            .reopen()
-            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
-    );
-
-    let mut total_size: usize = 0;
-
-    while let Some(chunk) = field.chunk().await.map_err(|e| {
-        tracing::error!("Failed to read chunk: {e}");
-        AppError::internal(format!("Failed to read chunk: {e}"))
-    })? {
-        total_size += chunk.len();
-        if total_size > max_size {
-            return Err(AppError::payload_too_large(format!(
-                "File size exceeds maximum allowed {max_size} bytes"
-            )));
-        }
-        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to write to temp file: {e}");
-                AppError::internal(format!("Failed to write to temp file: {e}"))
-            })?;
-    }
-
-    tokio::io::AsyncWriteExt::flush(&mut async_file)
-        .await
-        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
-
-    Ok((temp_file, total_size))
 }
 
 // ============================================================================
@@ -119,9 +73,12 @@ pub async fn upload_file(
         match field_name.as_str() {
             "file" => {
                 file_temp = Some(
-                    stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
-                        .await?
-                        .0,
+                    super::stream_multipart_field_to_temp_file(
+                        &mut field,
+                        super::max_upload_size_bytes(),
+                    )
+                    .await?
+                    .0,
                 );
             }
             "name" => {
@@ -245,7 +202,7 @@ pub async fn get_file(
     Ok(Json(file))
 }
 
-/// Get file download URL.
+/// Download file content directly with proper filename.
 ///
 /// GET /api/files/{id}/download
 #[utoipa::path(
@@ -254,7 +211,7 @@ pub async fn get_file(
     tag = "Files",
     params(("id" = Uuid, Path, description = "File ID")),
     responses(
-        (status = 200, description = "Download URL", body = DownloadUrlResponse),
+        (status = 200, description = "File content"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 404, description = "File not found", body = crate::handlers::ErrorResponse),
     ),
@@ -263,17 +220,8 @@ pub async fn download_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
-) -> Result<Json<DownloadUrlResponse>, AppError> {
-    let url = state
-        .file_service
-        .get_download_url(file_id, auth.user_id)
-        .await?;
-    Ok(Json(DownloadUrlResponse { url }))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DownloadUrlResponse {
-    pub url: String,
+) -> Result<Response, AppError> {
+    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Attachment).await
 }
 
 /// Download file content directly with proper filename.
@@ -298,8 +246,22 @@ pub async fn download_file_content(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Response, AppError> {
+    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Attachment).await
+}
+
+enum FileDisposition {
+    Attachment,
+    Inline,
+}
+
+async fn stream_file_response(
+    state: &AppState,
+    user_id: Uuid,
+    file_id: Uuid,
+    disposition: FileDisposition,
+) -> Result<Response, AppError> {
     // Get file metadata first (this also checks permissions)
-    let file = state.file_service.get_file(file_id, auth.user_id).await?;
+    let file = state.file_service.get_file(file_id, user_id).await?;
 
     if is_hidden_kanban_file(&file.name) {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
@@ -307,21 +269,24 @@ pub async fn download_file_content(
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
     let storage_key = file.storage_key();
-    let bytes = state.object_store.get(&storage_key).await.map_err(|e| {
-        tracing::error!("Failed to read file content: {}", e);
-        AppError::internal("Failed to read file content")
-    })?;
+    let (content_type, content_length, stream) = state
+        .object_store
+        .get_stream(&storage_key)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read file content: {}", e);
+            AppError::internal("Failed to read file content")
+        })?;
 
-    let content_disposition = format!(
-        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-        file.name.replace('"', "\\\""),
-        urlencoding::encode(&file.name)
-    );
+    let content_disposition = match disposition {
+        FileDisposition::Attachment => super::public_shares::build_content_disposition(&file.name),
+        FileDisposition::Inline => "inline".to_string(),
+    };
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&file.mime_type)
+        HeaderValue::from_str(&content_type.unwrap_or(file.mime_type))
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(
@@ -329,8 +294,15 @@ pub async fn download_file_content(
         HeaderValue::from_str(&content_disposition)
             .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
 
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// Preview file content (inline disposition for browser viewing).
@@ -355,32 +327,7 @@ pub async fn preview_file(
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
 ) -> Result<Response, AppError> {
-    // Get file metadata first (this also checks permissions)
-    let file = state.file_service.get_file(file_id, auth.user_id).await?;
-
-    if is_hidden_kanban_file(&file.name) {
-        return Err(AppError::not_found(format!("File not found: {}", file_id)));
-    }
-
-    // Stream the file content directly (avoids redirecting to internal storage URLs)
-    let storage_key = file.storage_key();
-    let bytes = state.object_store.get(&storage_key).await.map_err(|e| {
-        tracing::error!("Failed to read file content: {}", e);
-        AppError::internal("Failed to read file content")
-    })?;
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&file.mime_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("inline"),
-    );
-
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Inline).await
 }
 
 /// Delete a file.
@@ -459,9 +406,12 @@ pub async fn update_file(
     {
         if field.name() == Some("file") {
             file_temp = Some(
-                stream_multipart_field_to_temp_file(&mut field, MAX_UPLOAD_SIZE)
-                    .await?
-                    .0,
+                super::stream_multipart_field_to_temp_file(
+                    &mut field,
+                    super::max_upload_size_bytes(),
+                )
+                .await?
+                .0,
             );
             break;
         }

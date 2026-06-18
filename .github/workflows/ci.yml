@@ -52,6 +52,26 @@ jobs:
           fi
           echo "All commits have DCO sign-off"
 
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh --full
+
+  generate-secrets:
+    name: Generate Secrets
+    runs-on: ubuntu-latest
+    outputs:
+      pg_password: ${{ steps.secrets.outputs.pg_password }}
+    steps:
+      - name: Generate PostgreSQL password
+        id: secrets
+        run: |
+          PG_PASSWORD=$(openssl rand -hex 32)
+          echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -80,11 +100,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -94,7 +115,10 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Per-run cryptographically random database password. The container is
+      # ephemeral and only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -111,6 +135,7 @@ jobs:
   build-release:
     name: Build Release
     runs-on: ubuntu-latest
+    needs: secret-scan
     env:
       SQLX_OFFLINE: true
     steps:
@@ -133,11 +158,12 @@ jobs:
   root-workspace:
     name: Root Workspace
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -147,7 +173,8 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -164,6 +191,12 @@ jobs:
   sqlx-check:
     name: SQLx Prepare Check
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
+    env:
+      # Per-run cryptographically random database password. The container is
+      # ephemeral and only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -172,25 +205,26 @@ jobs:
         run: cargo install sqlx-cli --features postgres
       - name: Start PostgreSQL
         run: |
-          docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+          docker run -d -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" -p 5432:5432 postgres:16-alpine
           sleep 5
       - name: Run migrations
         run: cd backend && sqlx migrate run
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: ${{ env.DATABASE_URL }}
       - name: Check sqlx prepare
         run: cd backend && cargo sqlx prepare --workspace --check
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: ${{ env.DATABASE_URL }}
 
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -200,7 +234,8 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust

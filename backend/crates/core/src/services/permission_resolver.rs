@@ -61,47 +61,51 @@ enum CacheKey {
 /// operations to simplify the generic bounds for PermissionResolver.
 #[allow(async_fn_in_trait)]
 pub trait PermissionResolverOps: Send + Sync {
-    /// Find a user share by resource and recipient.
+    /// Find a user share by resource and recipient, scoped to a tenant.
     async fn find_user_share(
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Option<Share>>;
 
-    /// Find group shares by resource and group IDs.
+    /// Find group shares by resource and group IDs, scoped to a tenant.
     /// Returns all shares where recipient_group_id matches any of the provided group_ids.
     async fn find_group_shares(
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         group_ids: &[Uuid],
+        tenant_id: Uuid,
     ) -> Result<Vec<Share>>;
 
-    /// Find user shares for multiple folders at once.
+    /// Find user shares for multiple folders at once, scoped to a tenant.
     /// Returns all shares where the resource is one of the folder_ids and recipient matches user_id.
     async fn find_user_shares_for_folders(
         &self,
         folder_ids: &[FolderId],
         recipient_user_id: UserId,
+        tenant_id: Uuid,
     ) -> Result<Vec<Share>>;
 
-    /// Find group shares for multiple folders at once.
+    /// Find group shares for multiple folders at once, scoped to a tenant.
     /// Returns all shares where the resource is one of the folder_ids and recipient_group_id matches any group_ids.
     async fn find_group_shares_for_folders(
         &self,
         folder_ids: &[FolderId],
         group_ids: &[Uuid],
+        tenant_id: Uuid,
     ) -> Result<Vec<Share>>;
 
-    /// Find a file by ID.
-    async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>>;
+    /// Find a file by ID, scoped to a tenant.
+    async fn find_file_by_id(&self, id: FileId, tenant_id: Uuid) -> Result<Option<File>>;
 
-    /// Find a folder by ID.
-    async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>>;
+    /// Find a folder by ID, scoped to a tenant.
+    async fn find_folder_by_id(&self, id: FolderId, tenant_id: Uuid) -> Result<Option<Folder>>;
 
-    /// Get all group IDs that a user is a member of.
-    async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>>;
+    /// Get all group IDs that a user is a member of, scoped to a tenant.
+    async fn get_user_group_ids(&self, user_id: UserId, tenant_id: Uuid) -> Result<Vec<Uuid>>;
 }
 
 /// PermissionResolver service handles permission checks with caching and folder inheritance.
@@ -110,7 +114,7 @@ pub trait PermissionResolverOps: Send + Sync {
 /// and testing with mock implementations.
 pub struct PermissionResolver<Ops: PermissionResolverOps> {
     ops: Arc<Ops>,
-    cache: RwLock<HashMap<CacheKey, Option<SharePermissions>>>,
+    cache: RwLock<HashMap<CacheKey, PermissionResult>>,
 }
 
 impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
@@ -127,7 +131,29 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         share.is_active()
     }
 
-    /// Check if user has required permission on file.
+    async fn cache_result(&self, key: CacheKey, result: PermissionResult) {
+        self.cache.write().await.insert(key, result);
+    }
+
+    async fn cache_permission(
+        &self,
+        key: CacheKey,
+        permission: Option<SharePermissions>,
+        source: PermissionSource,
+        share_id: Option<ShareId>,
+    ) {
+        self.cache_result(
+            key,
+            PermissionResult {
+                permission,
+                source,
+                share_id,
+            },
+        )
+        .await;
+    }
+
+    /// Check if user has required permission on file within a tenant.
     ///
     /// Checks in order:
     /// 1. Owner check (Admin permission, no DB lookup)
@@ -139,6 +165,7 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     pub async fn check_file_permission(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         file_id: FileId,
         required: SharePermissions,
     ) -> Result<bool> {
@@ -148,57 +175,79 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
         // Check cache first
         let cache_key = CacheKey::File(user_id, file_id);
-        let cached = { self.cache.read().await.get(&cache_key).copied() };
+        let cached = {
+            self.cache
+                .read()
+                .await
+                .get(&cache_key)
+                .map(|result| result.permission)
+        };
         if let Some(cached) = cached {
             return Ok(cached.is_some_and(|perm| perm >= required));
         }
 
         // Get file metadata
-        let file = match self.ops.find_file_by_id(file_id).await? {
+        let file = match self.ops.find_file_by_id(file_id, tenant_id).await? {
             Some(f) => f,
             None => {
                 // File has been deleted or does not exist — treat as no permission
-                self.cache.write().await.insert(cache_key, None);
+                self.cache_permission(cache_key, None, PermissionSource::None, None)
+                    .await;
                 return Ok(false);
             }
         };
 
         // 1. Check ownership (implicit Admin permission)
         if file.owner_id == user_id {
-            self.cache
-                .write()
-                .await
-                .insert(cache_key, Some(SharePermissions::Admin));
+            self.cache_permission(
+                cache_key,
+                Some(SharePermissions::Admin),
+                PermissionSource::Owner,
+                None,
+            )
+            .await;
             return Ok(true);
         }
 
         // 2. Check direct share on file
         if let Some(share) = self
             .ops
-            .find_user_share(Some(file_id), None, user_id)
+            .find_user_share(Some(file_id), None, user_id, tenant_id)
             .await?
         {
             if Self::is_share_active(&share) {
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
+                self.cache_permission(
+                    cache_key,
+                    Some(perm),
+                    PermissionSource::DirectShare,
+                    Some(share.id),
+                )
+                .await;
                 return Ok(perm >= required);
             }
         }
 
         // 3. Check group shares on file
-        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        let user_groups = self.ops.get_user_group_ids(user_id, tenant_id).await?;
         if !user_groups.is_empty() {
             let group_shares = self
                 .ops
-                .find_group_shares(Some(file_id), None, &user_groups)
+                .find_group_shares(Some(file_id), None, &user_groups, tenant_id)
                 .await?;
-            let highest_group_perm = group_shares
+            if let Some(share) = group_shares
                 .iter()
                 .filter(|s| Self::is_share_active(s))
-                .map(|s| s.permissions)
-                .max();
-            if let Some(perm) = highest_group_perm {
-                self.cache.write().await.insert(cache_key, Some(perm));
+                .max_by_key(|s| s.permissions)
+            {
+                let perm = share.permissions;
+                self.cache_permission(
+                    cache_key,
+                    Some(perm),
+                    PermissionSource::GroupShare,
+                    Some(share.id),
+                )
+                .await;
                 return Ok(perm >= required);
             }
         }
@@ -206,23 +255,27 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // 4. Walk up folder ancestry for inherited permissions
         if let Some(parent_folder_id) = file.parent_folder_id {
             if let Some(inherited_perm) = self
-                .resolve_folder_ancestry(user_id, parent_folder_id, &user_groups)
+                .resolve_folder_ancestry(user_id, tenant_id, parent_folder_id, &user_groups)
                 .await?
             {
-                self.cache
-                    .write()
-                    .await
-                    .insert(cache_key, Some(inherited_perm));
+                self.cache_permission(
+                    cache_key,
+                    Some(inherited_perm),
+                    PermissionSource::Inherited,
+                    None,
+                )
+                .await;
                 return Ok(inherited_perm >= required);
             }
         }
 
         // No permission found
-        self.cache.write().await.insert(cache_key, None);
+        self.cache_permission(cache_key, None, PermissionSource::None, None)
+            .await;
         Ok(false)
     }
 
-    /// Check if user has required permission on folder.
+    /// Check if user has required permission on folder within a tenant.
     ///
     /// Checks in order:
     /// 1. Owner check (Admin permission, no DB lookup)
@@ -234,6 +287,7 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     pub async fn check_folder_permission(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         folder_id: FolderId,
         required: SharePermissions,
     ) -> Result<bool> {
@@ -243,57 +297,79 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
         // Check cache first
         let cache_key = CacheKey::Folder(user_id, folder_id);
-        let cached = { self.cache.read().await.get(&cache_key).copied() };
+        let cached = {
+            self.cache
+                .read()
+                .await
+                .get(&cache_key)
+                .map(|result| result.permission)
+        };
         if let Some(cached) = cached {
             return Ok(cached.is_some_and(|perm| perm >= required));
         }
 
         // Get folder metadata
-        let folder = match self.ops.find_folder_by_id(folder_id).await? {
+        let folder = match self.ops.find_folder_by_id(folder_id, tenant_id).await? {
             Some(f) => f,
             None => {
                 // Folder has been deleted or does not exist — treat as no permission
-                self.cache.write().await.insert(cache_key, None);
+                self.cache_permission(cache_key, None, PermissionSource::None, None)
+                    .await;
                 return Ok(false);
             }
         };
 
         // 1. Check ownership (implicit Admin permission)
         if folder.owner_id == user_id {
-            self.cache
-                .write()
-                .await
-                .insert(cache_key, Some(SharePermissions::Admin));
+            self.cache_permission(
+                cache_key,
+                Some(SharePermissions::Admin),
+                PermissionSource::Owner,
+                None,
+            )
+            .await;
             return Ok(true);
         }
 
         // 2. Check direct share on folder
         if let Some(share) = self
             .ops
-            .find_user_share(None, Some(folder_id), user_id)
+            .find_user_share(None, Some(folder_id), user_id, tenant_id)
             .await?
         {
             if Self::is_share_active(&share) {
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
+                self.cache_permission(
+                    cache_key,
+                    Some(perm),
+                    PermissionSource::DirectShare,
+                    Some(share.id),
+                )
+                .await;
                 return Ok(perm >= required);
             }
         }
 
         // 3. Check group shares on folder
-        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        let user_groups = self.ops.get_user_group_ids(user_id, tenant_id).await?;
         if !user_groups.is_empty() {
             let group_shares = self
                 .ops
-                .find_group_shares(None, Some(folder_id), &user_groups)
+                .find_group_shares(None, Some(folder_id), &user_groups, tenant_id)
                 .await?;
-            let highest_group_perm = group_shares
+            if let Some(share) = group_shares
                 .iter()
                 .filter(|s| Self::is_share_active(s))
-                .map(|s| s.permissions)
-                .max();
-            if let Some(perm) = highest_group_perm {
-                self.cache.write().await.insert(cache_key, Some(perm));
+                .max_by_key(|s| s.permissions)
+            {
+                let perm = share.permissions;
+                self.cache_permission(
+                    cache_key,
+                    Some(perm),
+                    PermissionSource::GroupShare,
+                    Some(share.id),
+                )
+                .await;
                 return Ok(perm >= required);
             }
         }
@@ -301,19 +377,23 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // 4. Walk up parent folder ancestry for inherited permissions
         if let Some(parent_folder_id) = folder.parent_folder_id {
             if let Some(inherited_perm) = self
-                .resolve_folder_ancestry(user_id, parent_folder_id, &user_groups)
+                .resolve_folder_ancestry(user_id, tenant_id, parent_folder_id, &user_groups)
                 .await?
             {
-                self.cache
-                    .write()
-                    .await
-                    .insert(cache_key, Some(inherited_perm));
+                self.cache_permission(
+                    cache_key,
+                    Some(inherited_perm),
+                    PermissionSource::Inherited,
+                    None,
+                )
+                .await;
                 return Ok(inherited_perm >= required);
             }
         }
 
         // No permission found
-        self.cache.write().await.insert(cache_key, None);
+        self.cache_permission(cache_key, None, PermissionSource::None, None)
+            .await;
         Ok(false)
     }
 
@@ -325,23 +405,27 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     async fn resolve_folder_ancestry(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         folder_id: FolderId,
         user_groups: &[Uuid],
     ) -> Result<Option<SharePermissions>> {
         // Step 1: Fetch the starting folder to get its ancestor_ids
         let folder = self
             .ops
-            .find_folder_by_id(folder_id)
+            .find_folder_by_id(folder_id, tenant_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
 
         // Folder owners implicitly have Admin on all descendants
         if folder.owner_id == user_id {
             let cache_key = CacheKey::Folder(user_id, folder_id);
-            self.cache
-                .write()
-                .await
-                .insert(cache_key, Some(SharePermissions::Admin));
+            self.cache_permission(
+                cache_key,
+                Some(SharePermissions::Admin),
+                PermissionSource::Owner,
+                None,
+            )
+            .await;
             return Ok(Some(SharePermissions::Admin));
         }
 
@@ -352,13 +436,16 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // Folder documents now store ancestor_ids for efficient permission resolution
         if let Some(ref ancestor_ids) = folder.ancestor_ids {
             for &ancestor_id in ancestor_ids {
-                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id).await? {
+                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id, tenant_id).await? {
                     if ancestor.owner_id == user_id {
                         let cache_key = CacheKey::Folder(user_id, ancestor_id);
-                        self.cache
-                            .write()
-                            .await
-                            .insert(cache_key, Some(SharePermissions::Admin));
+                        self.cache_permission(
+                            cache_key,
+                            Some(SharePermissions::Admin),
+                            PermissionSource::Owner,
+                            None,
+                        )
+                        .await;
                         return Ok(Some(SharePermissions::Admin));
                     }
                 }
@@ -381,14 +468,17 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 folder_ids_to_check.push(parent_id);
 
                 // Fetch parent to continue walking
-                if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                if let Some(parent) = self.ops.find_folder_by_id(parent_id, tenant_id).await? {
                     // Ancestor owners also implicitly have Admin
                     if parent.owner_id == user_id {
                         let cache_key = CacheKey::Folder(user_id, parent_id);
-                        self.cache
-                            .write()
-                            .await
-                            .insert(cache_key, Some(SharePermissions::Admin));
+                        self.cache_permission(
+                            cache_key,
+                            Some(SharePermissions::Admin),
+                            PermissionSource::Owner,
+                            None,
+                        )
+                        .await;
                         return Ok(Some(SharePermissions::Admin));
                     }
                     current_id = parent.parent_folder_id;
@@ -405,7 +495,13 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
 
         for &fid in &folder_ids_to_check {
             let cache_key = CacheKey::Folder(user_id, fid);
-            let cached = { self.cache.read().await.get(&cache_key).copied() };
+            let cached = {
+                self.cache
+                    .read()
+                    .await
+                    .get(&cache_key)
+                    .map(|result| result.permission)
+            };
             match cached {
                 Some(Some(perm)) => permissions.push(perm),
                 Some(None) => {} // Cached as no permission, continue
@@ -418,13 +514,13 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             // Fetch user shares for all folders at once
             let user_shares = self
                 .ops
-                .find_user_shares_for_folders(&uncached_folder_ids, user_id)
+                .find_user_shares_for_folders(&uncached_folder_ids, user_id, tenant_id)
                 .await?;
 
             // Fetch group shares for all folders at once (if user has groups)
             let group_shares = if !user_groups.is_empty() {
                 self.ops
-                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups)
+                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups, tenant_id)
                     .await?
             } else {
                 Vec::new()
@@ -433,32 +529,44 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             // Process results and update cache
             for folder_id in uncached_folder_ids {
                 // Find highest user share for this folder
-                let user_perm = user_shares
-                    .iter()
-                    .find(|s| s.folder_id == Some(folder_id) && Self::is_share_active(s))
-                    .map(|s| s.permissions);
-
-                // Find highest group share for this folder
-                let group_perm = group_shares
+                let user_share = user_shares
                     .iter()
                     .filter(|s| s.folder_id == Some(folder_id) && Self::is_share_active(s))
-                    .map(|s| s.permissions)
-                    .max();
+                    .max_by_key(|s| s.permissions);
+
+                // Find highest group share for this folder
+                let group_share = group_shares
+                    .iter()
+                    .filter(|s| s.folder_id == Some(folder_id) && Self::is_share_active(s))
+                    .max_by_key(|s| s.permissions);
 
                 // Take the highest of user and group permissions
-                let found_perm = match (user_perm, group_perm) {
-                    (Some(u), Some(g)) => Some(u.max(g)),
-                    (Some(u), None) => Some(u),
-                    (None, Some(g)) => Some(g),
+                let found = match (user_share, group_share) {
+                    (Some(u), Some(g)) if u.permissions >= g.permissions => {
+                        Some((u.permissions, PermissionSource::DirectShare, Some(u.id)))
+                    }
+                    (Some(_), Some(g)) => {
+                        Some((g.permissions, PermissionSource::GroupShare, Some(g.id)))
+                    }
+                    (Some(u), None) => {
+                        Some((u.permissions, PermissionSource::DirectShare, Some(u.id)))
+                    }
+                    (None, Some(g)) => {
+                        Some((g.permissions, PermissionSource::GroupShare, Some(g.id)))
+                    }
                     (None, None) => None,
                 };
 
                 // Update cache
                 let cache_key = CacheKey::Folder(user_id, folder_id);
-                self.cache.write().await.insert(cache_key, found_perm);
+                if let Some((perm, source, share_id)) = found {
+                    self.cache_permission(cache_key, Some(perm), source, share_id)
+                        .await;
 
-                if let Some(perm) = found_perm {
                     permissions.push(perm);
+                } else {
+                    self.cache_permission(cache_key, None, PermissionSource::None, None)
+                        .await;
                 }
             }
         }
@@ -485,23 +593,24 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     pub async fn resolve_permission(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         resource: Resource,
     ) -> Result<Option<SharePermissions>> {
         match resource {
             Resource::File(file_id) => {
                 // Check all permission levels from highest to lowest
                 if self
-                    .check_file_permission(user_id, file_id, SharePermissions::Admin)
+                    .check_file_permission(user_id, tenant_id, file_id, SharePermissions::Admin)
                     .await?
                 {
                     Ok(Some(SharePermissions::Admin))
                 } else if self
-                    .check_file_permission(user_id, file_id, SharePermissions::Edit)
+                    .check_file_permission(user_id, tenant_id, file_id, SharePermissions::Edit)
                     .await?
                 {
                     Ok(Some(SharePermissions::Edit))
                 } else if self
-                    .check_file_permission(user_id, file_id, SharePermissions::View)
+                    .check_file_permission(user_id, tenant_id, file_id, SharePermissions::View)
                     .await?
                 {
                     Ok(Some(SharePermissions::View))
@@ -512,17 +621,17 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             Resource::Folder(folder_id) => {
                 // Check all permission levels from highest to lowest
                 if self
-                    .check_folder_permission(user_id, folder_id, SharePermissions::Admin)
+                    .check_folder_permission(user_id, tenant_id, folder_id, SharePermissions::Admin)
                     .await?
                 {
                     Ok(Some(SharePermissions::Admin))
                 } else if self
-                    .check_folder_permission(user_id, folder_id, SharePermissions::Edit)
+                    .check_folder_permission(user_id, tenant_id, folder_id, SharePermissions::Edit)
                     .await?
                 {
                     Ok(Some(SharePermissions::Edit))
                 } else if self
-                    .check_folder_permission(user_id, folder_id, SharePermissions::View)
+                    .check_folder_permission(user_id, tenant_id, folder_id, SharePermissions::View)
                     .await?
                 {
                     Ok(Some(SharePermissions::View))
@@ -540,15 +649,16 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     pub async fn resolve_permission_with_source(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         resource: Resource,
     ) -> Result<PermissionResult> {
         match resource {
             Resource::File(file_id) => {
-                self.resolve_file_permission_with_source(user_id, file_id)
+                self.resolve_file_permission_with_source(user_id, tenant_id, file_id)
                     .await
             }
             Resource::Folder(folder_id) => {
-                self.resolve_folder_permission_with_source(user_id, folder_id)
+                self.resolve_folder_permission_with_source(user_id, tenant_id, folder_id)
                     .await
             }
         }
@@ -558,210 +668,228 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     async fn resolve_file_permission_with_source(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         file_id: FileId,
     ) -> Result<PermissionResult> {
         // Check cache first (but we don't cache source info, so this is a simplified check)
         let cache_key = CacheKey::File(user_id, file_id);
         let cached = { self.cache.read().await.get(&cache_key).copied() };
-        if let Some(perm) = cached {
-            return Ok(PermissionResult {
-                permission: perm,
-                source: PermissionSource::DirectShare, // We don't cache source, assume direct
-                share_id: None,
-            });
+        if let Some(result) = cached {
+            return Ok(result);
         }
 
         // Get file metadata
-        let file = match self.ops.find_file_by_id(file_id).await? {
+        let file = match self.ops.find_file_by_id(file_id, tenant_id).await? {
             Some(f) => f,
             None => {
-                self.cache.write().await.insert(cache_key, None);
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: None,
                     source: PermissionSource::None,
                     share_id: None,
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         };
 
         // 1. Check ownership
         if file.owner_id == user_id {
-            return Ok(PermissionResult {
+            let result = PermissionResult {
                 permission: Some(SharePermissions::Admin),
                 source: PermissionSource::Owner,
                 share_id: None,
-            });
+            };
+            self.cache_result(cache_key, result).await;
+            return Ok(result);
         }
 
         // 2. Check direct share on file
         if let Some(share) = self
             .ops
-            .find_user_share(Some(file_id), None, user_id)
+            .find_user_share(Some(file_id), None, user_id, tenant_id)
             .await?
         {
             if Self::is_share_active(&share) {
                 let share_id = share.id;
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(perm),
                     source: PermissionSource::DirectShare,
                     share_id: Some(share_id),
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // 3. Check group shares on file
-        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        let user_groups = self.ops.get_user_group_ids(user_id, tenant_id).await?;
         if !user_groups.is_empty() {
             let group_shares = self
                 .ops
-                .find_group_shares(Some(file_id), None, &user_groups)
+                .find_group_shares(Some(file_id), None, &user_groups, tenant_id)
                 .await?;
 
-            // Find the first active group share
-            if let Some(share) = group_shares.iter().find(|s| Self::is_share_active(s)) {
+            if let Some(share) = group_shares
+                .iter()
+                .filter(|s| Self::is_share_active(s))
+                .max_by_key(|s| s.permissions)
+            {
                 let share_id = share.id;
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(perm),
                     source: PermissionSource::GroupShare,
                     share_id: Some(share_id),
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // 4. Walk up folder ancestry for inherited permissions
         if let Some(parent_folder_id) = file.parent_folder_id {
             if let Some((inherited_perm, share_id, inherited_source)) = self
-                .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
+                .resolve_folder_ancestry_with_source(
+                    user_id,
+                    tenant_id,
+                    parent_folder_id,
+                    &user_groups,
+                )
                 .await?
             {
-                self.cache
-                    .write()
-                    .await
-                    .insert(cache_key, Some(inherited_perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(inherited_perm),
                     source: inherited_source,
                     share_id,
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // No permission found
-        self.cache.write().await.insert(cache_key, None);
-        Ok(PermissionResult {
+        let result = PermissionResult {
             permission: None,
             source: PermissionSource::None,
             share_id: None,
-        })
+        };
+        self.cache_result(cache_key, result).await;
+        Ok(result)
     }
 
     /// Resolve folder permission with source information.
     async fn resolve_folder_permission_with_source(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         folder_id: FolderId,
     ) -> Result<PermissionResult> {
         // Check cache first
         let cache_key = CacheKey::Folder(user_id, folder_id);
         let cached = { self.cache.read().await.get(&cache_key).copied() };
-        if let Some(perm) = cached {
-            return Ok(PermissionResult {
-                permission: perm,
-                source: PermissionSource::DirectShare, // We don't cache source, assume direct
-                share_id: None,
-            });
+        if let Some(result) = cached {
+            return Ok(result);
         }
 
         // Get folder metadata
-        let folder = match self.ops.find_folder_by_id(folder_id).await? {
+        let folder = match self.ops.find_folder_by_id(folder_id, tenant_id).await? {
             Some(f) => f,
             None => {
-                self.cache.write().await.insert(cache_key, None);
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: None,
                     source: PermissionSource::None,
                     share_id: None,
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         };
 
         // 1. Check ownership
         if folder.owner_id == user_id {
-            return Ok(PermissionResult {
+            let result = PermissionResult {
                 permission: Some(SharePermissions::Admin),
                 source: PermissionSource::Owner,
                 share_id: None,
-            });
+            };
+            self.cache_result(cache_key, result).await;
+            return Ok(result);
         }
 
         // 2. Check direct share on folder
         if let Some(share) = self
             .ops
-            .find_user_share(None, Some(folder_id), user_id)
+            .find_user_share(None, Some(folder_id), user_id, tenant_id)
             .await?
         {
             if Self::is_share_active(&share) {
                 let share_id = share.id;
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(perm),
                     source: PermissionSource::DirectShare,
                     share_id: Some(share_id),
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // 3. Check group shares on folder
-        let user_groups = self.ops.get_user_group_ids(user_id).await?;
+        let user_groups = self.ops.get_user_group_ids(user_id, tenant_id).await?;
         if !user_groups.is_empty() {
             let group_shares = self
                 .ops
-                .find_group_shares(None, Some(folder_id), &user_groups)
+                .find_group_shares(None, Some(folder_id), &user_groups, tenant_id)
                 .await?;
 
-            // Find the first active group share
-            if let Some(share) = group_shares.iter().find(|s| Self::is_share_active(s)) {
+            if let Some(share) = group_shares
+                .iter()
+                .filter(|s| Self::is_share_active(s))
+                .max_by_key(|s| s.permissions)
+            {
                 let share_id = share.id;
                 let perm = share.permissions;
-                self.cache.write().await.insert(cache_key, Some(perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(perm),
                     source: PermissionSource::GroupShare,
                     share_id: Some(share_id),
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // 4. Walk up parent folder ancestry for inherited permissions
         if let Some(parent_folder_id) = folder.parent_folder_id {
             if let Some((inherited_perm, share_id, inherited_source)) = self
-                .resolve_folder_ancestry_with_source(user_id, parent_folder_id, &user_groups)
+                .resolve_folder_ancestry_with_source(
+                    user_id,
+                    tenant_id,
+                    parent_folder_id,
+                    &user_groups,
+                )
                 .await?
             {
-                self.cache
-                    .write()
-                    .await
-                    .insert(cache_key, Some(inherited_perm));
-                return Ok(PermissionResult {
+                let result = PermissionResult {
                     permission: Some(inherited_perm),
                     source: inherited_source,
                     share_id,
-                });
+                };
+                self.cache_result(cache_key, result).await;
+                return Ok(result);
             }
         }
 
         // No permission found
-        self.cache.write().await.insert(cache_key, None);
-        Ok(PermissionResult {
+        let result = PermissionResult {
             permission: None,
             source: PermissionSource::None,
             share_id: None,
-        })
+        };
+        self.cache_result(cache_key, result).await;
+        Ok(result)
     }
 
     /// Walk up folder ancestry to find inherited permissions with source info.
@@ -770,23 +898,27 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
     async fn resolve_folder_ancestry_with_source(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         folder_id: FolderId,
         user_groups: &[Uuid],
     ) -> Result<Option<(SharePermissions, Option<ShareId>, PermissionSource)>> {
         // Step 1: Fetch the starting folder to get its ancestor_ids
         let folder = self
             .ops
-            .find_folder_by_id(folder_id)
+            .find_folder_by_id(folder_id, tenant_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Folder not found in ancestry"))?;
 
         // Folder owners implicitly have Admin on all descendants
         if folder.owner_id == user_id {
             let cache_key = CacheKey::Folder(user_id, folder_id);
-            self.cache
-                .write()
-                .await
-                .insert(cache_key, Some(SharePermissions::Admin));
+            self.cache_permission(
+                cache_key,
+                Some(SharePermissions::Admin),
+                PermissionSource::Owner,
+                None,
+            )
+            .await;
             return Ok(Some((
                 SharePermissions::Admin,
                 None,
@@ -800,13 +932,16 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         // Add ancestor_ids from the folder document if available
         if let Some(ref ancestor_ids) = folder.ancestor_ids {
             for &ancestor_id in ancestor_ids {
-                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id).await? {
+                if let Some(ancestor) = self.ops.find_folder_by_id(ancestor_id, tenant_id).await? {
                     if ancestor.owner_id == user_id {
                         let cache_key = CacheKey::Folder(user_id, ancestor_id);
-                        self.cache
-                            .write()
-                            .await
-                            .insert(cache_key, Some(SharePermissions::Admin));
+                        self.cache_permission(
+                            cache_key,
+                            Some(SharePermissions::Admin),
+                            PermissionSource::Owner,
+                            None,
+                        )
+                        .await;
                         return Ok(Some((
                             SharePermissions::Admin,
                             None,
@@ -832,14 +967,17 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 folder_ids_to_check.push(parent_id);
 
                 // Fetch parent to continue walking
-                if let Some(parent) = self.ops.find_folder_by_id(parent_id).await? {
+                if let Some(parent) = self.ops.find_folder_by_id(parent_id, tenant_id).await? {
                     // Ancestor owners also implicitly have Admin
                     if parent.owner_id == user_id {
                         let cache_key = CacheKey::Folder(user_id, parent_id);
-                        self.cache
-                            .write()
-                            .await
-                            .insert(cache_key, Some(SharePermissions::Admin));
+                        self.cache_permission(
+                            cache_key,
+                            Some(SharePermissions::Admin),
+                            PermissionSource::Owner,
+                            None,
+                        )
+                        .await;
                         return Ok(Some((
                             SharePermissions::Admin,
                             None,
@@ -863,13 +1001,33 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             let cache_key = CacheKey::Folder(user_id, fid);
             let cached = { self.cache.read().await.get(&cache_key).copied() };
             match cached {
-                Some(Some(perm)) => {
-                    // We have a cached permission but don't know the source.
-                    // For now, treat it as inherited without a specific share_id.
-                    // A full implementation would require caching the source info too.
-                    user_shares_found.push((fid, perm, fid)); // Use folder_id as placeholder
+                Some(PermissionResult {
+                    permission: Some(perm),
+                    source,
+                    share_id: Some(share_id),
+                }) => match source {
+                    PermissionSource::GroupShare => {
+                        group_shares_found.push((fid, perm, share_id));
+                    }
+                    _ => {
+                        user_shares_found.push((fid, perm, share_id));
+                    }
+                },
+                Some(PermissionResult {
+                    permission: Some(perm),
+                    source: PermissionSource::Owner,
+                    share_id: None,
+                }) => {
+                    return Ok(Some((perm, None, PermissionSource::Owner)));
                 }
-                Some(None) => {} // Cached as no permission, continue
+                Some(PermissionResult {
+                    permission: Some(_),
+                    share_id: None,
+                    ..
+                }) => {}
+                Some(PermissionResult {
+                    permission: None, ..
+                }) => {}
                 None => uncached_folder_ids.push(fid),
             }
         }
@@ -879,13 +1037,13 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
             // Fetch user shares for all folders at once
             let user_shares = self
                 .ops
-                .find_user_shares_for_folders(&uncached_folder_ids, user_id)
+                .find_user_shares_for_folders(&uncached_folder_ids, user_id, tenant_id)
                 .await?;
 
             // Fetch group shares for all folders at once (if user has groups)
             let group_shares = if !user_groups.is_empty() {
                 self.ops
-                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups)
+                    .find_group_shares_for_folders(&uncached_folder_ids, user_groups, tenant_id)
                     .await?
             } else {
                 Vec::new()
@@ -896,7 +1054,8 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 // Find highest user share for this folder
                 let user_share = user_shares
                     .iter()
-                    .find(|s| s.folder_id == Some(folder_id) && Self::is_share_active(s));
+                    .filter(|s| s.folder_id == Some(folder_id) && Self::is_share_active(s))
+                    .max_by_key(|s| s.permissions);
 
                 // Find highest group share for this folder
                 let group_share = group_shares
@@ -908,30 +1067,35 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 let found = match (user_share, group_share) {
                     (Some(u), Some(g)) => {
                         if u.permissions >= g.permissions {
-                            Some((u.permissions, u.id, PermissionSource::Inherited))
+                            Some((u.permissions, u.id, PermissionSource::DirectShare))
                         } else {
-                            Some((g.permissions, g.id, PermissionSource::Inherited))
+                            Some((g.permissions, g.id, PermissionSource::GroupShare))
                         }
                     }
-                    (Some(u), None) => Some((u.permissions, u.id, PermissionSource::Inherited)),
-                    (None, Some(g)) => Some((g.permissions, g.id, PermissionSource::Inherited)),
+                    (Some(u), None) => Some((u.permissions, u.id, PermissionSource::DirectShare)),
+                    (None, Some(g)) => Some((g.permissions, g.id, PermissionSource::GroupShare)),
                     (None, None) => None,
                 };
 
                 // Update cache
                 let cache_key = CacheKey::Folder(user_id, folder_id);
-                self.cache
-                    .write()
-                    .await
-                    .insert(cache_key, found.map(|(p, _, _)| p));
+                if let Some((perm, share_id, source)) = found {
+                    self.cache_permission(cache_key, Some(perm), source, Some(share_id))
+                        .await;
 
-                if let Some((perm, share_id, _source)) = found {
                     // Track for determining the highest permission
-                    if user_share.is_some() && group_share.is_none() {
-                        user_shares_found.push((folder_id, perm, share_id));
-                    } else {
-                        group_shares_found.push((folder_id, perm, share_id));
+                    match source {
+                        PermissionSource::DirectShare => {
+                            user_shares_found.push((folder_id, perm, share_id));
+                        }
+                        PermissionSource::GroupShare => {
+                            group_shares_found.push((folder_id, perm, share_id));
+                        }
+                        _ => {}
                     }
+                } else {
+                    self.cache_permission(cache_key, None, PermissionSource::None, None)
+                        .await;
                 }
             }
         }
@@ -1008,6 +1172,7 @@ mod tests {
             file_id: Option<FileId>,
             folder_id: Option<FolderId>,
             recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Option<Share>> {
             let shares = self.shares.lock().await;
             Ok(shares
@@ -1025,6 +1190,7 @@ mod tests {
             file_id: Option<FileId>,
             folder_id: Option<FolderId>,
             group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().await;
             Ok(shares
@@ -1044,6 +1210,7 @@ mod tests {
             &self,
             folder_ids: &[FolderId],
             recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().await;
             Ok(shares
@@ -1063,6 +1230,7 @@ mod tests {
             &self,
             folder_ids: &[FolderId],
             group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().await;
             Ok(shares
@@ -1080,11 +1248,15 @@ mod tests {
                 .collect())
         }
 
-        async fn find_file_by_id(&self, id: FileId) -> Result<Option<File>> {
+        async fn find_file_by_id(&self, id: FileId, _tenant_id: Uuid) -> Result<Option<File>> {
             Ok(self.files.lock().await.iter().find(|f| f.id == id).cloned())
         }
 
-        async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: FolderId,
+            _tenant_id: Uuid,
+        ) -> Result<Option<Folder>> {
             Ok(self
                 .folders
                 .lock()
@@ -1094,7 +1266,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_user_group_ids(&self, user_id: UserId) -> Result<Vec<Uuid>> {
+        async fn get_user_group_ids(&self, user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
             let map = self.user_groups.lock().await;
             Ok(map.get(&user_id).cloned().unwrap_or_default())
         }
@@ -1126,15 +1298,15 @@ mod tests {
 
         // Owner should have Admin permission without any share record
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::Admin)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::Edit)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(owner_id, file_id, SharePermissions::View)
+            .check_file_permission(owner_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1181,12 +1353,12 @@ mod tests {
 
         // User should have View permission
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         // But not Edit permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
     }
@@ -1259,15 +1431,15 @@ mod tests {
 
         // User should have Edit permission on file through inheritance
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1314,7 +1486,7 @@ mod tests {
 
         // User should not have permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1361,13 +1533,13 @@ mod tests {
 
         // First call should populate cache
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
 
         // Second call should use cache (we can verify this by checking cache size)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert_eq!(resolver.cache.read().await.len(), 1);
@@ -1399,7 +1571,7 @@ mod tests {
 
         // User has no share, should not have permission
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1416,15 +1588,15 @@ mod tests {
 
         // Owner should have Admin permission
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::Admin)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::Admin)
             .await
             .unwrap());
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::Edit)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_folder_permission(owner_id, folder_id, SharePermissions::View)
+            .check_folder_permission(owner_id, Uuid::nil(), folder_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1508,11 +1680,11 @@ mod tests {
         // User should have View permission from direct share (direct share takes precedence)
         // This is correct because we check direct shares before ancestry
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1565,15 +1737,15 @@ mod tests {
 
         // User should have Edit permission through group membership
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1623,7 +1795,7 @@ mod tests {
 
         // User should NOT have permission (not in the group)
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -1695,11 +1867,11 @@ mod tests {
         // User should have View permission because direct share takes precedence
         // (Direct shares are checked before group shares)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
     }
@@ -1772,17 +1944,74 @@ mod tests {
 
         // User should have Admin permission (highest from all group shares)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_cached_source_preserves_group_share() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        ops.add_user_to_group(user_id, group_id).await;
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+            Uuid::new_v4(),
+        );
+        let file_id = file.id;
+        ops.add_file(file).await;
+
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        let share_id = share.id;
+        ops.add_share(share).await;
+
+        assert!(resolver
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
+            .await
+            .unwrap());
+
+        let result = resolver
+            .resolve_permission_with_source(user_id, Uuid::nil(), Resource::File(file_id))
+            .await
+            .unwrap();
+
+        assert_eq!(result.permission, Some(SharePermissions::Edit));
+        assert_eq!(result.source, PermissionSource::GroupShare);
+        assert_eq!(result.share_id, Some(share_id));
     }
 
     #[tokio::test]
@@ -1857,15 +2086,15 @@ mod tests {
 
         // User should have Edit permission on file through group share inheritance
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Edit)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Edit)
             .await
             .unwrap());
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
     }
@@ -1916,7 +2145,7 @@ mod tests {
 
         // User should not have permission (share is revoked)
         assert!(!resolver
-            .check_file_permission(user_id, file_id, SharePermissions::View)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::View)
             .await
             .unwrap());
     }
@@ -2003,8 +2232,91 @@ mod tests {
 
         // User should have Admin permission (highest from user + group shares in ancestry)
         assert!(resolver
-            .check_file_permission(user_id, file_id, SharePermissions::Admin)
+            .check_file_permission(user_id, Uuid::nil(), file_id, SharePermissions::Admin)
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_folder_ancestry_uses_highest_user_share() {
+        let (resolver, ops) = setup();
+
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+
+        let root_folder = Folder::new_root(owner_id, Uuid::new_v4());
+        let root_id = root_folder.id;
+        ops.add_folder(root_folder).await;
+
+        let parent_folder = Folder::new_child(
+            "parent".to_string(),
+            "/parent".to_string(),
+            root_id,
+            owner_id,
+            Uuid::new_v4(),
+        );
+        let parent_id = parent_folder.id;
+        ops.add_folder(parent_folder).await;
+
+        let file = File::new(
+            "test.txt".to_string(),
+            "/parent/test.txt".to_string(),
+            "hash".to_string(),
+            100,
+            "text/plain".to_string(),
+            Some(parent_id),
+            owner_id,
+            Uuid::new_v4(),
+        );
+        let file_id = file.id;
+        ops.add_file(file).await;
+
+        let view_share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(parent_id),
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(user_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        ops.add_share(view_share).await;
+
+        let admin_share = Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(parent_id),
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(user_id),
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id: Uuid::new_v4(),
+        };
+        let admin_share_id = admin_share.id;
+        ops.add_share(admin_share).await;
+
+        let result = resolver
+            .resolve_permission_with_source(user_id, Uuid::nil(), Resource::File(file_id))
+            .await
+            .unwrap();
+
+        assert_eq!(result.permission, Some(SharePermissions::Admin));
+        assert_eq!(result.source, PermissionSource::Inherited);
+        assert_eq!(result.share_id, Some(admin_share_id));
     }
 }

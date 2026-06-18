@@ -202,7 +202,6 @@ FROM share_access_log sal";
 
 /// Query type=admin_action returns admin_actions rows only.
 #[tokio::test]
-#[ignore]
 async fn test_audit_filter_admin_action_type() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -256,7 +255,6 @@ async fn test_audit_filter_admin_action_type() {
 
 /// Query type=security_event returns user_security_events rows only.
 #[tokio::test]
-#[ignore]
 async fn test_audit_filter_security_event_type() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -304,7 +302,6 @@ async fn test_audit_filter_security_event_type() {
 
 /// UNION ALL of both branches returns rows from both tables.
 #[tokio::test]
-#[ignore]
 async fn test_audit_all_type_union() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -367,7 +364,6 @@ async fn test_audit_all_type_union() {
 
 /// user_id filter returns only rows belonging to that actor.
 #[tokio::test]
-#[ignore]
 async fn test_audit_user_id_filter() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -424,7 +420,6 @@ async fn test_audit_user_id_filter() {
 
 /// Date-range filter (occurred_at >= from AND occurred_at <= to) returns only matching rows.
 #[tokio::test]
-#[ignore]
 async fn test_audit_date_range_filter() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -496,7 +491,6 @@ async fn test_audit_date_range_filter() {
 
 /// Pagination: LIMIT/OFFSET returns correct slice of results.
 #[tokio::test]
-#[ignore]
 async fn test_audit_pagination() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -600,7 +594,6 @@ async fn test_audit_pagination() {
 
 /// Query type=share_access returns share_access_log rows only.
 #[tokio::test]
-#[ignore]
 async fn test_audit_filter_share_access_type() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -647,7 +640,6 @@ async fn test_audit_filter_share_access_type() {
 
 /// UNION ALL of all three branches returns rows from all tables.
 #[tokio::test]
-#[ignore]
 async fn test_audit_all_type_union_with_three_branches() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -723,7 +715,6 @@ async fn test_audit_all_type_union_with_three_branches() {
 
 /// Events written to the events table are durable and queryable.
 #[tokio::test]
-#[ignore]
 async fn test_audit_durable_evidence_in_events_table() {
     let pool = test_pool().await;
     let suffix = &Uuid::new_v4().to_string()[..8];

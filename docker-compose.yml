@@ -60,6 +60,7 @@ services:
       RUSTFS_PUBLIC_ENDPOINT: http://localhost:9000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
+      RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: ${RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET:-true}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       # CRITICAL: Must be strong random values. Server refuses to start with weak secrets.

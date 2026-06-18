@@ -42,6 +42,7 @@ envy = "0.4"
 hmac = { workspace = true }
 hex = { workspace = true }
 sha2.workspace = true
+md5 = "0.8"
 reqwest = { workspace = true }
 async-trait = "0.1"
 governor = "0.10"
@@ -164,6 +165,26 @@ name = "openapi_export_test"
 path = "../tests/openapi_export_test.rs"
 
 [[test]]
+name = "chat_webhook_signature_test"
+path = "../tests/chat_webhook_signature_test.rs"
+
+[[test]]
+name = "public_share_download_header_test"
+path = "../tests/public_share_download_header_test.rs"
+
+[[test]]
+name = "upload_streaming_test"
+path = "../tests/upload_streaming_test.rs"
+
+[[test]]
+name = "chat_webhook_http_rejection_test"
+path = "../tests/chat_webhook_http_rejection_test.rs"
+
+[[test]]
+name = "chat_integration_admin_authorization_test"
+path = "../tests/chat_integration_admin_authorization_test.rs"
+
+[[test]]
 name = "e2e_sample"
 path = "tests/e2e_sample.rs"
 
@@ -174,3 +195,4 @@ hmac = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+libc = "0.2"

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    handlers::{AppError, AuthenticatedUser},
+    handlers::{AdminUser, AppError, AuthenticatedUser},
     AppState,
 };
 
@@ -99,6 +99,12 @@ pub struct AdminJobsQuery {
     pub limit: Option<i64>,
 }
 
+/// GET /api/v1/files/{id}/replication
+///
+/// Returns the replication status for a specific file. This endpoint is
+/// intentionally available to any authenticated user (not just admins) because
+/// it is scoped to a single file and enforces ownership via
+/// `file_service.get_file`, which verifies the caller owns the file.
 pub async fn get_file_replication_status(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -164,10 +170,8 @@ pub async fn get_file_replication_status(
 
 pub async fn get_replication_summary(
     State(state): State<AppState>,
-    auth: AuthenticatedUser,
+    _admin: AdminUser,
 ) -> Result<Json<ReplicationSummaryResponse>, AppError> {
-    require_admin(&state, auth.user_id).await?;
-
     let version_counts_row = sqlx::query!(
         r#"
         SELECT
@@ -244,11 +248,9 @@ pub async fn get_replication_summary(
 
 pub async fn list_replication_jobs(
     State(state): State<AppState>,
-    auth: AuthenticatedUser,
+    _admin: AdminUser,
     Query(query): Query<AdminJobsQuery>,
 ) -> Result<Json<Vec<ReplicationJobResponse>>, AppError> {
-    require_admin(&state, auth.user_id).await?;
-
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let rows = sqlx::query!(
         r#"
@@ -299,10 +301,8 @@ pub async fn list_replication_jobs(
 
 pub async fn list_replication_targets(
     State(state): State<AppState>,
-    auth: AuthenticatedUser,
+    _admin: AdminUser,
 ) -> Result<Json<Vec<ReplicationTargetHealthResponse>>, AppError> {
-    require_admin(&state, auth.user_id).await?;
-
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -356,16 +356,46 @@ fn to_rfc3339(value: DateTime<Utc>) -> String {
     value.to_rfc3339()
 }
 
-async fn require_admin(state: &AppState, user_id: Uuid) -> Result<(), AppError> {
-    let user = state
-        .metadata_store
-        .find_user_by_id(user_id)
-        .await?
-        .ok_or_else(|| AppError::internal("authenticated user not found"))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
 
-    if !user.is_admin {
-        return Err(AppError::forbidden("Admin access required"));
+    #[test]
+    fn replication_admin_routes_require_admin_user() {
+        fn assert_list_jobs_requires_admin<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AdminUser, Query<AdminJobsQuery>) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_list_jobs_requires_admin(list_replication_jobs);
+
+        fn assert_summary_requires_admin<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AdminUser) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_summary_requires_admin(get_replication_summary);
+
+        fn assert_list_targets_requires_admin<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AdminUser) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_list_targets_requires_admin(list_replication_targets);
     }
 
-    Ok(())
+    #[test]
+    fn file_replication_status_allows_authenticated_user() {
+        fn assert_file_status_allows_authenticated<H, Fut>(_handler: H)
+        where
+            H: Fn(State<AppState>, AuthenticatedUser, Path<Uuid>) -> Fut,
+            Fut: Future,
+        {
+        }
+        assert_file_status_allows_authenticated(get_file_replication_status);
+    }
 }

@@ -132,6 +132,10 @@ impl UploadObjectStore for MockUploadObjectStore {
         Ok(())
     }
 
+    async fn delete_object(&self, _key: &str) -> Result<(), UploadError> {
+        Ok(())
+    }
+
     async fn chunk_exists(
         &self,
         _session_id: Uuid,
@@ -140,13 +144,13 @@ impl UploadObjectStore for MockUploadObjectStore {
         Ok(true)
     }
 
-    async fn assemble_chunks(
+    async fn assemble_chunks_to_prefix(
         &self,
         _session_id: Uuid,
         _total_chunks: u32,
-        _final_key: &str,
-    ) -> Result<(), UploadError> {
-        Ok(())
+        _final_key_prefix: &str,
+    ) -> Result<String, UploadError> {
+        Ok(rustshare_core::validation::calculate_sha256(&Bytes::new()))
     }
 }
 

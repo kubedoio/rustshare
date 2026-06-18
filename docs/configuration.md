@@ -60,6 +60,7 @@ RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 | `RUSTFS_PUBLIC_ENDPOINT` | Public-facing RustFS endpoint | `http://localhost:9000` |
 | `RUSTFS_REGION` | RustFS region | `us-east-1` |
 | `RUSTFS_BUCKET` | RustFS bucket | `rustshare-files` |
+| `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` | Create the bucket at backend startup when missing. Keep disabled in production; Docker Compose defaults it to `true` for local bootstrap. | `false` |
 | `RUSTFS_ACCESS_KEY` | RustFS access key (Docker alias) | — |
 | `RUSTFS_SECRET_KEY` | RustFS secret key (Docker alias) | — |
 

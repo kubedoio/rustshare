@@ -154,12 +154,13 @@ where
     async fn require_folder_permission(
         &self,
         user_id: UserId,
+        tenant_id: Uuid,
         folder_id: FolderId,
         required: SharePermissions,
     ) -> Result<(), FolderError> {
         let has = self
             .permission_resolver
-            .check_folder_permission(user_id, folder_id, required)
+            .check_folder_permission(user_id, tenant_id, folder_id, required)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
         if !has {
@@ -193,7 +194,7 @@ where
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
 
             // Verify permissions: user must own the folder or have Edit permission
-            self.require_folder_permission(owner_id, parent_id, SharePermissions::Edit)
+            self.require_folder_permission(owner_id, tenant_id, parent_id, SharePermissions::Edit)
                 .await?;
 
             // Construct path: parent_path + "/" + name
@@ -356,7 +357,7 @@ where
 
         // 2. Check permissions using the resolver.
         let perm_result = self
-            .require_folder_permission(user_id, folder_id, SharePermissions::View)
+            .require_folder_permission(user_id, folder.tenant_id, folder_id, SharePermissions::View)
             .await;
         match &perm_result {
             Ok(()) => {
@@ -478,8 +479,13 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await?;
+        self.require_folder_permission(
+            user_id,
+            folder.tenant_id,
+            folder_id,
+            SharePermissions::Edit,
+        )
+        .await?;
 
         // Check if name is actually changing
         if folder.name == new_name {
@@ -569,8 +575,13 @@ where
         let mut folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Edit permission
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Edit)
-            .await?;
+        self.require_folder_permission(
+            user_id,
+            folder.tenant_id,
+            folder_id,
+            SharePermissions::Edit,
+        )
+        .await?;
 
         // Check if parent is actually changing
         if folder.parent_folder_id == new_parent_id {
@@ -690,8 +701,13 @@ where
         let folder = self.get_folder(folder_id, user_id).await?;
 
         // Verify Admin permission for deletion
-        self.require_folder_permission(user_id, folder_id, SharePermissions::Admin)
-            .await?;
+        self.require_folder_permission(
+            user_id,
+            folder.tenant_id,
+            folder_id,
+            SharePermissions::Admin,
+        )
+        .await?;
 
         // Check if it's the system root folder (nil UUID) - only protect system folders
         // User-created root folders should be deletable even if named "Root"
@@ -1062,6 +1078,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<FolderId>,
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Option<Share>> {
             Ok(None)
         }
@@ -1071,6 +1088,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<FolderId>,
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -1079,6 +1097,7 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -1087,15 +1106,20 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             Ok(Vec::new())
         }
 
-        async fn find_file_by_id(&self, _id: FileId) -> Result<Option<File>> {
+        async fn find_file_by_id(&self, _id: FileId, _tenant_id: Uuid) -> Result<Option<File>> {
             Ok(None)
         }
 
-        async fn find_folder_by_id(&self, id: FolderId) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: FolderId,
+            _tenant_id: Uuid,
+        ) -> Result<Option<Folder>> {
             if let Some(store) = &self.metadata_store {
                 store.find_folder_by_id(id, Uuid::nil()).await
             } else {
@@ -1103,7 +1127,11 @@ mod tests {
             }
         }
 
-        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
     }

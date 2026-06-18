@@ -16,14 +16,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan for hardcoded secrets
+        run: ./scripts/secret-scan.sh --full
+
+  generate-secrets:
+    name: Generate Secrets
+    runs-on: ubuntu-latest
+    outputs:
+      pg_password: ${{ steps.secrets.outputs.pg_password }}
+    steps:
+      - name: Generate PostgreSQL password
+        id: secrets
+        run: |
+          PG_PASSWORD=$(openssl rand -hex 32)
+          echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
+
   check-backend-dependencies:
     name: Check Backend Dependencies
     runs-on: ubuntu-latest
+    needs: [generate-secrets, secret-scan]
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -33,12 +54,15 @@ jobs:
           - 5432:5432
     env:
       SQLX_OFFLINE: true
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Per-run cryptographically random database password. The container is
+      # ephemeral and only reachable from within this job.
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Cache cargo-outdated
         uses: actions/cache@v5
@@ -97,6 +121,7 @@ jobs:
   check-frontend-dependencies:
     name: Check Frontend Dependencies
     runs-on: ubuntu-latest
+    needs: secret-scan
     steps:
       - uses: actions/checkout@v6
       
@@ -126,6 +151,7 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    needs: secret-scan
     steps:
       - uses: actions/checkout@v6
 

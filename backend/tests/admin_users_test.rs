@@ -61,7 +61,6 @@ async fn cleanup(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
 /// Full user lifecycle: create → fetch → update quota → disable → enable → delete.
 /// Verifies admin_actions are written for each mutating step.
 #[tokio::test]
-#[ignore]
 async fn test_admin_user_full_lifecycle() {
     let pool = test_pool().await;
     let actor_id = create_test_admin(&pool, &Uuid::new_v4().to_string()[..8]).await;
@@ -263,7 +262,6 @@ async fn test_admin_user_full_lifecycle() {
 /// Disabled user has disabled_at IS NOT NULL — the login handler
 /// checks this column to block login.
 #[tokio::test]
-#[ignore]
 async fn test_disabled_user_has_disabled_at_set() {
     let pool = test_pool().await;
     let user_id = Uuid::new_v4();

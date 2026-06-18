@@ -4,8 +4,9 @@
 //! It includes session creation with password validation and file download.
 
 use axum::{
+    body::Body,
     extract::{ConnectInfo, Multipart, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -20,6 +21,33 @@ use crate::{handlers::ShareSessionAuth, AppState};
 
 use super::files::FileUploadResponse;
 use crate::handlers::AppError;
+
+/// Header used to convey the tenant context for unauthenticated public-share
+/// requests. Public share links do not encode tenant in the token. The tenant
+/// is normally derived from the globally unique token; callers may supply this
+/// header as defense-in-depth, and requests for the wrong tenant are rejected
+/// with `ShareNotFoundByToken`.
+pub const PUBLIC_SHARE_TENANT_HEADER: &str = "X-Tenant-ID";
+
+/// Extract an optional tenant ID from the public-share tenant header.
+///
+/// A missing header or a nil UUID is treated as "derive tenant from the
+/// token". A syntactically invalid value is rejected with a 400 Bad Request.
+fn extract_public_tenant_id(headers: &HeaderMap) -> Result<Option<Uuid>, AppError> {
+    let Some(header) = headers.get(PUBLIC_SHARE_TENANT_HEADER) else {
+        return Ok(None);
+    };
+    let value = header
+        .to_str()
+        .map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))?;
+    let tenant_id =
+        Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid X-Tenant-ID header"))?;
+    if tenant_id.is_nil() {
+        Ok(None)
+    } else {
+        Ok(Some(tenant_id))
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSessionRequest {
@@ -64,12 +92,44 @@ pub struct SharedFolderContentsQuery {
     pub folder_id: Option<Uuid>,
 }
 
+/// Build a safe `Content-Disposition` header value for a file download.
+///
+/// Sanitizes the legacy `filename` parameter by escaping quotes and backslashes
+/// and stripping control characters (including `\n`, `\r`, and `\x7f`). The
+/// RFC 5987 `filename*` parameter is kept and uses percent-encoding so Unicode
+/// names round-trip safely for supporting clients.
+fn sanitize_legacy_filename(file_name: &str) -> String {
+    let mut sanitized = String::with_capacity(file_name.len());
+    for ch in file_name.chars() {
+        match ch {
+            '"' => sanitized.push_str("\\\""),
+            '\\' => sanitized.push_str("\\\\"),
+            c if c.is_control() => {
+                // Drop control characters to prevent header injection.
+            }
+            c => sanitized.push(c),
+        }
+    }
+    sanitized
+}
+
+pub fn build_content_disposition(file_name: &str) -> String {
+    format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        sanitize_legacy_filename(file_name),
+        urlencoding::encode(file_name)
+    )
+}
+
 /// Create anonymous session for share access
 #[utoipa::path(
     post,
     path = "/api/v1/public/share/{token}/session",
     tag = "Public Shares",
-    params(("token" = String, Path, description = "Share token")),
+    params(
+        ("X-Tenant-ID" = Option<Uuid>, Header, description = "Optional tenant identifier for the public share link"),
+        ("token" = String, Path, description = "Share token"),
+    ),
     request_body = CreateSessionRequest,
     responses(
         (status = 200, description = "Session created", body = SessionResponse),
@@ -80,11 +140,13 @@ pub struct SharedFolderContentsQuery {
 pub async fn create_session(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Response, AppError> {
+    let tenant_id = extract_public_tenant_id(&headers)?;
     let session = state
         .share_service
-        .validate_and_create_session(&token, req.password)
+        .validate_and_create_session(&token, req.password, tenant_id)
         .await?;
 
     Ok((
@@ -104,7 +166,10 @@ pub async fn create_session(
     get,
     path = "/api/v1/public/share/{token}/info",
     tag = "Public Shares",
-    params(("token" = String, Path, description = "Share token")),
+    params(
+        ("X-Tenant-ID" = Option<Uuid>, Header, description = "Optional tenant identifier for the public share link"),
+        ("token" = String, Path, description = "Share token"),
+    ),
     responses(
         (status = 200, description = "Share information", body = ShareInfoResponse),
         (status = 404, description = "Share not found or revoked", body = crate::handlers::ErrorResponse),
@@ -114,8 +179,13 @@ pub async fn create_session(
 pub async fn get_share_info(
     State(state): State<AppState>,
     Path(token): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let (share, file, folder) = state.share_service.get_public_share_info(&token).await?;
+    let tenant_id = extract_public_tenant_id(&headers)?;
+    let (share, file, folder) = state
+        .share_service
+        .get_public_share_info(&token, tenant_id)
+        .await?;
 
     if let Some(file) = file {
         Ok(Json(ShareInfoResponse {
@@ -140,6 +210,19 @@ pub async fn get_share_info(
             file_size: None,
             mime_type: None,
             password_protected: share.password_hash.is_some(),
+            expires_at: share.expires_at,
+        })
+        .into_response())
+    } else if share.password_hash.is_some() {
+        Ok(Json(ShareInfoResponse {
+            resource_id: share.id,
+            resource_type: "protected".to_string(),
+            name: "Protected share".to_string(),
+            permissions: share.permissions,
+            upload_only: share.upload_only,
+            file_size: None,
+            mime_type: None,
+            password_protected: true,
             expires_at: share.expires_at,
         })
         .into_response())
@@ -173,48 +256,49 @@ fn ensure_share_is_active(share: &rustshare_core::domain::Share) -> Result<(), A
     Ok(())
 }
 
-/// Stream a multipart field to a temporary file and return the temp file plus size.
-/// Enforces a per-field size limit during streaming to prevent OOM.
-async fn stream_multipart_field_to_temp_file(
-    field: &mut axum::extract::multipart::Field<'_>,
-    max_size: usize,
-) -> Result<(tempfile::NamedTempFile, usize), AppError> {
-    let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
-        .await
-        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?
-        .map_err(|e| AppError::internal(format!("Failed to create temp file: {e}")))?;
-
-    let mut async_file = tokio::fs::File::from_std(
-        temp_file
-            .reopen()
-            .map_err(|e| AppError::internal(format!("Failed to reopen temp file: {e}")))?,
-    );
-
-    let mut total_size: usize = 0;
-
-    while let Some(chunk) = field.chunk().await.map_err(|e| {
-        tracing::error!("Failed to read chunk: {e}");
-        AppError::internal(format!("Failed to read chunk: {e}"))
-    })? {
-        total_size += chunk.len();
-        if total_size > max_size {
-            return Err(AppError::payload_too_large(format!(
-                "File size exceeds maximum allowed {max_size} bytes"
-            )));
-        }
-        tokio::io::AsyncWriteExt::write_all(&mut async_file, &chunk)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to write to temp file: {e}");
-                AppError::internal(format!("Failed to write to temp file: {e}"))
-            })?;
+/// Resolve the effective tenant for a public-share session.
+///
+/// Legacy share session JWTs may have `tenant_id` set to nil. When that
+/// happens the tenant is derived from the share itself. If the JWT contains a
+/// non-nil tenant, it must match the share's actual tenant (defense in depth).
+fn resolve_public_share_tenant(
+    token: &str,
+    claims_tenant_id: Uuid,
+    share_tenant_id: Uuid,
+) -> Result<Uuid, AppError> {
+    if claims_tenant_id.is_nil() || claims_tenant_id == share_tenant_id {
+        Ok(share_tenant_id)
+    } else {
+        Err(AppError::from(
+            rustshare_core::services::ShareError::ShareNotFoundByToken(token.to_string()),
+        ))
     }
+}
 
-    tokio::io::AsyncWriteExt::flush(&mut async_file)
+/// Load a public share for a session-authenticated request and resolve the
+/// effective tenant.
+async fn resolve_share_for_public_session(
+    state: &AppState,
+    token: &str,
+    claims: &rustshare_auth::ShareSessionClaims,
+) -> Result<(rustshare_core::domain::Share, Uuid), AppError> {
+    let share = state
+        .metadata_store
+        .get_share_by_token_unscoped(token)
         .await
-        .map_err(|e| AppError::internal(format!("Failed to flush temp file: {e}")))?;
+        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
+        .ok_or_else(|| {
+            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
+                token.to_string(),
+            ))
+        })?;
 
-    Ok((temp_file, total_size))
+    ensure_share_session_matches(&share, claims)?;
+    ensure_share_is_active(&share)?;
+
+    let effective_tenant = resolve_public_share_tenant(token, claims.tenant_id, share.tenant_id)?;
+
+    Ok((share, effective_tenant))
 }
 
 async fn parse_upload_multipart(
@@ -253,7 +337,7 @@ async fn parse_upload_multipart(
                     }
                 }
                 file_temp = Some(
-                    stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
+                    super::stream_multipart_field_to_temp_file(&mut field, MAX_PUBLIC_UPLOAD_SIZE)
                         .await?
                         .0,
                 );
@@ -332,23 +416,13 @@ pub async fn download_shared_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // Get share to verify token matches
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    // Verify JWT share_id matches the share we're accessing
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches. Legacy tokens may have a nil tenant,
+    // so derive the effective tenant from the share itself.
+    let (share, _effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
+    // `_effective_tenant` is not needed for the download itself (the file is
+    // looked up by ID and owner), but resolving it validates the JWT against
+    // the share and ensures legacy nil-tenant tokens still resolve correctly.
 
     // Get file metadata
     let file_id = share
@@ -375,10 +449,11 @@ pub async fn download_shared_file(
         ));
     }
 
-    // Get file content from storage
-    let content = state
+    // Stream file content from storage without loading it into memory.
+    let storage_key = file.storage_key();
+    let (content_type, content_length, stream) = state
         .object_store
-        .get(&file.storage_key())
+        .get_stream(&storage_key)
         .await
         .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
@@ -413,20 +488,30 @@ pub async fn download_shared_file(
         tracing::warn!("Failed to log share access: {}", e);
     }
 
-    // Return file with appropriate headers
-    Ok((
-        StatusCode::OK,
-        [
-            ("Content-Type", file.mime_type.as_str()),
-            (
-                "Content-Disposition",
-                &format!("attachment; filename=\"{}\"", file.name),
-            ),
-            ("Content-Length", &content.len().to_string()),
-        ],
-        content,
-    )
-        .into_response())
+    // Return file with appropriate headers. Only set Content-Length when the
+    // object store reports one; falling back to the metadata size could send a
+    // stale value if the stored object has changed.
+    let content_disposition = build_content_disposition(&file.name);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type.unwrap_or_else(|| file.mime_type.clone()))
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+    );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
+
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
 /// List contents of a shared folder.
@@ -447,21 +532,10 @@ pub async fn get_shared_folder_contents(
     ShareSessionAuth(claims): ShareSessionAuth,
     Query(query): Query<SharedFolderContentsQuery>,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
 
     if share.folder_id.is_none() {
         return Err(AppError::bad_request("This share is not for a folder"));
@@ -473,7 +547,7 @@ pub async fn get_shared_folder_contents(
 
     let (_share, current_folder, folders, files) = state
         .share_service
-        .list_public_folder_contents(&token, query.folder_id)
+        .list_public_folder_contents(&token, query.folder_id, Some(effective_tenant))
         .await?;
 
     let root_folder_id = share
@@ -522,21 +596,13 @@ pub async fn download_shared_folder_file(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, _effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
+    // `_effective_tenant` is not needed for the download itself (access is
+    // verified by checking the file is inside the shared folder tree), but
+    // resolving it validates the JWT and supports legacy nil-tenant tokens.
 
     let root_folder_id = share
         .folder_id
@@ -577,9 +643,10 @@ pub async fn download_shared_folder_file(
         return Err(AppError::forbidden("File is not inside the shared folder"));
     }
 
-    let content = state
+    let storage_key = file.storage_key();
+    let (content_type, content_length, stream) = state
         .object_store
-        .get(&file.storage_key())
+        .get_stream(&storage_key)
         .await
         .map_err(|e| AppError::internal(format!("Failed to retrieve file: {}", e)))?;
 
@@ -611,22 +678,30 @@ pub async fn download_shared_folder_file(
         tracing::warn!("Failed to log share access: {}", e);
     }
 
-    Ok((
-        StatusCode::OK,
-        [
-            ("Content-Type", file.mime_type.as_str()),
-            (
-                "Content-Disposition",
-                &format!("attachment; filename=\"{}\"", file.name),
-            ),
-            ("Content-Length", &content.len().to_string()),
-        ],
-        content,
-    )
-        .into_response())
+    let content_disposition = build_content_disposition(&file.name);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type.unwrap_or_else(|| file.mime_type.clone()))
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+    );
+    if let Some(len) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_str(&len.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+        );
+    }
+
+    Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
 }
 
-/// Maximum file size for public share uploads (100MB).
+/// Maximum file size for public share uploads (100 MB).
 const MAX_PUBLIC_UPLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 /// Upload a file into a shared folder using an authenticated share session.
@@ -649,27 +724,16 @@ pub async fn upload_shared_folder_file(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Result<Response, AppError> {
-    let share = state
-        .metadata_store
-        .get_share_by_token(&token)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.clone(),
-            ))
-        })?;
-
-    ensure_share_session_matches(&share, &claims)?;
-
-    // Re-check revocation and expiration to block already-issued tokens
-    ensure_share_is_active(&share)?;
+    // Get share to verify token matches, deriving the tenant from the share for
+    // legacy tokens with a nil tenant_id.
+    let (share, effective_tenant) =
+        resolve_share_for_public_session(&state, &token, &claims).await?;
 
     let root_folder_id = share
         .folder_id
         .ok_or_else(|| AppError::bad_request("This share is not for a folder"))?;
 
-    if !share.upload_only && claims.permissions < SharePermissions::Edit {
+    if !share.upload_only && share.permissions < SharePermissions::Edit {
         return Err(AppError::forbidden("This share does not allow uploads"));
     }
 
@@ -728,7 +792,7 @@ pub async fn upload_shared_folder_file(
             Some(target_folder_id),
             file_path,
             mime_type,
-            share.tenant_id,
+            effective_tenant,
         )
         .await?;
 
@@ -839,5 +903,200 @@ mod tests {
         assert_eq!(json["mime_type"], "application/pdf");
         assert_eq!(json["password_protected"], true);
         assert!(json["expires_at"].is_string());
+    }
+
+    #[test]
+    fn public_share_download_header_escaped() {
+        let file_name = "report\".txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"report\\\".txt\""),
+            "legacy filename parameter must escape embedded quotes: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''report%22.txt"),
+            "RFC 5987 filename* parameter must URL-encode embedded quotes: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_newline_sanitized() {
+        let file_name = "line\nfeed.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.contains("\n"),
+            "legacy filename must not contain raw newline: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"linefeed.txt\""),
+            "legacy filename must strip newline: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''line%0Afeed.txt"),
+            "RFC 5987 filename* must percent-encode newline: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_carriage_return_sanitized() {
+        let file_name = "car\rriage.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.contains("\r"),
+            "legacy filename must not contain raw carriage return: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"carriage.txt\""),
+            "legacy filename must strip carriage return: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''car%0Driage.txt"),
+            "RFC 5987 filename* must percent-encode carriage return: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_backslash_escaped() {
+        let file_name = "path\\to\\file.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"path\\\\to\\\\file.txt\""),
+            "legacy filename parameter must escape backslashes: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''path%5Cto%5Cfile.txt"),
+            "RFC 5987 filename* must percent-encode backslashes: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_control_chars_sanitized() {
+        let file_name = "foo\x01bar\x7fbaz.txt";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            !header.bytes().any(|b| b < 0x20 || b == 0x7f),
+            "legacy filename must not contain control characters: {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"foobarbaz.txt\""),
+            "legacy filename must strip all control characters: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''foo%01bar%7Fbaz.txt"),
+            "RFC 5987 filename* must percent-encode control characters: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn public_share_download_header_unicode_preserved() {
+        let file_name = "我的報告 \"v2\".pdf";
+        let header = build_content_disposition(file_name);
+
+        assert!(
+            header.contains("filename=\"我的報告 \\\"v2\\\".pdf\""),
+            "legacy filename must escape quotes while preserving unicode: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A%20%22v2%22.pdf"),
+            "RFC 5987 filename* must percent-encode unicode: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn extract_public_tenant_id_missing_returns_none() {
+        let headers = HeaderMap::new();
+        let result = extract_public_tenant_id(&headers);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn extract_public_tenant_id_invalid_returns_bad_request() {
+        let mut headers = HeaderMap::new();
+        headers.insert(PUBLIC_SHARE_TENANT_HEADER, "not-a-uuid".parse().unwrap());
+        let result = extract_public_tenant_id(&headers);
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn extract_public_tenant_id_nil_returns_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            Uuid::nil().to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn extract_public_tenant_id_matching_tenant_returns_some() {
+        let tenant_id = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            tenant_id.to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), Some(tenant_id));
+    }
+
+    #[test]
+    fn extract_public_tenant_id_mismatched_tenant_value_returns_some() {
+        // The extractor itself does not compare against the share; it just
+        // parses the header. The downstream service rejects a mismatch.
+        let other_tenant_id = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            PUBLIC_SHARE_TENANT_HEADER,
+            other_tenant_id.to_string().parse().unwrap(),
+        );
+        let result = extract_public_tenant_id(&headers);
+        assert_eq!(result.unwrap(), Some(other_tenant_id));
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_nil_claims_uses_share_tenant() {
+        let share_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", Uuid::nil(), share_tenant_id);
+        assert_eq!(result.unwrap(), share_tenant_id);
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_matching_claims_succeeds() {
+        let share_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", share_tenant_id, share_tenant_id);
+        assert_eq!(result.unwrap(), share_tenant_id);
+    }
+
+    #[test]
+    fn resolve_public_share_tenant_mismatched_claims_fails() {
+        let share_tenant_id = Uuid::new_v4();
+        let other_tenant_id = Uuid::new_v4();
+        let result = resolve_public_share_tenant("token", other_tenant_id, share_tenant_id);
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::NotFound(_) | AppError::BadRequest(_)
+        ));
     }
 }

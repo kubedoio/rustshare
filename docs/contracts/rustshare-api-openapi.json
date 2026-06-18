@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "servers": [
     {
@@ -2488,7 +2488,7 @@
         "tags": [
           "Files"
         ],
-        "summary": "Get file download URL.",
+        "summary": "Download file content directly with proper filename.",
         "description": "GET /api/files/{id}/download",
         "operationId": "download_file",
         "parameters": [
@@ -2505,14 +2505,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Download URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DownloadUrlResponse"
-                }
-              }
-            }
+            "description": "File content"
           },
           "401": {
             "description": "Unauthorized",
@@ -4217,7 +4210,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReceiveChatEventRequest"
+                "$ref": "#/components/schemas/IncomingChatEvent"
               }
             }
           },
@@ -4310,6 +4303,18 @@
         "summary": "POST /api/v1/integrations/chat/unfurl/public",
         "description": "Public link unfurl endpoint that doesn't require authentication.\nThis is for chat systems that want to preview public shares.",
         "operationId": "unfurl_link_public",
+        "parameters": [
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "description": "Tenant identifier for the public chat unfurl request",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -7766,6 +7771,19 @@
         "operationId": "get_share_info",
         "parameters": [
           {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
             "name": "token",
             "in": "path",
             "description": "Share token",
@@ -7817,6 +7835,19 @@
         "summary": "Create anonymous session for share access",
         "operationId": "create_session",
         "parameters": [
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "description": "Optional tenant identifier for the public share link",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
           {
             "name": "token",
             "in": "path",
@@ -11465,17 +11496,6 @@
           }
         }
       },
-      "DownloadUrlResponse": {
-        "type": "object",
-        "required": [
-          "url"
-        ],
-        "properties": {
-          "url": {
-            "type": "string"
-          }
-        }
-      },
       "DuplicateNoteResponse": {
         "type": "object",
         "required": [
@@ -14201,6 +14221,14 @@
           },
           "password": {
             "type": "string"
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Optional tenant ID. When provided, login is scoped to that tenant.\nExisting clients may omit this field for backward compatibility."
           }
         }
       },
@@ -15372,18 +15400,6 @@
           },
           "status": {
             "type": "string"
-          }
-        }
-      },
-      "ReceiveChatEventRequest": {
-        "type": "object",
-        "description": "Request to receive a chat event from an external system.",
-        "required": [
-          "event"
-        ],
-        "properties": {
-          "event": {
-            "$ref": "#/components/schemas/IncomingChatEvent"
           }
         }
       },

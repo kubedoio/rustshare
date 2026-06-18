@@ -222,10 +222,6 @@ impl ObjectStoreOps for MockObjectStore {
         Ok(false)
     }
 
-    async fn get_presigned_url(&self, _key: &str, _expiry_secs: u64) -> Result<String> {
-        unreachable!()
-    }
-
     async fn get(&self, _key: &str) -> Result<Bytes> {
         unreachable!()
     }
@@ -259,6 +255,7 @@ impl PermissionResolverOps for MockPermissionOps {
         _file_id: Option<Uuid>,
         _folder_id: Option<Uuid>,
         _recipient_user_id: UserId,
+        _tenant_id: Uuid,
     ) -> Result<Option<Share>> {
         Ok(None)
     }
@@ -268,6 +265,7 @@ impl PermissionResolverOps for MockPermissionOps {
         _file_id: Option<Uuid>,
         _folder_id: Option<Uuid>,
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -276,6 +274,7 @@ impl PermissionResolverOps for MockPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _recipient_user_id: UserId,
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -284,15 +283,16 @@ impl PermissionResolverOps for MockPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
 
-    async fn find_file_by_id(&self, _id: Uuid) -> Result<Option<File>> {
+    async fn find_file_by_id(&self, _id: Uuid, _tenant_id: Uuid) -> Result<Option<File>> {
         Ok(None)
     }
 
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: Uuid, _tenant_id: Uuid) -> Result<Option<Folder>> {
         Ok(self
             .folders
             .lock()
@@ -302,7 +302,7 @@ impl PermissionResolverOps for MockPermissionOps {
             .cloned())
     }
 
-    async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+    async fn get_user_group_ids(&self, _user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
 }
@@ -507,6 +507,7 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
         _file_id: Option<Uuid>,
         folder_id: Option<Uuid>,
         _recipient_user_id: UserId,
+        _tenant_id: Uuid,
     ) -> Result<Option<Share>> {
         if folder_id == Some(self.folder.id) {
             Ok(Some(self.share.clone()))
@@ -520,6 +521,7 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
         _file_id: Option<Uuid>,
         _folder_id: Option<Uuid>,
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -528,6 +530,7 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _recipient_user_id: UserId,
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -536,15 +539,16 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
 
-    async fn find_file_by_id(&self, _id: Uuid) -> Result<Option<File>> {
+    async fn find_file_by_id(&self, _id: Uuid, _tenant_id: Uuid) -> Result<Option<File>> {
         Ok(None)
     }
 
-    async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+    async fn find_folder_by_id(&self, id: Uuid, _tenant_id: Uuid) -> Result<Option<Folder>> {
         if id == self.folder.id {
             Ok(Some(self.folder.clone()))
         } else {
@@ -552,7 +556,7 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
         }
     }
 
-    async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+    async fn get_user_group_ids(&self, _user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
 }

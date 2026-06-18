@@ -29,10 +29,10 @@ pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,
 };
 pub use chat_integration::{
-    ChatEvent, ChatEventPayload, ChatEventType, ChatIntegrationError, ChatIntegrationService,
-    EventStoreOps as ChatEventStoreOps, HttpWebhookDispatcher, IncomingChatEvent,
-    MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest, UnfurlResponse,
-    WebhookDispatcher,
+    validate_chat_webhook_url, ChatEvent, ChatEventPayload, ChatEventType, ChatIntegrationError,
+    ChatIntegrationService, EventStoreOps as ChatEventStoreOps, HttpWebhookDispatcher,
+    IncomingChatEvent, MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest,
+    UnfurlResponse, WebhookDispatcher,
 };
 pub use email_service::{EmailError, EmailService};
 pub use errors::{FileError, FolderError, VaultSyncError};

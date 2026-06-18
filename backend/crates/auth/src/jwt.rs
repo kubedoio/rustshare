@@ -200,8 +200,15 @@ mod tests {
         let share_id = uuid::Uuid::new_v4();
         let file_id = uuid::Uuid::new_v4();
 
-        let claims =
-            ShareSessionClaims::new(share_id, Some(file_id), None, SharePermissions::View, 3600);
+        let tenant_id = uuid::Uuid::new_v4();
+        let claims = ShareSessionClaims::new(
+            share_id,
+            Some(file_id),
+            None,
+            SharePermissions::View,
+            tenant_id,
+            3600,
+        );
 
         let token = manager.encode_custom_claims(&claims).unwrap();
         let decoded: ShareSessionClaims = manager.decode_custom(&token).unwrap();

@@ -22,7 +22,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(
         title = "RustShare REST API",
-        version = "1.0.0",
+        version = "2.0.0",
         description = "Auto-generated OpenAPI specification for the RustShare file-sharing and sync platform.",
     ),
     servers(
@@ -314,7 +314,7 @@ use utoipa::OpenApi;
         crate::handlers::brainstorming::SaveBoardSourceRequest,
         crate::handlers::chat_integration::DispatchWebhookRequest,
         crate::handlers::chat_integration::DispatchWebhookResponse,
-        crate::handlers::chat_integration::ReceiveChatEventRequest,
+        rustshare_core::services::IncomingChatEvent,
         crate::handlers::chat_integration::RegisterWebhookRequest,
         crate::handlers::chat_integration::UnfurlLinkRequest,
         crate::handlers::chat_integration::UnfurlLinkResponse,
@@ -332,7 +332,6 @@ use utoipa::OpenApi;
         crate::handlers::devices::DeviceListResponse,
         crate::handlers::devices::ListDevicesResponse,
         crate::handlers::features::FeaturesResponse,
-        crate::handlers::files::DownloadUrlResponse,
         crate::handlers::files::EditFileRequest,
         crate::handlers::files::EditFileResponse,
         crate::handlers::files::FileRestoreResponse,

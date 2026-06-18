@@ -1,7 +1,10 @@
 use bytes;
+use futures_util::StreamExt;
 use rustshare_core::services::UploadError;
 use rustshare_storage::{MetadataStore, ObjectStore};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 /// Adapter for ObjectStore to implement UploadObjectStore trait
@@ -13,6 +16,18 @@ pub struct UploadObjectStoreAdapter {
 impl UploadObjectStoreAdapter {
     pub fn new(inner: Arc<ObjectStore>) -> Self {
         Self { inner }
+    }
+
+    fn map_put_if_absent_error(error: anyhow::Error, chunk_index: u32) -> UploadError {
+        let message = error.to_string();
+        if message.contains("Precondition")
+            || message.contains("PreconditionFailed")
+            || message.contains("412")
+        {
+            UploadError::ChunkAlreadyReceived(chunk_index)
+        } else {
+            UploadError::Storage(message)
+        }
     }
 }
 
@@ -26,9 +41,9 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     ) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner
-            .put(&key, data)
+            .put_if_absent(&key, data)
             .await
-            .map_err(|e| UploadError::Storage(e.to_string()))
+            .map_err(|e| Self::map_put_if_absent_error(e, chunk_index))
     }
 
     async fn put_chunk_from_path(
@@ -39,9 +54,9 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     ) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner
-            .put_from_path(&key, path)
+            .put_from_path_if_absent(&key, path)
             .await
-            .map_err(|e| UploadError::Storage(e.to_string()))
+            .map_err(|e| Self::map_put_if_absent_error(e, chunk_index))
     }
 
     async fn get_chunk(
@@ -78,6 +93,13 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         Ok(())
     }
 
+    async fn delete_object(&self, key: &str) -> Result<(), UploadError> {
+        self.inner
+            .delete(key)
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))
+    }
+
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner
@@ -86,29 +108,58 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
             .map_err(|e| UploadError::Storage(e.to_string()))
     }
 
-    async fn assemble_chunks(
+    async fn assemble_chunks_to_prefix(
         &self,
         session_id: Uuid,
         total_chunks: u32,
-        final_key: &str,
-    ) -> Result<(), UploadError> {
-        // Download all chunks and concatenate
-        let mut assembled = Vec::new();
+        final_key_prefix: &str,
+    ) -> Result<String, UploadError> {
+        let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
+            .await
+            .map_err(|e| UploadError::Storage(format!("Failed to create temp file: {e}")))?
+            .map_err(|e| UploadError::Storage(format!("Failed to create temp file: {e}")))?;
+        let mut assembled_file = tokio::fs::File::from_std(
+            temp_file
+                .reopen()
+                .map_err(|e| UploadError::Storage(format!("Failed to reopen temp file: {e}")))?,
+        );
+        let mut hasher = Sha256::new();
+
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            let chunk_data = self
+            let stream = self
                 .inner
-                .get(&key)
+                .get_stream(&key)
                 .await
-                .map_err(|e| UploadError::Storage(e.to_string()))?;
-            assembled.extend_from_slice(&chunk_data);
+                .map_err(|e| UploadError::Storage(e.to_string()))?
+                .2;
+            futures_util::pin_mut!(stream);
+
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| UploadError::Storage(e.to_string()))?;
+                hasher.update(&chunk);
+                assembled_file
+                    .write_all(&chunk)
+                    .await
+                    .map_err(|e| UploadError::Storage(e.to_string()))?;
+            }
         }
 
-        // Upload assembled file
-        self.inner
-            .put(final_key, bytes::Bytes::from(assembled))
+        assembled_file
+            .flush()
             .await
-            .map_err(|e| UploadError::Storage(e.to_string()))
+            .map_err(|e| UploadError::Storage(e.to_string()))?;
+        drop(assembled_file);
+
+        let final_hash = hex::encode(hasher.finalize());
+        let final_key = format!("{final_key_prefix}{final_hash}");
+
+        self.inner
+            .put_from_path(&final_key, temp_file.path())
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))?;
+
+        Ok(final_hash)
     }
 }
 

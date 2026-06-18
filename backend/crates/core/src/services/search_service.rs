@@ -132,7 +132,7 @@ where
             // Resolve permission for this user on this resource
             let permission = match self
                 .permission_resolver
-                .resolve_permission(user_id, resource)
+                .resolve_permission(user_id, tenant_id, resource)
                 .await
             {
                 Ok(perm) => perm,
@@ -289,6 +289,7 @@ mod tests {
             file_id: Option<Uuid>,
             folder_id: Option<Uuid>,
             recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Option<Share>> {
             let shares = self.shares.lock().unwrap();
             Ok(shares
@@ -306,6 +307,7 @@ mod tests {
             file_id: Option<Uuid>,
             folder_id: Option<Uuid>,
             group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().unwrap();
             Ok(shares
@@ -325,6 +327,7 @@ mod tests {
             &self,
             folder_ids: &[Uuid],
             recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().unwrap();
             Ok(shares
@@ -344,6 +347,7 @@ mod tests {
             &self,
             folder_ids: &[Uuid],
             group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> Result<Vec<Share>> {
             let shares = self.shares.lock().unwrap();
             Ok(shares
@@ -361,15 +365,19 @@ mod tests {
                 .collect())
         }
 
-        async fn find_file_by_id(&self, id: Uuid) -> Result<Option<File>> {
+        async fn find_file_by_id(&self, id: Uuid, _tenant_id: Uuid) -> Result<Option<File>> {
             Ok(self.files.lock().unwrap().get(&id).cloned())
         }
 
-        async fn find_folder_by_id(&self, id: Uuid) -> Result<Option<Folder>> {
+        async fn find_folder_by_id(&self, id: Uuid, _tenant_id: Uuid) -> Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
-        async fn get_user_group_ids(&self, _user_id: UserId) -> Result<Vec<Uuid>> {
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
     }

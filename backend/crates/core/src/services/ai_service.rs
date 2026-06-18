@@ -196,7 +196,7 @@ where
             let resource = Resource::File(document.file_id);
             let permission = match self
                 .permission_resolver
-                .resolve_permission(user_id, resource)
+                .resolve_permission(user_id, tenant_id, resource)
                 .await
             {
                 Ok(perm) => perm,
@@ -258,7 +258,7 @@ where
         let resource = Resource::File(file_id);
         let permission = match self
             .permission_resolver
-            .resolve_permission(user_id, resource)
+            .resolve_permission(user_id, tenant_id, resource)
             .await
         {
             Ok(perm) => perm,
@@ -572,6 +572,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<Uuid>,
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Option<crate::domain::Share>> {
             Ok(None)
         }
@@ -581,6 +582,7 @@ mod tests {
             _file_id: Option<FileId>,
             _folder_id: Option<Uuid>,
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<crate::domain::Share>> {
             Ok(Vec::new())
         }
@@ -589,6 +591,7 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<crate::domain::Share>> {
             Ok(Vec::new())
         }
@@ -597,11 +600,16 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<crate::domain::Share>> {
             Ok(Vec::new())
         }
 
-        async fn find_file_by_id(&self, id: FileId) -> anyhow::Result<Option<crate::domain::File>> {
+        async fn find_file_by_id(
+            &self,
+            id: FileId,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Option<crate::domain::File>> {
             // Return file with user as owner for testing
             Ok(Some(crate::domain::File::new(
                 "test.txt".to_string(),
@@ -618,11 +626,16 @@ mod tests {
         async fn find_folder_by_id(
             &self,
             id: Uuid,
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Option<crate::domain::Folder>> {
             Ok(Some(crate::domain::Folder::new_root(id, Uuid::new_v4())))
         }
 
-        async fn get_user_group_ids(&self, _user_id: UserId) -> anyhow::Result<Vec<Uuid>> {
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
     }
@@ -752,6 +765,7 @@ mod tests {
             file_id: Option<Uuid>,
             folder_id: Option<Uuid>,
             recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Option<Share>> {
             let shares = self.shares.lock().unwrap();
             Ok(shares
@@ -769,6 +783,7 @@ mod tests {
             _file_id: Option<Uuid>,
             _folder_id: Option<Uuid>,
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -777,6 +792,7 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _recipient_user_id: UserId,
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<Share>> {
             Ok(Vec::new())
         }
@@ -785,19 +801,32 @@ mod tests {
             &self,
             _folder_ids: &[Uuid],
             _group_ids: &[Uuid],
+            _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<Share>> {
             Ok(Vec::new())
         }
 
-        async fn find_file_by_id(&self, id: Uuid) -> anyhow::Result<Option<File>> {
+        async fn find_file_by_id(
+            &self,
+            id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Option<File>> {
             Ok(self.files.lock().unwrap().get(&id).cloned())
         }
 
-        async fn find_folder_by_id(&self, id: Uuid) -> anyhow::Result<Option<Folder>> {
+        async fn find_folder_by_id(
+            &self,
+            id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Option<Folder>> {
             Ok(self.folders.lock().unwrap().get(&id).cloned())
         }
 
-        async fn get_user_group_ids(&self, _user_id: UserId) -> anyhow::Result<Vec<Uuid>> {
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
     }

@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 mod common;
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_broadcast_to_all_sessions() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);

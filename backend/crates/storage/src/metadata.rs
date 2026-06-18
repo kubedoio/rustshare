@@ -12,6 +12,8 @@ use rustshare_core::domain::{
 };
 use serde_json;
 use sqlx::PgPool;
+#[cfg(test)]
+use sqlx::Row;
 use uuid::Uuid;
 
 /// Business-level errors for vault file operations.
@@ -493,12 +495,48 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find user by email
+    /// Find user by email using the same case-insensitive semantics as the
+    /// tenant-scoped email uniqueness index.
+    ///
+    /// This lookup is intentionally unscoped for legacy password-login
+    /// fallback only. Callers must reject ambiguous cross-tenant matches before
+    /// authenticating the returned user.
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        let user = sqlx::query_as::<_, User>(
+            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme, created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1"#,
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(user)
+    }
+
+    /// Count users matching the given email using case-insensitive semantics.
+    pub async fn count_users_by_email(&self, email: &str) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER($1)"#,
+        )
+        .bind(email)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Find user by email scoped to a tenant (case-insensitive).
+    pub async fn find_user_by_email_and_tenant(
+        &self,
+        email: &str,
+        tenant_id: Uuid,
+    ) -> Result<Option<User>> {
         let user = sqlx::query_as!(
             User,
-            r#"SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _" FROM users WHERE email = $1"#,
-            email
+            r#"
+            SELECT id, username, email, password_hash, display_name, is_admin, storage_quota, theme as "theme: _", created_at, updated_at, disabled_at, name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id, dashboard_config as "dashboard_config: _"
+            FROM users
+            WHERE LOWER(email) = LOWER($1) AND tenant_id = $2
+            "#,
+            email,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -2441,17 +2479,36 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Find a share by its token
-    pub async fn get_share_by_token(&self, token: &str) -> Result<Option<Share>> {
+    /// Find a share by its token, scoped to a tenant.
+    pub async fn get_share_by_token(&self, token: &str, tenant_id: Uuid) -> Result<Option<Share>> {
         let share = sqlx::query_as!(
             Share,
             r#"
             SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as "permissions: SharePermissions", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
             FROM shares
+            WHERE share_token = $1 AND tenant_id = $2
+            "#,
+            token,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(share)
+    }
+
+    /// Find a share by its token without tenant scoping.
+    ///
+    /// Public share tokens are globally unique, so this is safe to use for
+    /// public-share endpoints that perform their own tenant verification.
+    pub async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>> {
+        let share = sqlx::query_as::<_, Share>(
+            r#"
+            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions::text AS permissions, password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id
+            FROM shares
             WHERE share_token = $1
             "#,
-            token
         )
+        .bind(token)
         .fetch_optional(&self.pool)
         .await?;
         Ok(share)
@@ -4239,7 +4296,10 @@ mod tests {
         store.create_share(&share).await.unwrap();
 
         // Test: get_share_by_token
-        let found_by_token = store.get_share_by_token(&share_token).await.unwrap();
+        let found_by_token = store
+            .get_share_by_token(&share_token, tenant_id)
+            .await
+            .unwrap();
         assert!(found_by_token.is_some());
         let found_share = found_by_token.unwrap();
         assert_eq!(found_share.id, share.id);
@@ -4831,16 +4891,15 @@ mod tests {
         }
 
         // Verify the final failed_count is exactly 10
-        let row = sqlx::query!(
-            "SELECT failed_count FROM login_attempts WHERE ip_address = $1",
-            ip
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row = sqlx::query("SELECT failed_count FROM login_attempts WHERE ip_address = $1")
+            .bind(ip)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
+        let failed_count: i32 = row.try_get("failed_count").unwrap();
         assert_eq!(
-            row.failed_count, 10,
+            failed_count, 10,
             "Concurrent login failures should sum to exactly 10"
         );
 

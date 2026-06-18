@@ -32,6 +32,7 @@ pub trait ShareOps: Send + Sync {
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         recipient_user_id: UserId,
+        tenant_id: uuid::Uuid,
     ) -> anyhow::Result<Option<Share>>;
 
     async fn create_user_share(
@@ -47,14 +48,20 @@ pub trait ShareOps: Send + Sync {
     async fn update_share_permission(
         &self,
         share_id: ShareId,
+        tenant_id: uuid::Uuid,
         new_permission: SharePermissions,
     ) -> anyhow::Result<Share>;
 
-    async fn get_by_id(&self, share_id: ShareId) -> anyhow::Result<Option<Share>>;
+    async fn get_by_id(
+        &self,
+        share_id: ShareId,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Share>>;
 
     async fn list_received_shares(
         &self,
         user_id: UserId,
+        tenant_id: uuid::Uuid,
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<Vec<Share>>;
@@ -63,15 +70,20 @@ pub trait ShareOps: Send + Sync {
         &self,
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
+        tenant_id: uuid::Uuid,
     ) -> anyhow::Result<Vec<Share>>;
 
-    async fn revoke_share(&self, share_id: ShareId) -> anyhow::Result<()>;
+    async fn revoke_share(&self, share_id: ShareId, tenant_id: uuid::Uuid) -> anyhow::Result<()>;
 }
 
 /// Trait for user repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait UserOps: Send + Sync {
-    async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<User>>;
+    async fn find_by_email(
+        &self,
+        email: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<User>>;
     async fn get_by_id(&self, user_id: UserId) -> anyhow::Result<Option<User>>;
     async fn get_tenant_id_for_user(&self, user_id: UserId) -> anyhow::Result<Option<uuid::Uuid>>;
 }
@@ -79,13 +91,21 @@ pub trait UserOps: Send + Sync {
 /// Trait for file repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FileOps: Send + Sync {
-    async fn get_by_id(&self, file_id: FileId) -> anyhow::Result<Option<File>>;
+    async fn get_by_id(
+        &self,
+        file_id: FileId,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<File>>;
 }
 
 /// Trait for folder repository operations needed by UserShareService.
 #[allow(async_fn_in_trait)]
 pub trait FolderOps: Send + Sync {
-    async fn get_by_id(&self, folder_id: FolderId) -> anyhow::Result<Option<Folder>>;
+    async fn get_by_id(
+        &self,
+        folder_id: FolderId,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Folder>>;
 }
 
 /// DEPRECATED: Use ShareService instead
@@ -237,10 +257,18 @@ where
         permission: SharePermissions,
         created_by: UserId,
     ) -> Result<Share, ShareError> {
+        // Get creator's tenant ID for scoped file lookup
+        let tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .unwrap_or_else(uuid::Uuid::nil);
+
         // Verify file exists
         let file = self
             .file_repo
-            .get_by_id(file_id)
+            .get_by_id(file_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
@@ -253,26 +281,14 @@ where
             });
         }
 
-        // Get creator's tenant ID
-        let creator_tenant_id = self
-            .user_repo
-            .get_tenant_id_for_user(created_by)
-            .await
-            .map_err(|e| ShareError::Database(e.to_string()))?;
-
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
             .user_repo
-            .find_by_email(&recipient_email_lower)
+            .find_by_email(&recipient_email_lower, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
-
-        // Verify recipient is in the same tenant as the creator
-        if Some(recipient.tenant_id) != creator_tenant_id {
-            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
-        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -282,7 +298,7 @@ where
         // Check if share already exists - if so, update permission
         if let Some(existing_share) = self
             .share_repo
-            .find_user_share(Some(file_id), None, recipient.id)
+            .find_user_share(Some(file_id), None, recipient.id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
         {
@@ -290,7 +306,7 @@ where
                 // Update existing share permission
                 return self
                     .share_repo
-                    .update_share_permission(existing_share.id, permission)
+                    .update_share_permission(existing_share.id, tenant_id, permission)
                     .await
                     .map_err(|error| {
                         error!(
@@ -313,7 +329,7 @@ where
                 recipient.id,
                 permission,
                 created_by,
-                creator_tenant_id.unwrap_or_else(uuid::Uuid::nil),
+                tenant_id,
             )
             .await
             .map_err(|error| {
@@ -368,10 +384,18 @@ where
         permission: SharePermissions,
         created_by: UserId,
     ) -> Result<Share, ShareError> {
+        // Get creator's tenant ID for scoped folder lookup
+        let tenant_id = self
+            .user_repo
+            .get_tenant_id_for_user(created_by)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .unwrap_or_else(uuid::Uuid::nil);
+
         // Verify folder exists
         let folder = self
             .folder_repo
-            .get_by_id(folder_id)
+            .get_by_id(folder_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
@@ -384,26 +408,14 @@ where
             });
         }
 
-        // Get creator's tenant ID
-        let creator_tenant_id = self
-            .user_repo
-            .get_tenant_id_for_user(created_by)
-            .await
-            .map_err(|e| ShareError::Database(e.to_string()))?;
-
         // Find recipient user by email
         let recipient_email_lower = recipient_email.trim().to_lowercase();
         let recipient = self
             .user_repo
-            .find_by_email(&recipient_email_lower)
+            .find_by_email(&recipient_email_lower, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or_else(|| ShareError::RecipientNotFound(recipient_email.to_string()))?;
-
-        // Verify recipient is in the same tenant as the creator
-        if Some(recipient.tenant_id) != creator_tenant_id {
-            return Err(ShareError::RecipientNotFound(recipient_email.to_string()));
-        }
 
         // Verify not sharing with self
         if recipient.id == created_by {
@@ -413,7 +425,7 @@ where
         // Check if share already exists
         if let Some(existing_share) = self
             .share_repo
-            .find_user_share(None, Some(folder_id), recipient.id)
+            .find_user_share(None, Some(folder_id), recipient.id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
         {
@@ -421,7 +433,7 @@ where
                 // Update existing share permission
                 return self
                     .share_repo
-                    .update_share_permission(existing_share.id, permission)
+                    .update_share_permission(existing_share.id, tenant_id, permission)
                     .await
                     .map_err(|error| {
                         error!(
@@ -444,7 +456,7 @@ where
                 recipient.id,
                 permission,
                 created_by,
-                creator_tenant_id.unwrap_or_else(uuid::Uuid::nil),
+                tenant_id,
             )
             .await
             .map_err(|error| {
@@ -491,16 +503,17 @@ where
         since = "0.2.0",
         note = "Use ShareService::list_received_shares instead"
     )]
-    /// List shares received by a user.
+    /// List shares received by a user within a tenant.
     pub async fn list_received_shares(
         &self,
         user_id: UserId,
+        tenant_id: uuid::Uuid,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Share>, ShareError> {
         let shares = self
             .share_repo
-            .list_received_shares(user_id, limit, offset)
+            .list_received_shares(user_id, tenant_id, limit, offset)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
         Ok(shares)
@@ -514,6 +527,7 @@ where
         file_id: Option<FileId>,
         folder_id: Option<FolderId>,
         requesting_user: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Vec<ShareRecipient>, ShareError> {
         // Determine resource for permission check
         let resource = if let Some(fid) = file_id {
@@ -530,7 +544,7 @@ where
         // Owners implicitly have Admin permission via ownership check in permission_resolver
         let permission = match self
             .permission_resolver
-            .resolve_permission(requesting_user, resource)
+            .resolve_permission(requesting_user, tenant_id, resource)
             .await
         {
             Ok(Some(perm)) => perm,
@@ -555,7 +569,7 @@ where
         // Get all shares for this resource
         let shares = self
             .share_repo
-            .list_share_recipients(file_id, folder_id)
+            .list_share_recipients(file_id, folder_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -596,11 +610,12 @@ where
         share_id: ShareId,
         new_permission: SharePermissions,
         requesting_user: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Share, ShareError> {
         // Get the share
         let share = self
             .share_repo
-            .get_by_id(share_id)
+            .get_by_id(share_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -619,7 +634,7 @@ where
         // Check if requesting user has Admin permission
         let permission = self
             .permission_resolver
-            .resolve_permission(requesting_user, resource)
+            .resolve_permission(requesting_user, tenant_id, resource)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -636,7 +651,7 @@ where
         // Update permission
         let updated_share = self
             .share_repo
-            .update_share_permission(share_id, new_permission)
+            .update_share_permission(share_id, tenant_id, new_permission)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -644,7 +659,7 @@ where
         if let Some(recipient_id) = updated_share.recipient_user_id {
             let resource_name = if let Some(fid) = share.file_id {
                 self.file_repo
-                    .get_by_id(fid)
+                    .get_by_id(fid, tenant_id)
                     .await
                     .ok()
                     .flatten()
@@ -652,7 +667,7 @@ where
                     .unwrap_or_else(|| "a file".to_string())
             } else if let Some(foid) = share.folder_id {
                 self.folder_repo
-                    .get_by_id(foid)
+                    .get_by_id(foid, tenant_id)
                     .await
                     .ok()
                     .flatten()
@@ -704,11 +719,12 @@ where
         &self,
         share_id: ShareId,
         requesting_user: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<(), ShareError> {
         // Get the share
         let share = self
             .share_repo
-            .get_by_id(share_id)
+            .get_by_id(share_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
@@ -727,7 +743,7 @@ where
         // Check if requesting user has Admin permission
         let permission = self
             .permission_resolver
-            .resolve_permission(requesting_user, resource)
+            .resolve_permission(requesting_user, tenant_id, resource)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -743,13 +759,13 @@ where
             // Get resource owner
             let owner_id = if let Some(fid) = share.file_id {
                 self.file_repo
-                    .get_by_id(fid)
+                    .get_by_id(fid, tenant_id)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .map(|f| f.owner_id)
             } else if let Some(foid) = share.folder_id {
                 self.folder_repo
-                    .get_by_id(foid)
+                    .get_by_id(foid, tenant_id)
                     .await
                     .map_err(|e| ShareError::Database(e.to_string()))?
                     .map(|f| f.owner_id)
@@ -766,7 +782,7 @@ where
 
         // Revoke share (soft delete)
         self.share_repo
-            .revoke_share(share_id)
+            .revoke_share(share_id, tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -774,7 +790,7 @@ where
         if let Some(recipient_id) = share.recipient_user_id {
             let resource_name = if let Some(fid) = share.file_id {
                 self.file_repo
-                    .get_by_id(fid)
+                    .get_by_id(fid, tenant_id)
                     .await
                     .ok()
                     .flatten()
@@ -782,7 +798,7 @@ where
                     .unwrap_or_else(|| "a file".to_string())
             } else if let Some(foid) = share.folder_id {
                 self.folder_repo
-                    .get_by_id(foid)
+                    .get_by_id(foid, tenant_id)
                     .await
                     .ok()
                     .flatten()

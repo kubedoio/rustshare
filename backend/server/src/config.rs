@@ -13,6 +13,11 @@ pub struct AppConfig {
     pub rustfs_endpoint: String,
     pub rustfs_region: String,
     pub rustfs_bucket: String,
+    #[serde(
+        default = "default_object_store_auto_create_bucket",
+        rename = "RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET"
+    )]
+    pub object_store_auto_create_bucket: bool,
     #[serde(default = "default_public_url", rename = "RUSTSHARE_PUBLIC_URL")]
     pub public_url: String,
     #[serde(
@@ -66,6 +71,10 @@ fn default_storage_quota() -> i64 {
 
 fn default_ai_enabled() -> bool {
     true
+}
+
+fn default_object_store_auto_create_bucket() -> bool {
+    false
 }
 
 fn default_log_format() -> String {

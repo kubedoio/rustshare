@@ -57,14 +57,14 @@ Or generate secrets automatically with the pre-flight script:
 ./scripts/pre-flight.sh
 ```
 
-At minimum, change these values in `.env` for any non-local deployment:
+At minimum, change these values in `.env` for any non-local deployment. Generate real secret values with [`scripts/pre-flight.sh`](../../scripts/pre-flight.sh):
 
 ```bash
-JWT_SECRET=your-random-secret-here
-RUSTSHARE_SECRET_ENCRYPTION_KEY=your-32-byte-base64-key-here
+JWT_SECRET=<generate-with-scripts/pre-flight.sh>
+RUSTSHARE_SECRET_ENCRYPTION_KEY=<generate-with-scripts/pre-flight.sh>
 ```
 
-For local testing, the defaults in `docker-compose.yml` are sufficient.
+For local testing, fill in the secret values in `.env` (or run `scripts/pre-flight.sh`); the compose stack will not start without them.
 
 ### 3. Build and start the stack
 
@@ -90,7 +90,7 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 - Admin: `admin@localhost` — password from `RUSTSHARE_ADMIN_PASSWORD` in `.env`
 - Demo viewer: `viewer@localhost` — password from `RUSTSHARE_DEMO_VIEWER_PASSWORD` in `.env`
 
-> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve them from the backend container logs: `docker logs rustshare-backend-1 | grep "Bootstrap admin password"`
+> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve the admin password from the secure bootstrap file inside the backend container: `docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt` (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`).
 
 ---
 
@@ -241,6 +241,29 @@ docker compose up -d --build
 
 ## Environment Variables
 
+### Required production secrets
+
+The following values **must** be set for any production deployment. Generate
+them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
+
+| Variable | How to generate | Rotation |
+|----------|-----------------|----------|
+| `JWT_SECRET` | `openssl rand -base64 32` | Rotate on suspected compromise or at least quarterly. After rotation, existing sessions are invalidated and users must log in again. |
+| `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `openssl rand -base64 32` | Rotate on suspected compromise. **Back up the old key** until all data encrypted with it has been re-encrypted, or you will lose access to stored secrets. |
+| `POSTGRES_PASSWORD` | `openssl rand -hex 32` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
+| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Run `scripts/pre-flight.sh` (user: alphanumeric access key; password: `openssl rand -hex 32`) | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
+| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
+| `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file. | Rotate after first login and whenever the admin credential is suspected to be exposed. |
+| `RUSTSHARE_DEMO_VIEWER_PASSWORD` | Run `scripts/pre-flight.sh` (`openssl rand -hex 32`) | Rotate if demo mode is enabled in production (not recommended). |
+
+### Optional secrets
+
+| Variable | Purpose | Rotation |
+|----------|---------|----------|
+| `OIDC_CLIENT_SECRET` | OIDC provider client secret | Follow your IdP's rotation policy; update this value and restart the backend. |
+| `RUSTSHARE_CHAT_WEBHOOK_SECRET` | Webhook signing secret | Rotate on suspected compromise. |
+| `METRICS_API_TOKEN` | Bearer token for Prometheus `/metrics` endpoint | Rotate periodically if the endpoint is exposed. |
+
 ### Backend / runtime
 
 | Variable | Default | Purpose |
@@ -251,6 +274,7 @@ docker compose up -d --build
 | `RUSTFS_ENDPOINT` | `http://rustfs:9000` | Internal S3-compatible object storage |
 | `RUSTFS_PUBLIC_ENDPOINT` | `http://localhost:9000` | Public-facing object storage URL |
 | `RUSTFS_BUCKET` | `rustshare-files` | Object storage bucket |
+| `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` | `false` | Whether the backend should create a missing object-storage bucket at startup. Keep disabled in production and provision buckets out-of-band. |
 | `RUSTSHARE_METADATA_BACKEND` | `postgres` | Metadata store backend (`postgres`, `rustfs`, `dual_write`, `rustfs_reads`, `localfs`) |
 | `PASSWORD_LOGIN_ENABLED` | `true` | Whether password login is available |
 | `OIDC_ISSUER_URL` | — | OIDC provider URL |
@@ -266,6 +290,12 @@ These are passed as `ARG` values in `docker/backend.Dockerfile`:
 |----------|---------|---------|
 | `VITE_API_URL` | `/api/v1` | API base path |
 | `VITE_WS_URL` | `/api/ws` | WebSocket endpoint path |
+
+### Dev-only overrides
+
+Values marked `[dev-only]` in `.env.example` are safe defaults for local
+development. They must be reviewed and changed before any production or
+shared-environment deployment.
 
 ---
 
@@ -300,6 +330,10 @@ logging:
 ### Internal Port Binding
 
 Internal service ports (backend 8080, postgres 5432, rustfs 9000/9001) are bound to `127.0.0.1` so they are not reachable from outside the host. Only nginx ports 80 and 443 are exposed publicly.
+
+### Secure Cookies
+
+`docker-compose.prod.yml` sets `SESSION_COOKIE_SECURE=true`. This tells the backend to emit session and CSRF cookies with the `Secure` attribute, which means browsers will only send them over HTTPS. The CSRF cookie's `Secure` flag follows the same setting as the session cookie; there is no separate `CSRF_COOKIE_SECURE` variable. **TLS termination is mandatory when using the production compose file.** If you terminate TLS at an upstream load balancer or CDN, ensure the backend still sees HTTPS requests (for example, via `X-Forwarded-Proto: https`) and that the `Secure` cookie setting matches your TLS topology.
 
 ### Non-Root Containers
 
@@ -426,6 +460,8 @@ curl http://localhost:9000
 ```
 
 Check the RustFS console at http://localhost:9001 (credentials are `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` from your `.env` file).
+
+In production, the backend does **not** create a missing bucket by default. Provision `RUSTFS_BUCKET` out-of-band before startup. Local Docker Compose bootstrap defaults `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=true`; keep it `false` for production unless you intentionally want the application to create the bucket.
 
 ---
 

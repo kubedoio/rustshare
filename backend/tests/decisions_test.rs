@@ -40,9 +40,16 @@ async fn setup_test_env() -> (
         .unwrap_or_else(|_| "rustshare".to_string());
 
     let object_store = Arc::new(
-        ObjectStore::new(s3_endpoint, s3_region, s3_bucket)
-            .await
-            .expect("Failed to create object store"),
+        ObjectStore::new_with_options(
+            s3_endpoint,
+            s3_region,
+            s3_bucket,
+            rustshare_storage::ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
+        .await
+        .expect("Failed to create object store"),
     );
 
     (pool, event_store, metadata_store, object_store)
@@ -211,7 +218,7 @@ async fn contract_create_decision_creates_file_in_decisions_folder() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_decision_does_not_appear_in_notes_list() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -268,7 +275,7 @@ async fn contract_decision_does_not_appear_in_notes_list() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_rename_decision_updates_filename_and_metadata() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -322,7 +329,7 @@ async fn contract_rename_decision_updates_filename_and_metadata() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_rename_decision_empty_title_fails() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
@@ -356,7 +363,7 @@ async fn contract_rename_decision_empty_title_fails() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "Requires database and S3"]
 async fn contract_list_decisions_only_returns_decisions() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();

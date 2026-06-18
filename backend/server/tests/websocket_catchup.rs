@@ -5,7 +5,7 @@ use serde_json::json;
 mod common;
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_catchup_after_disconnect() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);
@@ -55,7 +55,7 @@ async fn test_catchup_after_disconnect() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Implement test server setup
+#[ignore = "Requires running HTTP/WebSocket server, PostgreSQL, and S3-compatible object storage"]
 async fn test_catchup_with_invalid_id() {
     let (state, base_url) = common::setup_test_server().await;
     let token = common::create_test_token(&state);

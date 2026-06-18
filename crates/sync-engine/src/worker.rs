@@ -307,7 +307,9 @@ impl SyncWorker {
         // Verify hash only when the server supplies a real content hash.
         // Some server responses only include a version token; in that case we
         // trust the downloaded bytes and compute the local hash afterwards.
-        if looks_like_content_hash(expected_hash) && !self.verify_hash(&temp_path, expected_hash).await? {
+        if looks_like_content_hash(expected_hash)
+            && !self.verify_hash(&temp_path, expected_hash).await?
+        {
             tokio::fs::remove_file(&temp_path).await.ok();
             return Err(anyhow::anyhow!(
                 "Hash verification failed for downloaded file: expected {}, file: {}",

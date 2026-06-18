@@ -225,7 +225,7 @@ pub async fn list_received_shares(
 ) -> Result<Response, AppError> {
     let shares = state
         .user_share_service
-        .list_received_shares(auth.user_id, query.limit, query.offset)
+        .list_received_shares(auth.user_id, auth.tenant_id, query.limit, query.offset)
         .await?;
 
     let mut response = Vec::with_capacity(shares.len());
@@ -326,7 +326,7 @@ pub async fn list_file_recipients(
 ) -> Result<Response, AppError> {
     let recipients = state
         .user_share_service
-        .list_recipients(Some(file_id), None, auth.user_id)
+        .list_recipients(Some(file_id), None, auth.user_id, auth.tenant_id)
         .await?;
 
     let response: Vec<ShareRecipientResponse> = recipients
@@ -372,7 +372,7 @@ pub async fn list_folder_recipients(
 ) -> Result<Response, AppError> {
     let recipients = state
         .user_share_service
-        .list_recipients(None, Some(folder_id), auth.user_id)
+        .list_recipients(None, Some(folder_id), auth.user_id, auth.tenant_id)
         .await?;
 
     let response: Vec<ShareRecipientResponse> = recipients
@@ -420,7 +420,7 @@ pub async fn update_recipient_permission(
 ) -> Result<Response, AppError> {
     let updated_share = state
         .user_share_service
-        .update_recipient_permission(share_id, req.permission, auth.user_id)
+        .update_recipient_permission(share_id, req.permission, auth.user_id, auth.tenant_id)
         .await?;
 
     let resource_id = updated_share
@@ -472,7 +472,7 @@ pub async fn remove_recipient(
 ) -> Result<Response, AppError> {
     state
         .user_share_service
-        .remove_recipient(share_id, auth.user_id)
+        .remove_recipient(share_id, auth.user_id, auth.tenant_id)
         .await?;
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
@@ -507,7 +507,7 @@ pub async fn get_user_shared_folder_contents(
     // 1. Get contents via FolderService (which handles permissions and visibility)
     let current_folder_permission = state
         .permission_resolver
-        .resolve_permission_with_source(auth.user_id, Resource::Folder(folder_id))
+        .resolve_permission_with_source(auth.user_id, auth.tenant_id, Resource::Folder(folder_id))
         .await
         .map_err(|error| {
             tracing::error!(
@@ -531,7 +531,7 @@ pub async fn get_user_shared_folder_contents(
         let size = load_folder_size(&state.db_pool, f.id).await?;
         let permission = state
             .permission_resolver
-            .resolve_permission_with_source(auth.user_id, Resource::Folder(f.id))
+            .resolve_permission_with_source(auth.user_id, auth.tenant_id, Resource::Folder(f.id))
             .await
             .map_err(|error| {
                 tracing::error!(
@@ -568,7 +568,7 @@ pub async fn get_user_shared_folder_contents(
         let share_info = load_file_share_summary(&state.db_pool, f.id).await?;
         let permission = state
             .permission_resolver
-            .resolve_permission_with_source(auth.user_id, Resource::File(f.id))
+            .resolve_permission_with_source(auth.user_id, auth.tenant_id, Resource::File(f.id))
             .await
             .map_err(|error| {
                 tracing::error!(
@@ -626,13 +626,15 @@ pub async fn get_user_shared_folder_tree(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<Json<FolderTreeWithShares>, AppError> {
-    let tree = build_user_shared_folder_tree(&state, auth.user_id, folder_id).await?;
+    let tree =
+        build_user_shared_folder_tree(&state, auth.user_id, auth.tenant_id, folder_id).await?;
     Ok(Json(tree))
 }
 
 async fn build_user_shared_folder_tree(
     state: &AppState,
     user_id: Uuid,
+    tenant_id: Uuid,
     folder_id: Uuid,
 ) -> Result<FolderTreeWithShares, AppError> {
     let folder = state.folder_service.get_folder(folder_id, user_id).await?;
@@ -640,7 +642,7 @@ async fn build_user_shared_folder_tree(
     let share_info = load_folder_share_summary(&state.db_pool, folder_id).await?;
     let permission = state
         .permission_resolver
-        .resolve_permission_with_source(user_id, Resource::Folder(folder_id))
+        .resolve_permission_with_source(user_id, tenant_id, Resource::Folder(folder_id))
         .await
         .map_err(|error| {
             tracing::error!(
@@ -659,7 +661,10 @@ async fn build_user_shared_folder_tree(
 
     let mut subfolders = Vec::with_capacity(contents.folders.len());
     for child in contents.folders {
-        let subtree = Box::pin(build_user_shared_folder_tree(state, user_id, child.id)).await?;
+        let subtree = Box::pin(build_user_shared_folder_tree(
+            state, user_id, tenant_id, child.id,
+        ))
+        .await?;
         subfolders.push(subtree);
     }
 

@@ -49,7 +49,8 @@ error() {
 	printf "\033[1;31m✗\033[0m %s\n" "$1" >&2
 }
 
-# Read a variable from .env (ignores comments, handles simple KEY=VAL lines)
+# Read a variable from .env (ignores comments, handles simple KEY=VAL lines,
+# strips inline comments and surrounding quotes).
 env_get() {
 	local key="$1"
 	local file="${2:-${ENV_FILE}}"
@@ -62,15 +63,71 @@ env_get() {
 	if [[ -z "${line}" ]]; then
 		return 1
 	fi
-	# Strip everything before =
-	printf '%s' "${line#*=}"
+	local value
+	value="${line#*=}"
+	# Strip inline shell comments and surrounding whitespace.
+	value="$(printf '%s' "${value}" | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+	# Strip matching surrounding quotes.
+	if [[ "${value}" == \"*\" ]]; then
+		value="${value#\"}"
+		value="${value%\"}"
+	elif [[ "${value}" == \'*\' ]]; then
+		value="${value#\'}"
+		value="${value%\'}"
+	fi
+	printf '%s' "${value}"
 }
 
-# Append a key=value pair to .env
-env_set() {
+# Update an existing key=value pair in .env, or append it if absent.
+# Uses a temp file to avoid duplicate keys.
+env_update_or_set() {
 	local key="$1"
 	local value="$2"
-	printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+	local tmp_file
+	tmp_file="$(mktemp)"
+	if grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null; then
+		awk -v k="${key}=" -v v="${key}=${value}" 'index($0, k) == 1 {print v; next} {print}' "${ENV_FILE}" > "${tmp_file}"
+		mv "${tmp_file}" "${ENV_FILE}"
+	else
+		printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+		rm -f "${tmp_file}"
+	fi
+}
+
+# Rebuild a postgres(ql):// URL with a new password, preserving user, host,
+# port, database, and query parameters. Prints the updated URL on stdout and
+# returns 0 on success. If the URL cannot be parsed safely, prints nothing and
+# returns 1.
+rebuild_database_url_password() {
+	local url="$1"
+	local new_password="$2"
+
+	# Prefer Python's urllib.parse for robust handling of special characters,
+	# percent-encoding, query parameters, IPv6 hosts, and non-standard ports.
+	if command -v python3 >/dev/null 2>&1; then
+		python3 - "$url" "$new_password" <<'PY'
+import sys
+from urllib.parse import urlparse, urlunparse
+url, password = sys.argv[1], sys.argv[2]
+parsed = urlparse(url)
+if parsed.scheme not in ("postgres", "postgresql"):
+    sys.exit(1)
+user = parsed.username or ""
+host = parsed.hostname or ""
+port = f":{parsed.port}" if parsed.port is not None else ""
+netloc = f"{user}:{password}@{host}{port}"
+print(urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)))
+PY
+		return 0
+	fi
+
+	# Bash fallback for the common case: postgres://user:password@host:port/db?params
+	if [[ "${url}" =~ ^postgres(ql)?://([^:@]+):[^@]+@(.+)$ ]]; then
+		printf 'postgres%s://%s:%s@%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${new_password}" "${BASH_REMATCH[3]}"
+		return 0
+	fi
+
+	return 1
 }
 
 # Generate a strong secret (machine-only)
@@ -80,7 +137,12 @@ generate_secret() {
 
 # Generate a strong password (URL-safe hex — avoids / and + that break DATABASE_URL)
 generate_password() {
-	openssl rand -hex 24
+	openssl rand -hex 32
+}
+
+# Generate an S3-compatible access key (alphanumeric, <=20 chars)
+generate_access_key() {
+	openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 20
 }
 
 # ---------------------------------------------------------------------------
@@ -95,13 +157,9 @@ SECRET_SPECS=(
 	"RUSTSHARE_SECRET_ENCRYPTION_KEY|secret|32|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	"RUSTSHARE_CHAT_WEBHOOK_SECRET|secret|32|change-me-in-production"
 	"POSTGRES_PASSWORD|password|16|changeme"
-	"RUSTFS_ROOT_USER|password|4|rustfsadmin"
+	"RUSTFS_ROOT_USER|access_key|4|rustfsadmin"
 	"RUSTFS_ROOT_PASSWORD|password|16|rustfsadmin"
 	"RUSTSHARE_DEMO_VIEWER_PASSWORD|password|12|"
-	"STORAGE_ACCESS_KEY|password|4|rustfsadmin"
-	"STORAGE_SECRET_KEY|password|16|rustfsadmin"
-	"AWS_ACCESS_KEY_ID|password|4|"
-	"AWS_SECRET_ACCESS_KEY|secret|16|"
 )
 
 # Variables that docker-compose requires but are not secrets (we just check presence)
@@ -143,6 +201,13 @@ BACKUP_FILE="${ENV_FILE}.backup.$(date +%Y%m%d%H%M%S)"
 cp "${ENV_FILE}" "${BACKUP_FILE}"
 info ".env backed up to ${BACKUP_FILE}"
 
+# Remember the original POSTGRES_PASSWORD so we can detect whether it was
+# regenerated later and keep DATABASE_URL in sync.
+ORIGINAL_POSTGRES_PASSWORD=""
+if env_get "POSTGRES_PASSWORD" >/dev/null 2>&1; then
+	ORIGINAL_POSTGRES_PASSWORD="$(env_get "POSTGRES_PASSWORD")"
+fi
+
 # ---------------------------------------------------------------------------
 # Check / generate secrets
 # ---------------------------------------------------------------------------
@@ -182,21 +247,25 @@ for spec in "${SECRET_SPECS[@]}"; do
 		new_value=""
 		if [[ "${var_type}" == "secret" ]]; then
 			new_value="$(generate_secret)"
+		elif [[ "${var_type}" == "access_key" ]]; then
+			new_value="$(generate_access_key)"
 		else
 			new_value="$(generate_password)"
 		fi
-		env_set "${var_name}" "${new_value}"
-		warn "${var_name} was missing — generated and appended to .env"
+		env_update_or_set "${var_name}" "${new_value}"
+		warn "${var_name} was missing — generated and added to .env"
 		GENERATED_COUNT=$((GENERATED_COUNT + 1))
 	elif [[ "${is_weak}" -eq 1 ]]; then
 		new_value=""
 		if [[ "${var_type}" == "secret" ]]; then
 			new_value="$(generate_secret)"
+		elif [[ "${var_type}" == "access_key" ]]; then
+			new_value="$(generate_access_key)"
 		else
 			new_value="$(generate_password)"
 		fi
-		env_set "${var_name}" "${new_value}"
-		warn "${var_name} was weak (too short or known default) — generated and appended to .env"
+		env_update_or_set "${var_name}" "${new_value}"
+		warn "${var_name} was weak (too short or known default) — generated and updated in .env"
 		WEAK_COUNT=$((WEAK_COUNT + 1))
 	else
 		ok "${var_name}"
@@ -208,16 +277,83 @@ for spec in "${SECRET_SPECS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# Auto-construct DATABASE_URL if empty
+# Derive S3/RustFS credentials from RustFS root credentials
+# ---------------------------------------------------------------------------
+# For the default RustFS deployment, STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY
+# and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must match RustFS root
+# credentials. If you are using real AWS S3, override these variables in .env
+# instead of relying on this derivation.
+#
+# We only overwrite the derived variables when they are empty or still set to a
+# known weak default ("rustfsadmin"). Any non-empty, non-default value is treated
+# as user-supplied and is preserved so that real S3 credentials are not clobbered.
+RUSTFS_ROOT_USER_VALUE="$(env_get "RUSTFS_ROOT_USER")"
+RUSTFS_ROOT_PASSWORD_VALUE="$(env_get "RUSTFS_ROOT_PASSWORD")"
+
+is_derived_weak_default() {
+	local value="$1"
+	[[ -z "${value}" || "${value}" == "rustfsadmin" ]]
+}
+
+if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
+	for derived_var in STORAGE_ACCESS_KEY AWS_ACCESS_KEY_ID; do
+		current_derived=""
+		if env_get "${derived_var}" >/dev/null 2>&1; then
+			current_derived="$(env_get "${derived_var}")"
+		fi
+		if is_derived_weak_default "${current_derived}"; then
+			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_USER_VALUE}"
+			warn "${derived_var} was empty/weak — derived from RUSTFS_ROOT_USER in .env"
+			WEAK_COUNT=$((WEAK_COUNT + 1))
+			export "${derived_var}=${RUSTFS_ROOT_USER_VALUE}"
+		else
+			export "${derived_var}=${current_derived}"
+		fi
+		ok "${derived_var}"
+	done
+
+	for derived_var in STORAGE_SECRET_KEY AWS_SECRET_ACCESS_KEY; do
+		current_derived=""
+		if env_get "${derived_var}" >/dev/null 2>&1; then
+			current_derived="$(env_get "${derived_var}")"
+		fi
+		if is_derived_weak_default "${current_derived}"; then
+			env_update_or_set "${derived_var}" "${RUSTFS_ROOT_PASSWORD_VALUE}"
+			warn "${derived_var} was empty/weak — derived from RUSTFS_ROOT_PASSWORD in .env"
+			WEAK_COUNT=$((WEAK_COUNT + 1))
+			export "${derived_var}=${RUSTFS_ROOT_PASSWORD_VALUE}"
+		else
+			export "${derived_var}=${current_derived}"
+		fi
+		ok "${derived_var}"
+	done
+fi
+
+# ---------------------------------------------------------------------------
+# Auto-construct or sync DATABASE_URL
 # ---------------------------------------------------------------------------
 
 db_url=""
 if env_get "DATABASE_URL" >/dev/null 2>&1; then
 	db_url="$(env_get "DATABASE_URL")"
 fi
+
 if [[ -z "${db_url}" ]]; then
-	env_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
+	env_update_or_set "DATABASE_URL" "postgres://rustshare:${POSTGRES_PASSWORD}@postgres:5432/rustshare"
 	warn "DATABASE_URL was empty — auto-constructed from POSTGRES_PASSWORD"
+elif [[ "${ORIGINAL_POSTGRES_PASSWORD}" != "${POSTGRES_PASSWORD}" ]]; then
+	# POSTGRES_PASSWORD was regenerated; keep DATABASE_URL in sync while
+	# preserving host, port, database, and query parameters.
+	updated_url=""
+	if updated_url="$(rebuild_database_url_password "${db_url}" "${POSTGRES_PASSWORD}")"; then
+		if [[ "${updated_url}" != "${db_url}" ]]; then
+			env_update_or_set "DATABASE_URL" "${updated_url}"
+			warn "DATABASE_URL password updated to match regenerated POSTGRES_PASSWORD"
+		fi
+	else
+		warn "POSTGRES_PASSWORD was regenerated but DATABASE_URL could not be parsed automatically"
+		warn "Update DATABASE_URL manually to use the new POSTGRES_PASSWORD"
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -261,8 +397,9 @@ echo
 echo
 warn "Admin password is NOT stored in .env"
 echo "  On first boot, the backend will generate a random admin password"
-echo "  and print it to the container logs. Retrieve it with:"
-echo "    docker logs rustshare-backend-1 | grep 'Bootstrap admin password'"
+echo "  and write it to a secure file inside the container. Retrieve it with:"
+echo "    docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt"
+echo "  The path is configurable via RUSTSHARE_BOOTSTRAP_PASSWORD_FILE."
 echo "  Log in, then change the password immediately."
 echo
 

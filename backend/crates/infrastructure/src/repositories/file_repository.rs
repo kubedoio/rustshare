@@ -13,8 +13,12 @@ impl FileRepository {
         Self { pool }
     }
 
-    /// Get a file by ID.
-    pub async fn get_by_id(&self, file_id: FileId) -> anyhow::Result<Option<File>> {
+    /// Get a file by ID, scoped to a tenant.
+    pub async fn get_by_id(
+        &self,
+        file_id: FileId,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<File>> {
         let file = sqlx::query_as!(
             File,
             r#"
@@ -23,9 +27,11 @@ impl FileRepository {
                    created_at, modified_at, starred_at, deleted_at, tenant_id
             FROM files
             WHERE id = $1
+              AND tenant_id = $2
               AND deleted_at IS NULL
             "#,
-            file_id
+            file_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -39,8 +45,9 @@ impl rustshare_core::services::FileOps for FileRepository {
     async fn get_by_id(
         &self,
         file_id: rustshare_core::domain::FileId,
+        tenant_id: uuid::Uuid,
     ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.get_by_id(file_id).await
+        self.get_by_id(file_id, tenant_id).await
     }
 }
 
@@ -116,7 +123,7 @@ mod tests {
         .expect("create file");
 
         let file = repo
-            .get_by_id(file_id)
+            .get_by_id(file_id, tenant_id)
             .await
             .expect("query file")
             .expect("file exists");
@@ -128,6 +135,22 @@ mod tests {
         assert!(file.starred_at.is_some());
         assert_eq!(file.deleted_at, None);
 
+        let other_tenant_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(other_tenant_id)
+            .bind(format!("other-tenant-{test_id}"))
+            .execute(&pool)
+            .await
+            .expect("create other tenant");
+
+        assert!(
+            repo.get_by_id(file_id, other_tenant_id)
+                .await
+                .expect("query file with wrong tenant")
+                .is_none(),
+            "file lookup leaked across tenants"
+        );
+
         sqlx::query("DELETE FROM files WHERE id = $1")
             .bind(file_id)
             .execute(&pool)
@@ -135,6 +158,11 @@ mod tests {
             .ok();
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user_id)
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(other_tenant_id)
             .execute(&pool)
             .await
             .ok();

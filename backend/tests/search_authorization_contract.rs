@@ -75,6 +75,7 @@ impl PermissionResolverOps for MockPermissionOps {
         file_id: Option<Uuid>,
         folder_id: Option<Uuid>,
         recipient_user_id: Uuid,
+        _tenant_id: Uuid,
     ) -> anyhow::Result<Option<Share>> {
         let shares = self.shares.lock().unwrap();
         Ok(shares
@@ -92,6 +93,7 @@ impl PermissionResolverOps for MockPermissionOps {
         _file_id: Option<Uuid>,
         _folder_id: Option<Uuid>,
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> anyhow::Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -100,6 +102,7 @@ impl PermissionResolverOps for MockPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _recipient_user_id: Uuid,
+        _tenant_id: Uuid,
     ) -> anyhow::Result<Vec<Share>> {
         Ok(Vec::new())
     }
@@ -108,19 +111,28 @@ impl PermissionResolverOps for MockPermissionOps {
         &self,
         _folder_ids: &[Uuid],
         _group_ids: &[Uuid],
+        _tenant_id: Uuid,
     ) -> anyhow::Result<Vec<Share>> {
         Ok(Vec::new())
     }
 
-    async fn find_file_by_id(&self, id: Uuid) -> anyhow::Result<Option<File>> {
+    async fn find_file_by_id(&self, id: Uuid, _tenant_id: Uuid) -> anyhow::Result<Option<File>> {
         Ok(self.files.lock().unwrap().get(&id).cloned())
     }
 
-    async fn find_folder_by_id(&self, _id: Uuid) -> anyhow::Result<Option<Folder>> {
+    async fn find_folder_by_id(
+        &self,
+        _id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Option<Folder>> {
         Ok(None)
     }
 
-    async fn get_user_group_ids(&self, _user_id: Uuid) -> anyhow::Result<Vec<Uuid>> {
+    async fn get_user_group_ids(
+        &self,
+        _user_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
 }

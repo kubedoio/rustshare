@@ -576,7 +576,27 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStoreCompat {
         }
     }
 
-    async fn get_share_by_token(&self, token: &str) -> anyhow::Result<Option<Share>> {
+    async fn get_share_by_token(
+        &self,
+        token: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Share>> {
+        // Hash the token for lookup
+        let token_hash = format!("{:x}", md5::compute(token));
+        match self.repo.shares().get_by_token(&token_hash).await? {
+            Some(doc) => {
+                let share = share_from_document(&doc);
+                if share.tenant_id == tenant_id {
+                    Ok(Some(share))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn get_share_by_token_unscoped(&self, token: &str) -> anyhow::Result<Option<Share>> {
         // Hash the token for lookup
         let token_hash = format!("{:x}", md5::compute(token));
         match self.repo.shares().get_by_token(&token_hash).await? {

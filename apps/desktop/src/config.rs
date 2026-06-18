@@ -250,11 +250,7 @@ impl Config {
     /// Returns true if the folder was found and updated, false otherwise.
     /// The caller is responsible for persisting the configuration with
     /// [`Config::save`] or [`Config::save_to`].
-    pub fn update_sync_folder(
-        &mut self,
-        folder_id: uuid::Uuid,
-        updates: FolderUpdate,
-    ) -> bool {
+    pub fn update_sync_folder(&mut self, folder_id: uuid::Uuid, updates: FolderUpdate) -> bool {
         let Some(folder) = self
             .sync_folders
             .iter_mut()

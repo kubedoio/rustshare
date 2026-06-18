@@ -15,6 +15,7 @@ use axum::{
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
@@ -149,12 +150,12 @@ pub struct CompleteUploadResponse {
     pub file_size: u64,
 }
 
-/// Maximum chunk size (100MB — matches the upload service clamp).
+/// Maximum chunk size for resumable uploads (100 MB).
 const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
 /// Stream an HTTP body to a temporary file and return the temp file plus size.
 /// Enforces a size limit during streaming to prevent OOM.
-async fn stream_body_to_temp_file(
+pub async fn stream_body_to_temp_file(
     body: Body,
     max_size: usize,
 ) -> Result<(tempfile::NamedTempFile, usize), AppError> {
@@ -198,6 +199,27 @@ async fn stream_body_to_temp_file(
     Ok((temp_file, total_size))
 }
 
+async fn calculate_md5_hex_from_path(path: &std::path::Path) -> Result<String, AppError> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to open chunk file: {e}")))?;
+    let mut context = md5::Context::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to read chunk file: {e}")))?;
+        if read == 0 {
+            break;
+        }
+        context.consume(&buffer[..read]);
+    }
+
+    Ok(format!("{:x}", context.finalize()))
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -236,7 +258,12 @@ pub async fn create_upload_session(
     if let Some(folder_id) = request.folder_id {
         let has_permission = state
             .permission_resolver
-            .check_folder_permission(auth.user_id, folder_id, SharePermissions::Edit)
+            .check_folder_permission(
+                auth.user_id,
+                auth.tenant_id,
+                folder_id,
+                SharePermissions::Edit,
+            )
             .await
             .map_err(|e| AppError::internal(format!("Permission check failed: {}", e)))?;
         if !has_permission {
@@ -349,30 +376,24 @@ pub async fn upload_chunk(
     let (chunk_temp, _chunk_size) = stream_body_to_temp_file(body, MAX_CHUNK_SIZE).await?;
     let chunk_path = chunk_temp.path();
 
-    // Extract hash from Content-MD5 header if present
-    let provided_hash = headers
+    let expected_md5 = headers
         .get("Content-MD5")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
-    // Convert MD5 to hex if provided (the header is base64 encoded)
-    let provided_hash = if let Some(base64_hash) = provided_hash {
-        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &base64_hash) {
-            Ok(bytes) => Some(hex::encode(bytes)),
-            Err(_) => None,
+    if let Some(base64_hash) = expected_md5 {
+        let expected_md5 =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &base64_hash)
+                .map_err(|_| AppError::bad_request("Invalid Content-MD5 header"))?;
+        let expected_md5 = hex::encode(expected_md5);
+        let actual_md5 = calculate_md5_hex_from_path(chunk_path).await?;
+        if expected_md5 != actual_md5 {
+            return Err(AppError::bad_request("Content-MD5 verification failed"));
         }
-    } else {
-        None
-    };
+    }
 
     let response = service
-        .upload_chunk_from_path(
-            session_id,
-            chunk_index,
-            chunk_path,
-            provided_hash,
-            auth.user_id,
-        )
+        .upload_chunk_from_path(session_id, chunk_index, chunk_path, None, auth.user_id)
         .await?;
 
     Ok(Json(response.into()))
@@ -409,6 +430,27 @@ pub async fn complete_upload(
             ));
         }
     };
+
+    if let Some(folder_id) = service
+        .get_session_target_folder(session_id, auth.user_id)
+        .await?
+    {
+        let has_permission = state
+            .permission_resolver
+            .check_folder_permission(
+                auth.user_id,
+                auth.tenant_id,
+                folder_id,
+                SharePermissions::Edit,
+            )
+            .await
+            .map_err(|e| AppError::internal(format!("Permission check failed: {}", e)))?;
+        if !has_permission {
+            return Err(AppError::forbidden(
+                "You do not have permission to complete an upload to this folder",
+            ));
+        }
+    }
 
     let response = service.complete_upload(session_id, auth.user_id).await?;
 
@@ -499,5 +541,157 @@ mod hex {
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use axum::body::Body;
+    use bytes::Bytes;
+    use futures_util::stream;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_writes_all_content() {
+        let content = b"hello streaming upload";
+        let body = Body::from(content.as_slice());
+
+        let (temp_file, size) = stream_body_to_temp_file(body, 1024 * 1024)
+            .await
+            .expect("should stream small body to temp file");
+
+        assert_eq!(size, content.len());
+
+        let mut file = tokio::fs::File::open(temp_file.path())
+            .await
+            .expect("temp file should exist");
+        let mut read = Vec::new();
+        file.read_to_end(&mut read)
+            .await
+            .expect("should read temp file");
+        assert_eq!(read, content);
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_handles_many_small_chunks() {
+        // Total content larger than the internal buffer so the streaming path
+        // is exercised, but still small enough for a unit test.
+        let chunk_size = 1024usize;
+        let chunk_count = 1024usize;
+        let total_size = chunk_size * chunk_count;
+        let chunks: Vec<Bytes> = (0..chunk_count)
+            .map(|i| Bytes::from(vec![(i % 256) as u8; chunk_size]))
+            .collect();
+
+        let body =
+            Body::from_stream(stream::iter(chunks.clone()).map(Ok::<_, std::convert::Infallible>));
+
+        let (temp_file, size) = stream_body_to_temp_file(body, total_size * 2)
+            .await
+            .expect("should stream chunked body to temp file");
+
+        assert_eq!(size, total_size);
+
+        let mut file = tokio::fs::File::open(temp_file.path())
+            .await
+            .expect("temp file should exist");
+        let mut read = Vec::with_capacity(total_size);
+        file.read_to_end(&mut read)
+            .await
+            .expect("should read temp file");
+        assert_eq!(read.len(), total_size);
+
+        // Verify each chunk round-tripped correctly.
+        for (i, chunk) in chunks.iter().enumerate() {
+            let offset = i * chunk_size;
+            assert_eq!(&read[offset..offset + chunk_size], chunk.as_ref());
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_rejects_oversized_content() {
+        let content = b"this content exceeds the tiny limit";
+        let body = Body::from(content.as_slice());
+
+        let err = stream_body_to_temp_file(body, 5)
+            .await
+            .expect_err("should reject body over max size");
+
+        match err {
+            AppError::PayloadTooLarge(_) => {}
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn calculate_md5_hex_from_path_matches_content_md5_header_value() {
+        let temp_file = tempfile::NamedTempFile::new().expect("temp file should be created");
+        let content = b"chunk with content-md5";
+        std::fs::write(temp_file.path(), content).expect("temp file should be writable");
+
+        let actual = calculate_md5_hex_from_path(temp_file.path())
+            .await
+            .expect("md5 should be calculated");
+        let expected_header = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            md5::compute(content).as_ref(),
+        );
+        let expected_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, expected_header)
+                .expect("header should decode");
+
+        assert_eq!(actual, hex::encode(expected_bytes));
+    }
+
+    #[tokio::test]
+    async fn calculate_md5_hex_from_path_differs_from_sha256() {
+        let temp_file = tempfile::NamedTempFile::new().expect("temp file should be created");
+        let content = b"md5 is not sha256";
+        std::fs::write(temp_file.path(), content).expect("temp file should be writable");
+
+        let actual_md5 = calculate_md5_hex_from_path(temp_file.path())
+            .await
+            .expect("md5 should be calculated");
+        let sha256 = rustshare_core::validation::calculate_sha256(&Bytes::from_static(content));
+
+        assert_ne!(actual_md5, sha256);
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_cleans_up_on_drop() {
+        let content = b"temporary content";
+        let body = Body::from(content.as_slice());
+
+        let (temp_file, _size) = stream_body_to_temp_file(body, 1024 * 1024)
+            .await
+            .expect("should stream body to temp file");
+
+        let path = temp_file.path().to_path_buf();
+        assert!(path.exists(), "temp file should exist before drop");
+
+        drop(temp_file);
+
+        // NamedTempFile deletes the underlying file on drop.
+        assert!(!path.exists(), "temp file should be cleaned up after drop");
+    }
+
+    #[tokio::test]
+    async fn stream_body_to_temp_file_cleans_up_on_size_error() {
+        let chunks: Vec<Bytes> = (0..4).map(|_| Bytes::from_static(b"chunk")).collect();
+        let body = Body::from_stream(stream::iter(chunks).map(Ok::<_, std::convert::Infallible>));
+
+        let err = stream_body_to_temp_file(body, 10)
+            .await
+            .expect_err("should reject body over max size");
+
+        match err {
+            AppError::PayloadTooLarge(_) => {}
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+
+        // We cannot inspect the temp file path because it is not returned on
+        // error, but NamedTempFile's Drop impl deletes it automatically. This
+        // test documents that cleanup is expected even on failure.
     }
 }
