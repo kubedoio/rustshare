@@ -28,7 +28,7 @@ What it verifies:
 - viewer password login
 - root listing
 - folder creation
-- private file upload and private download URL
+- private file upload and streamed download
 - internal share visibility for the recipient
 - public file link download
 - upload-only public folder upload
@@ -257,6 +257,7 @@ EOF
 
 require_command curl
 require_command python3
+require_command cmp
 
 BASE_URL="${BASE_URL:-http://localhost}"
 API_BASE_URL="${API_BASE_URL:-${BASE_URL%/}/api/v1}"
@@ -296,7 +297,7 @@ LOGIN_VIEWER="${TMP_DIR}/login-viewer.json"
 ROOT_RESPONSE="${TMP_DIR}/root.json"
 CREATE_FOLDER_RESPONSE="${TMP_DIR}/create-folder.json"
 UPLOAD_RESPONSE="${TMP_DIR}/upload.json"
-DOWNLOAD_URL_RESPONSE="${TMP_DIR}/download-url.json"
+PRIVATE_DOWNLOAD_RESPONSE="${TMP_DIR}/private-download.bin"
 SHARE_FILE_RESPONSE="${TMP_DIR}/share-file.json"
 SHARE_SESSION_RESPONSE="${TMP_DIR}/share-session.json"
 SHARED_FILE_RESPONSE="${TMP_DIR}/shared-file.bin"
@@ -352,10 +353,25 @@ echo "5. Uploading a private file..."
 upload_file "${ADMIN_COOKIES}" "${SMOKE_FOLDER_ID}" "${PRIVATE_FILE_PATH}" "phase6-private.txt" "${UPLOAD_RESPONSE}"
 SMOKE_FILE_ID="$(json_get "${UPLOAD_RESPONSE}" "id")"
 
-echo "6. Validating private download URL..."
-run_json_request "GET" "${API_BASE_URL}/files/${SMOKE_FILE_ID}/download" "" "${ADMIN_COOKIES}" "${DOWNLOAD_URL_RESPONSE}"
-PRIVATE_DOWNLOAD_URL="$(json_get "${DOWNLOAD_URL_RESPONSE}" "url")"
-	curl -fsS "${PRIVATE_DOWNLOAD_URL}" >/dev/null
+echo "6. Validating private streamed download..."
+DOWNLOAD_STATUS="$(
+	curl -sS -X GET \
+		-b "${ADMIN_COOKIES}" -c "${ADMIN_COOKIES}" \
+		-o "${PRIVATE_DOWNLOAD_RESPONSE}" -w "%{http_code}" \
+		"${API_BASE_URL}/files/${SMOKE_FILE_ID}/download"
+)"
+if [[ "${DOWNLOAD_STATUS}" != 2* ]]; then
+	echo "Private download failed with status ${DOWNLOAD_STATUS}" >&2
+	if [[ -s "${PRIVATE_DOWNLOAD_RESPONSE}" ]]; then
+		cat "${PRIVATE_DOWNLOAD_RESPONSE}" >&2
+		echo >&2
+	fi
+	exit 1
+fi
+if ! cmp -s "${PRIVATE_FILE_PATH}" "${PRIVATE_DOWNLOAD_RESPONSE}"; then
+	echo "Private download content did not match uploaded file" >&2
+	exit 1
+fi
 
 echo "7. Creating an internal share and validating recipient visibility..."
 INTERNAL_SHARE_PAYLOAD="$(python3 - "$VIEWER_EMAIL" <<'PY'
