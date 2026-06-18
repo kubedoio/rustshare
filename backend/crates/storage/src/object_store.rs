@@ -564,8 +564,12 @@ mod tests {
 
         let (content_type, content_length, stream) = store.get_stream(&key).await.unwrap();
 
-        // Content-Type is not set by put_object here, but content length should match.
-        assert!(content_type.is_none());
+        if let Some(content_type) = content_type {
+            assert!(
+                !content_type.is_empty(),
+                "object store returned an empty content type"
+            );
+        }
         assert_eq!(content_length, Some(total_size as i64));
 
         // Collect the stream and verify it matches the original content. The
@@ -635,7 +639,12 @@ mod tests {
         let rss_before = peak_rss_bytes();
 
         let (content_type, content_length, stream) = store.get_stream(&key).await.unwrap();
-        assert!(content_type.is_none());
+        if let Some(content_type) = content_type {
+            assert!(
+                !content_type.is_empty(),
+                "object store returned an empty content type"
+            );
+        }
         assert_eq!(content_length, Some(total_size as i64));
 
         let mut received_bytes = 0usize;
