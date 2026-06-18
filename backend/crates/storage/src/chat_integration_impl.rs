@@ -27,6 +27,10 @@ impl MetadataStoreOps for MetadataStore {
         self.get_share_by_token(token, tenant_id).await
     }
 
+    async fn get_share_by_token_unscoped(&self, token: &str) -> Result<Option<Share>> {
+        self.get_share_by_token_unscoped(token).await
+    }
+
     async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> Result<Option<File>> {
         self.find_file_by_id(id, owner_id).await
     }

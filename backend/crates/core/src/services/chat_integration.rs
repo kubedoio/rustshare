@@ -215,6 +215,9 @@ pub trait MetadataStoreOps: Send + Sync {
         tenant_id: Uuid,
     ) -> anyhow::Result<Option<Share>>;
 
+    /// Get a share by globally unique public token without tenant scoping.
+    async fn get_share_by_token_unscoped(&self, token: &str) -> anyhow::Result<Option<Share>>;
+
     /// Find a file by ID.
     async fn find_file_by_id(&self, id: Uuid, owner_id: Uuid) -> anyhow::Result<Option<File>>;
 
@@ -667,18 +670,22 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         &self,
         request: &UnfurlRequest,
         requesting_user_id: Option<UserId>,
-        tenant_id: Uuid,
+        tenant_id: Option<Uuid>,
     ) -> Result<UnfurlResponse, ChatIntegrationError> {
         // Parse the URL to extract share token
         let share_token = self.extract_share_token(&request.url)?;
 
-        // Get the share, scoped to the requesting tenant.
-        let share = self
-            .metadata_store
-            .get_share_by_token(&share_token, tenant_id)
-            .await
-            .map_err(|e| ChatIntegrationError::DispatchFailed(e.to_string()))?
-            .ok_or(ChatIntegrationError::ShareNotFound)?;
+        let share = if let Some(tenant_id) = tenant_id {
+            self.metadata_store
+                .get_share_by_token(&share_token, tenant_id)
+                .await
+        } else {
+            self.metadata_store
+                .get_share_by_token_unscoped(&share_token)
+                .await
+        }
+        .map_err(|e| ChatIntegrationError::DispatchFailed(e.to_string()))?
+        .ok_or(ChatIntegrationError::ShareNotFound)?;
 
         // Check if share is revoked
         if share.revoked_at.is_some() {
@@ -695,7 +702,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
                 return Err(ChatIntegrationError::PermissionDenied);
             };
 
-            if share.tenant_id != tenant_id || share.recipient_user_id != Some(user_id) {
+            if tenant_id != Some(share.tenant_id) || share.recipient_user_id != Some(user_id) {
                 return Err(ChatIntegrationError::PermissionDenied);
             }
         }
@@ -899,6 +906,16 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|s| s.share_token.as_deref() == Some(token) && s.tenant_id == tenant_id)
+                .cloned())
+        }
+
+        async fn get_share_by_token_unscoped(&self, token: &str) -> anyhow::Result<Option<Share>> {
+            Ok(self
+                .shares
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.share_token.as_deref() == Some(token))
                 .cloned())
         }
 
@@ -1117,13 +1134,57 @@ mod tests {
         };
 
         let result = service
-            .unfurl_link(&request, Some(other_user_id), tenant_id)
+            .unfurl_link(&request, Some(other_user_id), Some(tenant_id))
             .await;
 
         assert!(matches!(
             result,
             Err(ChatIntegrationError::PermissionDenied)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_unfurl_public_share_resolves_without_tenant() {
+        let metadata = Arc::new(MockMetadataStore::new());
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file = File::new(
+            "public.pdf".to_string(),
+            "/public.pdf".to_string(),
+            "hash".to_string(),
+            42,
+            "application/pdf".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let share = Share {
+            id: Uuid::new_v4(),
+            file_id: Some(file.id),
+            folder_id: None,
+            share_token: Some("public-token".to_string()),
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: None,
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        metadata.files.lock().unwrap().push(file);
+        metadata.shares.lock().unwrap().push(share);
+        let service = test_chat_service(metadata);
+        let request = UnfurlRequest {
+            url: "https://rustshare.example.com/share/public-token".to_string(),
+        };
+
+        let response = service.unfurl_link(&request, None, None).await.unwrap();
+
+        assert_eq!(response.metadata.title, "public.pdf");
     }
 
     #[tokio::test]
@@ -1167,7 +1228,7 @@ mod tests {
         };
 
         let response = service
-            .unfurl_link(&request, Some(recipient_id), tenant_id)
+            .unfurl_link(&request, Some(recipient_id), Some(tenant_id))
             .await
             .unwrap();
 

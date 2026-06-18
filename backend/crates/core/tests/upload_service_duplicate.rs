@@ -132,6 +132,10 @@ impl UploadObjectStore for MockUploadObjectStore {
         Ok(())
     }
 
+    async fn delete_object(&self, _key: &str) -> Result<(), UploadError> {
+        Ok(())
+    }
+
     async fn chunk_exists(
         &self,
         _session_id: Uuid,

@@ -48,6 +48,16 @@ fn parse_unfurl_tenant_header(
     })
 }
 
+fn parse_optional_unfurl_tenant_header(
+    headers: &HeaderMap,
+) -> Result<Option<Uuid>, (StatusCode, Json<ErrorResponse>)> {
+    if headers.contains_key(PUBLIC_UNFURL_TENANT_HEADER) {
+        parse_unfurl_tenant_header(headers).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 /// Request to unfurl a RustShare link.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UnfurlLinkRequest {
@@ -105,7 +115,7 @@ pub async fn unfurl_link(
 
     let response = state
         .chat_integration_service
-        .unfurl_link(&unfurl_req, Some(auth.user_id), auth.tenant_id)
+        .unfurl_link(&unfurl_req, Some(auth.user_id), Some(auth.tenant_id))
         .await
         .map_err(map_chat_integration_error)?;
 
@@ -151,7 +161,7 @@ pub async fn unfurl_link_public(
 ) -> Result<Json<UnfurlLinkResponse>, (StatusCode, Json<ErrorResponse>)> {
     debug!("Public unfurl request for URL: {}", req.url);
 
-    let tenant_id = parse_unfurl_tenant_header(&headers)?;
+    let tenant_id = parse_optional_unfurl_tenant_header(&headers)?;
     let unfurl_req = UnfurlRequest { url: req.url };
 
     let response = state

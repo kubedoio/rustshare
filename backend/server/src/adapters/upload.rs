@@ -93,6 +93,13 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         Ok(())
     }
 
+    async fn delete_object(&self, key: &str) -> Result<(), UploadError> {
+        self.inner
+            .delete(key)
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))
+    }
+
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
         self.inner

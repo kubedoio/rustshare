@@ -170,6 +170,9 @@ pub trait UploadObjectStore: Send + Sync {
         total_chunks: u32,
     ) -> Result<(), UploadError>;
 
+    /// Delete an object by storage key.
+    async fn delete_object(&self, key: &str) -> Result<(), UploadError>;
+
     /// Check if a chunk exists
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError>;
 
@@ -639,6 +642,9 @@ where
         // Verify final hash if expected
         if let Some(expected_hash) = &session.file_hash {
             if expected_hash != &final_hash {
+                self.object_store
+                    .delete_object(&format!("blobs/{final_hash}"))
+                    .await?;
                 return Err(UploadError::FileHashVerificationFailed);
             }
         }
@@ -1002,6 +1008,7 @@ mod tests {
     struct MockUploadObjectStore {
         assembled: Mutex<Vec<(Uuid, u32, String)>>,
         put_chunk_from_path_result: Mutex<Option<UploadError>>,
+        deleted_objects: Mutex<Vec<String>>,
     }
 
     impl MockUploadObjectStore {
@@ -1009,6 +1016,7 @@ mod tests {
             Self {
                 assembled: Mutex::new(Vec::new()),
                 put_chunk_from_path_result: Mutex::new(None),
+                deleted_objects: Mutex::new(Vec::new()),
             }
         }
     }
@@ -1057,6 +1065,11 @@ mod tests {
             _session_id: Uuid,
             _total_chunks: u32,
         ) -> Result<(), UploadError> {
+            Ok(())
+        }
+
+        async fn delete_object(&self, key: &str) -> Result<(), UploadError> {
+            self.deleted_objects.lock().unwrap().push(key.to_string());
             Ok(())
         }
 
@@ -1245,6 +1258,52 @@ mod tests {
         let session = repo.session.lock().unwrap().clone().unwrap();
         assert!(session.has_chunk(0));
         assert_eq!(session.uploaded_bytes, 4);
+    }
+
+    #[tokio::test]
+    async fn complete_upload_deletes_final_blob_when_expected_hash_mismatches() {
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+
+        let mut session = UploadSession::new(
+            session_id,
+            tenant_id,
+            owner_id,
+            None,
+            "bad-hash.bin".to_string(),
+            "application/octet-stream".to_string(),
+            0,
+            1024 * 1024,
+            Some("expected-hash".to_string()),
+        );
+        session.status = UploadSessionStatus::InProgress;
+        session.mark_chunk_received(0);
+
+        let repo = Arc::new(MockUploadRepo::new(session));
+        let object_store = Arc::new(MockUploadObjectStore::new());
+        let metadata_store = Arc::new(MockUploadMetadataStore::new(None));
+        let event_store = Arc::new(MockEventStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(16));
+
+        let service = UploadService::new(
+            repo,
+            object_store.clone(),
+            metadata_store,
+            event_store,
+            broadcaster,
+        );
+
+        let result = service.complete_upload(session_id, owner_id).await;
+
+        assert!(matches!(
+            result,
+            Err(UploadError::FileHashVerificationFailed)
+        ));
+        assert_eq!(
+            object_store.deleted_objects.lock().unwrap().as_slice(),
+            &["blobs/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+        );
     }
 
     #[tokio::test]
