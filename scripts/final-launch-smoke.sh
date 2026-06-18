@@ -38,7 +38,8 @@ Environment overrides:
 - BASE_URL (default: http://localhost)
 - API_BASE_URL (default: ${BASE_URL}/api/v1)
 - ADMIN_EMAIL (default: admin@localhost)
-- ADMIN_PASSWORD (required; falls back to RUSTSHARE_ADMIN_PASSWORD from .env)
+- ADMIN_PASSWORD (falls back to RUSTSHARE_ADMIN_PASSWORD from .env, then backend bootstrap file)
+- RUSTSHARE_BOOTSTRAP_PASSWORD_FILE (default: /tmp/rustshare-bootstrap-password.txt)
 - VIEWER_EMAIL (default: viewer@localhost)
 - VIEWER_PASSWORD (required; falls back to RUSTSHARE_DEMO_VIEWER_PASSWORD from .env)
 - REPORT_DIR (default: ./launch-smoke-reports)
@@ -174,6 +175,26 @@ PY
 	[[ "$status" == 2* ]]
 }
 
+read_bootstrap_admin_password() {
+	local password_file="${RUSTSHARE_BOOTSTRAP_PASSWORD_FILE:-/tmp/rustshare-bootstrap-password.txt}"
+	local password=""
+
+	if ! command -v docker >/dev/null 2>&1; then
+		return 1
+	fi
+
+	password="$(
+		docker compose exec -T backend cat "${password_file}" 2>/dev/null || true
+	)"
+	password="$(printf '%s' "${password}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+
+	if [[ -z "${password}" ]]; then
+		return 1
+	fi
+
+	printf '%s' "${password}"
+}
+
 csrf_json_request() {
 	local method="$1"
 	local url="$2"
@@ -268,9 +289,13 @@ VIEWER_PASSWORD="${VIEWER_PASSWORD:-${RUSTSHARE_DEMO_VIEWER_PASSWORD:-}}"
 REPORT_DIR="${REPORT_DIR:-$(pwd)/launch-smoke-reports}"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
-	echo "ERROR: ADMIN_PASSWORD or RUSTSHARE_ADMIN_PASSWORD must be set." >&2
-	echo "Run scripts/pre-flight.sh to populate .env, or set ADMIN_PASSWORD explicitly." >&2
-	exit 1
+	if ADMIN_PASSWORD="$(read_bootstrap_admin_password)"; then
+		echo "Using admin password from backend bootstrap file."
+	else
+		echo "ERROR: ADMIN_PASSWORD or RUSTSHARE_ADMIN_PASSWORD must be set, or the backend bootstrap password file must be readable." >&2
+		echo "Run scripts/pre-flight.sh and restart the stack, or set ADMIN_PASSWORD explicitly." >&2
+		exit 1
+	fi
 fi
 
 if [[ -z "${VIEWER_PASSWORD}" ]]; then
@@ -318,7 +343,18 @@ printf 'phase-6-private-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PRIVATE_FIL
 printf 'phase-6-public-upload-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PUBLIC_UPLOAD_FILE_PATH}"
 
 echo "1. Logging in as admin..."
-login_with_password "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${ADMIN_COOKIES}" "${LOGIN_ADMIN}"
+if ! try_login_with_password "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${ADMIN_COOKIES}" "${LOGIN_ADMIN}" >/dev/null 2>&1; then
+	if BOOTSTRAP_ADMIN_PASSWORD="$(read_bootstrap_admin_password)" && [[ "${BOOTSTRAP_ADMIN_PASSWORD}" != "${ADMIN_PASSWORD}" ]]; then
+		echo "Configured admin password failed; retrying with backend bootstrap password."
+		ADMIN_PASSWORD="${BOOTSTRAP_ADMIN_PASSWORD}"
+		login_with_password "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${ADMIN_COOKIES}" "${LOGIN_ADMIN}"
+	else
+		cat "${LOGIN_ADMIN}" >&2
+		echo >&2
+		echo "Admin login failed. Set ADMIN_PASSWORD to the active admin password or recreate the stack after scripts/pre-flight.sh." >&2
+		exit 1
+	fi
+fi
 if [[ "$(json_get "${LOGIN_ADMIN}" "user.email")" != "${ADMIN_EMAIL}" ]]; then
 	echo "Admin login returned the wrong user" >&2
 	exit 1
