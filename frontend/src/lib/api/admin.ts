@@ -52,8 +52,6 @@ export const testOidcConfig = () =>
 export const getSmtpConfig = () => apiClient.get<SmtpConfig>('/admin/config/smtp');
 export const updateSmtpConfig = (data: SmtpConfigRequest) =>
 	apiClient.put<SmtpConfig>('/admin/config/smtp', data);
-export const testSmtpConfig = () =>
-	apiClient.post<{ success: boolean; message?: string }>('/admin/config/smtp/test');
 
 // Security config
 export const getSecurityConfig = () => apiClient.get<SecurityConfig>('/admin/config/security');

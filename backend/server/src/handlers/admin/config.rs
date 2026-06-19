@@ -1,6 +1,6 @@
 //! Admin OIDC and SMTP config handlers.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, Json};
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -511,30 +511,6 @@ pub async fn update_smtp_config(
     .await;
 
     Ok(Json(SmtpConfigResponse::from(row)))
-}
-
-/// POST /api/v1/admin/config/smtp/test
-///
-/// No SMTP library is available; always returns a "not_implemented" stub.
-#[utoipa::path(
-    post,
-    path = "/api/v1/admin/config/smtp/test",
-    tag = "Admin",
-    responses(
-        (status = 200, description = "Success"),
-        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
-    ),
-)]
-pub async fn test_smtp_config(
-    AdminUser { .. }: AdminUser,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "status": "not_implemented",
-            "message": "SMTP test not yet available"
-        })),
-    )
 }
 
 // ---------------------------------------------------------------------------

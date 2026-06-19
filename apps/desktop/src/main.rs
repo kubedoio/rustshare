@@ -161,25 +161,6 @@ enum SyncAction {
         #[command(subcommand)]
         action: FilterAction,
     },
-    /// Manage native Virtual Filesystem (VFS)
-    Vfs {
-        #[command(subcommand)]
-        action: VfsAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum VfsAction {
-    /// Register a sync root as a native VFS root
-    Create {
-        /// Root ID (UUID)
-        root_id: Uuid,
-    },
-    /// Evict a file (convert back to placeholder)
-    Evict {
-        /// File path
-        path: PathBuf,
-    },
 }
 
 #[derive(Subcommand)]
@@ -774,22 +755,6 @@ async fn async_main(cli: Cli) -> Result<()> {
                             println!("- {}", f);
                         }
                     }
-                }
-            },
-            SyncAction::Vfs { action } => match action {
-                VfsAction::Create { root_id } => {
-                    info!("Creating VFS for root {}", root_id);
-                    // In a real implementation:
-                    // 1. Get root from DB
-                    // 2. Call VfsManagerWin::register_root or macOS equivalent
-                    println!("✓ VFS registered for root {}", root_id);
-                }
-                VfsAction::Evict { path } => {
-                    info!("Evicting file to placeholder: {:?}", path);
-                    // In a real implementation:
-                    // 1. Mark in DB as Placeholder
-                    // 2. Truncate file and set OS placeholder attributes
-                    println!("✓ File evicted: {:?}", path);
                 }
             },
         },

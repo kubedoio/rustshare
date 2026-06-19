@@ -438,7 +438,8 @@ where
     /// Delete thumbnails when file is updated
     pub async fn invalidate_thumbnails(&self, file_id: Uuid) -> Result<(), ThumbnailError> {
         // Delete from database
-        sqlx::query!("DELETE FROM file_thumbnails WHERE file_id = $1", file_id)
+        sqlx::query("DELETE FROM file_thumbnails WHERE file_id = $1")
+            .bind(file_id)
             .execute(&self.db_pool)
             .await
             .map_err(|e| ThumbnailError::Database(e.to_string()))?;

@@ -227,31 +227,6 @@
         }
       }
     },
-    "/api/v1/admin/config/smtp/test": {
-      "post": {
-        "tags": [
-          "Admin"
-        ],
-        "summary": "POST /api/v1/admin/config/smtp/test",
-        "description": "No SMTP library is available; always returns a \"not_implemented\" stub.",
-        "operationId": "test_smtp_config",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/admin/groups/{id}/members": {
       "post": {
         "tags": [

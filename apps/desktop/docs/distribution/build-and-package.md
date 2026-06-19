@@ -41,7 +41,7 @@ The resulting binary will be located at:
 The Notepad++ plugin must be built as a `cdylib` DLL:
 
 ```bash
-cargo build --release -p editor-npp
+# Notepad++ plugin packaging was removed until the integration ships.
 ```
 Result: `target/release/editor_npp.dll`
 

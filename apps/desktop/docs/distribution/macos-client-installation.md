@@ -16,7 +16,7 @@ The repository already contains a working macOS desktop target, but it is import
 - Tokens are stored through the system keyring, which maps to macOS Keychain on Mac.
 - The daemon also stores a local `token.txt` fallback so background sync can authenticate even when keychain access is unavailable in the daemon process.
 - The repository does not yet contain a finished `.app`, `.pkg`, or notarized `.dmg` release pipeline.
-- The optional `tauri` dependency in `apps/desktop/Cargo.toml` is a placeholder and is not currently wired into a shipping GUI shell.
+- The desktop client currently ships as a CLI; GUI packaging should be added when a GUI shell exists.
 
 If you need a proper drag-and-drop Mac app for external distribution, there is still packaging work to do. If you need to build, install, and run the client on a Mac today, the source-build path below is the correct path.
 

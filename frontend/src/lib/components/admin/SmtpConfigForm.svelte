@@ -1,11 +1,6 @@
 <script lang="ts">
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
-	import {
-		getSmtpConfig,
-		updateSmtpConfig,
-		testSmtpConfig,
-		type SmtpConfigRequest
-	} from '$lib/api/admin';
+	import { getSmtpConfig, updateSmtpConfig, type SmtpConfigRequest } from '$lib/api/admin';
 
 	const queryClient = useQueryClient();
 
@@ -23,8 +18,6 @@
 	let from_name = $state('');
 	let tls_mode = $state('starttls');
 	let showPassword = $state(false);
-
-	let testResult = $state<{ success: boolean; message?: string } | null>(null);
 
 	$effect(() => {
 		const data = $query.data;
@@ -56,16 +49,6 @@
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin', 'smtp-config'] });
-		}
-	});
-
-	const testMutation = createMutation({
-		mutationFn: () => testSmtpConfig(),
-		onSuccess: (res) => {
-			testResult = res;
-		},
-		onError: (err) => {
-			testResult = { success: false, message: err instanceof Error ? err.message : 'Test failed' };
 		}
 	});
 </script>
@@ -219,28 +202,9 @@
 					<div class="alert text-sm alert-success">SMTP configuration saved.</div>
 				{/if}
 
-				{#if testResult !== null}
-					<div
-						class="alert text-sm"
-						class:alert-success={testResult.success}
-						class:alert-error={!testResult.success}
-					>
-						{testResult.message ??
-							(testResult.success ? 'Test email sent successfully' : 'Test failed')}
-					</div>
-				{/if}
-
 				<div class="flex gap-3">
 					<button type="submit" class="btn btn-primary" disabled={$saveMutation.isPending}>
 						{$saveMutation.isPending ? 'Saving...' : 'Save Configuration'}
-					</button>
-					<button
-						type="button"
-						class="btn btn-outline"
-						disabled={$testMutation.isPending || !enabled}
-						onclick={() => $testMutation.mutate()}
-					>
-						{$testMutation.isPending ? 'Sending...' : 'Send Test Email'}
 					</button>
 				</div>
 			</form>
