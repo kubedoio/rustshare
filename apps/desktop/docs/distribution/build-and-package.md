@@ -37,14 +37,6 @@ The resulting binary will be located at:
 
 ## 3. Building Editor Plugins
 
-### Notepad++ (Windows)
-The Notepad++ plugin must be built as a `cdylib` DLL:
-
-```bash
-# Notepad++ plugin packaging was removed until the integration ships.
-```
-Result: `target/release/editor_npp.dll`
-
 ### Sublime Text (macOS)
 The Sublime plugin is Python-based and does not require compilation. However, it should be bundled with the application distribution:
 Location: `apps/editor-sublime/Packages/RustShareSync/`
@@ -73,12 +65,11 @@ This produces:
 - a versioned `.tar.gz` archive ready for internal distribution
 
 ### Windows (.zip / MSI)
-We recommend using **WiX Toolset** or simply zipping the binary + DLL:
+We recommend using **WiX Toolset** or simply zipping the binary:
 
 1. Create a `dist/windows` folder.
 2. Copy `target/release/rustshare-desktop.exe`.
-3. Copy `target/release/editor_npp.dll` (rename to `rustshare_npp.dll`).
-4. (Optional) Provide a `config.toml` template.
+3. (Optional) Provide a `config.toml` template.
 
 ---
 
