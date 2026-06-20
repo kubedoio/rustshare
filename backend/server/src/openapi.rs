@@ -34,6 +34,7 @@ use utoipa::OpenApi;
         crate::handlers::admin::config::get_security_config,
         crate::handlers::admin::config::get_smtp_config,
         crate::handlers::admin::config::test_oidc_config,
+        crate::handlers::admin::config::test_smtp_config,
         crate::handlers::admin::config::update_oidc_config,
         crate::handlers::admin::config::update_security_config,
         crate::handlers::admin::config::update_smtp_config,

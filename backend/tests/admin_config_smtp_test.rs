@@ -1,13 +1,20 @@
-//! Integration tests: Admin SMTP config SQL lifecycle (Task 6).
+//! Integration tests: Admin SMTP config SQL lifecycle and email service.
 //!
 //! Tests:
 //!   - Update the pre-seeded smtp_config row with host, port, encrypted password
 //!   - Read back, verify password_enc is set (not plaintext)
 //!   - Update config again and verify updated_at changes
+//!   - send_test_email fails fast when SMTP is disabled or recipient is invalid
 //!
-//! Run with: cargo test --test admin_config_smtp_test -- --ignored
+//! HTTP-level tests for `POST /api/v1/admin/config/smtp/test` are not included
+//! here because exercising the Axum handler requires a fully constructed
+//! `AppState` (including a live S3-compatible object store). The handler itself
+//! is thin error-mapping plumbing over `EmailService`, which is covered below.
+//!
+//! Run with: cargo test --test admin_config_smtp_test
 
 use base64::{engine::general_purpose::STANDARD, Engine};
+use rustshare_core::services::{EmailError, EmailService};
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
 use sqlx::Row;
 use uuid::Uuid;
@@ -236,6 +243,102 @@ async fn test_smtp_config_update_changes_updated_at() {
     );
 
     // Cleanup
+    reset_smtp_config(&pool).await;
+    cleanup_users(&pool, &[actor_id]).await;
+}
+
+async fn configure_smtp(
+    pool: &sqlx::PgPool,
+    key: &SecretEncryptionKey,
+    actor_id: Uuid,
+    enabled: bool,
+) {
+    let smtp_id: Uuid = SMTP_CONFIG_ID.parse().unwrap();
+    let password_enc = encrypt_secret("smtp-password-123", key).expect("encrypt SMTP password");
+
+    sqlx::query(
+        "UPDATE smtp_config
+         SET enabled      = $2,
+             host         = $3,
+             port         = $4,
+             username     = $5,
+             password_enc = $6,
+             from_address = $7,
+             from_name    = $8,
+             tls_mode     = $9,
+             updated_by   = $10,
+             updated_at   = NOW()
+         WHERE id = $1",
+    )
+    .bind(smtp_id)
+    .bind(enabled)
+    .bind("smtp.example.com")
+    .bind(587_i32)
+    .bind("noreply@example.com")
+    .bind(&password_enc)
+    .bind("noreply@example.com")
+    .bind("RustShare Notifications")
+    .bind("starttls")
+    .bind(actor_id)
+    .execute(pool)
+    .await
+    .expect("configure smtp_config");
+}
+
+/// When SMTP is disabled, send_test_email must fail with SmtpNotConfigured.
+#[tokio::test]
+async fn test_send_test_email_not_configured() {
+    let _guard = SMTP_TEST_LOCK.lock().await;
+
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let actor_id = create_test_admin(&pool, suffix).await;
+    let key = test_encryption_key();
+
+    reset_smtp_config(&pool).await;
+    configure_smtp(&pool, &key, actor_id, false).await;
+
+    let service = EmailService::new(pool.clone(), key);
+    let err = service
+        .send_test_email("admin@example.com")
+        .await
+        .expect_err("expected SmtpNotConfigured error");
+
+    assert!(
+        matches!(err, EmailError::SmtpNotConfigured),
+        "Expected SmtpNotConfigured, got {:?}",
+        err
+    );
+
+    reset_smtp_config(&pool).await;
+    cleanup_users(&pool, &[actor_id]).await;
+}
+
+/// An invalid recipient address must fail fast before talking to the SMTP server.
+#[tokio::test]
+async fn test_send_test_email_invalid_recipient() {
+    let _guard = SMTP_TEST_LOCK.lock().await;
+
+    let pool = test_pool().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let actor_id = create_test_admin(&pool, suffix).await;
+    let key = test_encryption_key();
+
+    reset_smtp_config(&pool).await;
+    configure_smtp(&pool, &key, actor_id, true).await;
+
+    let service = EmailService::new(pool.clone(), key);
+    let err = service
+        .send_test_email("not-an-email")
+        .await
+        .expect_err("expected invalid recipient error");
+
+    assert!(
+        matches!(err, EmailError::SmtpSendFailed(_)),
+        "Expected SmtpSendFailed, got {:?}",
+        err
+    );
+
     reset_smtp_config(&pool).await;
     cleanup_users(&pool, &[actor_id]).await;
 }

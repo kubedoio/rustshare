@@ -209,10 +209,21 @@
           "Admin"
         ],
         "summary": "PUT /api/v1/admin/config/smtp",
+        "description": "Validates the supplied port (1-65535) and TLS mode (`tls` or `starttls`)\nbefore persisting the configuration.",
         "operationId": "update_smtp_config",
         "responses": {
           "200": {
             "description": "Success"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -220,6 +231,68 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/config/smtp/test": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "POST /api/v1/admin/config/smtp/test",
+        "description": "Sends a test email to the acting admin's email address using the stored SMTP\nconfiguration. Returns 400 Bad Request for an invalid TLS mode, 503 Service\nUnavailable when SMTP is disabled or incomplete, and 502 Bad Gateway when the\nremote server rejects the message.",
+        "operationId": "test_smtp_config",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTestResponse"
                 }
               }
             }
@@ -16662,6 +16735,21 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "SmtpTestResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
           }
         }
       },

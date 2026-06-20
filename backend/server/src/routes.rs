@@ -642,6 +642,10 @@ pub fn admin_routes() -> Router<AppState> {
             put(crate::handlers::admin::config::update_smtp_config),
         )
         .route(
+            "/api/v1/admin/config/smtp/test",
+            post(crate::handlers::admin::config::test_smtp_config),
+        )
+        .route(
             "/api/v1/admin/config/security",
             get(crate::handlers::admin::config::get_security_config),
         )
