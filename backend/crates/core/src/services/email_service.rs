@@ -28,6 +28,41 @@ impl EmailService {
         Self { pool, secret_key }
     }
 
+    /// Send a test email to `recipient_email` using the stored SMTP
+    /// configuration. Used by the admin "Send Test Email" action.
+    pub async fn send_test_email(&self, recipient_email: &str) -> Result<(), EmailError> {
+        let config = self.load_config().await?;
+        let from_address = config
+            .from_address
+            .as_deref()
+            .ok_or(EmailError::SmtpNotConfigured)?;
+        let from_name = config.from_name.as_deref().unwrap_or("RustShare");
+        let from_mailbox: Mailbox = format!("{} <{}>", from_name, from_address)
+            .parse()
+            .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid from address: {}", e)))?;
+
+        let to_mailbox: Mailbox = recipient_email
+            .parse()
+            .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid recipient address: {}", e)))?;
+
+        let email = Message::builder()
+            .from(from_mailbox)
+            .to(to_mailbox)
+            .subject("RustShare SMTP Test")
+            .body(String::from(
+                "This is a test email from RustShare.\n\nYour SMTP configuration is working correctly.",
+            ))
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        let transport = self.build_transport(&config).await?;
+        transport
+            .send(email)
+            .await
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
     pub async fn send_invite_email(
         &self,
         sender_name: &str,
@@ -37,23 +72,11 @@ impl EmailService {
         subject_template: &str,
         body_template: &str,
     ) -> Result<(), EmailError> {
-        let row = sqlx::query_as::<_, SmtpConfigRow>(
-            "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode
-             FROM smtp_config
-             WHERE id = '00000000-0000-0000-0000-000000000002'",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| EmailError::SmtpSendFailed(format!("Database error: {}", e)))?;
-
-        let config = row.ok_or(EmailError::SmtpNotConfigured)?;
-        if !config.enabled {
-            return Err(EmailError::SmtpNotConfigured);
-        }
-
-        let host = config.host.ok_or(EmailError::SmtpNotConfigured)?;
-        let port = config.port.ok_or(EmailError::SmtpNotConfigured)?;
-        let from_address = config.from_address.ok_or(EmailError::SmtpNotConfigured)?;
+        let config = self.load_config().await?;
+        let from_address = config
+            .from_address
+            .as_deref()
+            .ok_or(EmailError::SmtpNotConfigured)?;
 
         let from_name = config.from_name.as_deref().unwrap_or("RustShare");
         let from_mailbox: Mailbox = format!("{} <{}>", from_name, from_address)
@@ -81,6 +104,45 @@ impl EmailService {
             .body(body)
             .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
 
+        let transport = self.build_transport(&config).await?;
+        transport
+            .send(email)
+            .await
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
+        let row = sqlx::query_as::<_, SmtpConfigRow>(
+            "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode
+             FROM smtp_config
+             WHERE id = '00000000-0000-0000-0000-000000000002'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Database error: {}", e)))?;
+
+        let config = row.ok_or(EmailError::SmtpNotConfigured)?;
+        if !config.enabled {
+            return Err(EmailError::SmtpNotConfigured);
+        }
+        Ok(config)
+    }
+
+    async fn build_transport(
+        &self,
+        config: &SmtpConfigRow,
+    ) -> Result<AsyncSmtpTransport<Tokio1Executor>, EmailError> {
+        let host = config
+            .host
+            .as_deref()
+            .ok_or(EmailError::SmtpNotConfigured)?;
+        let port = config.port.ok_or(EmailError::SmtpNotConfigured)?;
+        let port = u16::try_from(port).map_err(|_| {
+            EmailError::SmtpSendFailed(format!("SMTP port {} is out of range", port))
+        })?;
+
         let creds = config
             .username
             .as_ref()
@@ -96,18 +158,18 @@ impl EmailService {
 
         let builder = match config.tls_mode.as_deref() {
             Some("tls") => {
-                let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(&host)
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
-                    .port(port as u16);
+                    .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
                 b
             }
             Some("starttls") => {
-                let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
-                    .port(port as u16);
+                    .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
@@ -120,14 +182,7 @@ impl EmailService {
             }
         };
 
-        let transport = builder.build();
-
-        transport
-            .send(email)
-            .await
-            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
-
-        Ok(())
+        Ok(builder.build())
     }
 }
 

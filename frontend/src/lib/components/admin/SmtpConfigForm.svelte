@@ -24,7 +24,7 @@
 	let tls_mode = $state('starttls');
 	let showPassword = $state(false);
 
-	let testResult = $state<{ success: boolean; message?: string } | null>(null);
+	let testResult = $state<{ success: boolean; message: string } | null>(null);
 
 	$effect(() => {
 		const data = $query.data;
@@ -129,7 +129,6 @@
 							bind:value={tls_mode}
 							disabled={!enabled}
 						>
-							<option value="none">None</option>
 							<option value="starttls">STARTTLS</option>
 							<option value="tls">TLS/SSL</option>
 						</select>

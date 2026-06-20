@@ -34,8 +34,6 @@ dirs = { workspace = true }
 daemonize = { workspace = true }
 nix = { workspace = true }
 
-# App specific
-tauri = { version = "2.11", optional = true } # Placeholder for recommended shell
 toml = { workspace = true }
 humantime-serde = { workspace = true }
 
@@ -44,4 +42,3 @@ tempfile = "3.0"
 
 [features]
 default = []
-gui = ["tauri"]

@@ -2,7 +2,6 @@
 	export type TabId =
 		| 'general'
 		| 'security'
-		| 'notifications'
 		| 'devices'
 		| 'appearance'
 		| 'sharing'
@@ -11,16 +10,7 @@
 </script>
 
 <script lang="ts">
-	import {
-		User,
-		Shield,
-		Bell,
-		Smartphone,
-		Palette,
-		Share2,
-		Activity,
-		LayoutGrid
-	} from 'lucide-svelte';
+	import { User, Shield, Smartphone, Palette, Share2, Activity, LayoutGrid } from 'lucide-svelte';
 
 	let {
 		activeTab = 'general',
@@ -39,7 +29,6 @@
 	const tabs: Tab[] = [
 		{ id: 'general', label: 'General', icon: User },
 		{ id: 'security', label: 'Security', icon: Shield },
-		{ id: 'notifications', label: 'Notifications', icon: Bell },
 		{ id: 'devices', label: 'Devices', icon: Smartphone },
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },

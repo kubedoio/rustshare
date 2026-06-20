@@ -321,10 +321,4 @@ pub async fn upload_simple(
     Ok(result.id)
 }
 
-// Extension trait to access base_url from ApiClient
-#[allow(dead_code)]
-trait ApiClientExt {
-    fn base_url(&self) -> &str;
-}
-
 use serde::Deserialize;

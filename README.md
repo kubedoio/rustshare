@@ -267,7 +267,6 @@ This repository includes design and planning documents that define the target sh
 - `docs/FRONTEND_STATUS.md` — Frontend-specific maturity and capabilities
 - `docs/PRODUCTION_READINESS.md` — Launch hardening checklist and remaining risks
 - `docs/TESTING.md` — Deployment validation and manual browser testing guide
-- `docs/TODOS.md` — Open and deferred engineering decisions
 - `docs/DESIGN.md` — Design system tokens, typography, colors, and UX rules
 - `docs/SPEC.md` — Notes MVP-1 implementation specification
 - `docs/ARCHITECTURE_NOTES.md` — Notes MVP-1 key architectural decisions

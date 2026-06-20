@@ -1,6 +1,7 @@
 //! Admin OIDC and SMTP config handlers.
 
 use axum::{extract::State, http::StatusCode, Json};
+use rustshare_core::services::{EmailError, EmailService};
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -167,6 +168,12 @@ pub struct UpdateSmtpConfigRequest {
     pub from_address: Option<String>,
     pub from_name: Option<String>,
     pub tls_mode: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SmtpTestResponse {
+    pub success: bool,
+    pub message: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -420,12 +427,16 @@ pub async fn get_smtp_config(
 }
 
 /// PUT /api/v1/admin/config/smtp
+///
+/// Validates the supplied port (1-65535) and TLS mode (`tls` or `starttls`)
+/// before persisting the configuration.
 #[utoipa::path(
     put,
     path = "/api/v1/admin/config/smtp",
     tag = "Admin",
     responses(
         (status = 200, description = "Success"),
+        (status = 400, description = "Bad Request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -454,6 +465,20 @@ pub async fn update_smtp_config(
     let new_from_address = req.from_address.or(current.from_address);
     let new_from_name = req.from_name.or(current.from_name);
     let new_tls_mode = req.tls_mode.or(current.tls_mode);
+
+    if let Some(port) = new_port {
+        if !(1..=65535).contains(&port) {
+            return Err(admin_bad_request("SMTP port must be between 1 and 65535"));
+        }
+    }
+
+    if let Some(ref tls_mode) = new_tls_mode {
+        if tls_mode != "tls" && tls_mode != "starttls" {
+            return Err(admin_bad_request(
+                "SMTP TLS mode must be 'tls' or 'starttls'",
+            ));
+        }
+    }
 
     // Determine encrypted password:
     //   - Some(s) where s is non-empty → encrypt it.
@@ -515,26 +540,61 @@ pub async fn update_smtp_config(
 
 /// POST /api/v1/admin/config/smtp/test
 ///
-/// No SMTP library is available; always returns a "not_implemented" stub.
+/// Sends a test email to the acting admin's email address using the stored SMTP
+/// configuration. Returns 400 Bad Request for an invalid TLS mode, 503 Service
+/// Unavailable when SMTP is disabled or incomplete, and 502 Bad Gateway when the
+/// remote server rejects the message.
 #[utoipa::path(
     post,
     path = "/api/v1/admin/config/smtp/test",
     tag = "Admin",
     responses(
-        (status = 200, description = "Success"),
+        (status = 200, description = "Success", body = SmtpTestResponse),
+        (status = 400, description = "Bad Request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 502, description = "Bad Gateway", body = crate::handlers::ErrorResponse),
+        (status = 503, description = "Service Unavailable", body = SmtpTestResponse),
     ),
 )]
 pub async fn test_smtp_config(
-    AdminUser { .. }: AdminUser,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "status": "not_implemented",
-            "message": "SMTP test not yet available"
-        })),
-    )
+    State(state): State<AppState>,
+    AdminUser { user_id: actor_id }: AdminUser,
+) -> Result<(StatusCode, Json<SmtpTestResponse>), AppError> {
+    let admin_email = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+        .bind(actor_id)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("Admin user not found"))?;
+
+    let email_service = EmailService::new(state.db_pool, state.secret_key);
+
+    match email_service.send_test_email(&admin_email).await {
+        Ok(()) => Ok((
+            StatusCode::OK,
+            Json(SmtpTestResponse {
+                success: true,
+                message: "Test email sent successfully".to_string(),
+            }),
+        )),
+        Err(EmailError::SmtpNotConfigured) => Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(SmtpTestResponse {
+                success: false,
+                message: "SMTP is not configured or not enabled".to_string(),
+            }),
+        )),
+        Err(EmailError::InvalidTlsMode(mode)) => Err(AppError::bad_request(format!(
+            "Invalid SMTP TLS mode: {}. Must be 'tls' or 'starttls'",
+            mode
+        ))),
+        Err(e) => {
+            tracing::warn!(error = %e, "SMTP test email failed");
+            Err(AppError::bad_gateway(
+                "Failed to send test email. Check the server logs for details.",
+            ))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

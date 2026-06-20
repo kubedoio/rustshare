@@ -47,7 +47,6 @@
 	const VALID_TABS: TabId[] = [
 		'general',
 		'security',
-		'notifications',
 		'devices',
 		'appearance',
 		'sharing',
@@ -82,22 +81,12 @@
 	let securityEvents = $state<UserSecurityEvent[]>([]);
 	let securityEventsLoading = $state(true);
 
-	// Notifications state (placeholder for future API implementation)
-	let emailNotifications = $state(true);
-	let fileShareNotifications = $state(true);
-	let securityNotifications = $state(true);
-	let marketingNotifications = $state(false);
-
 	// Profile state (for email sharing and trash retention)
 	let profile = $state<FullUserProfile | null>(null);
 	let profileLoading = $state(true);
 	let trashRetentionDays = $state<number | null>(30);
 	let trashRetentionSaving = $state(false);
 
-	// Sharing defaults (placeholder for future API implementation)
-	let defaultLinkExpiration = $state('30');
-	let requirePasswordForLinks = $state(false);
-	let allowPublicUploads = $state(false);
 	let emailSharingEnabled = $state(true);
 
 	// Activity state
@@ -617,82 +606,6 @@
 					</div>
 				</div>
 			</div>
-		{:else if activeTab === 'notifications'}
-			<!-- Notifications Tab -->
-			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
-				<div class="p-6">
-					<SettingsSection title="Email Notifications" description="Choose what emails you receive">
-						<div class="py-4">
-							<label class="flex cursor-pointer items-center justify-between gap-4">
-								<div class="flex-1">
-									<p class="text-sm font-medium text-base-content">Account and security</p>
-									<p class="text-sm text-base-content/60">
-										Get notified about sign-ins, password changes, and security alerts
-									</p>
-								</div>
-								<input
-									type="checkbox"
-									class="toggle toggle-primary"
-									bind:checked={securityNotifications}
-								/>
-							</label>
-						</div>
-						<div class="border-t border-base-300 py-4">
-							<label class="flex cursor-pointer items-center justify-between gap-4">
-								<div class="flex-1">
-									<p class="text-sm font-medium text-base-content">File sharing</p>
-									<p class="text-sm text-base-content/60">
-										Get notified when someone shares a file with you
-									</p>
-								</div>
-								<input
-									type="checkbox"
-									class="toggle toggle-primary"
-									bind:checked={fileShareNotifications}
-								/>
-							</label>
-						</div>
-						<div class="border-t border-base-300 py-4">
-							<label class="flex cursor-pointer items-center justify-between gap-4">
-								<div class="flex-1">
-									<p class="text-sm font-medium text-base-content">Product updates</p>
-									<p class="text-sm text-base-content/60">
-										Receive updates about new features and improvements
-									</p>
-								</div>
-								<input
-									type="checkbox"
-									class="toggle toggle-primary"
-									bind:checked={marketingNotifications}
-								/>
-							</label>
-						</div>
-					</SettingsSection>
-
-					<div class="mt-6 border-t border-base-300 pt-6">
-						<SettingsSection
-							title="In-App Notifications"
-							description="Notifications shown within RustShare"
-						>
-							<div class="py-4">
-								<label class="flex cursor-pointer items-center justify-between gap-4">
-									<div class="flex-1">
-										<p class="text-sm font-medium text-base-content">Enable in-app notifications</p>
-										<p class="text-sm text-base-content/60">
-											Show notification badges and alerts in the application
-										</p>
-									</div>
-									<input
-										type="checkbox"
-										class="toggle toggle-primary"
-										bind:checked={emailNotifications}
-									/>
-								</label>
-							</div>
-						</SettingsSection>
-					</div>
-				</div>
-			</div>
 		{:else if activeTab === 'devices'}
 			<!-- Devices Tab -->
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
@@ -900,88 +813,34 @@
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
 					<SettingsSection
-						title="Default Link Settings"
-						description="Preferences for new share links"
+						title="Email Sharing"
+						description="Control how others can share with you"
 					>
-						<div class="py-4">
-							<label
-								class="mb-2 block text-sm font-medium text-base-content"
-								for="default-link-expiration">Default link expiration</label
-							>
-							<select
-								id="default-link-expiration"
-								class="w-full rounded-lg border border-base-300 bg-base-100 px-4 py-2 text-sm text-base-content focus:border-brand-500/50 focus:outline-hidden sm:w-auto"
-								bind:value={defaultLinkExpiration}
-							>
-								<option value="0">Never</option>
-								<option value="7">7 days</option>
-								<option value="30">30 days</option>
-								<option value="90">90 days</option>
-							</select>
-						</div>
-						<div class="border-t border-base-300 py-4">
-							<label class="flex cursor-pointer items-center justify-between gap-4">
-								<div class="flex-1">
-									<p class="text-sm font-medium text-base-content">Require password for links</p>
-									<p class="text-sm text-base-content/60">
-										Add password protection to new share links by default
-									</p>
-								</div>
-								<input
-									type="checkbox"
-									class="toggle toggle-primary"
-									bind:checked={requirePasswordForLinks}
-								/>
-							</label>
-						</div>
-						<div class="border-t border-base-300 py-4">
-							<label class="flex cursor-pointer items-center justify-between gap-4">
-								<div class="flex-1">
-									<p class="text-sm font-medium text-base-content">Allow public uploads</p>
-									<p class="text-sm text-base-content/60">
-										Allow upload-only links by default when creating folder shares
-									</p>
-								</div>
-								<input
-									type="checkbox"
-									class="toggle toggle-primary"
-									bind:checked={allowPublicUploads}
-								/>
-							</label>
-						</div>
+						{#if profileLoading}
+							<div class="py-4 text-center">
+								<div
+									class="inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
+								></div>
+							</div>
+						{:else}
+							<div class="py-4">
+								<label class="flex cursor-pointer items-center justify-between gap-4">
+									<div class="flex-1">
+										<p class="text-sm font-medium text-base-content">Allow email sharing</p>
+										<p class="text-sm text-base-content/60">
+											Allow other users to see your email when sharing files
+										</p>
+									</div>
+									<input
+										type="checkbox"
+										class="toggle toggle-primary"
+										bind:checked={emailSharingEnabled}
+										onchange={handleEmailSharingToggle}
+									/>
+								</label>
+							</div>
+						{/if}
 					</SettingsSection>
-
-					<div class="mt-6 border-t border-base-300 pt-6">
-						<SettingsSection
-							title="Email Sharing"
-							description="Control how others can share with you"
-						>
-							{#if profileLoading}
-								<div class="py-4 text-center">
-									<div
-										class="inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
-									></div>
-								</div>
-							{:else}
-								<div class="py-4">
-									<label class="flex cursor-pointer items-center justify-between gap-4">
-										<div class="flex-1">
-											<p class="text-sm font-medium text-base-content">Allow email sharing</p>
-											<p class="text-sm text-base-content/60">
-												Allow other users to see your email when sharing files
-											</p>
-										</div>
-										<input
-											type="checkbox"
-											class="toggle toggle-primary"
-											bind:checked={emailSharingEnabled}
-											onchange={handleEmailSharingToggle}
-										/>
-									</label>
-								</div>
-							{/if}
-						</SettingsSection>
-					</div>
 				</div>
 			</div>
 		{:else if activeTab === 'activity'}

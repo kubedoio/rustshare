@@ -155,7 +155,7 @@ cargo check --all-features
 Always commit `Cargo.lock` for applications:
 
 ```bash
-git add backend/Cargo.lock
+git add Cargo.lock
 git commit -m "chore(deps): update Cargo dependencies"
 ```
 
@@ -191,7 +191,7 @@ cargo +nightly udeps --all-targets
 
 ## Current Stack Status
 
-See [Cargo.toml](../backend/Cargo.toml) for current versions.
+See [Cargo.toml](../Cargo.toml) for current versions.
 
 Last updated: 2026-03-26
 

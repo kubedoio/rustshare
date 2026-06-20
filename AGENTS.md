@@ -76,7 +76,7 @@ scripts/final-launch-smoke.sh
 
 ## Releasing
 
-See `docs/plans/v0.5.0-release-plan.md` for the current release process. Releases are tag-driven via `.github/workflows/release.yml`.
+Releases are tag-driven via `.github/workflows/release.yml`.
 
 ## Key Contacts / Ownership
 
