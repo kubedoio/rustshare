@@ -89,9 +89,10 @@ export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 			contentStr = match[2];
 		}
 
-		const data = (frontmatterStr
-			? (yaml.load(frontmatterStr, { schema: yaml.JSON_SCHEMA }) as FrontmatterData)
-			: {}) || {};
+		const data =
+			(frontmatterStr
+				? (yaml.load(frontmatterStr, { schema: yaml.JSON_SCHEMA }) as FrontmatterData)
+				: {}) || {};
 
 		const description = extractDescription(contentStr);
 

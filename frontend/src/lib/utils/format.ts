@@ -322,4 +322,3 @@ export function formatDistanceToNow(
 		return diffYear === 1 ? 'about 1 year' + suffix : `about ${diffYear} years` + suffix;
 	}
 }
-
