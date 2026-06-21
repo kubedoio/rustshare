@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { formatFileSize, formatDate, getMimeTypeIcon } from '$lib/utils/format';
+import {
+	formatFileSize,
+	formatDate,
+	getMimeTypeIcon,
+	formatDistanceToNow
+} from '$lib/utils/format';
 
 describe('format utilities', () => {
 	describe('formatFileSize', () => {
@@ -135,6 +140,44 @@ describe('format utilities', () => {
 			expect(getMimeTypeIcon('IMAGE/PNG')).toBe('🖼️');
 			expect(getMimeTypeIcon('Video/MP4')).toBe('🎥');
 			expect(getMimeTypeIcon('APPLICATION/PDF')).toBe('📄');
+		});
+	});
+
+	describe('formatDistanceToNow', () => {
+		it('should format past dates', () => {
+			const now = new Date();
+
+			const thirtySecsAgo = new Date(now.getTime() - 30 * 1000);
+			expect(formatDistanceToNow(thirtySecsAgo)).toBe('less than a minute');
+			expect(formatDistanceToNow(thirtySecsAgo, { addSuffix: true })).toBe(
+				'less than a minute ago'
+			);
+
+			const fiveMinsAgo = new Date(now.getTime() - 5 * 60 * 1000);
+			expect(formatDistanceToNow(fiveMinsAgo)).toBe('5 minutes');
+			expect(formatDistanceToNow(fiveMinsAgo, { addSuffix: true })).toBe('5 minutes ago');
+
+			const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+			expect(formatDistanceToNow(threeHoursAgo)).toBe('about 3 hours');
+			expect(formatDistanceToNow(threeHoursAgo, { addSuffix: true })).toBe('about 3 hours ago');
+		});
+
+		it('should format future dates', () => {
+			const now = new Date();
+
+			const thirtySecsInFuture = new Date(now.getTime() + 30 * 1000);
+			expect(formatDistanceToNow(thirtySecsInFuture)).toBe('less than a minute');
+			expect(formatDistanceToNow(thirtySecsInFuture, { addSuffix: true })).toBe(
+				'in less than a minute'
+			);
+
+			const fiveMinsInFuture = new Date(now.getTime() + 5 * 60 * 1000);
+			expect(formatDistanceToNow(fiveMinsInFuture)).toBe('5 minutes');
+			expect(formatDistanceToNow(fiveMinsInFuture, { addSuffix: true })).toBe('in 5 minutes');
+
+			const threeHoursInFuture = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+			expect(formatDistanceToNow(threeHoursInFuture)).toBe('about 3 hours');
+			expect(formatDistanceToNow(threeHoursInFuture, { addSuffix: true })).toBe('in about 3 hours');
 		});
 	});
 });

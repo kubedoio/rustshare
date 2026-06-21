@@ -291,3 +291,48 @@ export function truncateFilename(filename: string, maxLength: number = 20): stri
 
 	return `${start}..${end}.${extension}`;
 }
+
+export function formatDistanceToNow(
+	dateInput: Date | string,
+	options?: { addSuffix?: boolean }
+): string {
+	const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+	const now = new Date();
+	const diffMs = now.getTime() - date.getTime();
+	const isFuture = diffMs < 0;
+	const absMs = Math.abs(diffMs);
+
+	const diffSec = Math.floor(absMs / 1000);
+	const diffMin = Math.floor(diffSec / 60);
+	const diffHour = Math.floor(diffMin / 60);
+	const diffDay = Math.floor(diffHour / 24);
+	const diffMonth = Math.floor(diffDay / 30);
+	const diffYear = Math.floor(diffMonth / 12);
+
+	let prefix = '';
+	let suffix = '';
+	if (options?.addSuffix) {
+		if (isFuture) {
+			prefix = 'in ';
+		} else {
+			suffix = ' ago';
+		}
+	}
+
+	let distance = '';
+	if (diffSec < 60) {
+		distance = 'less than a minute';
+	} else if (diffMin < 60) {
+		distance = diffMin === 1 ? '1 minute' : `${diffMin} minutes`;
+	} else if (diffHour < 24) {
+		distance = diffHour === 1 ? 'about 1 hour' : `about ${diffHour} hours`;
+	} else if (diffDay < 30) {
+		distance = diffDay === 1 ? '1 day' : `${diffDay} days`;
+	} else if (diffMonth < 12) {
+		distance = diffMonth === 1 ? 'about 1 month' : `about ${diffMonth} months`;
+	} else {
+		distance = diffYear === 1 ? 'about 1 year' : `about ${diffYear} years`;
+	}
+
+	return `${prefix}${distance}${suffix}`;
+}

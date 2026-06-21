@@ -23,7 +23,7 @@
 		Grid3X3,
 		Share2
 	} from 'lucide-svelte';
-	import { formatDistanceToNow } from 'date-fns';
+	import { formatDistanceToNow } from '$lib/utils/format';
 
 	interface Props {
 		module: ModuleDefinition;

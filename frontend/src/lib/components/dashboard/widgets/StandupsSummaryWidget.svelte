@@ -2,7 +2,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getModuleSummary } from '$lib/api/modules';
 	import type { ModuleDefinition } from '$lib/modules/registry';
-	import { formatDistanceToNow } from 'date-fns';
+	import { formatDistanceToNow } from '$lib/utils/format';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 
 	let {

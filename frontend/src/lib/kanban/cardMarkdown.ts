@@ -1,4 +1,3 @@
-import matter from 'gray-matter';
 import * as yaml from 'js-yaml';
 import type {
 	KanbanCardDetail,
@@ -81,17 +80,21 @@ function computeChecklist(checklists: KanbanChecklistGroup[]) {
  */
 export function parseCardMarkdown(raw: string): KanbanCardMarkdown {
 	try {
-		const parsed = matter(raw, {
-			engines: {
-				yaml: {
-					parse: (str: string) => yaml.load(str, { schema: yaml.JSON_SCHEMA }) as object,
-					stringify: (data: unknown) => yaml.dump(data, { lineWidth: -1 })
-				}
-			}
-		});
-		const data = (parsed.data as FrontmatterData | undefined) || {};
+		let frontmatterStr = '';
+		let contentStr = raw;
 
-		const description = extractDescription(parsed.content);
+		const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+		if (match) {
+			frontmatterStr = match[1];
+			contentStr = match[2];
+		}
+
+		const data =
+			(frontmatterStr
+				? (yaml.load(frontmatterStr, { schema: yaml.JSON_SCHEMA }) as FrontmatterData)
+				: {}) || {};
+
+		const description = extractDescription(contentStr);
 
 		return {
 			...data,

@@ -7,11 +7,9 @@
 //! - Dual-write adapters for migration
 //! - Factory for backend selection
 
-pub mod dual_write;
 pub mod job;
 pub mod notification;
 pub mod path_builder;
-pub mod rustfs_repos;
 pub mod search;
 pub mod share_notification;
 pub mod sync;
@@ -19,7 +17,6 @@ pub mod traits;
 pub mod upload_session;
 pub mod user;
 
-pub use dual_write::*;
 pub use job::{
     Job, JobCoordinator, JobQuery, JobRepository, JobRepositoryError, JobStatus,
     RustFsJobRepository,
@@ -29,7 +26,6 @@ pub use notification::{
     RustFsNotificationRepository,
 };
 pub use path_builder::PathBuilder;
-pub use rustfs_repos::*;
 pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
 pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
 pub use traits::*;
