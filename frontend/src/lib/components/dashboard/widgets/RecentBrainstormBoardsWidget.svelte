@@ -2,7 +2,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { listBrainstormBoards } from '$lib/api/brainstorming';
 	import type { ModuleDefinition } from '$lib/modules/registry';
-	import { formatDistanceToNow } from 'date-fns';
+	import { formatDistanceToNow } from '$lib/utils/format';
 	import { Plus, ImageOff, Lightbulb } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 

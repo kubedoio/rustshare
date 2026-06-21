@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatDistanceToNow } from 'date-fns';
+	import { formatDistanceToNow } from '$lib/utils/format';
 	import { ArrowUpRight } from 'lucide-svelte';
 	import {
 		getModuleColor,

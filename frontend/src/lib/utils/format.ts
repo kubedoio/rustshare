@@ -291,3 +291,35 @@ export function truncateFilename(filename: string, maxLength: number = 20): stri
 
 	return `${start}..${end}.${extension}`;
 }
+
+export function formatDistanceToNow(
+	dateInput: Date | string,
+	options?: { addSuffix?: boolean }
+): string {
+	const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+	const now = new Date();
+	const diffMs = now.getTime() - date.getTime();
+	const diffSec = Math.floor(diffMs / 1000);
+	const diffMin = Math.floor(diffSec / 60);
+	const diffHour = Math.floor(diffMin / 60);
+	const diffDay = Math.floor(diffHour / 24);
+	const diffMonth = Math.floor(diffDay / 30);
+	const diffYear = Math.floor(diffMonth / 12);
+
+	const suffix = options?.addSuffix ? ' ago' : '';
+
+	if (diffSec < 60) {
+		return 'less than a minute' + suffix;
+	} else if (diffMin < 60) {
+		return diffMin === 1 ? '1 minute' + suffix : `${diffMin} minutes` + suffix;
+	} else if (diffHour < 24) {
+		return diffHour === 1 ? 'about 1 hour' + suffix : `about ${diffHour} hours` + suffix;
+	} else if (diffDay < 30) {
+		return diffDay === 1 ? '1 day' + suffix : `${diffDay} days` + suffix;
+	} else if (diffMonth < 12) {
+		return diffMonth === 1 ? 'about 1 month' + suffix : `about ${diffMonth} months` + suffix;
+	} else {
+		return diffYear === 1 ? 'about 1 year' + suffix : `about ${diffYear} years` + suffix;
+	}
+}
+
