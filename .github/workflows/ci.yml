@@ -39,6 +39,20 @@ jobs:
           COMMITS=$(git log --format='%H' "${BASE}..${HEAD_COMMIT}")
           MISSING=0
           for COMMIT in $COMMITS; do
+            # Skip merge commits (commits with more than 1 parent)
+            PARENTS=$(git rev-list --parents -n 1 "$COMMIT" | wc -w)
+            if [ "$PARENTS" -gt 2 ]; then
+              echo "Skipping merge commit $COMMIT"
+              continue
+            fi
+
+            # Skip Dependabot commits
+            AUTHOR=$(git log -1 --format='%an' "$COMMIT")
+            if [ "$AUTHOR" = "dependabot[bot]" ]; then
+              echo "Skipping Dependabot commit $COMMIT"
+              continue
+            fi
+
             if ! git log -1 --format='%B' "$COMMIT" | grep -q 'Signed-off-by:'; then
               echo "ERROR: Commit $COMMIT is missing DCO sign-off"
               git log -1 --format='  %H %s' "$COMMIT"
