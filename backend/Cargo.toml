@@ -25,7 +25,7 @@ tokio = { version = "1.52", features = ["full"] }
 # Web framework
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
+tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
 
 # Database
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
@@ -45,7 +45,7 @@ aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
 aws-smithy-types = "=1.5.0"
-time = "=0.3.49"
+time = "=0.3.51"
 
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
