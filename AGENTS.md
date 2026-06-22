@@ -8,6 +8,7 @@ This file contains project-specific guidance for coding agents working in the Ru
 - `frontend/` — SvelteKit / TypeScript frontend.
 - `apps/desktop/` — Rust Tauri/CLI desktop client.
 - `crates/` — Shared client-side Rust crates (sync engine, VFS adapters, etc.).
+- `rustshare-obsidian-plugin/` — Git submodule containing the separate repository for the Obsidian vault synchronization plugin.
 - `docs/` — Architecture Decision Records (ADRs), specifications, implementation notes, and plans.
 - `scripts/` — Operational and smoke-test scripts.
 - `.github/workflows/` — CI/CD definitions.
@@ -73,6 +74,7 @@ scripts/final-launch-smoke.sh
 - Add or update tests for new behavior.
 - Do not commit hardcoded credentials or secrets.
 - Do not commit local artifacts (`.codex/`, `.agents/`, `.gstack/`, `launch-smoke-reports/`, `target/`, root `node_modules/`, etc.). These are ignored in `.gitignore`.
+- **Submodules:** The repository uses Git submodules (e.g., `rustshare-obsidian-plugin/`). Always make, commit (with `-s`), and push changes *inside* the submodule directory first, then stage and commit the updated submodule pointer in the main repository. Do not mix them into a single direct commit.
 
 ## Releasing
 
