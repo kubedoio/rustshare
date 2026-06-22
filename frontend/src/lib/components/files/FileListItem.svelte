@@ -403,7 +403,7 @@
 							</button>
 						</li>
 					{/if}
-					{#if !isFolder && fileItem?.adapter === 'obsidian_vault'}
+					{#if !isFolder && fileItem?.adapter === 'ObsidianVault'}
 						<li>
 							<a
 								href={`obsidian://open?vault=${encodeURIComponent(fileItem.vault_name || '')}&file=${encodeURIComponent(fileItem.path)}`}

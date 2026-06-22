@@ -38,13 +38,12 @@
 	});
 
 	function adapterLabel(adapter: string): string {
-		if (adapter === 'obsidian_vault') return 'Obsidian vault';
+		if (adapter === 'ObsidianVault') return 'Obsidian vault';
 		return adapter;
 	}
 
 	function adapterBadgeClass(adapter: string): string {
-		if (adapter === 'obsidian_vault')
-			return 'border-purple-500/20 bg-purple-500/10 text-purple-600';
+		if (adapter === 'ObsidianVault') return 'border-purple-500/20 bg-purple-500/10 text-purple-600';
 		return 'border-base-300 bg-base-200 text-base-content/70';
 	}
 

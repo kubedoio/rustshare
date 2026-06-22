@@ -362,7 +362,7 @@
 										}}>Version History</button
 									>
 								</li>
-								{#if file.adapter === 'obsidian_vault'}
+								{#if file.adapter === 'ObsidianVault'}
 									<li>
 										<a
 											href={`obsidian://open?vault=${encodeURIComponent(file.vault_name || '')}&file=${encodeURIComponent(file.path)}`}

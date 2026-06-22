@@ -33,7 +33,7 @@ export interface File {
 	// Vault sync metadata (optional, only present for vault files)
 	vault_id?: string;
 	vault_name?: string;
-	adapter?: 'obsidian_vault';
+	adapter?: 'ObsidianVault';
 	source_type?: 'external_vault';
 	server_rev?: number;
 	last_synced_at?: string;
@@ -562,7 +562,7 @@ export interface KanbanCardDetail extends KanbanCard {
 export interface Vault {
 	id: string;
 	name: string;
-	adapter: 'obsidian_vault';
+	adapter: 'ObsidianVault';
 	root_path?: string;
 	server_rev: number;
 	created_at: string;
@@ -585,7 +585,7 @@ export interface VaultFile {
 
 export interface VaultManifest {
 	vault_id: string;
-	adapter: 'obsidian_vault';
+	adapter: 'ObsidianVault';
 	server_rev: number;
 	generated_at: string;
 	files: VaultManifestEntry[];
@@ -615,7 +615,7 @@ export interface VaultDevice {
 
 export interface CreateVaultRequest {
 	name: string;
-	adapter: 'obsidian_vault';
+	adapter: 'ObsidianVault';
 	client_vault_id?: string;
 	device_id: string;
 }
