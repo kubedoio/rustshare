@@ -1,0 +1,3 @@
+[submodule "rustshare-obsidian-plugin"]
+	path = rustshare-obsidian-plugin
+	url = https://github.com/zoorpha/rustshare-obsidian-plugin.git
