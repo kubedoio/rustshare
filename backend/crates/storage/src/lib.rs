@@ -1,6 +1,6 @@
 //! Storage layer for RustShare.
 //!
-//! Handles persistence to RustFS with optional Redis coordination.
+//! Handles persistence to RustFS with in-memory coordination.
 //!
 //! Obsidian is a trademark of Dynalist Inc. RustShare is not affiliated with,
 //! endorsed by, or sponsored by Obsidian.

@@ -7,9 +7,7 @@
 //! - Session revocation cache
 //! - Idempotency keys
 //!
-//! Two implementations:
-//! - InMemoryCoordinationStore: For standalone deployments
-//! - RedisCoordinationStore: For distributed deployments
+//! Currently only the in-memory implementation is provided.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -17,12 +15,8 @@ use std::time::Duration;
 use thiserror::Error;
 
 pub mod memory;
-#[cfg(feature = "redis-coordination")]
-pub mod redis;
 
 pub use memory::InMemoryCoordinationStore;
-#[cfg(feature = "redis-coordination")]
-pub use redis::RedisCoordinationStore;
 
 /// Errors that can occur during coordination operations
 #[derive(Debug, Error, Clone)]
@@ -327,51 +321,20 @@ impl RateLimitStatus {
     }
 }
 
-/// Factory for creating coordination stores based on configuration
+/// Factory for creating coordination stores.
 pub struct CoordinationStoreFactory;
 
 impl CoordinationStoreFactory {
-    /// Create an in-memory coordination store
+    /// Create an in-memory coordination store.
     pub fn create_memory() -> Box<dyn CoordinationStore> {
         Box::new(InMemoryCoordinationStore::new())
     }
 
-    /// Create a Redis coordination store
-    #[cfg(feature = "redis-coordination")]
-    pub async fn create_redis(
-        redis_url: &str,
-    ) -> Result<Box<dyn CoordinationStore>, CoordinationError> {
-        let store = RedisCoordinationStore::new(redis_url)
-            .await
-            .map_err(|e| CoordinationError::BackendError(e.to_string()))?;
-        Ok(Box::new(store))
-    }
-
-    /// Create coordination store based on configuration
-    pub async fn create(
-        use_redis: bool,
-        _redis_url: Option<&str>,
-    ) -> Result<Box<dyn CoordinationStore>, CoordinationError> {
-        if use_redis {
-            #[cfg(feature = "redis-coordination")]
-            {
-                let url = _redis_url.ok_or_else(|| {
-                    CoordinationError::InvalidConfig(
-                        "Redis URL required when Redis coordination is enabled".to_string(),
-                    )
-                })?;
-                Self::create_redis(url).await
-            }
-            #[cfg(not(feature = "redis-coordination"))]
-            {
-                Err(CoordinationError::InvalidConfig(
-                    "Redis coordination requested but redis-coordination feature not enabled"
-                        .to_string(),
-                ))
-            }
-        } else {
-            Ok(Self::create_memory())
-        }
+    /// Create the default coordination store.
+    ///
+    /// This always returns an in-memory store; Redis coordination has been removed.
+    pub async fn create() -> Result<Box<dyn CoordinationStore>, CoordinationError> {
+        Ok(Self::create_memory())
     }
 }
 
