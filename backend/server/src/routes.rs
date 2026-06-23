@@ -676,24 +676,8 @@ pub fn admin_routes() -> Router<AppState> {
 }
 
 pub fn scim_routes() -> Router<AppState> {
-    use axum::routing::{delete, get, post};
+    use axum::routing::get;
     Router::new()
-        .route(
-            "/api/v1/scim/users",
-            post(crate::handlers::scim::provision_user),
-        )
-        .route(
-            "/api/v1/scim/users/{external_id}",
-            delete(crate::handlers::scim::deprovision_user),
-        )
-        .route(
-            "/api/v1/scim/groups",
-            post(crate::handlers::scim::provision_group),
-        )
-        .route(
-            "/api/v1/scim/groups/{external_id}",
-            delete(crate::handlers::scim::delete_group),
-        )
         .route(
             "/scim/v2/Users",
             get(crate::handlers::scim_v2::list_users).post(crate::handlers::scim_v2::create_user),

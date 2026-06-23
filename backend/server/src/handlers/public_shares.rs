@@ -117,7 +117,8 @@ pub fn build_content_disposition(file_name: &str) -> String {
     format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
         sanitize_legacy_filename(file_name),
-        urlencoding::encode(file_name)
+        percent_encoding::percent_encode(file_name.as_bytes(), &percent_encoding::NON_ALPHANUMERIC)
+            .to_string()
     )
 }
 

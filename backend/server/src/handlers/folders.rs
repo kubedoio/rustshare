@@ -951,7 +951,8 @@ pub async fn download_folder(
     let content_disposition = format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
         filename.replace('"', "\\\""),
-        urlencoding::encode(&filename)
+        percent_encoding::percent_encode(filename.as_bytes(), &percent_encoding::NON_ALPHANUMERIC)
+            .to_string()
     );
 
     let stream = futures_util::stream::unfold(file, |mut file| async move {

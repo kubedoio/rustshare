@@ -277,7 +277,8 @@ fn build_device_pairing_uris(instance_url: &str, device_code: &str) -> (String, 
     let verification_uri_complete = format!(
         "{}?device_code={}",
         verification_uri,
-        urlencoding::encode(device_code)
+        percent_encoding::percent_encode(device_code.as_bytes(), &percent_encoding::NON_ALPHANUMERIC)
+            .to_string()
     );
 
     (verification_uri, verification_uri_complete)
