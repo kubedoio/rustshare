@@ -20,14 +20,6 @@ vi.mock('$lib/stores/replication', () => ({
 	}
 }));
 
-vi.mock('$lib/utils/logger', () => ({
-	logger: {
-		debug: vi.fn(),
-		error: vi.fn(),
-		warn: vi.fn()
-	}
-}));
-
 vi.mock('./client', () => ({
 	getWebSocketClient: vi.fn(),
 	disconnectWebSocket: vi.fn()

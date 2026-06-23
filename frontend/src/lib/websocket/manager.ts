@@ -1,4 +1,3 @@
-import { logger } from '$lib/utils/logger';
 import { getWebSocketClient, disconnectWebSocket } from './client';
 import { queryClient } from '$lib/query-client';
 import { replicationStore, type ReplicationStatus } from '$lib/stores/replication';
@@ -51,9 +50,9 @@ export async function initializeWebSocket(token: string | null, userId: string):
 
 	try {
 		await wsClient.connect(token);
-		logger.debug('[WebSocket Manager] Connected successfully');
+		console.debug('[WebSocket Manager] Connected successfully');
 	} catch (error) {
-		logger.error('[WebSocket Manager] Failed to connect:', error);
+		console.error('[WebSocket Manager] Failed to connect:', error);
 		throw error;
 	}
 }
@@ -380,7 +379,7 @@ function handleReplicationStateChanged(event: WebSocketEvent): void {
 	const replicationState = event.replication_state;
 
 	if (!fileId || !fileVersionId || !replicationState || !event.updated_at) {
-		logger.warn('[WebSocket Manager] ReplicationStateChanged missing required fields', event);
+		console.warn('[WebSocket Manager] ReplicationStateChanged missing required fields', event);
 		return;
 	}
 

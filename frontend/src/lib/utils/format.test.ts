@@ -9,15 +9,15 @@ import {
 describe('format utilities', () => {
 	describe('formatFileSize', () => {
 		it('should format bytes', () => {
-			expect(formatFileSize(0)).toBe('0 Bytes');
-			expect(formatFileSize(512)).toBe('512 Bytes');
-			expect(formatFileSize(1023)).toBe('1023 Bytes');
+			expect(formatFileSize(0)).toBe('0 B');
+			expect(formatFileSize(512)).toBe('512 byte');
+			expect(formatFileSize(1023)).toBe('1,023 byte');
 		});
 
 		it('should format kilobytes', () => {
-			expect(formatFileSize(1024)).toBe('1 KB');
-			expect(formatFileSize(1536)).toBe('1.5 KB');
-			expect(formatFileSize(10240)).toBe('10 KB');
+			expect(formatFileSize(1024)).toBe('1 kB');
+			expect(formatFileSize(1536)).toBe('1.5 kB');
+			expect(formatFileSize(10240)).toBe('10 kB');
 		});
 
 		it('should format megabytes', () => {
@@ -38,8 +38,8 @@ describe('format utilities', () => {
 		});
 
 		it('should round to 2 decimal places', () => {
-			expect(formatFileSize(1536)).toBe('1.5 KB');
-			expect(formatFileSize(1638)).toBe('1.6 KB'); // 1.599609375 KB
+			expect(formatFileSize(1536)).toBe('1.5 kB');
+			expect(formatFileSize(1638)).toBe('1.6 kB'); // 1.599609375 KB
 		});
 	});
 
@@ -148,36 +148,32 @@ describe('format utilities', () => {
 			const now = new Date();
 
 			const thirtySecsAgo = new Date(now.getTime() - 30 * 1000);
-			expect(formatDistanceToNow(thirtySecsAgo)).toBe('less than a minute');
-			expect(formatDistanceToNow(thirtySecsAgo, { addSuffix: true })).toBe(
-				'less than a minute ago'
-			);
+			expect(formatDistanceToNow(thirtySecsAgo)).toBe('30 seconds ago');
+			expect(formatDistanceToNow(thirtySecsAgo, { addSuffix: true })).toBe('30 seconds ago');
 
 			const fiveMinsAgo = new Date(now.getTime() - 5 * 60 * 1000);
-			expect(formatDistanceToNow(fiveMinsAgo)).toBe('5 minutes');
+			expect(formatDistanceToNow(fiveMinsAgo)).toBe('5 minutes ago');
 			expect(formatDistanceToNow(fiveMinsAgo, { addSuffix: true })).toBe('5 minutes ago');
 
 			const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-			expect(formatDistanceToNow(threeHoursAgo)).toBe('about 3 hours');
-			expect(formatDistanceToNow(threeHoursAgo, { addSuffix: true })).toBe('about 3 hours ago');
+			expect(formatDistanceToNow(threeHoursAgo)).toBe('3 hours ago');
+			expect(formatDistanceToNow(threeHoursAgo, { addSuffix: true })).toBe('3 hours ago');
 		});
 
 		it('should format future dates', () => {
 			const now = new Date();
 
 			const thirtySecsInFuture = new Date(now.getTime() + 30 * 1000);
-			expect(formatDistanceToNow(thirtySecsInFuture)).toBe('less than a minute');
-			expect(formatDistanceToNow(thirtySecsInFuture, { addSuffix: true })).toBe(
-				'in less than a minute'
-			);
+			expect(formatDistanceToNow(thirtySecsInFuture)).toBe('in 30 seconds');
+			expect(formatDistanceToNow(thirtySecsInFuture, { addSuffix: true })).toBe('in 30 seconds');
 
 			const fiveMinsInFuture = new Date(now.getTime() + 5 * 60 * 1000);
-			expect(formatDistanceToNow(fiveMinsInFuture)).toBe('5 minutes');
+			expect(formatDistanceToNow(fiveMinsInFuture)).toBe('in 5 minutes');
 			expect(formatDistanceToNow(fiveMinsInFuture, { addSuffix: true })).toBe('in 5 minutes');
 
 			const threeHoursInFuture = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-			expect(formatDistanceToNow(threeHoursInFuture)).toBe('about 3 hours');
-			expect(formatDistanceToNow(threeHoursInFuture, { addSuffix: true })).toBe('in about 3 hours');
+			expect(formatDistanceToNow(threeHoursInFuture)).toBe('in 3 hours');
+			expect(formatDistanceToNow(threeHoursInFuture, { addSuffix: true })).toBe('in 3 hours');
 		});
 	});
 });

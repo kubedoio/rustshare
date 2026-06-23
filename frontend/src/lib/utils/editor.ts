@@ -14,6 +14,9 @@ export interface FileCapabilities {
 
 // Import the isOfficeFile function from format.ts
 import { isOfficeFile } from './format';
+import * as monaco from 'monaco-editor';
+
+const monacoLanguages = monaco.languages.getLanguages();
 
 /**
  * Detects file capabilities based on name and MIME type
@@ -138,204 +141,35 @@ export function detectEditorType(fileName: string, mimeType: string): EditorType
 }
 
 /**
- * Checks if a file is a known code file based on extension
+ * Checks if a file is a known code file based on Monaco's registered languages
  */
 function isCodeFile(fileName: string): boolean {
-	const codeExtensions = [
-		// JavaScript/TypeScript
-		'.js',
-		'.mjs',
-		'.cjs',
-		'.ts',
-		'.tsx',
-		'.jsx',
-		// Python
-		'.py',
-		'.pyi',
-		'.pyw',
-		// Rust
-		'.rs',
-		// Go
-		'.go',
-		// Java
-		'.java',
-		// C/C++
-		'.c',
-		'.cpp',
-		'.cc',
-		'.cxx',
-		'.h',
-		'.hpp',
-		'.hxx',
-		// C#
-		'.cs',
-		// PHP
-		'.php',
-		// Ruby
-		'.rb',
-		// Swift
-		'.swift',
-		// Kotlin
-		'.kt',
-		'.kts',
-		// Scala
-		'.scala',
-		// R
-		'.r',
-		// Objective-C
-		'.m',
-		'.mm',
-		// Shell scripts
-		'.sh',
-		'.bash',
-		'.zsh',
-		'.fish',
-		'.ps1',
-		'.bat',
-		'.cmd',
-		// Web
-		'.html',
-		'.htm',
-		'.css',
-		'.scss',
-		'.sass',
-		'.less',
-		'.vue',
-		'.svelte',
-		// Data/config
-		'.json',
-		'.yaml',
-		'.yml',
-		'.toml',
-		'.xml',
-		'.ini',
-		'.conf',
-		'.config',
-		'.properties',
-		'.env',
-		// SQL
-		'.sql',
-		// Documentation
-		'.txt',
-		'.rst',
-		'.adoc',
-		// Other
-		'.dockerfile',
-		'makefile',
-		'.cmake',
-		'.gradle',
-		'.gitignore',
-		'.gitattributes',
-		'.editorconfig',
-		'.lock',
-		'.log',
-		'.csv',
-		'.tsv',
-		// Graphics code
-		'.svg',
-		'.glsl',
-		'.vert',
-		'.frag'
-	];
-
-	return codeExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
+	const lowerName = fileName.toLowerCase();
+	return monacoLanguages.some(
+		(lang) =>
+			lang.extensions?.some((ext) => lowerName.endsWith(ext.toLowerCase())) ||
+			lang.filenames?.some((filename) => lowerName === filename.toLowerCase())
+	);
 }
 
 /**
  * Gets the Monaco editor language for a file based on its extension
  */
 export function getMonacoLanguage(fileName: string): string {
-	const ext = fileName.toLowerCase().split('.').pop() || '';
-
-	const languageMap: Record<string, string> = {
-		// JavaScript/TypeScript
-		js: 'javascript',
-		mjs: 'javascript',
-		cjs: 'javascript',
-		ts: 'typescript',
-		tsx: 'typescript',
-		jsx: 'javascript',
-		// Python
-		py: 'python',
-		pyi: 'python',
-		// Rust
-		rs: 'rust',
-		// Go
-		go: 'go',
-		// Java
-		java: 'java',
-		// C/C++
-		c: 'c',
-		cpp: 'cpp',
-		cc: 'cpp',
-		cxx: 'cpp',
-		h: 'cpp',
-		hpp: 'cpp',
-		hxx: 'cpp',
-		// C#
-		cs: 'csharp',
-		// PHP
-		php: 'php',
-		// Ruby
-		rb: 'ruby',
-		// Swift
-		swift: 'swift',
-		// Kotlin
-		kt: 'kotlin',
-		kts: 'kotlin',
-		// Shell
-		sh: 'shell',
-		bash: 'shell',
-		zsh: 'shell',
-		fish: 'shell',
-		ps1: 'powershell',
-		// Web
-		html: 'html',
-		htm: 'html',
-		css: 'css',
-		scss: 'scss',
-		sass: 'sass',
-		less: 'less',
-		vue: 'html',
-		svelte: 'html',
-		// Data/config
-		json: 'json',
-		yaml: 'yaml',
-		yml: 'yaml',
-		toml: 'toml',
-		xml: 'xml',
-		ini: 'ini',
-		// SQL
-		sql: 'sql',
-		// Documentation
-		md: 'markdown',
-		mdx: 'markdown',
-		txt: 'plaintext',
-		rst: 'restructuredtext',
-		// Other
-		dockerfile: 'dockerfile',
-		cmake: 'cmake',
-		gradle: 'groovy',
-		// Graphics
-		svg: 'xml',
-		glsl: 'glsl',
-		vert: 'glsl',
-		frag: 'glsl'
-	};
-
-	// Handle special filenames without extensions
 	const lowerName = fileName.toLowerCase();
-	if (lowerName === 'dockerfile' || lowerName.endsWith('dockerfile')) {
-		return 'dockerfile';
-	}
-	if (lowerName === 'makefile' || lowerName.endsWith('makefile')) {
-		return 'makefile';
-	}
-	if (lowerName.startsWith('.git')) {
-		return 'plaintext';
-	}
 
-	return languageMap[ext] || 'plaintext';
+	const byFilename = monacoLanguages.find((lang) =>
+		lang.filenames?.some((filename) => lowerName === filename.toLowerCase())
+	);
+	if (byFilename) return byFilename.id;
+
+	const ext = lowerName.split('.').pop() || '';
+	const byExt = monacoLanguages.find((lang) =>
+		lang.extensions?.some((e) => ext === e.replace(/^\./, '').toLowerCase())
+	);
+	if (byExt) return byExt.id;
+
+	return 'plaintext';
 }
 
 /**
