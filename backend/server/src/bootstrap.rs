@@ -374,19 +374,20 @@ async fn init_services(
     let upload_doc_store_path = std::env::var("RUSTSHARE_UPLOAD_STORE_PATH")
         .unwrap_or_else(|_| "/tmp/rustshare-uploads".to_string());
 
-    let upload_backend_config = rustshare_storage::metadata_v2::MetadataBackendConfig {
+    let upload_backend_config = rustshare_storage::upload_doc_store::MetadataBackendConfig {
         base_prefix: "apps/rustshare".to_string(),
         namespace: "uploads".to_string(),
         enable_optimistic_concurrency: true,
         fallback_to_leases: true,
     };
 
-    let upload_doc_store: Arc<dyn rustshare_storage::metadata_v2::MetadataDocumentStore> = Arc::new(
-        rustshare_storage::metadata_v2::stores::LocalFsDocumentStore::new(
-            std::path::PathBuf::from(&upload_doc_store_path),
-            upload_backend_config,
-        ),
-    );
+    let upload_doc_store: Arc<dyn rustshare_storage::upload_doc_store::MetadataDocumentStore> =
+        Arc::new(
+            rustshare_storage::upload_doc_store::LocalFsDocumentStore::new(
+                std::path::PathBuf::from(&upload_doc_store_path),
+                upload_backend_config,
+            ),
+        );
 
     let upload_session_repo = rustshare_storage::repos::RustFsUploadSessionRepository::new(
         upload_doc_store,

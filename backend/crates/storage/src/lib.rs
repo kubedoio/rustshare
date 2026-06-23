@@ -5,15 +5,14 @@
 //! Obsidian is a trademark of Dynalist Inc. RustShare is not affiliated with,
 //! endorsed by, or sponsored by Obsidian.
 
-pub mod admin;
 pub mod chat_integration_impl;
 pub mod coordination;
 pub mod event_store;
 pub mod metadata;
-pub mod metadata_v2;
 pub mod object_store;
 pub mod repos;
 pub mod session;
+pub mod upload_doc_store;
 
 pub use event_store::EventStore;
 use metadata::VaultFileStoreError;

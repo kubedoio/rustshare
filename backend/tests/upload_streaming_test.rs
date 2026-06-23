@@ -15,8 +15,8 @@ use rustshare_core::services::{CreateSessionRequest, PermissionResolver, UploadS
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::adapters::{UploadMetadataStoreAdapter, UploadObjectStoreAdapter};
 use rustshare_storage::{
-    metadata_v2::{stores::LocalFsDocumentStore, MetadataBackendConfig},
     repos::RustFsUploadSessionRepository,
+    upload_doc_store::{LocalFsDocumentStore, MetadataBackendConfig},
     EventStore, MetadataStore, ObjectStore,
 };
 use sqlx::PgPool;
@@ -129,7 +129,7 @@ fn create_upload_service(
     object_store: Arc<ObjectStore>,
 ) -> (TestUploadService, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().expect("create temp dir for upload doc store");
-    let doc_store: Arc<dyn rustshare_storage::metadata_v2::MetadataDocumentStore> =
+    let doc_store: Arc<dyn rustshare_storage::upload_doc_store::MetadataDocumentStore> =
         Arc::new(LocalFsDocumentStore::new(
             temp_dir.path().to_path_buf(),
             MetadataBackendConfig {

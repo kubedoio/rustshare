@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::metadata_v2::{MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
 use crate::repos::PathBuilder;
+use crate::upload_doc_store::{MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
 
 use rustshare_core::services::UploadSessionRepository;
 
@@ -430,7 +430,7 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata_v2::{stores::LocalFsDocumentStore, MetadataBackendConfig};
+    use crate::upload_doc_store::{LocalFsDocumentStore, MetadataBackendConfig};
     use tempfile::TempDir;
 
     async fn create_test_repository() -> (RustFsUploadSessionRepository, TempDir) {

@@ -1,40 +1,20 @@
-//! Repository layer for metadata operations
+//! Repository layer for storage-backed operations.
 //!
-//! This module provides repository implementations for the new metadata_v2 system.
-//! It includes:
-//! - Repository traits defining the contract
-//! - RustFS-backed implementations
-//! - Dual-write adapters for migration
-//! - Factory for backend selection
+//! Currently only the upload-session repository is wired into the live server;
+//! the remaining modules are kept minimal.
 
-pub mod job;
-pub mod notification;
 pub mod path_builder;
-pub mod search;
 pub mod share_notification;
 pub mod sync;
-pub mod traits;
 pub mod upload_session;
-pub mod user;
 
-pub use job::{
-    Job, JobCoordinator, JobQuery, JobRepository, JobRepositoryError, JobStatus,
-    RustFsJobRepository,
-};
-pub use notification::{
-    NotificationProjector, NotificationQuery, NotificationRepository, NotificationRepositoryError,
-    RustFsNotificationRepository,
-};
 pub use path_builder::PathBuilder;
-pub use search::{RustFsSearchIndexRepository, SearchIndexRepository};
 pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
-pub use traits::*;
 pub use upload_session::RustFsUploadSessionRepository;
-pub use user::{RustFsUserRepository, UserRepository, UserRepositoryError};
 
 use thiserror::Error;
 
-/// Repository error types
+/// Repository error types.
 #[derive(Error, Debug)]
 pub enum RepositoryError {
     #[error("Entity not found: {0}")]
@@ -58,20 +38,17 @@ pub enum RepositoryError {
     #[error("Coordination error: {0}")]
     CoordinationError(String),
 
-    #[error("Dual-write mismatch: {0}")]
-    DualWriteMismatch(String),
-
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
 impl RepositoryError {
-    /// Check if this error indicates a not-found condition
+    /// Check if this error indicates a not-found condition.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
     }
 
-    /// Check if this error indicates a concurrency conflict
+    /// Check if this error indicates a concurrency conflict.
     pub fn is_conflict(&self) -> bool {
         matches!(self, Self::ConcurrencyConflict(_))
     }
