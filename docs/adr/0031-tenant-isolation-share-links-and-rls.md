@@ -1,4 +1,4 @@
-# ADR 0021: Tenant Isolation for Share Links and Removal of No-Op RLS Middleware
+# ADR-0031: Tenant Isolation for Share Links and Removal of No-Op RLS Middleware
 
 ## Status
 

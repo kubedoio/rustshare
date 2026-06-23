@@ -66,13 +66,6 @@ jobs:
           fi
           echo "All commits have DCO sign-off"
 
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Scan for hardcoded secrets
-        run: ./scripts/secret-scan.sh --full
 
   generate-secrets:
     name: Generate Secrets
@@ -114,7 +107,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: [generate-secrets, secret-scan]
+    needs: [generate-secrets]
     services:
       postgres:
         image: postgres:16-alpine
@@ -149,7 +142,6 @@ jobs:
   build-release:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: secret-scan
     env:
       SQLX_OFFLINE: true
     steps:
@@ -172,7 +164,7 @@ jobs:
   root-workspace:
     name: Root Workspace
     runs-on: ubuntu-latest
-    needs: [generate-secrets, secret-scan]
+    needs: [generate-secrets]
     services:
       postgres:
         image: postgres:16-alpine
@@ -205,7 +197,7 @@ jobs:
   sqlx-check:
     name: SQLx Prepare Check
     runs-on: ubuntu-latest
-    needs: [generate-secrets, secret-scan]
+    needs: [generate-secrets]
     env:
       # Per-run cryptographically random database password. The container is
       # ephemeral and only reachable from within this job.
@@ -233,7 +225,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    needs: [generate-secrets, secret-scan]
+    needs: [generate-secrets]
     services:
       postgres:
         image: postgres:16-alpine

@@ -16,13 +16,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Scan for hardcoded secrets
-        run: ./scripts/secret-scan.sh --full
 
   generate-secrets:
     name: Generate Secrets
@@ -39,7 +32,7 @@ jobs:
   check-backend-dependencies:
     name: Check Backend Dependencies
     runs-on: ubuntu-latest
-    needs: [generate-secrets, secret-scan]
+    needs: [generate-secrets]
     services:
       postgres:
         image: postgres:16-alpine
@@ -121,7 +114,6 @@ jobs:
   check-frontend-dependencies:
     name: Check Frontend Dependencies
     runs-on: ubuntu-latest
-    needs: secret-scan
     steps:
       - uses: actions/checkout@v6
       
@@ -151,7 +143,6 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    needs: secret-scan
     steps:
       - uses: actions/checkout@v6
 

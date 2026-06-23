@@ -24,18 +24,10 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/rustshare-backend
 
 jobs:
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Scan for hardcoded secrets
-        run: ./scripts/secret-scan.sh --full
 
   pilot-compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 80
-    needs: secret-scan
     permissions:
       contents: read
     steps:

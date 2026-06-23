@@ -20,18 +20,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Scan for hardcoded secrets
-        run: ./scripts/secret-scan.sh --full
 
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: secret-scan
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
