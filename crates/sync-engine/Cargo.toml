@@ -11,27 +11,18 @@ file-ops = { path = "../file-ops" }
 platform = { path = "../platform" }
 
 tokio = { workspace = true }
-tokio-util = { workspace = true }
-notify = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
-futures = { workspace = true }
 futures-util = { workspace = true }
 url = { workspace = true }
 tokio-tungstenite = { workspace = true }
 chrono = { workspace = true }
 glob = { workspace = true }
 uuid = { workspace = true }
-pathdiff = { workspace = true }
-axum = { workspace = true }
-tower = { workspace = true }
 nix = { workspace = true }
-sha2 = "0.11"
-base64 = "0.22"
 md5 = "0.8"
 walkdir = "2.5"
 filetime = "0.2"
@@ -40,3 +31,4 @@ filetime = "0.2"
 test-support = { path = "../test-support" }
 mockall = { workspace = true }
 tempfile = { workspace = true }
+axum = { workspace = true }
