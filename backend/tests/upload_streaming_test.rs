@@ -128,7 +128,7 @@ fn create_upload_service(
     object_store: Arc<ObjectStore>,
 ) -> (TestUploadService, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().expect("create temp dir for upload doc store");
-    let doc_store: Arc<dyn rustshare_storage::upload_doc_store::MetadataDocumentStore> =
+    let doc_store: Arc<rustshare_storage::upload_doc_store::LocalFsDocumentStore> =
         Arc::new(LocalFsDocumentStore::new(
             temp_dir.path().to_path_buf(),
             MetadataBackendConfig {

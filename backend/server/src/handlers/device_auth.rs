@@ -18,6 +18,13 @@ use sqlx::Row;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// Percent-encoding set that preserves RFC 3986 unreserved characters.
+const URL_SAFE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
+
 use super::ErrorResponse;
 use crate::handlers::AppError;
 use crate::handlers::AuthenticatedUser;
@@ -277,10 +284,7 @@ fn build_device_pairing_uris(instance_url: &str, device_code: &str) -> (String, 
     let verification_uri_complete = format!(
         "{}?device_code={}",
         verification_uri,
-        percent_encoding::percent_encode(
-            device_code.as_bytes(),
-            percent_encoding::NON_ALPHANUMERIC
-        )
+        percent_encoding::percent_encode(device_code.as_bytes(), URL_SAFE)
     );
 
     (verification_uri, verification_uri_complete)
