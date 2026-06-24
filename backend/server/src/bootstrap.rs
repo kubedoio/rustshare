@@ -381,13 +381,12 @@ async fn init_services(
         fallback_to_leases: true,
     };
 
-    let upload_doc_store: Arc<rustshare_storage::upload_doc_store::LocalFsDocumentStore> =
-        Arc::new(
-            rustshare_storage::upload_doc_store::LocalFsDocumentStore::new(
-                std::path::PathBuf::from(&upload_doc_store_path),
-                upload_backend_config,
-            ),
-        );
+    let upload_doc_store: Arc<rustshare_storage::upload_doc_store::LocalFsDocumentStore> = Arc::new(
+        rustshare_storage::upload_doc_store::LocalFsDocumentStore::new(
+            std::path::PathBuf::from(&upload_doc_store_path),
+            upload_backend_config,
+        ),
+    );
 
     let upload_session_repo = rustshare_storage::repos::RustFsUploadSessionRepository::new(
         upload_doc_store,

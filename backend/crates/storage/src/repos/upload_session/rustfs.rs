@@ -11,7 +11,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::repos::PathBuilder;
-use crate::upload_doc_store::{LocalFsDocumentStore, MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
+use crate::upload_doc_store::{
+    LocalFsDocumentStore, MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
+};
 
 use rustshare_core::services::UploadSessionRepository;
 
