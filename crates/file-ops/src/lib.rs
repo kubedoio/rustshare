@@ -4,10 +4,9 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::error;
-use walkdir::WalkDir;
 
 pub fn calculate_hash(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
@@ -70,11 +69,4 @@ impl FsWatcher {
     }
 }
 
-pub fn scan_directory(root: &Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.path().to_path_buf())
-        .collect()
-}
+

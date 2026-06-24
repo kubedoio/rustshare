@@ -98,7 +98,7 @@ pub enum ScimAction {
 }
 
 /// Repository operations required for SCIM service.
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait ScimRepository: Send + Sync {
     /// Find user by external_id.
     async fn find_user_by_external_id(

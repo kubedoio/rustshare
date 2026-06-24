@@ -147,7 +147,8 @@ pub async fn deprovision_user(
     verify_scim_token(&headers)?;
 
     // URL decode the external_id
-    let external_id = urlencoding::decode(&external_id)
+    let external_id = percent_encoding::percent_decode_str(&external_id)
+        .decode_utf8()
         .map(|s| s.into_owned())
         .unwrap_or(external_id);
 
@@ -263,7 +264,8 @@ pub async fn delete_group(
     verify_scim_token(&headers)?;
 
     // URL decode the external_id
-    let external_id = urlencoding::decode(&external_id)
+    let external_id = percent_encoding::percent_decode_str(&external_id)
+        .decode_utf8()
         .map(|s| s.into_owned())
         .unwrap_or(external_id);
 
@@ -315,7 +317,6 @@ impl ScimRepositoryImpl {
     }
 }
 
-#[async_trait::async_trait]
 impl ScimRepository for ScimRepositoryImpl {
     async fn find_user_by_external_id(
         &self,
@@ -607,18 +608,4 @@ struct GroupRecordRow {
     id: uuid::Uuid,
     external_id: Option<String>,
     name: String,
-}
-
-// Constant-time comparison for tokens
-mod constant_time_eq {
-    pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-        if a.len() != b.len() {
-            return false;
-        }
-        let mut result = 0u8;
-        for (x, y) in a.iter().zip(b.iter()) {
-            result |= x ^ y;
-        }
-        result == 0
-    }
 }

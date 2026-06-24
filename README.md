@@ -249,17 +249,8 @@ This repository includes design and planning documents that define the target sh
 
 ### Core documents
 
-- `docs/adr/01-product-spec.md`  
-  Product scope, target users, Phase 1 priorities, and product boundaries.
-
-- `docs/adr/02-contract.md`  
-  Behavioral contracts and acceptance rules that should be enforced through tests and validation.
-
-- `docs/adr/03-design.md`  
-  Architecture and system-design guidance for the intended RustShare direction.
-
 - `docs/adr/0001-ADR.md`  
-  Original ADR.
+  Architecture Decision Records index and original ADR.
 
 ### Implementation and status docs
 

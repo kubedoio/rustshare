@@ -1,4 +1,3 @@
-import { logger } from '$lib/utils/logger';
 /**
  * ==============================================================================
  * EXPLORER STORE / CONTROLLER
@@ -117,7 +116,7 @@ function createExplorerStore() {
 	 */
 	function activateRoot(rootType: ExplorerRoot, options?: { replaceState?: boolean }) {
 		if (!isExplorerRoot(rootType)) {
-			logger.error(`[explorerStore] Invalid root type: ${rootType}`);
+			console.error(`[explorerStore] Invalid root type: ${rootType}`);
 			return;
 		}
 
@@ -156,7 +155,7 @@ function createExplorerStore() {
 	 */
 	function activateCollection(collection: CollectionView, options?: { replaceState?: boolean }) {
 		if (!isCollectionView(collection)) {
-			logger.error(`[explorerStore] Invalid collection: ${collection}`);
+			console.error(`[explorerStore] Invalid collection: ${collection}`);
 			return;
 		}
 
@@ -200,7 +199,7 @@ function createExplorerStore() {
 	 */
 	function openFolder(location: CanonicalLocation, options?: { replaceState?: boolean }) {
 		if (!isValidCanonicalLocation(location)) {
-			logger.error('[explorerStore] Invalid canonical location:', location);
+			console.error('[explorerStore] Invalid canonical location:', location);
 			return;
 		}
 
@@ -255,12 +254,12 @@ function createExplorerStore() {
 	 */
 	function openFileLocation(location: CanonicalLocation, options?: { replaceState?: boolean }) {
 		if (!isValidCanonicalLocation(location)) {
-			logger.error('[explorerStore] Invalid canonical location:', location);
+			console.error('[explorerStore] Invalid canonical location:', location);
 			return;
 		}
 
 		if (!location.itemId || location.itemType !== 'file') {
-			logger.error('[explorerStore] openFileLocation requires a file itemId and itemType:"file"');
+			console.error('[explorerStore] openFileLocation requires a file itemId and itemType:"file"');
 			return;
 		}
 
@@ -364,14 +363,14 @@ function createExplorerStore() {
 		item: CollectionFile | CollectionFolder
 	): CanonicalLocation | null {
 		if (!item.collectionMeta?.canonicalLocation) {
-			logger.error('[explorerStore] Item missing collection metadata:', item);
+			console.error('[explorerStore] Item missing collection metadata:', item);
 			return null;
 		}
 
 		const location = item.collectionMeta.canonicalLocation;
 
 		if (!isValidCanonicalLocation(location)) {
-			logger.error('[explorerStore] Invalid canonical location in item:', item);
+			console.error('[explorerStore] Invalid canonical location in item:', item);
 			return null;
 		}
 

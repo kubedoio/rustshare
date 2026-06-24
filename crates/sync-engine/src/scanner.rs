@@ -14,14 +14,6 @@ pub struct FileScanResult {
     pub is_directory: bool,
 }
 
-/// Represents changes detected between local scan and database state
-#[derive(Debug, Default)]
-pub struct LocalChanges {
-    pub created: Vec<FileScanResult>,  // In scan, not in DB
-    pub modified: Vec<FileScanResult>, // Hash or mtime different
-    pub deleted: Vec<PathBuf>,         // In DB, not in scan
-}
-
 /// Scan a local root directory and return file metadata for all entries
 pub fn scan_local_root(root_path: &Path) -> Result<Vec<FileScanResult>> {
     trace!(path = %root_path.display(), "Starting directory scan");
@@ -111,66 +103,6 @@ pub fn scan_local_root(root_path: &Path) -> Result<Vec<FileScanResult>> {
     Ok(results)
 }
 
-/// Detect changes by comparing current scan with database state
-///
-/// This function compares a fresh scan against known state (represented by
-/// a function that retrieves the stored metadata for a given path) to
-/// detect created, modified, and deleted files.
-///
-/// # Arguments
-/// * `current_scan` - The current results from `scan_local_root`
-/// * `db_lookup` - A function that returns the stored (hash, modified_at, size) for a path if known
-pub fn detect_local_changes<F>(current_scan: &[FileScanResult], mut db_lookup: F) -> LocalChanges
-where
-    F: FnMut(&Path) -> Option<(String, u64, u64)>,
-{
-    trace!("Detecting local changes");
-
-    let mut changes = LocalChanges::default();
-    let mut scanned_paths: std::collections::HashSet<&Path> = std::collections::HashSet::new();
-
-    for scan_result in current_scan {
-        let path = &scan_result.relative_path;
-        scanned_paths.insert(path);
-
-        match db_lookup(path) {
-            Some((stored_hash, stored_mtime, stored_size)) => {
-                // File exists in DB, check if modified
-                let hash_changed = !scan_result.is_directory && scan_result.hash != stored_hash;
-                let mtime_changed = scan_result.modified_at != stored_mtime;
-                let size_changed = scan_result.size != stored_size;
-
-                if hash_changed || mtime_changed || size_changed {
-                    debug!(
-                        path = %path.display(),
-                        hash_changed, mtime_changed, size_changed,
-                        "Detected modified file"
-                    );
-                    changes.modified.push(scan_result.clone());
-                }
-            }
-            None => {
-                // File not in DB, it's new
-                debug!(path = %path.display(), "Detected new file");
-                changes.created.push(scan_result.clone());
-            }
-        }
-    }
-
-    // Find deleted files by iterating through known DB paths
-    // This would require the caller to provide the full set of known paths
-    // For now, we return the partial result; deleted detection is typically
-    // done at a higher level with knowledge of all DB entries for the root
-
-    debug!(
-        created = changes.created.len(),
-        modified = changes.modified.len(),
-        "Change detection complete (deleted requires full DB scan)"
-    );
-
-    changes
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,46 +163,4 @@ mod tests {
         assert!(paths.contains(&"subdir/file2.txt".to_string()));
     }
 
-    #[test]
-    fn test_detect_local_changes_created() {
-        let scan_result = FileScanResult {
-            relative_path: PathBuf::from("new_file.txt"),
-            absolute_path: PathBuf::from("/tmp/new_file.txt"),
-            hash: "abc123".to_string(),
-            size: 100,
-            modified_at: 1234567890,
-            is_directory: false,
-        };
-
-        let changes = detect_local_changes(&[scan_result], |_path| None);
-
-        assert_eq!(changes.created.len(), 1);
-        assert_eq!(changes.modified.len(), 0);
-        assert_eq!(changes.deleted.len(), 0);
-    }
-
-    #[test]
-    fn test_detect_local_changes_modified() {
-        let scan_result = FileScanResult {
-            relative_path: PathBuf::from("existing.txt"),
-            absolute_path: PathBuf::from("/tmp/existing.txt"),
-            hash: "new_hash".to_string(),
-            size: 200,
-            modified_at: 1234567890,
-            is_directory: false,
-        };
-
-        // Simulate DB having different hash/mtime
-        let changes = detect_local_changes(&[scan_result], |path| {
-            if path == Path::new("existing.txt") {
-                Some(("old_hash".to_string(), 1000000000, 100))
-            } else {
-                None
-            }
-        });
-
-        assert_eq!(changes.created.len(), 0);
-        assert_eq!(changes.modified.len(), 1);
-        assert_eq!(changes.deleted.len(), 0);
-    }
 }

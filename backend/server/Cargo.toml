@@ -44,12 +44,11 @@ hex = { workspace = true }
 sha2.workspace = true
 md5 = "0.8"
 reqwest = { workspace = true }
-async-trait = "0.1"
 governor = "0.10"
 constant_time_eq = "0.5"
 openidconnect = "4.0.1"
 url = "2.5"
-urlencoding = "2.1"
+percent-encoding = "2.3"
 base64 = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
@@ -62,7 +61,6 @@ serde_yaml = "0.9"
 validator = { workspace = true }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
-yrs = { version = "0.27", features = ["sync"] }
 
 [[test]]
 name = "admin_require_admin_test"
@@ -115,10 +113,6 @@ path = "../tests/brainstorming_test.rs"
 [[test]]
 name = "group_sharing_test"
 path = "../tests/group_sharing_test.rs"
-
-[[test]]
-name = "compat_layer_integration_test"
-path = "../tests/compat_layer_integration_test.rs"
 
 [[test]]
 name = "contracts"

@@ -3,17 +3,11 @@
 //! Provides operations for managing sync cursors and retrieving
 //! delta changes for desktop client synchronization.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::metadata_v2::schemas::SyncCursorDocument;
 use crate::repos::RepositoryError;
-
-pub mod rustfs;
-
-pub use rustfs::RustFsSyncRepository;
 
 /// A single delta item in a sync response
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,20 +207,8 @@ pub struct SyncCursor {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<SyncCursorDocument> for SyncCursor {
-    fn from(doc: SyncCursorDocument) -> Self {
-        Self {
-            user_id: doc.user_id,
-            device_id: doc.device_id,
-            cursor: doc.cursor,
-            last_event_id: doc.last_event_id,
-            updated_at: doc.updated_at,
-        }
-    }
-}
-
 /// Repository for sync operations
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait SyncRepository: Send + Sync {
     /// Get or create a sync cursor for a device
     ///
@@ -317,14 +299,23 @@ pub fn parse_cursor(cursor: &str) -> Result<DateTime<Utc>, CursorError> {
     chrono::DateTime::from_timestamp_millis(timestamp_millis).ok_or(CursorError::InvalidTimestamp)
 }
 
-/// Generate a new cursor token for the current time
+/// Generate a new cursor token for the current time.
+///
+/// Cursor format: base64(timestamp_millis + ":" + uuid_v4)
 pub fn generate_cursor() -> String {
-    SyncCursorDocument::generate_cursor(Utc::now())
+    generate_cursor_at(Utc::now())
 }
 
-/// Generate a cursor token for a specific timestamp
+/// Generate a cursor token for a specific timestamp.
+///
+/// Cursor format: base64(timestamp_millis + ":" + uuid_v4)
 pub fn generate_cursor_at(timestamp: DateTime<Utc>) -> String {
-    SyncCursorDocument::generate_cursor(timestamp)
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let timestamp_millis = timestamp.timestamp_millis();
+    let nonce = Uuid::new_v4();
+    let token = format!("{}:{}", timestamp_millis, nonce);
+    STANDARD.encode(token)
 }
 
 #[cfg(test)]

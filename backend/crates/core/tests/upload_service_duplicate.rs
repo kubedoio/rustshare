@@ -25,7 +25,6 @@ impl MockUploadRepo {
     }
 }
 
-#[async_trait::async_trait]
 impl UploadSessionRepository for MockUploadRepo {
     async fn create_session(&self, _session: &UploadSession) -> Result<(), UploadError> {
         unreachable!()
@@ -92,7 +91,6 @@ impl UploadSessionRepository for MockUploadRepo {
 
 struct MockUploadObjectStore;
 
-#[async_trait::async_trait]
 impl UploadObjectStore for MockUploadObjectStore {
     async fn put_chunk(
         &self,
@@ -178,7 +176,6 @@ impl MockUploadMetadataStore {
     }
 }
 
-#[async_trait::async_trait]
 impl UploadMetadataStore for MockUploadMetadataStore {
     async fn find_folder_by_id(
         &self,

@@ -22,6 +22,13 @@ use crate::{handlers::ShareSessionAuth, AppState};
 use super::files::FileUploadResponse;
 use crate::handlers::AppError;
 
+/// Percent-encoding set that preserves RFC 3986 unreserved characters.
+const URL_SAFE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
+
 /// Header used to convey the tenant context for unauthenticated public-share
 /// requests. Public share links do not encode tenant in the token. The tenant
 /// is normally derived from the globally unique token; callers may supply this
@@ -117,7 +124,7 @@ pub fn build_content_disposition(file_name: &str) -> String {
     format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
         sanitize_legacy_filename(file_name),
-        urlencoding::encode(file_name)
+        percent_encoding::percent_encode(file_name.as_bytes(), URL_SAFE)
     )
 }
 

@@ -203,29 +203,7 @@ Prove backups are recoverable without touching production:
 
 ## 7. Metadata Repair After Restore
 
-If folder listings, search results, or parent/child relationships look inconsistent after a restore, use the repair scripts. Both default to **dry-run mode**; pass `--execute` to make changes.
-
-### 7.1 `repair-metadata.sh`
-
-```bash
-# Dry run
-./scripts/repair-metadata.sh all
-
-# Execute repairs
-./scripts/repair-metadata.sh --execute all
-```
-
-### 7.2 `rebuild-metadata-index.sh`
-
-```bash
-# Dry run
-./scripts/rebuild-metadata-index.sh all
-
-# Execute rebuild
-./scripts/rebuild-metadata-index.sh --execute all
-```
-
-> **Warning:** Index rebuilds can be resource-intensive. Run during low-traffic periods.
+If folder listings, search results, or parent/child relationships look inconsistent after a restore, use the admin metadata endpoints (`/admin/metadata/verify/*` and `/admin/metadata/repair`) or contact support. The legacy standalone repair/rebuild scripts have been removed.
 
 ---
 
@@ -285,7 +263,7 @@ aws s3 sync /mnt/backups/rustshare s3://my-backup-bucket/rustshare/ \
 2. Identify the most recent valid backup.
 3. Run `./scripts/restore-stack.sh <backup_dir>`.
 4. Run `./scripts/post-restore-smoke.sh`.
-5. If metadata looks inconsistent, run `./scripts/repair-metadata.sh --execute all`.
+5. If metadata looks inconsistent, use the admin metadata repair endpoints or restore from an earlier backup.
 
 ### 9.2 Object Storage Data Loss
 

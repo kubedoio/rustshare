@@ -240,6 +240,79 @@ impl EventStore {
     }
 }
 
+// Service-layer event-store trait bridges.
+// These live next to the concrete type so the storage crate root stays small.
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FileEventStoreOps for EventStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.append(event, broadcaster).await
+    }
+
+    async fn begin_transaction(&self) -> anyhow::Result<Self::Tx> {
+        self.begin_transaction().await
+    }
+
+    async fn commit_transaction(&self, tx: Self::Tx) -> anyhow::Result<()> {
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn append_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        event: &rustshare_core::events::Event,
+    ) -> anyhow::Result<()> {
+        self.append_in_tx(tx, event).await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FolderEventStoreOps for EventStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.append(event, broadcaster).await
+    }
+
+    async fn begin_transaction(&self) -> anyhow::Result<Self::Tx> {
+        self.begin_transaction().await
+    }
+
+    async fn commit_transaction(&self, tx: Self::Tx) -> anyhow::Result<()> {
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn append_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        event: &rustshare_core::events::Event,
+    ) -> anyhow::Result<()> {
+        self.append_in_tx(tx, event).await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::ShareEventStoreOps for EventStore {
+    async fn append(
+        &self,
+        event: &rustshare_core::events::Event,
+        broadcaster: &rustshare_core::events::EventBroadcaster,
+    ) -> anyhow::Result<()> {
+        self.append(event, broadcaster).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

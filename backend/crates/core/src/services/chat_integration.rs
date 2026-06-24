@@ -364,7 +364,7 @@ async fn checked_webhook_socket_addrs(
 }
 
 /// Trait for webhook dispatch operations.
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait WebhookDispatcher: Send + Sync {
     /// Dispatch a webhook event to a URL.
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String>;
@@ -423,7 +423,6 @@ impl Default for HttpWebhookDispatcher {
     }
 }
 
-#[async_trait::async_trait]
 impl WebhookDispatcher for HttpWebhookDispatcher {
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
         // Re-validate and pin the vetted socket addresses at dispatch time.
@@ -1014,7 +1013,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl WebhookDispatcher for MockWebhookDispatcher {
         async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
             if self.should_fail {

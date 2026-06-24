@@ -18,6 +18,13 @@ use rustshare_core::domain::Folder;
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
+/// Percent-encoding set that preserves RFC 3986 unreserved characters.
+const URL_SAFE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
+
 // ============================================================================
 // Share Indicator Types
 // ============================================================================
@@ -951,7 +958,7 @@ pub async fn download_folder(
     let content_disposition = format!(
         "attachment; filename=\"{}\"; filename*=UTF-8''{}",
         filename.replace('"', "\\\""),
-        urlencoding::encode(&filename)
+        percent_encoding::percent_encode(filename.as_bytes(), URL_SAFE)
     );
 
     let stream = futures_util::stream::unfold(file, |mut file| async move {

@@ -39,23 +39,6 @@ cd frontend
 npm outdated
 ```
 
-### Full Dependency Check with Script
-
-```bash
-# Check all dependencies (no changes)
-./scripts/check-dependencies.sh
-
-# Check and update all dependencies
-./scripts/check-dependencies.sh --update
-```
-
-This script will:
-1. Check for outdated Rust dependencies
-2. Run `cargo audit` for security vulnerabilities
-3. Check for outdated npm packages
-4. Run `npm audit` for security vulnerabilities
-5. Optionally update and verify builds
-
 ## Installing Required Tools
 
 ### cargo-outdated

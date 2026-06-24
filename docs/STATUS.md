@@ -37,7 +37,6 @@ As of 2026-05-22, the implemented platform includes:
 - asynchronous replication worker with RustFS-tracked job states
 - rate limiting for auth and public-share hot paths (Redis or memory)
 - backup, restore, verification, and post-restore smoke tooling
-- CoordinationStore abstraction for distributed locks and job claims
 - first-class notes with markdown editor, autosave, and public sharing
 
 ## What Is Solid
@@ -179,19 +178,7 @@ RUSTSHARE_METADATA_NAMESPACE=default
 
 ### Verification Tools
 
-```bash
-# Verify data parity between backends
-./scripts/verify-metadata.sh parity
-
-# Check internal consistency
-./scripts/verify-metadata.sh consistency
-
-# Repair detected issues
-./scripts/repair-metadata.sh
-
-# Rebuild indexes from source objects
-./scripts/rebuild-metadata-index.sh
-```
+Use the admin metadata endpoints (`/admin/metadata/verify/*` and `/admin/metadata/repair`) for parity, consistency, and repair operations. The legacy standalone verification/repair scripts have been removed.
 
 ### Documentation
 
@@ -281,6 +268,4 @@ Automated dependency management is now configured:
 - **Dependabot**: Weekly PRs for Cargo and npm updates
 - **CI Checks**: Weekly automated dependency audits
 - **Local Tools**: `cargo-outdated`, `cargo-audit` for manual checks
-- **Script**: `./scripts/check-dependencies.sh` for one-command checking
-
 See [docs/DEPENDENCY_MANAGEMENT.md](docs/DEPENDENCY_MANAGEMENT.md) for details.

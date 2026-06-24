@@ -1,49 +1,41 @@
-use bytes;
-use futures_util::StreamExt;
-use rustshare_core::services::UploadError;
-use rustshare_storage::{MetadataStore, ObjectStore};
+//! Direct `UploadObjectStore` / `UploadMetadataStore` implementations for the
+//! concrete storage types. This collapses the previous server-side adapter
+//! wrappers so `UploadService` can be constructed with `Arc<ObjectStore>` and
+//! `Arc<MetadataStore>` directly.
+
+use bytes::Bytes;
+use futures::StreamExt;
+use rustshare_core::domain::{File, Folder};
+use rustshare_core::services::{UploadError, UploadMetadataStore, UploadObjectStore};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-/// Adapter for ObjectStore to implement UploadObjectStore trait
-#[derive(Clone)]
-pub struct UploadObjectStoreAdapter {
-    inner: Arc<ObjectStore>,
-}
+use crate::{MetadataStore, ObjectStore};
 
-impl UploadObjectStoreAdapter {
-    pub fn new(inner: Arc<ObjectStore>) -> Self {
-        Self { inner }
-    }
-
-    fn map_put_if_absent_error(error: anyhow::Error, chunk_index: u32) -> UploadError {
-        let message = error.to_string();
-        if message.contains("Precondition")
-            || message.contains("PreconditionFailed")
-            || message.contains("412")
-        {
-            UploadError::ChunkAlreadyReceived(chunk_index)
-        } else {
-            UploadError::Storage(message)
-        }
+fn map_put_if_absent_error(error: anyhow::Error, chunk_index: u32) -> UploadError {
+    let message = error.to_string();
+    if message.contains("Precondition")
+        || message.contains("PreconditionFailed")
+        || message.contains("412")
+    {
+        UploadError::ChunkAlreadyReceived(chunk_index)
+    } else {
+        UploadError::Storage(message)
     }
 }
 
-#[async_trait::async_trait]
-impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
+impl UploadObjectStore for ObjectStore {
     async fn put_chunk(
         &self,
         session_id: Uuid,
         chunk_index: u32,
-        data: bytes::Bytes,
+        data: Bytes,
     ) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .put_if_absent(&key, data)
+        self.put_if_absent(&key, data)
             .await
-            .map_err(|e| Self::map_put_if_absent_error(e, chunk_index))
+            .map_err(|e| map_put_if_absent_error(e, chunk_index))
     }
 
     async fn put_chunk_from_path(
@@ -53,19 +45,18 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         path: &std::path::Path,
     ) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .put_from_path_if_absent(&key, path)
+        self.put_from_path_if_absent(&key, path)
             .await
-            .map_err(|e| Self::map_put_if_absent_error(e, chunk_index))
+            .map_err(|e| map_put_if_absent_error(e, chunk_index))
     }
 
     async fn get_chunk(
         &self,
         session_id: Uuid,
         chunk_index: u32,
-    ) -> Result<Option<bytes::Bytes>, UploadError> {
+    ) -> Result<Option<Bytes>, UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        match self.inner.get(&key).await {
+        match self.get(&key).await {
             Ok(data) => Ok(Some(data)),
             Err(e) => Err(UploadError::Storage(e.to_string())),
         }
@@ -73,8 +64,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
 
     async fn delete_chunk(&self, session_id: Uuid, chunk_index: u32) -> Result<(), UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .delete(&key)
+        self.delete(&key)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))
     }
@@ -86,7 +76,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     ) -> Result<(), UploadError> {
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-            if let Err(e) = self.inner.delete(&key).await {
+            if let Err(e) = self.delete(&key).await {
                 tracing::warn!(key = %key, error = %e, "failed to delete object during cleanup");
             }
         }
@@ -94,16 +84,14 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     }
 
     async fn delete_object(&self, key: &str) -> Result<(), UploadError> {
-        self.inner
-            .delete(key)
+        self.delete(key)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))
     }
 
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError> {
         let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
-        self.inner
-            .exists(&key)
+        self.exists(&key)
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))
     }
@@ -128,12 +116,11 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
             let stream = self
-                .inner
                 .get_stream(&key)
                 .await
                 .map_err(|e| UploadError::Storage(e.to_string()))?
                 .2;
-            futures_util::pin_mut!(stream);
+            futures::pin_mut!(stream);
 
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|e| UploadError::Storage(e.to_string()))?;
@@ -154,8 +141,7 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
         let final_hash = hex::encode(hasher.finalize());
         let final_key = format!("{final_key_prefix}{final_hash}");
 
-        self.inner
-            .put_from_path(&final_key, temp_file.path())
+        self.put_from_path(&final_key, temp_file.path())
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
 
@@ -163,37 +149,19 @@ impl rustshare_core::services::UploadObjectStore for UploadObjectStoreAdapter {
     }
 }
 
-/// Adapter for MetadataStore to implement UploadMetadataStore trait
-#[derive(Clone)]
-pub struct UploadMetadataStoreAdapter {
-    inner: Arc<MetadataStore>,
-}
-
-impl UploadMetadataStoreAdapter {
-    pub fn new(inner: Arc<MetadataStore>) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapter {
+impl UploadMetadataStore for MetadataStore {
     async fn find_folder_by_id(
         &self,
         id: Uuid,
         owner_id: Uuid,
-    ) -> Result<Option<rustshare_core::domain::Folder>, UploadError> {
-        self.inner
-            .find_folder_by_id(id, owner_id)
+    ) -> Result<Option<Folder>, UploadError> {
+        self.find_folder_by_id(id, owner_id)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
-    async fn find_folder_by_id_unchecked(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<rustshare_core::domain::Folder>, UploadError> {
-        self.inner
-            .find_folder_by_id_unchecked(id)
+    async fn find_folder_by_id_unchecked(&self, id: Uuid) -> Result<Option<Folder>, UploadError> {
+        self.find_folder_by_id_unchecked(id)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
@@ -202,34 +170,30 @@ impl rustshare_core::services::UploadMetadataStore for UploadMetadataStoreAdapte
         &self,
         path: &str,
         owner_id: Uuid,
-    ) -> Result<Option<rustshare_core::domain::File>, UploadError> {
-        self.inner
-            .find_file_by_path(path, owner_id)
+    ) -> Result<Option<File>, UploadError> {
+        self.find_file_by_path(path, owner_id)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
-    async fn create_file(&self, file: &rustshare_core::domain::File) -> Result<(), UploadError> {
-        self.inner
-            .create_file(file)
+    async fn create_file(&self, file: &File) -> Result<(), UploadError> {
+        self.create_file(file)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
-    async fn update_file(&self, file: &rustshare_core::domain::File) -> Result<(), UploadError> {
-        self.inner
-            .update_file(file)
+    async fn update_file(&self, file: &File) -> Result<(), UploadError> {
+        self.update_file(file)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
 
     async fn create_file_version(
         &self,
-        _file: &rustshare_core::domain::File,
+        _file: &File,
         version: &rustshare_core::domain::FileVersion,
     ) -> Result<(), UploadError> {
-        self.inner
-            .create_file_version(version)
+        self.create_file_version(version)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }

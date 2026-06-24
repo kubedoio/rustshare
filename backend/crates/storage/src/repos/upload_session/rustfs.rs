@@ -1,6 +1,5 @@
 //! RustFS-backed upload session repository implementation
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rustshare_core::services::{
     upload_session::{ChunkInfo, UploadSession, UploadSessionStatus},
@@ -11,14 +10,16 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::metadata_v2::{MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions};
 use crate::repos::PathBuilder;
+use crate::upload_doc_store::{
+    LocalFsDocumentStore, MetadataDocumentStore, MetadataDocumentStoreExt, PutOptions,
+};
 
 use rustshare_core::services::UploadSessionRepository;
 
 /// RustFS-backed upload session repository
 pub struct RustFsUploadSessionRepository {
-    doc_store: Arc<dyn MetadataDocumentStore>,
+    doc_store: Arc<LocalFsDocumentStore>,
     path_builder: PathBuilder,
 }
 
@@ -158,7 +159,7 @@ impl From<ChunkInfoDocument> for ChunkInfo {
 impl RustFsUploadSessionRepository {
     /// Create a new RustFS upload session repository
     pub fn new(
-        doc_store: Arc<dyn MetadataDocumentStore>,
+        doc_store: Arc<LocalFsDocumentStore>,
         base_prefix: String,
         namespace: String,
     ) -> Self {
@@ -234,7 +235,6 @@ impl RustFsUploadSessionRepository {
     }
 }
 
-#[async_trait]
 impl UploadSessionRepository for RustFsUploadSessionRepository {
     async fn create_session(&self, session: &UploadSession) -> Result<(), UploadError> {
         let doc: UploadSessionDocument = session.clone().into();
@@ -430,7 +430,7 @@ impl UploadSessionRepository for RustFsUploadSessionRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata_v2::{stores::LocalFsDocumentStore, MetadataBackendConfig};
+    use crate::upload_doc_store::{LocalFsDocumentStore, MetadataBackendConfig};
     use tempfile::TempDir;
 
     async fn create_test_repository() -> (RustFsUploadSessionRepository, TempDir) {
@@ -442,7 +442,7 @@ mod tests {
             fallback_to_leases: true,
         };
 
-        let doc_store: Arc<dyn MetadataDocumentStore> = Arc::new(LocalFsDocumentStore::new(
+        let doc_store = Arc::new(LocalFsDocumentStore::new(
             temp_dir.path().to_path_buf(),
             config,
         ));

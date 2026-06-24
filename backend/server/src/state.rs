@@ -6,7 +6,6 @@ use std::time::Instant;
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
-use crate::adapters;
 use crate::handlers::collab::CollabRooms;
 use crate::middleware;
 use crate::oidc_runtime::OidcRuntimeCache;
@@ -38,11 +37,10 @@ pub type AppChatIntegrationService = rustshare_core::services::ChatIntegrationSe
     rustshare_core::services::HttpWebhookDispatcher,
 >;
 
-// Note: Upload service disabled due to trait mismatch between storage and core crates
 pub type AppUploadService = rustshare_core::services::UploadService<
     rustshare_storage::repos::RustFsUploadSessionRepository,
-    adapters::UploadObjectStoreAdapter,
-    adapters::UploadMetadataStoreAdapter,
+    rustshare_storage::ObjectStore,
+    rustshare_storage::MetadataStore,
     EventStore,
 >;
 

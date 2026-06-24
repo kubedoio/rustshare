@@ -19,21 +19,9 @@ on:
       - '.github/workflows/vault-sync-compliance.yml'
 
 jobs:
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
-
-      - name: Scan for hardcoded secrets
-        run: ./scripts/secret-scan.sh --full
 
   terminology-scan:
     name: Terminology & Trademark Scan
-    needs: secret-scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -93,7 +81,6 @@ jobs:
 
   plugin-tests:
     name: Plugin Unit Tests
-    needs: secret-scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

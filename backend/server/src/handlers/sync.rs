@@ -13,8 +13,7 @@ use rustshare_core::events::{
     Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
     ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
-use rustshare_storage::metadata_v2::SyncCursorDocument;
-use rustshare_storage::repos::sync::{DeltaResult, SyncDelta};
+use rustshare_storage::repos::sync::{DeltaResult, SyncCursor, SyncDelta};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -1356,23 +1355,16 @@ async fn get_or_create_cursor_impl(
     _state: &AppState,
     user_id: Uuid,
     device_id: Uuid,
-) -> anyhow::Result<SyncCursorDocument> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use rustshare_storage::metadata_v2::schemas::SyncCursorDocument;
+) -> anyhow::Result<SyncCursor> {
+    use rustshare_storage::repos::sync::generate_cursor;
 
-    let now = Utc::now();
-    let timestamp_millis = now.timestamp_millis();
-    let nonce = Uuid::new_v4();
-    let token = format!("{}:{}", timestamp_millis, nonce);
-    let cursor = STANDARD.encode(token);
-
-    Ok(SyncCursorDocument::new(
+    Ok(SyncCursor {
         user_id,
         device_id,
-        cursor,
-        Uuid::nil(), // No events processed yet
-        None,        // No device info
-    ))
+        cursor: generate_cursor(),
+        last_event_id: Uuid::nil(), // No events processed yet
+        updated_at: Utc::now(),
+    })
 }
 
 /// Internal implementation to get delta changes

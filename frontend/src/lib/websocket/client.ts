@@ -1,5 +1,4 @@
 import { websocketStore } from '$lib/stores/websocket';
-import { logger } from '$lib/utils/logger';
 import type { WebSocketEvent, WebSocketEventType, EventHandler } from './events';
 
 export class WebSocketClient {
@@ -71,7 +70,7 @@ export class WebSocketClient {
 				this.ws.onopen = () => {
 					settled = true;
 					this.connectPromise = null;
-					logger.debug('[WebSocket] Connected');
+					console.debug('[WebSocket] Connected');
 					websocketStore.setState('connected');
 					websocketStore.resetReconnectAttempts();
 					this.reconnectAttempts = 0;
@@ -83,12 +82,12 @@ export class WebSocketClient {
 						const data: WebSocketEvent = JSON.parse(event.data);
 						this.handleEvent(data);
 					} catch (error) {
-						logger.error('[WebSocket] Failed to parse message:', error);
+						console.error('[WebSocket] Failed to parse message:', error);
 					}
 				};
 
 				this.ws.onerror = (error) => {
-					logger.error('[WebSocket] Error:', error);
+					console.error('[WebSocket] Error:', error);
 					websocketStore.setError('WebSocket connection error');
 					if (!settled) {
 						settled = true;
@@ -98,7 +97,7 @@ export class WebSocketClient {
 				};
 
 				this.ws.onclose = (event) => {
-					logger.debug('[WebSocket] Disconnected', event.code, event.reason);
+					console.debug('[WebSocket] Disconnected', event.code, event.reason);
 					if (!settled) {
 						settled = true;
 						this.connectPromise = null;
@@ -110,14 +109,14 @@ export class WebSocketClient {
 						if (event.code === 1008 || event.code === 1002) {
 							// 1008: Policy Violation (auth failure)
 							// 1002: Protocol error
-							logger.error('[WebSocket] Authentication failed or protocol error');
+							console.error('[WebSocket] Authentication failed or protocol error');
 							websocketStore.setError('WebSocket authentication failed');
 							websocketStore.setState('error');
 						} else if (this.reconnectAttempts < this.maxReconnectAttempts) {
 							// Attempt reconnection with exponential backoff
 							this.reconnect();
 						} else {
-							logger.error('[WebSocket] Max reconnection attempts reached');
+							console.error('[WebSocket] Max reconnection attempts reached');
 							websocketStore.setError('Failed to reconnect after multiple attempts');
 							websocketStore.setState('error');
 						}
@@ -126,7 +125,7 @@ export class WebSocketClient {
 					}
 				};
 			} catch (error) {
-				logger.error('[WebSocket] Failed to create connection:', error);
+				console.error('[WebSocket] Failed to create connection:', error);
 				websocketStore.setError('Failed to create WebSocket connection');
 				this.connectPromise = null;
 				reject(error);
@@ -150,7 +149,7 @@ export class WebSocketClient {
 			this.maxReconnectDelay
 		);
 
-		logger.debug(
+		console.debug(
 			`[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
 		);
 
@@ -158,7 +157,7 @@ export class WebSocketClient {
 
 		this.reconnectTimer = setTimeout(() => {
 			this.connect(this.token).catch((error) => {
-				logger.error('[WebSocket] Reconnection failed:', error);
+				console.error('[WebSocket] Reconnection failed:', error);
 			});
 		}, delay);
 	}
@@ -168,7 +167,7 @@ export class WebSocketClient {
 		const eventType = (event as any).event_type || event.type;
 
 		if (!eventType) {
-			logger.error('[WebSocket] Event missing event_type field:', event);
+			console.error('[WebSocket] Event missing event_type field:', event);
 			return;
 		}
 
@@ -179,11 +178,11 @@ export class WebSocketClient {
 				try {
 					handler(event);
 				} catch (error) {
-					logger.error(`[WebSocket] Handler error for ${eventType}:`, error);
+					console.error(`[WebSocket] Handler error for ${eventType}:`, error);
 				}
 			});
 		} else {
-			logger.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
+			console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
 		}
 	}
 
@@ -274,7 +273,7 @@ function resolveCanonicalWebSocketUrl(rawWsUrl?: string, rawApiUrl?: string): st
 				return url.toString();
 			}
 		} catch (error) {
-			logger.warn('[WebSocket] Ignoring invalid URL candidate:', candidate, error);
+			console.warn('[WebSocket] Ignoring invalid URL candidate:', candidate, error);
 		}
 	}
 

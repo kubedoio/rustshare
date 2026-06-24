@@ -130,7 +130,6 @@ impl ScimV2RepositoryImpl {
     }
 }
 
-#[async_trait::async_trait]
 impl ScimV2Repository for ScimV2RepositoryImpl {
     async fn list_users(
         &self,

@@ -1,6 +1,5 @@
 //! Shared path builder for RustFS repository implementations
 
-use crate::metadata_v2::schemas::EventDocument;
 use rustshare_core::domain::{FileId, FolderId, ShareId, UserId};
 use uuid::Uuid;
 
@@ -80,20 +79,6 @@ impl PathBuilder {
         format!(
             "{}/{}/meta/shares/{}.json",
             self.base_prefix, self.namespace, id
-        )
-    }
-
-    /// Path for event document
-    pub fn event_path(&self, event: &EventDocument) -> String {
-        use chrono::Datelike;
-        format!(
-            "{}/{}/meta/events/{:04}/{:02}/{:02}/{}.json",
-            self.base_prefix,
-            self.namespace,
-            event.occurred_at.year(),
-            event.occurred_at.month(),
-            event.occurred_at.day(),
-            event.id
         )
     }
 

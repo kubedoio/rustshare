@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	import { markdownToHtml } from '$lib/editor/adapter/markdown';
+	import { sanitizeHtml } from '$lib/editor/adapter/security';
 	import { getPublicNote } from '$lib/api/notes';
 	import type { PublicNoteResponse } from '$lib/api/notes';
 	import { FileText, AlertCircle } from 'lucide-svelte';
@@ -22,7 +23,7 @@
 			}
 			try {
 				note = await getPublicNote(shareId);
-				renderedContent = renderMarkdown(note.content);
+				renderedContent = sanitizeHtml(markdownToHtml(note.content).html);
 			} catch (err) {
 				error = err instanceof Error ? err.message : 'Failed to load note';
 			} finally {

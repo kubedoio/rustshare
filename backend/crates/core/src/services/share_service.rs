@@ -164,7 +164,7 @@ pub trait MetadataStoreOps: Send + Sync {
 /// Trait for share notification tracking operations needed by ShareService.
 ///
 /// This trait abstracts notification tracking to allow for testing without database dependencies.
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait ShareNotificationRepo: Send + Sync {
     /// Check if user was already notified for this share.
     async fn was_notified(
@@ -1774,7 +1774,6 @@ mod tests {
 
     struct MockNotificationRepo;
 
-    #[async_trait::async_trait]
     impl ShareNotificationRepo for MockNotificationRepo {
         async fn was_notified(
             &self,

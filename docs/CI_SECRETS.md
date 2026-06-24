@@ -99,19 +99,13 @@ public configuration values and may remain as plain text in workflow files.
 
 ## Security checks
 
-- The `secret-scan` job in `ci.yml` runs `scripts/secret-scan.sh` on every PR
-  and push to `main`. It blocks merges if it detects hardcoded secrets in
-  workflow files, Docker Compose files, environment examples, or shell scripts.
-- To actually block merges, mark the `secret-scan` job as required in the
-  repository's branch protection rules for `main`.
+- Secret scanning is handled by GitHub Advanced Security and repository-level
+  settings. Ensure branch protection rules require passing CI checks.
 - Do **not** add real secrets to test fixtures or documentation. Use
-  deterministic fake values and add them to `.secret-scan-allowlist` if the
-  scanner flags them.
+  deterministic fake values where possible.
 
 ## Scanner scope
 
-`scripts/secret-scan.sh` intentionally scopes its scans to CI/CD, configuration,
-and shell files (`.github/workflows/*.yml`, `.env*`, `docker-compose*.yml`,
-`Dockerfile`s, and `*.sh`). Source code and test fixtures are out of scope to
-avoid noise. For broader coverage—including source files and test fixtures—use a
-dedicated secret scanner such as GitHub secret scanning or TruffleHog.
+Repository-level secret scanning covers CI/CD, configuration, source code, and
+test fixtures. For local scans, use a dedicated secret scanner such as
+`trufflehog` or `git-secrets`.

@@ -634,7 +634,7 @@ pub fn parse_filter(filter: &str) -> Result<Vec<ScimFilter>, ScimV2Error> {
 }
 
 /// Repository operations required for SCIM v2 service.
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait ScimV2Repository: Send + Sync {
     /// Get all users with optional filtering and pagination.
     async fn list_users(

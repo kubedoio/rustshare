@@ -4,7 +4,7 @@
 	import { formatFileSize } from '$lib/utils/format';
 	import { detectEditorType, detectFileCapabilities } from '$lib/utils/editor';
 	import OfficePreview from '$lib/components/preview/OfficePreview.svelte';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	import { markdownToHtml } from '$lib/editor/adapter/markdown';
 
 	import type { File } from '$lib/api/types';
 
@@ -260,7 +260,7 @@
 				{:else if file.name.toLowerCase().endsWith('.md') && textContent !== null}
 					<div class="h-full w-full overflow-auto bg-base-100 p-8">
 						<article class="prose max-w-none">
-							{@html renderMarkdown(textContent)}
+							{@html markdownToHtml(textContent).html}
 						</article>
 					</div>
 				{:else if (isExcalidraw(file.name) || isDrawio(file.name)) && textContent !== null}

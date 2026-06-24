@@ -1,35 +1,39 @@
 export function formatFileSize(bytes: number): string {
-	if (!Number.isFinite(bytes) || bytes < 0) return '0 Bytes';
-	if (bytes === 0) return '0 Bytes';
-	if (bytes < 1024) return `${bytes} Bytes`;
+	if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+	if (bytes === 0) return '0 B';
+
+	const units = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const;
 	const k = 1024;
-	const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(k));
+	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
 	const value = bytes / Math.pow(k, i);
-	return `${parseFloat(value.toFixed(2))} ${sizes[i]}`;
+
+	return new Intl.NumberFormat('en-US', {
+		style: 'unit',
+		unit: units[i],
+		maximumFractionDigits: 2
+	}).format(value);
 }
 
 export function formatDate(dateString: string): string {
 	const date = new Date(dateString);
 	const now = new Date();
-	const diff = now.getTime() - date.getTime();
+	const diffMs = now.getTime() - date.getTime();
+	const diffSec = Math.floor(Math.abs(diffMs) / 1000);
 
-	const minute = 60 * 1000;
-	const hour = 60 * minute;
-	const day = 24 * hour;
+	if (diffSec < 60) return 'Just now';
 
-	if (diff < minute) return 'Just now';
-	if (diff < hour) return `${Math.floor(diff / minute)} minutes ago`;
-	if (diff < day) return `${Math.floor(diff / hour)} hours ago`;
-	if (diff < 7 * day) return `${Math.floor(diff / day)} days ago`;
+	const rtf = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' });
+	if (diffSec < 3600) return rtf.format(-Math.floor(diffSec / 60), 'minute');
+	if (diffSec < 86400) return rtf.format(-Math.floor(diffSec / 3600), 'hour');
+	if (diffSec < 604800) return rtf.format(-Math.floor(diffSec / 86400), 'day');
 
-	return date.toLocaleDateString('en-US', {
+	return new Intl.DateTimeFormat('en-US', {
 		year: 'numeric',
 		month: 'short',
 		day: 'numeric',
 		hour: 'numeric',
 		minute: '2-digit'
-	});
+	}).format(date);
 }
 
 export function getMimeTypeIcon(mimeType: string): string {
@@ -300,39 +304,35 @@ export function formatDistanceToNow(
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
 	const isFuture = diffMs < 0;
-	const absMs = Math.abs(diffMs);
+	const diffSec = Math.round(Math.abs(diffMs) / 1000);
 
-	const diffSec = Math.floor(absMs / 1000);
-	const diffMin = Math.floor(diffSec / 60);
-	const diffHour = Math.floor(diffMin / 60);
-	const diffDay = Math.floor(diffHour / 24);
-	const diffMonth = Math.floor(diffDay / 30);
-	const diffYear = Math.floor(diffMonth / 12);
+	let value: number;
+	let unit: Intl.RelativeTimeFormatUnit;
 
-	let prefix = '';
-	let suffix = '';
-	if (options?.addSuffix) {
-		if (isFuture) {
-			prefix = 'in ';
-		} else {
-			suffix = ' ago';
-		}
-	}
-
-	let distance = '';
 	if (diffSec < 60) {
-		distance = 'less than a minute';
-	} else if (diffMin < 60) {
-		distance = diffMin === 1 ? '1 minute' : `${diffMin} minutes`;
-	} else if (diffHour < 24) {
-		distance = diffHour === 1 ? 'about 1 hour' : `about ${diffHour} hours`;
-	} else if (diffDay < 30) {
-		distance = diffDay === 1 ? '1 day' : `${diffDay} days`;
-	} else if (diffMonth < 12) {
-		distance = diffMonth === 1 ? 'about 1 month' : `about ${diffMonth} months`;
+		value = diffSec;
+		unit = 'second';
+	} else if (diffSec < 3600) {
+		value = Math.floor(diffSec / 60);
+		unit = 'minute';
+	} else if (diffSec < 86400) {
+		value = Math.floor(diffSec / 3600);
+		unit = 'hour';
+	} else if (diffSec < 2592000) {
+		value = Math.floor(diffSec / 86400);
+		unit = 'day';
+	} else if (diffSec < 31536000) {
+		value = Math.floor(diffSec / 2592000);
+		unit = 'month';
 	} else {
-		distance = diffYear === 1 ? 'about 1 year' : `about ${diffYear} years`;
+		value = Math.floor(diffSec / 31536000);
+		unit = 'year';
 	}
 
-	return `${prefix}${distance}${suffix}`;
+	if (value === 0 && unit === 'second') {
+		return options?.addSuffix ? 'just now' : 'now';
+	}
+
+	const rtf = new Intl.RelativeTimeFormat('en-US', { numeric: 'always' });
+	return rtf.format(isFuture ? value : -value, unit);
 }

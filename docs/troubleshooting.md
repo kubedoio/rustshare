@@ -541,8 +541,6 @@ docker compose exec postgres psql -U rustshare -d rustshare
 curl http://localhost:9000
 # Console: http://localhost:9001 (credentials from RUSTFS_ROOT_USER / RUSTFS_ROOT_PASSWORD in .env)
 
-# Verify metadata parity (if using metadata v2)
-./scripts/verify-metadata.sh parity
 ```
 
 ---

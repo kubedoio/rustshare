@@ -2,7 +2,6 @@
 //!
 //! This crate provides both the server binary and reusable server components.
 
-pub mod adapters;
 pub mod bootstrap;
 pub mod config;
 pub mod handlers;

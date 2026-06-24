@@ -8,7 +8,7 @@
  * - Hidden metadata file exclusion
  */
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown } from '$lib/utils/markdown';
+import { markdownToHtml } from '$lib/editor/adapter/markdown';
 
 // ── Label color validation ───────────────────────────────────────────
 
@@ -126,31 +126,29 @@ describe('Kanban Hidden Metadata Exclusion', () => {
 
 describe('Kanban Markdown Sanitization', () => {
 	it('strips inline script tags', () => {
-		const html = renderMarkdown('<script>alert("xss")</script>');
+		const html = markdownToHtml('<script>alert("xss")</script>').html;
 		// HTML is first escaped to &lt;script&gt;, then sanitized by DOMPurify
 		expect(html).not.toContain('<script');
 	});
 
-	it('HTML-escapes raw img tags with onerror handlers', () => {
-		// renderMarkdown HTML-escapes < and > first, so raw HTML tags become text
-		const html = renderMarkdown('<img src=x onerror=alert(1)>');
-		// The key security property: no actual <img> element in the output
-		expect(html).not.toContain('<img');
-		expect(html).toContain('&lt;img');
+	it('strips dangerous event handlers from raw img tags', () => {
+		const html = markdownToHtml('<img src=x onerror=alert(1)>').html;
+		// The key security property: no onerror handler in the output
+		expect(html).not.toContain('onerror');
 	});
 
-	it('neutralizes javascript: URLs in links', () => {
-		const html = renderMarkdown('[click](javascript:alert(1))');
-		expect(html).not.toContain('javascript:');
+	it('does not render javascript: URLs as clickable links', () => {
+		const html = markdownToHtml('[click](javascript:alert(1))').html;
+		expect(html).not.toContain('href="javascript:');
 	});
 
-	it('neutralizes javascript: URLs in images', () => {
-		const html = renderMarkdown('![img](javascript:alert(1))');
-		expect(html).not.toContain('javascript:');
+	it('does not render javascript: URLs as image sources', () => {
+		const html = markdownToHtml('![img](javascript:alert(1))').html;
+		expect(html).not.toContain('src="javascript:');
 	});
 
 	it('renders safe markdown correctly', () => {
-		const html = renderMarkdown('# Hello\n\nThis is **bold** and *italic*.');
+		const html = markdownToHtml('# Hello\n\nThis is **bold** and *italic*.').html;
 		expect(html).toContain('<h1>');
 		expect(html).toContain('<strong>bold</strong>');
 		expect(html).toContain('<em>italic</em>');

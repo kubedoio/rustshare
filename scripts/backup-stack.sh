@@ -107,8 +107,6 @@ tar -czf "${TARGET_DIR}/config.tar.gz" \
 	scripts \
 	README.md \
 	PRODUCTION_READINESS.md \
-	docs/2026-03-20-rate-limit-hardening.md \
-	docs/2026-03-20-backup-restore-runbook.md \
 	>/dev/null 2>&1
 
 cat >"${TARGET_DIR}/manifest.env" <<EOF

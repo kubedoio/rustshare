@@ -27,8 +27,5 @@ syntax locally:
 actionlint .github/workflows/*.yml
 ```
 
-Run the same secret scanner used in CI:
+Secret scanning is handled by GitHub Advanced Security and repository-level settings.
 
-```bash
-./scripts/secret-scan.sh
-```

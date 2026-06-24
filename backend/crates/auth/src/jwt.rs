@@ -126,6 +126,12 @@ impl JwtManager {
     }
 }
 
+impl rustshare_core::services::JwtOps for JwtManager {
+    fn encode_custom_claims<T: serde::Serialize>(&self, claims: &T) -> Result<String, String> {
+        self.encode_custom_claims(claims).map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
