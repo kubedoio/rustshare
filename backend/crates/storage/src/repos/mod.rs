@@ -9,7 +9,7 @@ pub mod sync;
 pub mod upload_session;
 
 pub use path_builder::PathBuilder;
-pub use share_notification::{ShareNotificationRepo, ShareNotificationRepoImpl};
+pub use share_notification::ShareNotificationRepoImpl;
 pub use upload_session::RustFsUploadSessionRepository;
 
 use thiserror::Error;

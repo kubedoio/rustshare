@@ -811,3 +811,28 @@ mod tests {
         assert!(stream.next().await.is_none());
     }
 }
+
+// Service-layer object-store trait bridge.
+// This lives next to the concrete type so the storage crate root stays small.
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::ObjectStoreOps for ObjectStore {
+    async fn put(&self, key: &str, data: bytes::Bytes) -> anyhow::Result<()> {
+        self.put(key, data).await
+    }
+
+    async fn put_from_path(&self, key: &str, path: &std::path::Path) -> anyhow::Result<()> {
+        self.put_from_path(key, path).await
+    }
+
+    async fn exists(&self, key: &str) -> anyhow::Result<bool> {
+        self.exists(key).await
+    }
+
+    async fn get(&self, key: &str) -> anyhow::Result<bytes::Bytes> {
+        self.get(key).await
+    }
+
+    async fn delete(&self, key: &str) -> anyhow::Result<()> {
+        self.delete(key).await
+    }
+}
