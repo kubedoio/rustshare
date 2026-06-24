@@ -397,12 +397,8 @@ async fn init_services(
 
     let upload_service = Arc::new(AppUploadService::new(
         Arc::new(upload_session_repo),
-        Arc::new(crate::adapters::UploadObjectStoreAdapter::new(Arc::clone(
-            &object_store,
-        ))),
-        Arc::new(crate::adapters::UploadMetadataStoreAdapter::new(
-            Arc::clone(&metadata_store),
-        )),
+        Arc::clone(&object_store),
+        Arc::clone(&metadata_store),
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
     ));
