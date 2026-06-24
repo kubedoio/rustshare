@@ -9,6 +9,7 @@ mod folder_service;
 mod notification_errors;
 mod notification_service;
 mod permission_resolver;
+mod scim_service;
 mod scim_v2_service;
 mod search_service;
 mod share_errors;
@@ -48,6 +49,10 @@ pub use notification_service::{
     CreateNotification, NotificationRepositoryOps, NotificationService,
 };
 pub use permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
+pub use scim_service::{
+    GroupRecord, ScimAction, ScimEmail, ScimError, ScimGroup, ScimGroupResult, ScimMember,
+    ScimName, ScimRepository, ScimService, ScimUser, ScimUserResult,
+};
 pub use scim_v2_service::{
     parse_filter, FilterOperator, ScimFilter, ScimPatchOperation, ScimPatchRequest, ScimSchemas,
     ScimV2Address, ScimV2AuthScheme, ScimV2BulkConfig, ScimV2Email, ScimV2Error,

@@ -23,6 +23,7 @@ pub mod notes;
 pub mod notifications;
 pub mod profile;
 pub mod public_shares;
+pub mod scim;
 pub mod scim_v2;
 pub mod shares;
 pub mod standups;
