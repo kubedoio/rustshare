@@ -6,7 +6,6 @@
 //! endorsed by, or sponsored by Obsidian.
 
 pub mod chat_integration_impl;
-pub mod coordination;
 pub mod event_store;
 pub mod metadata;
 pub mod object_store;

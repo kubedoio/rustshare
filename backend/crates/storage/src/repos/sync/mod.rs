@@ -3,7 +3,6 @@
 //! Provides operations for managing sync cursors and retrieving
 //! delta changes for desktop client synchronization.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -209,7 +208,7 @@ pub struct SyncCursor {
 }
 
 /// Repository for sync operations
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait SyncRepository: Send + Sync {
     /// Get or create a sync cursor for a device
     ///

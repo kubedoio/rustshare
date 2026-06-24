@@ -27,7 +27,6 @@ use uuid::Uuid;
 /// Mock notification repo for testing
 pub struct MockNotificationRepo;
 
-#[async_trait::async_trait]
 impl ShareNotificationRepo for MockNotificationRepo {
     async fn was_notified(
         &self,

@@ -5,7 +5,6 @@
 //! that scaffolding is removed.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Serialize};
@@ -48,7 +47,7 @@ pub struct ObjectMetadata {
 ///
 /// This trait uses serialized bytes to be object-safe (dyn-compatible).
 /// Callers are responsible for serialization/deserialization.
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait MetadataDocumentStore: Send + Sync {
     /// Get a document by key, returns raw bytes.
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>>;
@@ -71,7 +70,7 @@ pub trait MetadataDocumentStore: Send + Sync {
 }
 
 /// Extension trait for typed operations.
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait MetadataDocumentStoreExt: MetadataDocumentStore {
     /// Get a document by key.
     async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<(T, ObjectMetadata)>> {
@@ -111,7 +110,6 @@ pub trait MetadataDocumentStoreExt: MetadataDocumentStore {
 }
 
 // Auto-implement the extension trait for all MetadataDocumentStore types.
-#[async_trait]
 impl<T: MetadataDocumentStore + ?Sized> MetadataDocumentStoreExt for T {}
 
 /// Configuration for the metadata backend.
@@ -159,7 +157,6 @@ impl LocalFsDocumentStore {
     }
 }
 
-#[async_trait]
 impl MetadataDocumentStore for LocalFsDocumentStore {
     async fn get_raw(&self, key: &str) -> Result<Option<(Vec<u8>, ObjectMetadata)>> {
         let path = self.build_path(key);
@@ -314,7 +311,7 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
             } else if entry.file_type().await?.is_dir() {
                 // Recurse into subdirectories.
                 let sub_prefix = format!("{}/{}", prefix, entry.file_name().to_string_lossy());
-                let sub_keys = self.list_prefix(&sub_prefix).await?;
+                let sub_keys = Box::pin(self.list_prefix(&sub_prefix)).await?;
                 keys.extend(sub_keys);
             }
         }

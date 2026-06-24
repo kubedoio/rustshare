@@ -6,7 +6,6 @@
 //! - Handling pagination for large delta responses
 //! - Conflict resolution guidance
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use thiserror::Error;
@@ -300,7 +299,7 @@ impl ConflictInfo {
 ///
 /// This trait abstracts the sync service for testing and allows
 /// for different implementations in the future.
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait SyncServiceOps: Send + Sync {
     /// Get or create a sync cursor
     async fn get_or_create_cursor(
@@ -337,7 +336,6 @@ pub trait SyncServiceOps: Send + Sync {
     async fn reset_device_sync(&self, user_id: Uuid, device_id: Uuid) -> Result<SyncCursor>;
 }
 
-#[async_trait]
 impl<R: SyncRepository> SyncServiceOps for SyncService<R> {
     async fn get_or_create_cursor(
         &self,

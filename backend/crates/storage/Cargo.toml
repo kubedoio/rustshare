@@ -21,7 +21,6 @@ aws-smithy-types.workspace = true
 time.workspace = true
 bytes = "1.5"
 md5 = "0.8"
-async-trait = "0.1"
 futures = "0.3"
 tempfile = "3"
 

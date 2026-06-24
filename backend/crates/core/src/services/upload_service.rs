@@ -79,7 +79,7 @@ impl From<UploadError> for FileError {
 }
 
 /// Repository trait for upload session operations
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait UploadSessionRepository: Send + Sync {
     /// Create a new upload session
     async fn create_session(&self, session: &UploadSession) -> Result<(), UploadError>;
@@ -132,7 +132,7 @@ enum ChunkSource {
 }
 
 /// Object store operations for upload service
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait UploadObjectStore: Send + Sync {
     /// Store a chunk from in-memory bytes.
     async fn put_chunk(
@@ -186,7 +186,7 @@ pub trait UploadObjectStore: Send + Sync {
 }
 
 /// Metadata store operations for upload service
-#[async_trait::async_trait]
+#[allow(async_fn_in_trait)]
 pub trait UploadMetadataStore: Send + Sync {
     /// Find a folder by ID (owner-filtered)
     async fn find_folder_by_id(
@@ -930,7 +930,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl UploadSessionRepository for MockUploadRepo {
         async fn create_session(&self, _session: &UploadSession) -> Result<(), UploadError> {
             unreachable!()
@@ -1021,7 +1020,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl UploadObjectStore for MockUploadObjectStore {
         async fn put_chunk(
             &self,
@@ -1114,7 +1112,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl UploadMetadataStore for MockUploadMetadataStore {
         async fn find_folder_by_id(
             &self,

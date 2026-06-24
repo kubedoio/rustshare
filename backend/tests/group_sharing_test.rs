@@ -31,7 +31,6 @@ impl JwtOps for MockJwtManager {
 // Mock notification repo for testing
 struct MockNotificationRepo;
 
-#[async_trait::async_trait]
 impl ShareNotificationRepo for MockNotificationRepo {
     async fn was_notified(
         &self,

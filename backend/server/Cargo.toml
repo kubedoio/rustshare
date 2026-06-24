@@ -44,7 +44,6 @@ hex = { workspace = true }
 sha2.workspace = true
 md5 = "0.8"
 reqwest = { workspace = true }
-async-trait = "0.1"
 governor = "0.10"
 constant_time_eq = "0.5"
 openidconnect = "4.0.1"

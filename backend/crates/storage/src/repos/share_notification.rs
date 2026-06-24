@@ -1,6 +1,5 @@
 //! Repository for share access notification tracking
 
-use async_trait::async_trait;
 use rustshare_core::domain::UserId;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -15,7 +14,6 @@ impl ShareNotificationRepoImpl {
     }
 }
 
-#[async_trait]
 impl rustshare_core::services::ShareNotificationRepo for ShareNotificationRepoImpl {
     async fn was_notified(&self, user_id: UserId, share_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query_scalar::<_, bool>(

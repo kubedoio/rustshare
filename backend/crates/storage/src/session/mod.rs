@@ -5,7 +5,6 @@
 //! - Stateless: JWT validation only, revocation via short TTL cache
 //! - With revocation cache: Redis or memory-backed revocation tracking
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 use thiserror::Error;
@@ -169,7 +168,7 @@ impl SessionConfig {
 }
 
 /// Trait for session storage backends (revocation cache)
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait SessionStorage: Send + Sync {
     /// Store a session hash as valid
     async fn store_session(
@@ -208,7 +207,6 @@ impl Default for InMemorySessionStorage {
     }
 }
 
-#[async_trait]
 impl SessionStorage for InMemorySessionStorage {
     async fn store_session(
         &self,

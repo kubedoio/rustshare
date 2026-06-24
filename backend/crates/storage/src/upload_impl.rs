@@ -25,7 +25,6 @@ fn map_put_if_absent_error(error: anyhow::Error, chunk_index: u32) -> UploadErro
     }
 }
 
-#[async_trait::async_trait]
 impl UploadObjectStore for ObjectStore {
     async fn put_chunk(
         &self,
@@ -150,7 +149,6 @@ impl UploadObjectStore for ObjectStore {
     }
 }
 
-#[async_trait::async_trait]
 impl UploadMetadataStore for MetadataStore {
     async fn find_folder_by_id(
         &self,
