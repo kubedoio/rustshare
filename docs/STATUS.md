@@ -37,7 +37,6 @@ As of 2026-05-22, the implemented platform includes:
 - asynchronous replication worker with RustFS-tracked job states
 - rate limiting for auth and public-share hot paths (Redis or memory)
 - backup, restore, verification, and post-restore smoke tooling
-- CoordinationStore abstraction for distributed locks and job claims
 - first-class notes with markdown editor, autosave, and public sharing
 
 ## What Is Solid

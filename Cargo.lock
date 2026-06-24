@@ -4059,7 +4059,6 @@ name = "rustshare-core"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "chrono",
  "hex",
@@ -4140,7 +4139,6 @@ name = "rustshare-server"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "axum",
@@ -4199,7 +4197,6 @@ name = "rustshare-storage"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "aws-smithy-types",
