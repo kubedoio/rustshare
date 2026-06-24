@@ -279,21 +279,6 @@ impl ApiClient {
         Ok(())
     }
 
-    // ============================================================================
-    // Internal Helpers
-    // ============================================================================
-
-    pub fn http_client(&self) -> &reqwest::Client {
-        &self.client
-    }
-
-    pub fn base_url(&self) -> &Url {
-        &self.base_url
-    }
-
-    pub fn get_token(&self) -> Option<&str> {
-        self.token.as_deref()
-    }
 }
 
 #[cfg(test)]
