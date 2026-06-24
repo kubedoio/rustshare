@@ -1,9 +1,9 @@
 use anyhow::Result;
-use chrono::{TimeZone, Utc};
-use rusqlite::{params, Connection, Transaction};
+
+use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use sync_domain::{EntryType, HydrationState, LocalEntry, SyncRoot};
+use sync_domain::SyncRoot;
 use uuid::Uuid;
 
 pub struct Database {
@@ -31,44 +31,9 @@ impl Database {
         )?;
 
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS local_inventory (
-                path TEXT PRIMARY KEY,
-                entry_type TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                hash TEXT NOT NULL,
-                mtime_ms INTEGER NOT NULL,
-                last_synced_version TEXT,
-                hydration_state TEXT NOT NULL DEFAULT 'materialized'
-            )",
-            [],
-        )?;
-
-        conn.execute(
             "CREATE TABLE IF NOT EXISTS sync_cursor (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 cursor TEXT NOT NULL
-            )",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS conflicts (
-                id BLOB PRIMARY KEY,
-                local_path TEXT NOT NULL,
-                remote_version TEXT NOT NULL,
-                conflict_path TEXT NOT NULL,
-                timestamp_ms INTEGER NOT NULL
-            )",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS activity_log (
-                id BLOB PRIMARY KEY,
-                event_type TEXT NOT NULL,
-                path TEXT NOT NULL,
-                status TEXT NOT NULL,
-                timestamp_ms INTEGER NOT NULL
             )",
             [],
         )?;
@@ -156,16 +121,6 @@ impl Database {
             [],
         )?;
 
-        // Sync cursors - delta tracking per root
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS sync_cursors (
-                root_id BLOB PRIMARY KEY,
-                cursor TEXT,
-                updated_at INTEGER
-            )",
-            [],
-        )?;
-
         Ok(())
     }
 
@@ -190,10 +145,6 @@ impl Database {
         }
 
         Ok(())
-    }
-
-    pub fn transaction(&mut self) -> Result<Transaction<'_>> {
-        Ok(self.conn.transaction()?)
     }
 
     pub fn save_sync_root(&self, root: &SyncRoot) -> Result<()> {
@@ -221,11 +172,7 @@ impl Database {
             })
         })?;
 
-        let mut result = Vec::new();
-        for root in roots {
-            result.push(root?);
-        }
-        Ok(result)
+        Ok(roots.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn remove_sync_root(&self, root_id: Uuid) -> Result<bool> {
@@ -242,81 +189,6 @@ impl Database {
         )?;
 
         Ok(deleted > 0)
-    }
-
-    pub fn update_inventory(&self, entry: &LocalEntry) -> Result<()> {
-        let entry_type = match entry.entry_type {
-            EntryType::File => "file",
-            EntryType::Directory => "directory",
-        };
-
-        self.conn.execute(
-            "INSERT OR REPLACE INTO local_inventory (path, entry_type, size, hash, mtime_ms, last_synced_version, hydration_state) 
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                entry.path.to_string_lossy().to_string(),
-                entry_type,
-                entry.size as i64,
-                entry.hash,
-                entry.mtime.timestamp_millis(),
-                entry.last_synced_version,
-                format!("{:?}", entry.hydration_state).to_lowercase(),
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_inventory_entry(&self, path: &Path) -> Result<Option<LocalEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT path, entry_type, size, hash, mtime_ms, last_synced_version, hydration_state FROM local_inventory WHERE path = ?"
-        )?;
-
-        let entry = stmt
-            .query_row(params![path.to_string_lossy().to_string()], |row| {
-                let entry_type_str: String = row.get(1)?;
-                let entry_type = if entry_type_str == "file" {
-                    EntryType::File
-                } else {
-                    EntryType::Directory
-                };
-                let mtime_ms: i64 = row.get(4)?;
-
-                let hydration_str: String = row.get(6)?;
-                let hydration_state = match hydration_str.as_str() {
-                    "placeholder" => HydrationState::Placeholder,
-                    "pinned" => HydrationState::Pinned,
-                    _ => HydrationState::Materialized,
-                };
-
-                Ok(LocalEntry {
-                    path: PathBuf::from(row.get::<_, String>(0)?),
-                    entry_type,
-                    size: row.get::<_, i64>(2)? as u64,
-                    hash: row.get(3)?,
-                    mtime: Utc
-                        .timestamp_millis_opt(mtime_ms)
-                        .single()
-                        .unwrap_or_else(Utc::now),
-                    last_synced_version: row.get(5)?,
-                    hydration_state,
-                })
-            })
-            .ok();
-
-        Ok(entry)
-    }
-
-    pub fn get_sync_cursor(&self) -> Result<Option<String>> {
-        let res: Result<String, _> =
-            self.conn
-                .query_row("SELECT cursor FROM sync_cursor WHERE id = 1", [], |row| {
-                    row.get(0)
-                });
-        match res {
-            Ok(cursor) => Ok(Some(cursor)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
     }
 
     pub fn save_sync_cursor(&self, cursor: &str) -> Result<()> {
@@ -342,11 +214,7 @@ impl Database {
         )?;
         let rows = stmt.query_map(params![root_id.as_bytes()], |row| row.get::<_, String>(0))?;
 
-        let mut patterns = Vec::new();
-        for row in rows {
-            patterns.push(row?);
-        }
-        Ok(patterns)
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ============================================================================
@@ -471,11 +339,7 @@ impl Database {
             })
         })?;
 
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(row?);
-        }
-        Ok(result)
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     // ============================================================================
@@ -602,11 +466,7 @@ impl Database {
             })
         })?;
 
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(row?);
-        }
-        Ok(result)
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn clear_broken_remote_entries_for_path(
