@@ -27,6 +27,17 @@ function normalize(md: string): string {
 	return md.replace(/\r\n/g, '\n').trim();
 }
 
+function loadAndSerialize(markdown: string): string {
+	const preprocessed = preprocessMarkdownTables(markdown);
+	const editor = new Editor({
+		extensions: getEditorExtensions(),
+		content: preprocessed
+	});
+	const result = editorToMarkdown(editor);
+	editor.destroy();
+	return result;
+}
+
 // ---------------------------------------------------------------------------
 // markdownToHtml
 // ---------------------------------------------------------------------------
@@ -353,6 +364,31 @@ describe('preprocessMarkdownTables', () => {
 	it('passes through markdown with no tables unchanged', () => {
 		const input = '# Hello\n\nSome **bold** text.';
 		expect(preprocessMarkdownTables(input)).toBe(input);
+	});
+
+	it('does not accumulate backslashes in table cells across load/save cycles', () => {
+		let md = '| Cost |\n| --- |\n| ~€200k-€330k |';
+		for (let i = 0; i < 5; i++) {
+			md = loadAndSerialize(md);
+		}
+		const backslashRun = md.match(/\\+/);
+		const maxBackslashes = backslashRun ? backslashRun[0].length : 0;
+		expect(maxBackslashes).toBeLessThanOrEqual(1);
+	});
+
+	it('preserves inline markdown formatting in table cells', () => {
+		const md = '| Text |\n| --- |\n| **bold** and *italic* |';
+		const result = loadAndSerialize(md);
+		expect(result).toContain('**bold**');
+		expect(result).toContain('*italic*');
+	});
+
+	it('does not escape block markers at the start of table cells', () => {
+		const md = '| Item |\n| --- |\n| 1. First |\n| - Second |\n| # Title |';
+		const result = loadAndSerialize(md);
+		expect(result).toContain('| 1. First |');
+		expect(result).toContain('| - Second |');
+		expect(result).toContain('| # Title |');
 	});
 });
 

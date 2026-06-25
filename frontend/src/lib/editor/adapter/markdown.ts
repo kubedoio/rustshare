@@ -5,6 +5,7 @@
 
 import { Editor } from '@tiptap/core';
 import type { EditorProps } from '@tiptap/pm/view';
+import markdownit from 'markdown-it';
 import { getEditorExtensions } from './extensions';
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,38 @@ export interface MarkdownParseResult {
 // ---------------------------------------------------------------------------
 // Table preprocessing
 // ---------------------------------------------------------------------------
+
+/**
+ * Shared markdown-it instance for rendering inline cell content.
+ * Using the same options as tiptap-markdown keeps table cell parsing
+ * consistent with the rest of the editor.
+ */
+const tableCellMarkdown = markdownit({ html: true });
+
+/**
+ * Renders a table cell's inline Markdown content to HTML.
+ * This consumes Markdown escape sequences (e.g. \~ becomes ~) so that
+ * Tiptap stores the literal characters and serialization does not add
+ * additional backslashes on every save/load round-trip.
+ */
+function renderCellContent(content: string): string {
+	if (!content) return '';
+	return tableCellMarkdown.renderInline(content);
+}
+
+/**
+ * Restores inline-code placeholders inside a single table cell before
+ * the cell is rendered to HTML. This keeps `|` characters inside inline
+ * code from breaking the table structure while still letting markdown-it
+ * format the code span correctly.
+ */
+function restoreInlineCodes(text: string, inlineCodes: string[]): string {
+	let result = text;
+	inlineCodes.forEach((code, idx) => {
+		result = result.replace(`\0INLINECODE${idx}\0`, code);
+	});
+	return result;
+}
 
 /**
  * Converts GFM-style Markdown tables into HTML tables.
@@ -63,7 +96,7 @@ export function preprocessMarkdownTables(markdown: string): string {
 			}
 
 			if (tableLines.length >= 2 && isTableSeparator(tableLines[1])) {
-				result.push(convertTableLinesToHtml(tableLines));
+				result.push(convertTableLinesToHtml(tableLines, inlineCodes));
 				i = j;
 				continue;
 			}
@@ -101,7 +134,7 @@ function parseTableRow(line: string): string[] {
 	return content.split('|');
 }
 
-function convertTableLinesToHtml(lines: string[]): string {
+function convertTableLinesToHtml(lines: string[], inlineCodes: string[]): string {
 	const headerCells = parseTableRow(lines[0]);
 	const bodyRows: string[][] = [];
 	for (let i = 2; i < lines.length; i++) {
@@ -112,7 +145,7 @@ function convertTableLinesToHtml(lines: string[]): string {
 
 	html += '<thead><tr>';
 	headerCells.forEach((cell) => {
-		html += `<th>${cell.trim()}</th>`;
+		html += `<th>${renderCellContent(restoreInlineCodes(cell.trim(), inlineCodes))}</th>`;
 	});
 	html += '</tr></thead>';
 
@@ -121,7 +154,7 @@ function convertTableLinesToHtml(lines: string[]): string {
 		bodyRows.forEach((cells) => {
 			html += '<tr>';
 			cells.forEach((cell) => {
-				html += `<td>${cell.trim()}</td>`;
+				html += `<td>${renderCellContent(restoreInlineCodes(cell.trim(), inlineCodes))}</td>`;
 			});
 			html += '</tr>';
 		});

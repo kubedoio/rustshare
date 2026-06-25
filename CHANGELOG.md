@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed permission resolver caching so source-aware lookups preserve owner, direct-share, group-share, inherited, and no-permission sources.
 - Fixed inherited folder permission aggregation to select the highest active user share instead of an arbitrary share.
 - Added object-store integrity checks for content-addressed `blobs/{sha256}` uploads and downloads.
+- Fixed Markdown table preprocessing so backslashes no longer multiply on each save/load round-trip. Cell content is now rendered through markdown-it, preserving inline formatting and consuming escape sequences correctly.
+- Fixed Markdown table serialization so cell content is treated as inline text. This prevents unnecessary escaping of block markers such as `1.`, `-`, and `#` at the start of a table cell.
 
 ### Security
 
