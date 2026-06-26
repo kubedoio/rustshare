@@ -3,7 +3,7 @@
 Status: Accepted  
 Date: TBD  
 Owner: RustShare Core Team  
-Related: ADR-0016, ADR-0017  
+Related: ADR-0016, ADR-0017, ADR-0019  
 
 ## Context
 
@@ -26,6 +26,8 @@ When a module is enabled, users should see:
 
 The notification bell must be removed from the left sidebar and kept only in the top header.
 
+ADR-0019 adds an important clarification for the Notes module: Notes remain user-facing as **Notes**, but new Notes module documents must be OKF-compatible Markdown documents and the note title/file identity must be independent from the first Markdown H1.
+
 ## Decision
 
 RustShare WebUI will render module navigation and dashboard content from the Module Registry.
@@ -35,7 +37,7 @@ The WebUI must not hardcode module cards or sidebar module icons.
 Permanent rule:
 
 ```text
-Enabled module definitions drive sidebar, dashboard, routes, renderers, and summaries.
+Enabled module definitions drive sidebar, dashboard, routes, renderers, summaries, document format, and module-specific indexing behavior.
 ```
 
 ## Sidebar integration
@@ -125,7 +127,7 @@ Initial summary providers:
 
 | Module | Summary behavior |
 |---|---|
-| Notes | first 4 recent notes |
+| Notes | first 4 recent OKF note documents |
 | Meeting Notes | first 4 recent meeting notes |
 | Standups | today's status plus first 4 recent records |
 | Kanban | active boards plus first 4 active cards |
@@ -173,12 +175,34 @@ Every module page must have a common shell:
 
 Specialized renderers may add module-specific content.
 
+For the Notes module, the page shell title remains **Notes**, but the renderer must support OKF-backed note documents. The top-left document title inside a note must display the note/file/bundle name, not the first H1 from the Markdown body.
+
 ## WebUI definitions in module manifests
 
-Module manifests must include WebUI placement configuration:
+Module manifests must include WebUI placement configuration.
+
+The Notes module manifest must also expose document format and OKF behavior so the Admin UI can show that Notes are OKF-backed and RAG-ready.
 
 ```json
 {
+  "key": "notes",
+  "label": "Notes",
+  "description": "Write OKF-compatible, file-backed notes for durable company memory.",
+  "rootPath": "/Workspace/Notes",
+  "renderer": "okf-note",
+  "documentFormat": "okf-markdown",
+  "defaultTemplate": "template_default_okf_note",
+  "aiIndexingPolicy": {
+    "enabled": true,
+    "source": "okf-frontmatter-and-markdown",
+    "permissionAware": true
+  },
+  "okf": {
+    "enabled": true,
+    "conceptType": "Note",
+    "frontmatterRequired": true,
+    "preserveUnknownFields": true
+  },
   "ui": {
     "sidebar": {
       "enabled": true,
@@ -190,24 +214,35 @@ Module manifests must include WebUI placement configuration:
       "enabled": true,
       "order": 10,
       "cardTitle": "Notes",
-      "cardDescription": "Recent file-backed notes.",
-      "summaryMode": "recent-items",
+      "cardDescription": "Recent OKF-compatible notes for durable company memory.",
+      "summaryMode": "recent-okf-documents",
       "maxItems": 4,
       "primaryAction": {
         "label": "New Note",
         "action": "create-from-template",
-        "template": "template_default_note"
+        "template": "template_default_okf_note"
       }
     },
     "modulePage": {
       "layout": "list-grid",
       "emptyStateTitle": "No notes yet",
-      "emptyStateDescription": "Create your first file-backed note.",
+      "emptyStateDescription": "Create your first OKF-compatible note.",
       "emptyStateAction": "New Note"
     }
   }
 }
 ```
+
+## Notes document title behavior
+
+The Notes renderer must follow these rules:
+
+- The document header title displays the note/file/bundle name.
+- The title is changed only through explicit Rename note behavior.
+- The Markdown first H1 remains normal document content.
+- Changing the Markdown first H1 must not rename the note file or folder.
+- The first H1 or generated excerpt may be shown as an optional subtitle.
+- Explicit Rename note updates the note/bundle name, `_rustshare/manifest.json`, and OKF frontmatter `title`.
 
 ## Consequences
 
@@ -217,6 +252,8 @@ Module manifests must include WebUI placement configuration:
 - Enabling a module immediately changes the workspace UI.
 - Custom modules/templates can use generic renderers.
 - The dashboard becomes operational instead of storage-statistic-heavy.
+- Notes become a concrete OKF-backed module without changing the simple user-facing module name.
+- The UI stops coupling note identity to Markdown body headings.
 
 ### Trade-offs
 
@@ -224,6 +261,7 @@ Module manifests must include WebUI placement configuration:
 - Sidebar rendering must support permissions and active route state.
 - Dashboard summary providers require module-specific adapters.
 - Unknown renderers require a safe generic fallback.
+- The Notes renderer must preserve OKF frontmatter and avoid accidental title/body coupling.
 
 ## Non-goals
 
@@ -231,3 +269,5 @@ Module manifests must include WebUI placement configuration:
 - Do not keep duplicate notification bells in top header and left sidebar.
 - Do not show disabled modules in dashboard or sidebar.
 - Do not make the dashboard empty when only one module is enabled.
+- Do not rename the user-facing Notes module to “OKF Notes”.
+- Do not make H1 content control file or folder identity.
