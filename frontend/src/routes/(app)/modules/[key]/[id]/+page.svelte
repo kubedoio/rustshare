@@ -3,7 +3,15 @@
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
-	import { notesApi, renameNote, moveNote, deleteNote, duplicateNote } from '$lib/api/notes';
+	import {
+		notesApi,
+		renameNote,
+		moveNote,
+		deleteNote,
+		duplicateNote,
+		resolveConflict,
+		type ConflictResolutionStrategy
+	} from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
 	import { standupsApi } from '$lib/api/standups';
@@ -147,6 +155,9 @@
 	let showDeleteModal = $state(false);
 	let isDeleting = $state(false);
 	let isDuplicating = $state(false);
+	let isResolvingConflict = $state(false);
+	let showCustomConflictTitle = $state(false);
+	let customConflictTitle = $state('');
 	let attachments = $state<RichMarkdownAttachment[]>([]);
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
 
@@ -542,6 +553,23 @@
 		);
 	}
 
+	async function handleResolveConflict(resolution: ConflictResolutionStrategy) {
+		if (isResolvingConflict || !item) return;
+		await withToastLoading(
+			(v) => (isResolvingConflict = v),
+			() => resolveConflict(id, resolution),
+			{
+				successMessage: 'Conflict resolved',
+				errorMessage: 'Failed to resolve conflict',
+				onSuccess: () => {
+					showCustomConflictTitle = false;
+					customConflictTitle = '';
+					$query.refetch();
+				}
+			}
+		);
+	}
+
 	async function handleDeleteConfirm() {
 		if (isDeleting || !item) return;
 		await withToastLoading(
@@ -573,12 +601,41 @@
 		</div>
 	{:else if item}
 		{#if conflict}
-			<!-- TODO: wire to POST /api/v1/notes/{id}/resolve-conflict when the backend exposes it. -->
 			<div class="alert alert-warning mb-2 rounded-lg" role="alert">
 				<AlertTriangle size={18} />
 				<div class="flex-1">
 					<strong class="font-semibold">Conflict: {conflict.kind}</strong>
 					<p class="text-sm">{conflict.message}</p>
+					{#if conflict.kind === 'title_mismatch'}
+						<div class="mt-2 flex flex-wrap gap-2">
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => handleResolveConflict({ strategy: 'prefer_yaml' })}
+							>
+								Use YAML title{conflict.yaml_title ? ` (${conflict.yaml_title})` : ''}
+							</button>
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => handleResolveConflict({ strategy: 'prefer_folder' })}
+							>
+								Use folder name{conflict.folder_name ? ` (${conflict.folder_name})` : ''}
+							</button>
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => {
+									customConflictTitle = conflict.yaml_title ?? conflict.folder_name ?? '';
+									showCustomConflictTitle = true;
+								}}
+							>
+								Custom title
+							</button>
+						</div>
+					{:else if conflict.kind === 'identity_mismatch'}
+						<p class="text-sm">Identity conflict: manual file edit required.</p>
+					{/if}
 				</div>
 				<button
 					class="btn btn-ghost btn-xs"
@@ -705,6 +762,20 @@
 				itemType="file"
 				onClose={() => (showDeleteModal = false)}
 				onConfirm={handleDeleteConfirm}
+			/>
+
+			<PromptModal
+				open={showCustomConflictTitle}
+				title="Resolve conflict"
+				message="Enter a title for this note"
+				defaultValue={customConflictTitle}
+				confirmLabel="Resolve"
+				isLoading={isResolvingConflict}
+				onConfirm={(title) => handleResolveConflict({ strategy: 'custom', title })}
+				onCancel={() => {
+					showCustomConflictTitle = false;
+					customConflictTitle = '';
+				}}
 			/>
 		{/if}
 	{/if}

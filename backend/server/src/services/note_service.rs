@@ -128,6 +128,18 @@ pub enum NoteConflictResolution {
     Custom(String),
 }
 
+impl NoteConflictResolution {
+    fn validate_custom_title(title: &str) -> Result<String, NoteError> {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(NoteError::InvalidName(
+                "Custom title cannot be empty".to_string(),
+            ));
+        }
+        Ok(trimmed.to_string())
+    }
+}
+
 /// Report produced by [`NoteService::migrate_notes_to_okf`].
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteMigrationReport {
@@ -1393,7 +1405,9 @@ impl NoteService {
                     Some(file.name.trim_end_matches(".md").to_string())
                 }
             }
-            NoteConflictResolution::Custom(title) => Some(title.clone()),
+            NoteConflictResolution::Custom(title) => {
+                Some(NoteConflictResolution::validate_custom_title(title)?)
+            }
         };
 
         let title = resolved_title.ok_or_else(|| {
@@ -3091,6 +3105,25 @@ mod tests {
             let decoded: NoteConflictResolution = serde_json::from_str(&json).unwrap();
             assert_eq!(resolution, decoded);
         }
+    }
+
+    #[test]
+    fn custom_title_rejects_empty_or_whitespace() {
+        for title in ["", "   ", "\t\n"] {
+            let result = NoteConflictResolution::validate_custom_title(title);
+            assert!(
+                matches!(result, Err(NoteError::InvalidName(_))),
+                "expected InvalidName for {:?}, got {:?}",
+                title,
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn custom_title_trims_whitespace() {
+        let title = NoteConflictResolution::validate_custom_title("  My Title  ").unwrap();
+        assert_eq!(title, "My Title");
     }
 
     #[test]

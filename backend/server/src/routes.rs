@@ -186,6 +186,10 @@ pub fn note_routes() -> Router<AppState> {
             "/api/v1/notes/{id}/duplicate",
             post(crate::handlers::duplicate_note),
         )
+        .route(
+            "/api/v1/notes/{id}/resolve-conflict",
+            post(crate::handlers::resolve_conflict),
+        )
 }
 
 pub fn note_public_routes() -> Router<AppState> {

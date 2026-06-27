@@ -7373,6 +7373,78 @@
         }
       }
     },
+    "/api/v1/notes/{id}/resolve-conflict": {
+      "post": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "resolve_conflict",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Note ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveConflictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Conflict resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetNoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notes/{id}/visibility": {
       "post": {
         "tags": [
@@ -10843,6 +10915,13 @@
           "name": {
             "type": "string"
           },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "parent_folder_id": {
             "type": [
               "string",
@@ -11579,6 +11658,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "parent_folder_id": {
             "type": [
@@ -13278,6 +13364,13 @@
           "name": {
             "type": "string"
           },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "parent_folder_id": {
             "type": [
               "string",
@@ -14667,6 +14760,16 @@
           "modified_at"
         ],
         "properties": {
+          "conflict": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NoteConflict"
+              }
+            ]
+          },
           "content": {
             "type": "string"
           },
@@ -14691,6 +14794,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "owner_id": {
             "type": "string",
@@ -14738,6 +14848,54 @@
           }
         }
       },
+      "NoteConflict": {
+        "type": "object",
+        "description": "A reconciliation conflict detected between the YAML frontmatter, sidecar,\nand bundle folder name of an OKF-native note.",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "folder_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "manifest_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "sidecar_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "yaml_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "yaml_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "NoteMetadata": {
         "type": "object",
         "description": "Note-specific metadata sidecar schema.",
@@ -14752,6 +14910,19 @@
           "extension"
         ],
         "properties": {
+          "acl_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acl_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "attachments": {
             "type": "array",
             "items": {
@@ -14762,6 +14933,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "conflict": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NoteConflict"
+              }
             ]
           },
           "created_at": {
@@ -14785,6 +14966,13 @@
           },
           "mime_type": {
             "type": "string"
+          },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "pinned": {
             "type": [
@@ -14852,6 +15040,16 @@
             "type": "integer",
             "format": "int64"
           },
+          "conflict": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NoteConflict"
+              }
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -14881,6 +15079,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "okf_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "owner_id": {
             "type": "string",
@@ -15836,6 +16041,56 @@
             "format": "date-time"
           }
         }
+      },
+      "ResolveConflictRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "prefer_yaml"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "prefer_folder"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "title",
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "type": "string",
+                "enum": [
+                  "custom"
+                ]
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       },
       "ResourceType": {
         "type": "string",

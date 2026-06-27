@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::handlers::AppError;
+use crate::handlers::{AppError, ValidatedJson};
 use crate::services::note_service::{NoteAttachment, NoteSummary, NoteVisibility};
 use crate::AppState;
 
@@ -520,6 +520,77 @@ pub async fn duplicate_note(
 }
 
 // ============================================================================
+// Resolve Conflict
+// ============================================================================
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case", tag = "strategy")]
+pub enum ResolveConflictRequest {
+    PreferYaml,
+    PreferFolder,
+    Custom { title: String },
+}
+
+impl validator::Validate for ResolveConflictRequest {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        Ok(())
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/notes/{id}/resolve-conflict",
+    tag = "Notes",
+    params(("id" = Uuid, Path, description = "Note ID")),
+    request_body = ResolveConflictRequest,
+    responses(
+        (status = 200, description = "Conflict resolved", body = GetNoteResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn resolve_conflict(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(note_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ResolveConflictRequest>,
+) -> Result<Json<GetNoteResponse>, AppError> {
+    use crate::services::note_service::NoteConflictResolution;
+
+    let resolution = match req {
+        ResolveConflictRequest::PreferYaml => NoteConflictResolution::PreferYaml,
+        ResolveConflictRequest::PreferFolder => NoteConflictResolution::PreferFolder,
+        ResolveConflictRequest::Custom { title } => NoteConflictResolution::Custom(title),
+    };
+
+    let note = state
+        .note_service
+        .resolve_note_conflict(note_id, auth.user_id, auth.tenant_id, resolution)
+        .await?;
+
+    let public_url = note
+        .metadata
+        .public_share_id
+        .as_ref()
+        .map(|id| format!("{}/p/note/{}", state.public_base_url, id));
+
+    Ok(Json(GetNoteResponse {
+        id: note.id,
+        okf_id: note.okf_id,
+        name: note.name,
+        path: note.path,
+        content: note.content,
+        metadata: note.metadata,
+        parent_folder_id: note.parent_folder_id,
+        current_version: note.current_version,
+        created_at: note.created_at.to_rfc3339(),
+        modified_at: note.modified_at.to_rfc3339(),
+        public_url,
+    }))
+}
+
+// ============================================================================
 // Public Note
 // ============================================================================
 
@@ -560,3 +631,67 @@ pub async fn get_public_note(
 
 // Need Query import for list_notes
 use axum::extract::Query;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request, routing::post, Router};
+    use tower::ServiceExt;
+
+    #[test]
+    fn resolve_conflict_request_deserializes() {
+        let json = r#"{"strategy":"prefer_yaml"}"#;
+        let req: ResolveConflictRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ResolveConflictRequest::PreferYaml));
+
+        let json = r#"{"strategy":"custom","title":"My Title"}"#;
+        let req: ResolveConflictRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ResolveConflictRequest::Custom { title } if title == "My Title"));
+    }
+
+    #[tokio::test]
+    async fn resolve_conflict_valid_body_returns_200() {
+        async fn handler(ValidatedJson(_req): ValidatedJson<ResolveConflictRequest>) -> StatusCode {
+            StatusCode::OK
+        }
+
+        let app = Router::new().route("/resolve-conflict", post(handler));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/resolve-conflict")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"strategy":"prefer_yaml"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn resolve_conflict_invalid_body_returns_400() {
+        async fn handler(ValidatedJson(_req): ValidatedJson<ResolveConflictRequest>) -> StatusCode {
+            StatusCode::OK
+        }
+
+        let app = Router::new().route("/resolve-conflict", post(handler));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/resolve-conflict")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"strategy":"custom"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}

@@ -1,6 +1,11 @@
 import { apiClient } from './client';
 import type { Note, NoteMetadata, NoteSummary, NoteAttachment } from './types';
 
+export type ConflictResolutionStrategy =
+	| { strategy: 'prefer_yaml' }
+	| { strategy: 'prefer_folder' }
+	| { strategy: 'custom'; title: string };
+
 export interface CreateNoteRequest {
 	title?: string;
 	parent_folder_id?: string | null;
@@ -89,6 +94,13 @@ export async function deleteNote(noteId: string): Promise<void> {
 
 export async function duplicateNote(noteId: string): Promise<CreateNoteResponse> {
 	return apiClient.post<CreateNoteResponse>(`/notes/${noteId}/duplicate`);
+}
+
+export async function resolveConflict(
+	noteId: string,
+	resolution: ConflictResolutionStrategy
+): Promise<Note> {
+	return apiClient.post<Note>(`/notes/${noteId}/resolve-conflict`, resolution);
 }
 
 export async function listNotes(limit?: number): Promise<NoteSummary[]> {
