@@ -300,6 +300,7 @@ async fn init_services(
                     Arc::clone(&folder_service),
                     Arc::clone(&metadata_store),
                     Arc::clone(&object_store),
+                    Arc::clone(&permission_resolver),
                 )
                 .with_index_sink(note_index_sink),
             )

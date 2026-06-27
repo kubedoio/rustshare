@@ -135,6 +135,38 @@ impl PermissionResolverOps for MockPermissionOps {
     ) -> anyhow::Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
+
+    async fn find_all_user_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_user_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
 }
 
 fn search_result(id: Uuid, name: &str, owner_id: Uuid) -> SearchResult {

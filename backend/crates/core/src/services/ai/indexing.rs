@@ -58,7 +58,7 @@ pub struct NoteAclPayload {
 pub struct AclSearchFilter {
     pub tenant_id: Uuid,
     pub caller_user_id: Uuid,
-    pub caller_groups: Vec<String>,
+    pub caller_group_ids: Vec<Uuid>,
     /// note_id -> minimum accepted acl_version.
     pub min_acl_versions: HashMap<Uuid, i64>,
 }
@@ -535,13 +535,15 @@ pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
     }
 
     // Group membership match.
-    if !filter.caller_groups.is_empty()
-        && acl
-            .read_acl
+    if !filter.caller_group_ids.is_empty() {
+        let group_principals: Vec<String> = filter
+            .caller_group_ids
             .iter()
-            .any(|p| filter.caller_groups.contains(p))
-    {
-        return true;
+            .map(|id| format!("group:{id}"))
+            .collect();
+        if acl.read_acl.iter().any(|p| group_principals.contains(p)) {
+            return true;
+        }
     }
 
     // Public visibility match.
@@ -862,7 +864,7 @@ mod tests {
         let filter = AclSearchFilter {
             tenant_id: tenant_a,
             caller_user_id: owner_id,
-            caller_groups: vec![],
+            caller_group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&filter, "content", 10).await;
@@ -899,7 +901,7 @@ mod tests {
         let filter = AclSearchFilter {
             tenant_id,
             caller_user_id: stranger_id,
-            caller_groups: vec![],
+            caller_group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&filter, "private", 10).await;
@@ -909,7 +911,7 @@ mod tests {
         let owner_filter = AclSearchFilter {
             tenant_id,
             caller_user_id: owner_id,
-            caller_groups: vec![],
+            caller_group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&owner_filter, "private", 10).await;
@@ -950,10 +952,11 @@ mod tests {
         let mut min_acl_versions = HashMap::new();
         min_acl_versions.insert(note_id, 2);
 
+        let engineering_id = Uuid::new_v4();
         let filter = AclSearchFilter {
             tenant_id,
             caller_user_id: owner_id,
-            caller_groups: vec!["engineering".to_string()],
+            caller_group_ids: vec![engineering_id],
             min_acl_versions,
         };
         let results = indexer.search_with_acl(&filter, "engineering", 10).await;
@@ -988,7 +991,8 @@ mod tests {
         let mut new_acl = make_acl_payload(
             tenant_id, note_id, file_id, owner_id, "public", "allowed", 2,
         );
-        new_acl.read_acl = vec!["group_engineering".to_string()];
+        let engineering_id = Uuid::new_v4();
+        new_acl.read_acl = vec![format!("group:{engineering_id}")];
 
         let updated = indexer
             .update_note_acl(tenant_id, note_id, new_acl.clone())
@@ -999,7 +1003,7 @@ mod tests {
         let stored = doc.acl.unwrap();
         assert_eq!(stored.visibility, "public");
         assert_eq!(stored.acl_version, 2);
-        assert_eq!(stored.read_acl, vec!["group_engineering".to_string()]);
+        assert_eq!(stored.read_acl, vec![format!("group:{engineering_id}")]);
     }
 
     #[tokio::test]

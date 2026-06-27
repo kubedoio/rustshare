@@ -173,6 +173,112 @@ impl PermissionResolverOps for PermissionResolverRepository {
 
         Ok(group_ids)
     }
+
+    async fn find_all_user_shares_for_file(
+        &self,
+        file_id: FileId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        let shares = sqlx::query_as!(
+            Share,
+            r#"
+            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
+                   created_by, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE file_id = $1
+              AND folder_id IS NULL
+              AND recipient_user_id IS NOT NULL
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+            file_id,
+            tenant_id
+        )
+        .fetch_all(&self.share_repo.pool)
+        .await?;
+        Ok(shares)
+    }
+
+    async fn find_all_group_shares_for_file(
+        &self,
+        file_id: FileId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        let shares = sqlx::query_as!(
+            Share,
+            r#"
+            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
+                   created_by, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE file_id = $1
+              AND folder_id IS NULL
+              AND recipient_group_id IS NOT NULL
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+            file_id,
+            tenant_id
+        )
+        .fetch_all(&self.share_repo.pool)
+        .await?;
+        Ok(shares)
+    }
+
+    async fn find_all_user_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        let shares = sqlx::query_as!(
+            Share,
+            r#"
+            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
+                   created_by, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE folder_id = ANY($1)
+              AND recipient_user_id IS NOT NULL
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+            folder_ids,
+            tenant_id
+        )
+        .fetch_all(&self.share_repo.pool)
+        .await?;
+        Ok(shares)
+    }
+
+    async fn find_all_group_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        let shares = sqlx::query_as!(
+            Share,
+            r#"
+            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
+                   created_by, created_at, revoked_at, tenant_id
+            FROM shares
+            WHERE folder_id = ANY($1)
+              AND recipient_group_id IS NOT NULL
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+            folder_ids,
+            tenant_id
+        )
+        .fetch_all(&self.share_repo.pool)
+        .await?;
+        Ok(shares)
+    }
 }
 
 #[cfg(test)]

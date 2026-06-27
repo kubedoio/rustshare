@@ -139,11 +139,15 @@ impl TestContext {
     pub fn note_service(&self) -> NoteService {
         let file_service = Arc::new(self.file_service());
         let folder_service = Arc::new(self.folder_service());
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(self.pool.clone()),
+        )));
         NoteService::new(
             file_service,
             folder_service,
             self.metadata_store.clone(),
             self.object_store.clone(),
+            permission_resolver,
         )
     }
 

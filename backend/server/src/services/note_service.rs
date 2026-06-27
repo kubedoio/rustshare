@@ -13,7 +13,7 @@ use rustshare_core::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, split_frontmatter,
         to_document, OkfNoteFrontmatter, RustshareFrontmatter,
     },
-    services::{FileService, FolderService, NoteAclPayload},
+    services::{FileService, FolderService, NoteAclPayload, PermissionResolver},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
@@ -278,6 +278,7 @@ pub struct NoteService {
     >,
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
+    permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     pub workspace_name: String,
     pub folder_name: String,
     index_sink: Option<Arc<dyn NoteIndexSink>>,
@@ -302,12 +303,14 @@ impl NoteService {
         >,
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
+        permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     ) -> Self {
         Self {
             file_service,
             folder_service,
             metadata_store,
             object_store,
+            permission_resolver,
             workspace_name: "Workspace".to_string(),
             folder_name: "Notes".to_string(),
             index_sink: None,
@@ -688,15 +691,24 @@ impl NoteService {
         }
     }
 
+    /// Resolve every principal that has read access to a note.
+    pub async fn resolve_note_read_principals(
+        &self,
+        file: &rustshare_core::domain::File,
+        tenant_id: Uuid,
+    ) -> Result<Vec<String>, NoteError> {
+        self.permission_resolver
+            .resolve_read_principals(file, tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(format!("Failed to resolve ACL principals: {e}")))
+    }
+
     /// Build the ACL payload used by the AI content indexer.
-    ///
-    /// TODO(#118): `read_acl` currently only contains the owner principal. It
-    /// must be populated from the real permission resolver once group/sharing
-    /// integration is in place.
     pub fn build_acl_payload(
         file: &rustshare_core::domain::File,
         meta: &NoteMetadata,
         tenant_id: Uuid,
+        read_acl: Vec<String>,
     ) -> NoteAclPayload {
         NoteAclPayload {
             tenant_id,
@@ -705,7 +717,7 @@ impl NoteService {
             source_file_id: file.id,
             source_folder_id: file.parent_folder_id,
             owner_id: file.owner_id,
-            read_acl: vec![format!("owner:{}", file.owner_id)],
+            read_acl,
             visibility: meta.visibility.as_str().to_string(),
             acl_hash: meta.acl_hash.clone().unwrap_or_default(),
             acl_version: meta.acl_version.unwrap_or(1),
@@ -721,7 +733,14 @@ impl NoteService {
         tenant_id: Uuid,
     ) {
         if let Some(sink) = &self.index_sink {
-            let acl = Self::build_acl_payload(file, meta, tenant_id);
+            let read_acl = match self.resolve_note_read_principals(file, tenant_id).await {
+                Ok(acl) => acl,
+                Err(e) => {
+                    tracing::warn!("Failed to resolve ACL principals for {}: {}", file.id, e);
+                    return;
+                }
+            };
+            let acl = Self::build_acl_payload(file, meta, tenant_id, read_acl);
             sink.index_note(
                 file.id,
                 file.name.clone(),
@@ -3225,7 +3244,12 @@ mod tests {
         meta.acl_version = Some(3);
         meta.visibility = NoteVisibility::Public;
 
-        let acl = NoteService::build_acl_payload(&file, &meta, tenant_id);
+        let acl = NoteService::build_acl_payload(
+            &file,
+            &meta,
+            tenant_id,
+            vec![format!("owner:{owner_id}")],
+        );
 
         assert_eq!(acl.tenant_id, tenant_id);
         assert_eq!(acl.workspace_id, tenant_id);
@@ -3238,5 +3262,41 @@ mod tests {
         assert_eq!(acl.visibility, "public");
         assert_eq!(acl.embedding_policy, "allowed");
         assert_eq!(acl.read_acl, vec![format!("owner:{}", owner_id)]);
+    }
+
+    #[test]
+    fn build_acl_payload_includes_shared_user_principal() {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let okf_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+
+        let file = rustshare_core::domain::File::new(
+            "note.md".to_string(),
+            "/Workspace/Notes/Test/note.md".to_string(),
+            "hash".to_string(),
+            100,
+            "text/markdown".to_string(),
+            Some(parent_id),
+            owner_id,
+            tenant_id,
+        );
+
+        let mut meta = NoteMetadata::new("Test Note");
+        meta.okf_id = Some(okf_id);
+        meta.acl_hash = Some("test-hash".to_string());
+        meta.acl_version = Some(3);
+        meta.visibility = NoteVisibility::Public;
+
+        let acl = NoteService::build_acl_payload(
+            &file,
+            &meta,
+            tenant_id,
+            vec![format!("owner:{owner_id}"), format!("user:{user_id}")],
+        );
+
+        assert!(acl.read_acl.contains(&format!("owner:{owner_id}")));
+        assert!(acl.read_acl.contains(&format!("user:{user_id}")));
     }
 }

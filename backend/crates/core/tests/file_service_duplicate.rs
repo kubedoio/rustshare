@@ -305,6 +305,38 @@ impl PermissionResolverOps for MockPermissionOps {
     async fn get_user_group_ids(&self, _user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
+
+    async fn find_all_user_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_user_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
 }
 
 #[tokio::test]
@@ -557,6 +589,38 @@ impl PermissionResolverOps for SharedFolderPermissionOps {
     }
 
     async fn get_user_group_ids(&self, _user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_user_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_user_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> Result<Vec<Share>> {
         Ok(Vec::new())
     }
 }

@@ -638,6 +638,38 @@ mod tests {
         ) -> anyhow::Result<Vec<Uuid>> {
             Ok(Vec::new())
         }
+
+        async fn find_all_user_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<crate::domain::Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_group_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<crate::domain::Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_user_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<crate::domain::Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_group_shares_for_folders(
+            &self,
+            _folder_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<crate::domain::Share>> {
+            Ok(Vec::new())
+        }
     }
 
     fn create_test_service() -> AiService<SimpleEmbeddingGenerator, MockPermissionOps> {
@@ -828,6 +860,78 @@ mod tests {
             _tenant_id: Uuid,
         ) -> anyhow::Result<Vec<Uuid>> {
             Ok(Vec::new())
+        }
+
+        async fn find_all_user_shares_for_file(
+            &self,
+            file_id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == Some(file_id)
+                        && s.folder_id.is_none()
+                        && s.recipient_user_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_group_shares_for_file(
+            &self,
+            file_id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == Some(file_id)
+                        && s.folder_id.is_none()
+                        && s.recipient_group_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_user_shares_for_folders(
+            &self,
+            folder_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
+                        && s.recipient_user_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_group_shares_for_folders(
+            &self,
+            folder_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<Vec<Share>> {
+            let shares = self.shares.lock().unwrap();
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
+                        && s.recipient_group_id.is_some()
+                })
+                .cloned()
+                .collect())
         }
     }
 
