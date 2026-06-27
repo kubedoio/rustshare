@@ -11,7 +11,7 @@
 	import { getFolderContents } from '$lib/api/folders';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto, beforeNavigate } from '$app/navigation';
-	import { Folder, Share2, Pencil } from 'lucide-svelte';
+	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -26,9 +26,11 @@
 		restoreRelativePaths,
 		generateUniqueFilename
 	} from '$lib/editor/adapter/attachments';
+	import { extractH1, splitFrontmatter } from '$lib/editor/adapter/frontmatter';
 	import type {
 		NoteAttachment,
 		NoteMetadata,
+		NoteConflict,
 		Folder as ApiFolder,
 		File as ApiFile
 	} from '$lib/api/types';
@@ -66,9 +68,11 @@
 			attachments?: NoteAttachment[];
 			date?: string;
 			attendees?: string[];
+			conflict?: NoteConflict | null;
 		};
 		modified_at?: string;
 		parent_folder_id?: string | null;
+		conflict?: NoteConflict | null;
 	}
 
 	let key = $derived(($page.params.key || '') as string);
@@ -94,10 +98,19 @@
 		});
 	});
 
+	let dismissedConflict = $state(false);
+
 	let item = $derived($query.data as ModuleItem | undefined);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
-	let subtitle = $derived(key === 'notes' ? item?.metadata?.excerpt || '' : '');
+	let subtitle = $derived.by(() => {
+		if (key !== 'notes') return '';
+		const body = splitFrontmatter(item?.content ?? '').body;
+		return extractH1(body) || item?.metadata?.excerpt || '';
+	});
+	let conflict = $derived(
+		(key === 'notes' && !dismissedConflict && (item?.metadata?.conflict || item?.conflict)) || null
+	);
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
@@ -115,6 +128,14 @@
 		// Initialize mode based on module key when it changes
 		untrack(() => {
 			mode = key === 'notes' ? 'edit' : 'read';
+		});
+	});
+
+	$effect(() => {
+		// Reset dismissed conflict state when the note identity changes
+		void id;
+		untrack(() => {
+			dismissedConflict = false;
 		});
 	});
 	let showShareModal = $state(false);
@@ -551,6 +572,24 @@
 			<button class="btn mt-4 btn-ghost" onclick={() => $query.refetch()}>Retry</button>
 		</div>
 	{:else if item}
+		{#if conflict}
+			<!-- TODO: wire to POST /api/v1/notes/{id}/resolve-conflict when the backend exposes it. -->
+			<div class="alert alert-warning mb-2 rounded-lg" role="alert">
+				<AlertTriangle size={18} />
+				<div class="flex-1">
+					<strong class="font-semibold">Conflict: {conflict.kind}</strong>
+					<p class="text-sm">{conflict.message}</p>
+				</div>
+				<button
+					class="btn btn-ghost btn-xs"
+					onclick={() => (dismissedConflict = true)}
+					aria-label="Dismiss conflict warning"
+				>
+					<X size={14} />
+				</button>
+			</div>
+		{/if}
+
 		<MarkdownDocumentPage
 			bind:this={documentPage}
 			{title}

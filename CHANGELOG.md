@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added operational runbooks for backup/restore and security incidents.
 - Added production-readiness documentation (`docs/PRODUCTION_READINESS.md`) summarizing completed workstreams, residual risks, and operator checklists.
 - Implemented a functional admin SMTP test action. `POST /api/v1/admin/config/smtp/test` now sends a real test email to the acting admin's address using the stored SMTP configuration, replacing the previous `501 Not Implemented` stub.
+- Added `rustshare migrate-notes-okf` CLI binary for safely migrating legacy Markdown notes to OKF-native notes. The command plans frontmatter injection/merging, manifest creation, and visible sidecar updates, supports `--dry-run` and `--format json|text`, and is idempotent.
+- Added ACL-aware indexing contract for OKF notes. Indexed note chunks now carry `NoteAclPayload` (tenant, workspace, note id, source file/folder ids, owner, read ACL, visibility, ACL hash/version, embedding policy). `ContentIndexer` supports `index_note`, `search_with_acl`, `update_note_acl`, and `remove_note_chunks`. `NoteService` emits indexing callbacks through an optional `NoteIndexSink`, wired to the shared `ContentIndexer` when AI is enabled. `read_acl` currently contains an owner placeholder pending real permission-resolver integration.
 
 ### Changed
 

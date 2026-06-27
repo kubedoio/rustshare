@@ -15,7 +15,8 @@ pub type Embedding = Vec<f32>;
 /// Trait for generating embeddings from text.
 ///
 /// Implementations can range from simple TF-IDF to neural network-based embeddings.
-#[allow(async_fn_in_trait)]
+/// The returned future is required to be `Send` so it can be used across await
+/// points in multi-threaded runtimes and trait-object callbacks.
 pub trait EmbeddingGenerator: Send + Sync {
     /// Generate an embedding for the given text.
     ///
@@ -24,7 +25,7 @@ pub trait EmbeddingGenerator: Send + Sync {
     ///
     /// # Returns
     /// A normalized embedding vector
-    async fn generate(&self, text: &str) -> Embedding;
+    fn generate(&self, text: &str) -> impl std::future::Future<Output = Embedding> + Send;
 
     /// Compute cosine similarity between two embeddings.
     ///

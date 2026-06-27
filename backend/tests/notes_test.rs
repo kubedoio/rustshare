@@ -8,7 +8,9 @@ use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_server::services::module_service::ModuleService;
-use rustshare_server::services::note_service::{NoteError, NoteService, NoteVisibility};
+use rustshare_server::services::note_service::{
+    NoteConflictResolution, NoteError, NoteService, NoteVisibility,
+};
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -175,7 +177,11 @@ async fn contract_create_note_creates_markdown_file_and_metadata_sidecar() {
 
     // 1. Markdown file created
     assert!(note.name.ends_with(".md"));
-    assert_eq!(note.content, "# Hello");
+    assert!(note.content.starts_with("---\n"));
+    assert!(note.content.contains("type: Note"));
+    assert!(note.content.contains("rustshare:\n"));
+    assert!(note.content.contains("id: "));
+    assert!(note.content.contains("# Architecture Ideas"));
 
     // 2. Metadata sidecar exists with kind=note and private visibility
     assert_eq!(note.metadata.kind, "note");
@@ -183,8 +189,15 @@ async fn contract_create_note_creates_markdown_file_and_metadata_sidecar() {
     assert_eq!(note.metadata.title, "Architecture Ideas");
     assert!(note.metadata.public_share_id.is_none());
 
-    // 3. Excerpt derived from content
-    assert!(note.metadata.excerpt.contains("Hello"));
+    // 3. OKF identity
+    let okf_id = note.metadata.okf_id.expect("okf_id should be set");
+    assert!(!okf_id.is_nil());
+    assert_eq!(note.okf_id, Some(okf_id));
+    assert!(note.metadata.acl_hash.is_some());
+    assert_eq!(note.metadata.acl_version, Some(1));
+
+    // 4. Excerpt derived from body
+    assert!(note.metadata.excerpt.contains("Architecture Ideas"));
 
     cleanup_user(&pool, user.id).await;
 }
@@ -279,7 +292,9 @@ async fn contract_read_note_returns_content_and_metadata_unified() {
         .await
         .unwrap();
     assert_eq!(note.id, created.id);
-    assert_eq!(note.content, "body");
+    assert!(note.content.starts_with("---\n"));
+    assert!(note.content.contains("body"));
+    assert!(note.content.contains("title: Read Test"));
     assert_eq!(note.metadata.title, "Read Test");
 
     cleanup_user(&pool, user.id).await;
@@ -318,7 +333,8 @@ async fn contract_save_note_updates_content_excerpt_and_updated_at() {
         .await
         .unwrap();
 
-    assert_eq!(saved.content, "new content");
+    assert!(saved.content.starts_with("---\n"));
+    assert!(saved.content.contains("new content"));
     assert!(saved.metadata.updated_at > old_updated_at);
     assert_eq!(saved.metadata.excerpt, "new content");
 
@@ -489,7 +505,7 @@ async fn contract_toggle_visibility_private_to_public_generates_share_id_and_url
     // Public route readable anonymously
     let anon = service.get_public_note(&share_id).await.unwrap();
     assert_eq!(anon.title, "Public Test");
-    assert_eq!(anon.content, "secret");
+    assert!(anon.content.contains("secret"));
 
     cleanup_user(&pool, user.id).await;
 }
@@ -643,7 +659,7 @@ async fn contract_create_note_creates_bundle_structure() {
 
 #[tokio::test]
 #[ignore] // Requires database and S3
-async fn contract_save_note_renames_bundle_folder_on_h1_change() {
+async fn contract_save_note_does_not_rename_bundle_folder_on_h1_change() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
     let user = create_test_user(&metadata_store, "note_bundle_user_2", tenant_id).await;
@@ -661,6 +677,12 @@ async fn contract_save_note_renames_bundle_folder_on_h1_change() {
         .unwrap();
 
     let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+    let original_folder_name = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .expect("bundle folder should exist")
+        .name;
 
     let saved = service
         .save_note(
@@ -677,13 +699,17 @@ async fn contract_save_note_renames_bundle_folder_on_h1_change() {
     // File name should still be note.md
     assert_eq!(saved.name, "note.md");
 
-    // Bundle folder should be renamed to the new H1 title
+    // ADR-0029: changing H1 must NOT rename the bundle folder.
     let bundle_folder = metadata_store
         .find_folder_by_id(bundle_folder_id, user.id)
         .await
         .unwrap()
         .expect("bundle folder should exist");
-    assert_eq!(bundle_folder.name, "New Title");
+    assert_eq!(bundle_folder.name, original_folder_name);
+
+    // Frontmatter title and bundle_name should still reflect the original title.
+    assert!(saved.content.contains("title: Original Title"));
+    assert!(saved.content.contains("bundle_name: Original Title"));
 
     cleanup_user(&pool, user.id).await;
 }
@@ -921,7 +947,8 @@ async fn contract_standalone_md_still_works() {
     assert_eq!(found.drawing_count, 0);
     assert_eq!(found.export_count, 0);
 
-    // save_note should work (plain content update, no H1 rename)
+    // save_note should work (plain content update, no H1 rename).
+    // Legacy notes without frontmatter get OKF frontmatter merged in.
     let saved = service
         .save_note(
             standalone.id,
@@ -933,7 +960,9 @@ async fn contract_standalone_md_still_works() {
         )
         .await
         .unwrap();
-    assert_eq!(saved.content, "updated standalone");
+    assert!(saved.content.starts_with("---\n"));
+    assert!(saved.content.contains("updated standalone"));
+    assert!(saved.content.contains("type: Note"));
 
     // delete_note should work (file deleted, no folder cascade)
     service
@@ -1055,6 +1084,116 @@ async fn contract_custom_workspace_and_folder_paths() {
 
     cleanup_user(&pool, user.id).await;
 }
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_rename_note_preserves_okf_id_and_updates_frontmatter() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_rename_okf_user", tenant_id).await;
+    let service = create_note_service(
+        event_store,
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let original_okf_id = note.okf_id.expect("okf_id should be set");
+    let bundle_folder_id = note.parent_folder_id.expect("should have parent folder");
+
+    let renamed = service
+        .rename_note(note.id, user.id, tenant_id, "Renamed Title".to_string())
+        .await
+        .unwrap();
+
+    // rustshare.id is preserved.
+    assert_eq!(renamed.okf_id, Some(original_okf_id));
+    assert_eq!(renamed.metadata.okf_id, Some(original_okf_id));
+
+    // Parent bundle folder renamed.
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .expect("bundle folder should exist");
+    assert!(bundle_folder.name.contains("Renamed Title"));
+
+    // Sidecar title updated.
+    assert_eq!(renamed.metadata.title, "Renamed Title");
+
+    // note.md frontmatter updated.
+    assert!(renamed.content.contains("title: Renamed Title"));
+    assert!(renamed.content.contains("bundle_name: Renamed Title"));
+    assert!(renamed.content.contains(&format!("id: {original_okf_id}")));
+
+    // Manifest title updated.
+    let rustshare_folder = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|f| f.name == "_rustshare")
+        .expect("_rustshare folder should exist");
+    let manifest_file = metadata_store
+        .list_files(Some(rustshare_folder.id), user.id, tenant_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|f| f.name == "manifest.json")
+        .expect("manifest.json should exist");
+    let manifest_bytes = object_store
+        .get(&manifest_file.storage_key())
+        .await
+        .unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert_eq!(manifest["title"], "Renamed Title");
+    assert_eq!(manifest["rustshare_id"], original_okf_id.to_string());
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_duplicate_note_generates_new_okf_id() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_dup_okf_user", tenant_id).await;
+    let service = create_note_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(user.id, tenant_id, Some("Original".to_string()), None, None)
+        .await
+        .unwrap();
+
+    let original_okf_id = note.okf_id.expect("okf_id should be set");
+
+    let duplicated = service
+        .duplicate_note(note.id, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    assert_ne!(duplicated.id, note.id);
+    let duplicated_okf_id = duplicated.okf_id.expect("duplicated okf_id should be set");
+    assert!(!duplicated_okf_id.is_nil());
+    assert_ne!(duplicated_okf_id, original_okf_id);
+    assert!(duplicated
+        .content
+        .contains(&format!("id: {duplicated_okf_id}")));
+
+    cleanup_user(&pool, user.id).await;
+}
+
 // LB-02: Negative tenant/permission contract tests
 
 #[tokio::test]
@@ -1770,6 +1909,954 @@ async fn contract_note_attachment_duplicate_overwrites() {
     );
     assert_eq!(second.current_version, first.current_version + 1);
     assert_eq!(second.size, 6); // "second" length
+
+    cleanup_user(&pool, user.id).await;
+}
+
+// ============================================================================
+// OKF-native reconciliation tests
+// ============================================================================
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_external_yaml_title_updates_manifest_and_folder() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_yaml_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store,
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+
+    // Simulate external edit: rewrite note.md with a new title but same OKF id.
+    let okf_id = note.okf_id.unwrap();
+    let edited_doc = format!(
+        "---\n\
+         type: Note\n\
+         title: YAML Edited Title\n\
+         rustshare:\n\
+           id: {okf_id}\n\
+           module: notes\n\
+           bundle_name: YAML Edited Title\n\
+         ---\n\
+         # YAML Edited Title\n\n\
+         body"
+    );
+    file_service
+        .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
+        .await
+        .unwrap();
+
+    // Reconcile on read.
+    let reconciled = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+
+    assert_eq!(reconciled.metadata.title, "YAML Edited Title");
+    assert!(reconciled.conflict.is_none());
+    assert!(reconciled.content.contains("title: YAML Edited Title"));
+
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .expect("bundle folder should exist");
+    assert!(
+        bundle_folder.name.contains("YAML Edited Title"),
+        "folder should be renamed from YAML title, got: {}",
+        bundle_folder.name
+    );
+
+    // Manifest title updated.
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let rustshare_folder = subfolders.iter().find(|f| f.name == "_rustshare").unwrap();
+    let manifest_files = metadata_store
+        .list_files(Some(rustshare_folder.id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let manifest_file = manifest_files
+        .into_iter()
+        .find(|f| f.name == "manifest.json")
+        .expect("manifest.json should exist");
+    let manifest_bytes = object_store
+        .get(&manifest_file.storage_key())
+        .await
+        .unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert_eq!(manifest["title"], "YAML Edited Title");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_external_folder_rename_updates_yaml_and_manifest() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_folder_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+
+    // Simulate external folder rename.
+    folder_service
+        .rename_folder(
+            bundle_folder_id,
+            "Folder Renamed Externally".to_string(),
+            user.id,
+        )
+        .await
+        .unwrap();
+
+    let reconciled = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+
+    assert_eq!(reconciled.metadata.title, "Folder Renamed Externally");
+    assert!(reconciled.conflict.is_none());
+    assert!(reconciled
+        .content
+        .contains("title: Folder Renamed Externally"));
+    assert!(reconciled
+        .content
+        .contains("bundle_name: Folder Renamed Externally"));
+
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_folder_id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let rustshare_folder = subfolders.iter().find(|f| f.name == "_rustshare").unwrap();
+    let manifest_files = metadata_store
+        .list_files(Some(rustshare_folder.id), user.id, tenant_id)
+        .await
+        .unwrap();
+    let manifest_file = manifest_files
+        .into_iter()
+        .find(|f| f.name == "manifest.json")
+        .expect("manifest.json should exist");
+    let manifest_bytes = object_store
+        .get(&manifest_file.storage_key())
+        .await
+        .unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert_eq!(manifest["title"], "Folder Renamed Externally");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_both_title_and_folder_changed_creates_conflict() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_conflict_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let okf_id = note.okf_id.unwrap();
+
+    // External YAML title edit.
+    let edited_doc = format!(
+        "---\n\
+         type: Note\n\
+         title: YAML Title\n\
+         rustshare:\n\
+           id: {okf_id}\n\
+           module: notes\n\
+           bundle_name: YAML Title\n\
+         ---\n\
+         # YAML Title\n\n\
+         body"
+    );
+    file_service
+        .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
+        .await
+        .unwrap();
+
+    // External folder rename to something different.
+    folder_service
+        .rename_folder(bundle_folder_id, "Folder Name".to_string(), user.id)
+        .await
+        .unwrap();
+
+    let reconciled = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+
+    let conflict = reconciled
+        .conflict
+        .expect("should have a title_mismatch conflict");
+    assert_eq!(conflict.kind, "title_mismatch");
+    assert_eq!(conflict.yaml_title, Some("YAML Title".to_string()));
+    assert_eq!(conflict.folder_name, Some("Folder Name".to_string()));
+
+    // Neither YAML nor folder should be overwritten by the other.
+    assert!(reconciled.content.contains("title: YAML Title"));
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(bundle_folder.name, "Folder Name");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_missing_okf_id_generates_and_persists_id() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_id_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    // Create a setup note to ensure /Workspace/Notes exists.
+    let setup = service
+        .create_note(user.id, tenant_id, Some("Setup".to_string()), None, None)
+        .await
+        .unwrap();
+    let bundle_folder = metadata_store
+        .find_folder_by_id(setup.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let notes_folder = metadata_store
+        .find_folder_by_id(bundle_folder.parent_folder_id.unwrap(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Upload a standalone markdown file without rustshare.id.
+    let standalone = file_service
+        .upload_file(
+            user.id,
+            "no-id.md".to_string(),
+            Some(notes_folder.id),
+            Bytes::from("---\ntype: Note\ntitle: No Id Note\n---\n# No Id Note\n"),
+            "text/markdown".to_string(),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let reconciled = service
+        .get_note(standalone.id, user.id, tenant_id)
+        .await
+        .unwrap();
+
+    let okf_id = reconciled
+        .okf_id
+        .expect("missing okf_id should be generated");
+    assert!(!okf_id.is_nil());
+    assert!(reconciled.content.contains(&format!("id: {okf_id}")));
+
+    // A sidecar should now exist with the generated id.
+    assert_eq!(reconciled.metadata.okf_id, Some(okf_id));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_preserves_unknown_frontmatter_fields() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_preserve_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let okf_id = note.okf_id.unwrap();
+    let edited_doc = format!(
+        "---\n\
+         type: Note\n\
+         title: Original Title\n\
+         custom_field: preserved_value\n\
+         rustshare:\n\
+           id: {okf_id}\n\
+           module: notes\n\
+           custom_nested: also_preserved\n\
+         ---\n\
+         body"
+    );
+    file_service
+        .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
+        .await
+        .unwrap();
+
+    let reconciled = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+
+    assert!(reconciled.content.contains("custom_field: preserved_value"));
+    assert!(reconciled.content.contains("custom_nested: also_preserved"));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_reconcile_identity_mismatch_creates_conflict() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_reconcile_identity_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service =
+        create_file_service(event_store, metadata_store.clone(), object_store, &pool);
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let original_okf_id = note.okf_id.unwrap();
+    let tampered_okf_id = Uuid::new_v4();
+    assert_ne!(tampered_okf_id, original_okf_id);
+
+    let edited_doc = format!(
+        "---\n\
+         type: Note\n\
+         title: Original Title\n\
+         rustshare:\n\
+           id: {tampered_okf_id}\n\
+           module: notes\n\
+         ---\n\
+         body"
+    );
+    file_service
+        .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
+        .await
+        .unwrap();
+
+    let reconciled = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+
+    let conflict = reconciled
+        .conflict
+        .expect("should have an identity_mismatch conflict");
+    assert_eq!(conflict.kind, "identity_mismatch");
+    assert_eq!(conflict.yaml_id, Some(tampered_okf_id));
+    assert_eq!(conflict.sidecar_id, Some(original_okf_id));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_resolve_note_conflict_clears_conflict_and_persists_choice() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "note_resolve_conflict_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+
+    let note = service
+        .create_note(
+            user.id,
+            tenant_id,
+            Some("Original Title".to_string()),
+            None,
+            Some("body".to_string()),
+        )
+        .await
+        .unwrap();
+
+    let bundle_folder_id = note.parent_folder_id.unwrap();
+    let okf_id = note.okf_id.unwrap();
+
+    // Create a title/folder conflict.
+    let edited_doc = format!(
+        "---\n\
+         type: Note\n\
+         title: YAML Title\n\
+         rustshare:\n\
+           id: {okf_id}\n\
+           module: notes\n\
+         ---\n\
+         body"
+    );
+    file_service
+        .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
+        .await
+        .unwrap();
+    folder_service
+        .rename_folder(bundle_folder_id, "Folder Title".to_string(), user.id)
+        .await
+        .unwrap();
+
+    let conflicted = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+    assert!(conflicted.conflict.is_some());
+
+    // Resolve with a custom title.
+    let resolved = service
+        .resolve_note_conflict(
+            note.id,
+            user.id,
+            tenant_id,
+            NoteConflictResolution::Custom("Resolved Title".to_string()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.metadata.title, "Resolved Title");
+    assert!(resolved.conflict.is_none());
+    assert!(resolved.content.contains("title: Resolved Title"));
+    assert!(resolved.content.contains("bundle_name: Resolved Title"));
+
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(bundle_folder.name.contains("Resolved Title"));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+// ---------------------------------------------------------------------------
+// OKF migration tests
+// ---------------------------------------------------------------------------
+
+async fn ensure_notes_folder_exists(
+    service: &NoteService,
+    user_id: Uuid,
+    tenant_id: Uuid,
+    metadata_store: &MetadataStore,
+) -> Uuid {
+    let setup = service
+        .create_note(user_id, tenant_id, Some("setup".to_string()), None, None)
+        .await
+        .expect("setup note should be created");
+    let bundle_folder_id = setup.parent_folder_id.expect("bundle folder");
+    let bundle_folder = metadata_store
+        .find_folder_by_id(bundle_folder_id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let notes_folder_id = bundle_folder.parent_folder_id.expect("notes folder");
+    service
+        .delete_note(setup.id, user_id, tenant_id)
+        .await
+        .expect("delete setup note");
+    notes_folder_id
+}
+
+async fn create_legacy_note_bundle(
+    service: &NoteService,
+    file_service: &FileService<
+        EventStore,
+        MetadataStore,
+        ObjectStore,
+        PermissionResolverRepository,
+    >,
+    folder_service: &FolderService<EventStore, MetadataStore, PermissionResolverRepository>,
+    metadata_store: &MetadataStore,
+    user_id: Uuid,
+    tenant_id: Uuid,
+    folder_name: &str,
+    content: &str,
+) -> (rustshare_core::domain::File, Uuid) {
+    let notes_folder_id =
+        ensure_notes_folder_exists(service, user_id, tenant_id, metadata_store).await;
+    let bundle_folder = folder_service
+        .create_folder(
+            folder_name.to_string(),
+            Some(notes_folder_id),
+            user_id,
+            tenant_id,
+        )
+        .await
+        .expect("create bundle folder");
+    let file = file_service
+        .upload_file(
+            user_id,
+            "note.md".to_string(),
+            Some(bundle_folder.id),
+            Bytes::from(content.to_string()),
+            "text/markdown".to_string(),
+            tenant_id,
+        )
+        .await
+        .expect("upload note.md");
+    (file, bundle_folder.id)
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_dry_run_modifies_nothing() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_dry_run_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, _bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Dry Run Note",
+        "plain body",
+    )
+    .await;
+
+    let before = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note before migration");
+    let report = service
+        .migrate_notes_to_okf(tenant_id, true)
+        .await
+        .expect("dry-run migration should succeed");
+
+    assert_eq!(report.notes_scanned, 1);
+    assert_eq!(report.missing_frontmatter, 1);
+    assert_eq!(report.planned_changes.len(), 1);
+    assert_eq!(report.conflicts.len(), 0);
+
+    let after = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note after migration");
+    assert_eq!(before, after, "dry-run must not modify note content");
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_adds_frontmatter() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_add_fm_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Add Frontmatter Note",
+        "plain body",
+    )
+    .await;
+
+    let report = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("migration should succeed");
+
+    assert_eq!(report.missing_frontmatter, 1);
+    assert_eq!(report.already_okf, 0);
+    assert_eq!(report.frontmatter_to_merge, 0);
+
+    let content = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read migrated note");
+    let content_str = String::from_utf8_lossy(&content);
+    assert!(
+        content_str.starts_with("---\n"),
+        "frontmatter block should be injected"
+    );
+    assert!(content_str.contains("type: Note"));
+    assert!(content_str.contains("rustshare:\n"));
+    assert!(content_str.contains("id: "));
+    assert!(content_str.contains("plain body"));
+
+    let files = metadata_store
+        .list_files(Some(bundle_id), user.id, tenant_id)
+        .await
+        .expect("list bundle files");
+    assert!(
+        files.iter().any(|f| f.name == "note.md.rustshare.json"),
+        "visible sidecar should be created"
+    );
+
+    let subfolders = metadata_store
+        .list_folders(Some(bundle_id), user.id, tenant_id)
+        .await
+        .expect("list bundle folders");
+    let rustshare_folder = subfolders
+        .iter()
+        .find(|f| f.name == "_rustshare")
+        .expect("_rustshare folder should be created");
+    let manifests = metadata_store
+        .list_files(Some(rustshare_folder.id), user.id, tenant_id)
+        .await
+        .expect("list manifest files");
+    assert!(
+        manifests.iter().any(|f| f.name == "manifest.json"),
+        "manifest.json should be created"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_merges_existing_frontmatter() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_merge_fm_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, _bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Merge Frontmatter Note",
+        "---\ntitle: Existing Title\ncustom_field: keep-me\n---\nbody",
+    )
+    .await;
+
+    let report = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("migration should succeed");
+
+    assert_eq!(report.frontmatter_to_merge, 1);
+    assert_eq!(report.missing_frontmatter, 0);
+
+    let content = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read migrated note");
+    let content_str = String::from_utf8_lossy(&content);
+    assert!(content_str.contains("type: Note"));
+    assert!(content_str.contains("title: Existing Title"));
+    assert!(content_str.contains("custom_field: keep-me"));
+    assert!(content_str.contains("rustshare:\n"));
+    assert!(content_str.contains("id: "));
+    assert!(content_str.contains("body"));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_preserves_unknown_keys() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_preserve_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, _bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Preserve Keys Note",
+        "---\ncustom_top: hello\nrustshare:\n  custom_nested: world\n---\nbody",
+    )
+    .await;
+
+    let report = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("migration should succeed");
+
+    assert_eq!(report.frontmatter_to_merge, 1);
+
+    let content = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read migrated note");
+    let content_str = String::from_utf8_lossy(&content);
+    assert!(content_str.contains("custom_top: hello"));
+    assert!(content_str.contains("custom_nested: world"));
+    assert!(content_str.contains("type: Note"));
+    assert!(content_str.contains("id: "));
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_is_idempotent() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_idempotent_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, _bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Idempotent Note",
+        "plain body",
+    )
+    .await;
+
+    let first = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("first migration should succeed");
+    assert_eq!(first.missing_frontmatter, 1);
+
+    let after_first = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note after first migration");
+
+    let second = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("second migration should succeed");
+    assert_eq!(second.notes_scanned, 1);
+    assert_eq!(second.already_okf, 1);
+    assert_eq!(second.missing_frontmatter, 0);
+    assert_eq!(second.frontmatter_to_merge, 0);
+    assert!(
+        second
+            .planned_changes
+            .iter()
+            .all(|c| c.frontmatter_action == "none" && c.manifest_action == "none"),
+        "second run must produce no changes"
+    );
+
+    let after_second = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note after second migration");
+    assert_eq!(
+        after_first, after_second,
+        "second migration must not modify note content"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn contract_migrate_notes_okf_invalid_yaml_reported_as_conflict() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "migrate_invalid_user", tenant_id).await;
+    let service = create_note_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let file_service = create_file_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
+    let folder_service = create_folder_service(event_store, metadata_store.clone(), &pool);
+    let (file, _bundle_id) = create_legacy_note_bundle(
+        service.as_ref(),
+        &file_service,
+        &folder_service,
+        metadata_store.as_ref(),
+        user.id,
+        tenant_id,
+        "Invalid YAML Note",
+        "---\ntype: [unclosed\n---\nbody",
+    )
+    .await;
+
+    let before = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note before migration");
+    let report = service
+        .migrate_notes_to_okf(tenant_id, false)
+        .await
+        .expect("migration should report conflict without failing");
+
+    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(report.conflicts[0].kind, "invalid_yaml");
+    assert_eq!(report.planned_changes.len(), 0);
+
+    let after = object_store
+        .get(&file.storage_key())
+        .await
+        .expect("read note after migration");
+    assert_eq!(
+        before, after,
+        "invalid YAML note content must not be destroyed"
+    );
 
     cleanup_user(&pool, user.id).await;
 }

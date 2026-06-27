@@ -9,6 +9,10 @@ autotests = false
 name = "rustshare-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "rustshare"
+path = "src/bin/rustshare.rs"
+
 [dependencies]
 rustshare-core = { path = "../crates/core" }
 rustshare-storage = { path = "../crates/storage" }

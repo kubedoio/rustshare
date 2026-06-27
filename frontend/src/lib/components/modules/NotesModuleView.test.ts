@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryClient } from '$lib/query-client';
 import NotesModuleView from './NotesModuleView.svelte';
@@ -6,7 +6,8 @@ import NotesModuleView from './NotesModuleView.svelte';
 const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
 	listNotes: vi.fn(),
-	createNote: vi.fn()
+	createNote: vi.fn(),
+	renameNote: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -15,7 +16,8 @@ vi.mock('$app/navigation', () => ({
 
 vi.mock('$lib/api/notes', () => ({
 	listNotes: mocks.listNotes,
-	createNote: mocks.createNote
+	createNote: mocks.createNote,
+	renameNote: mocks.renameNote
 }));
 
 describe('NotesModuleView', () => {
@@ -345,5 +347,169 @@ describe('NotesModuleView', () => {
 		await screen.findByText('Plain Note');
 		expect(screen.queryByText('0')).toBeFalsy();
 		expect(screen.queryByText('undefined')).toBeFalsy();
+	});
+
+	it('supports the OKF-native notes module definition', async () => {
+		render(NotesModuleView, {
+			module: {
+				id: 'module_notes',
+				key: 'notes',
+				displayName: 'Notes',
+				description: 'Write OKF-compatible notes.',
+				enabled: true,
+				rootPath: '/Workspace/Notes',
+				renderer: 'okf-note',
+				documentFormat: 'okf-markdown',
+				defaultTemplate: 'template_default_okf_note',
+				icon: 'sticky-note',
+				schemaVersion: '1.0',
+				okf: {
+					enabled: true,
+					conceptType: 'Note',
+					frontmatterRequired: true,
+					preserveUnknownFields: true
+				},
+				permissions: {
+					adminCanConfigure: true,
+					workspaceMembersCanUse: true,
+					allowPublicShare: false,
+					allowInternalShare: true
+				},
+				ui: {
+					sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' },
+					dashboard: {
+						enabled: true,
+						order: 10,
+						widget: {
+							enabled: true,
+							type: 'latest-notes',
+							title: 'Notes',
+							description: 'Recent OKF notes.',
+							size: 'medium',
+							columns: { desktop: 6, tablet: 12, mobile: 12 },
+							maxItems: 4
+						}
+					},
+					page: {
+						enabled: true,
+						route: '/modules/notes',
+						renderer: 'okf-note',
+						layout: 'list-grid',
+						emptyStateTitle: 'No notes yet',
+						emptyStateDescription: 'Create your first OKF note.',
+						primaryAction: {
+							label: 'New note',
+							action: 'create-from-template',
+							template: 'template_default_okf_note'
+						}
+					}
+				},
+				aiIndexing: { enabled: true },
+				audit: { enabled: true }
+			}
+		});
+
+		const button = screen.getByRole('button', { name: 'New note' });
+		expect(button.hasAttribute('disabled')).toBe(false);
+
+		await fireEvent.click(button);
+
+		await waitFor(() => {
+			expect(mocks.goto).toHaveBeenCalledWith('/modules/notes/note-123');
+		});
+	});
+
+	it('rename action changes the display title and keeps the attachments panel working', async () => {
+		mocks.renameNote.mockResolvedValue({
+			id: 'note-1',
+			name: 'New Title.md',
+			metadata: { title: 'New Title' }
+		});
+		mocks.listNotes
+			.mockResolvedValueOnce([
+				{
+					id: 'note-1',
+					name: 'Old Title.md',
+					modified_at: '2026-04-30T10:00:00Z',
+					metadata: { title: 'Old Title', excerpt: 'Old excerpt' },
+					attachment_count: 2
+				}
+			])
+			.mockResolvedValueOnce([
+				{
+					id: 'note-1',
+					name: 'New Title.md',
+					modified_at: '2026-04-30T10:05:00Z',
+					metadata: { title: 'New Title', excerpt: 'Old excerpt' },
+					attachment_count: 2
+				}
+			]);
+
+		render(NotesModuleView, {
+			module: {
+				id: 'module_notes',
+				key: 'notes',
+				displayName: 'Notes',
+				description: 'Capture notes.',
+				enabled: true,
+				rootPath: '/Workspace/Notes',
+				renderer: 'notes',
+				defaultTemplate: 'template_default_note',
+				icon: 'sticky-note',
+				schemaVersion: '1.0',
+				permissions: {
+					adminCanConfigure: true,
+					workspaceMembersCanUse: true,
+					allowPublicShare: false,
+					allowInternalShare: true
+				},
+				ui: {
+					sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' },
+					dashboard: {
+						enabled: true,
+						order: 10,
+						widget: {
+							enabled: true,
+							type: 'notes-recent',
+							title: 'Notes',
+							description: 'Recent notes.',
+							size: 'medium',
+							columns: { desktop: 6, tablet: 12, mobile: 12 },
+							maxItems: 4
+						}
+					},
+					page: {
+						enabled: true,
+						route: '/modules/notes',
+						renderer: 'notes',
+						layout: 'list-grid',
+						emptyStateTitle: 'No notes yet',
+						emptyStateDescription: 'Create your first note.',
+						primaryAction: { label: 'New note', action: 'create-from-template' }
+					}
+				},
+				aiIndexing: { enabled: true },
+				audit: { enabled: true }
+			}
+		});
+
+		await screen.findByText('Old Title');
+		expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Rename note' }));
+
+		const dialog = screen.getByRole('dialog', { name: 'Rename note' });
+		const input = within(dialog).getByRole('textbox');
+		await fireEvent.input(input, { target: { value: 'New Title' } });
+		await fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
+
+		await waitFor(() => {
+			expect(mocks.renameNote).toHaveBeenCalledWith('note-1', { title: 'New Title' });
+		});
+		await waitFor(() => {
+			expect(screen.getByText('New Title')).toBeTruthy();
+		});
+		expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
 	});
 });

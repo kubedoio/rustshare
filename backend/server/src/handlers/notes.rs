@@ -27,6 +27,8 @@ pub struct CreateNoteRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateNoteResponse {
     pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub okf_id: Option<Uuid>,
     pub name: String,
     pub path: String,
     pub content: String,
@@ -75,6 +77,7 @@ pub async fn create_note(
         StatusCode::CREATED,
         Json(CreateNoteResponse {
             id: note.id,
+            okf_id: note.okf_id,
             name: note.name,
             path: note.path,
             content: note.content,
@@ -95,6 +98,8 @@ pub async fn create_note(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GetNoteResponse {
     pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub okf_id: Option<Uuid>,
     pub name: String,
     pub path: String,
     pub content: String,
@@ -135,6 +140,7 @@ pub async fn get_note(
 
     Ok(Json(GetNoteResponse {
         id: note.id,
+        okf_id: note.okf_id,
         name: note.name,
         path: note.path,
         content: note.content,
@@ -245,6 +251,7 @@ pub async fn rename_note(
 
     Ok(Json(GetNoteResponse {
         id: note.id,
+        okf_id: note.okf_id,
         name: note.name,
         path: note.path,
         content: note.content,
@@ -297,6 +304,7 @@ pub async fn move_note(
 
     Ok(Json(GetNoteResponse {
         id: note.id,
+        okf_id: note.okf_id,
         name: note.name,
         path: note.path,
         content: note.content,
@@ -461,6 +469,8 @@ pub async fn toggle_visibility(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DuplicateNoteResponse {
     pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub okf_id: Option<Uuid>,
     pub name: String,
     pub path: String,
     pub content: String,
@@ -496,6 +506,7 @@ pub async fn duplicate_note(
         StatusCode::CREATED,
         Json(DuplicateNoteResponse {
             id: note.id,
+            okf_id: note.okf_id,
             name: note.name,
             path: note.path,
             content: note.content,

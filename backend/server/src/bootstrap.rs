@@ -254,6 +254,25 @@ async fn init_services(
         async { Arc::new(NotificationService::new(notification_repository)) },
     );
 
+    // Shared content indexer used both by the AI service and by the note
+    // service's indexing callback sink. Kept outside the tokio::join! so both
+    // services can be wired to the same in-memory index.
+    let ai_service_enabled = config.ai_enabled;
+    let shared_content_indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>> =
+        if ai_service_enabled {
+            let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
+            Some(Arc::new(ContentIndexer::new(embedding_generator)))
+        } else {
+            None
+        };
+
+    let note_index_sink: Option<Arc<dyn crate::services::note_index_sink::NoteIndexSink>> =
+        shared_content_indexer.as_ref().map(|indexer| {
+            Arc::new(
+                crate::services::note_index_sink::ContentIndexerNoteSink::new(Arc::clone(indexer)),
+            ) as Arc<dyn crate::services::note_index_sink::NoteIndexSink>
+        });
+
     let (
         share_service,
         note_service,
@@ -275,12 +294,15 @@ async fn init_services(
             ))
         },
         async {
-            Arc::new(crate::services::note_service::NoteService::new(
-                Arc::clone(&file_service),
-                Arc::clone(&folder_service),
-                Arc::clone(&metadata_store),
-                Arc::clone(&object_store),
-            ))
+            Arc::new(
+                crate::services::note_service::NoteService::new(
+                    Arc::clone(&file_service),
+                    Arc::clone(&folder_service),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&object_store),
+                )
+                .with_index_sink(note_index_sink),
+            )
         },
         async {
             Arc::new(crate::services::decision_service::DecisionService::new(
@@ -352,18 +374,15 @@ async fn init_services(
         broadcaster: Arc::clone(&broadcaster),
     }));
 
-    let ai_service_enabled = config.ai_enabled;
-
-    let ai_service: Option<Arc<AppAiService>> = if ai_service_enabled {
-        let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let content_indexer = Arc::new(ContentIndexer::new(embedding_generator));
-        Some(Arc::new(AiService::new(
-            content_indexer,
-            Arc::clone(&permission_resolver),
-        )))
-    } else {
-        None
-    };
+    let ai_service: Option<Arc<AppAiService>> =
+        if let Some(content_indexer) = shared_content_indexer {
+            Some(Arc::new(AiService::new(
+                content_indexer,
+                Arc::clone(&permission_resolver),
+            )))
+        } else {
+            None
+        };
 
     if ai_service.is_some() {
         info!("AI service initialized");

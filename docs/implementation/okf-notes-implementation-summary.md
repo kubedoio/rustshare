@@ -1,0 +1,114 @@
+# OKF-native Notes Module — Implementation Summary
+
+> GitHub issue #118
+
+## Summary of changed files
+
+### Backend — OKF frontmatter core
+- `backend/crates/core/src/okf.rs` — module re-exports.
+- `backend/crates/core/src/okf/frontmatter.rs` — parser/serializer, `OkfNoteFrontmatter`, `RustshareFrontmatter`, merge/round-trip helpers, unit tests.
+- `backend/crates/core/Cargo.toml` — added `serde_yaml` dependency.
+- `backend/crates/core/src/lib.rs` — registered `okf` module.
+
+### Backend — Notes behavior
+- `backend/server/src/services/note_service.rs` — OKF-native create/save/rename/duplicate/move/delete, stable `rustshare.id`, H1-driven folder rename removed, reconciliation, conflict resolution, migration service, ACL payload builder, `NoteConflict`, `NoteMigrationReport`, tests.
+- `backend/server/src/handlers/notes.rs` — response structs include `okf_id` and `conflict`.
+
+### Backend — Migration CLI
+- `backend/server/src/bin/rustshare.rs` — new `rustshare` binary.
+- `backend/server/Cargo.toml` — added `rustshare` binary target.
+
+### Backend — Admin module/template registry
+- `backend/crates/core/src/domain/module.rs` — OKF config support.
+- `backend/crates/core/src/domain/template.rs` — serialization contract updates.
+- `backend/server/src/services/module_service.rs` — notes module defaults to `okf-note` renderer, `okf-markdown` document format, `template_default_okf_note`, OKF + AI indexing policies.
+- `backend/server/src/services/template_service.rs` — new `template_default_okf_note` with OKF frontmatter and bundle structure.
+- `backend/server/src/handlers/admin/modules.rs` / `templates.rs` — expose new fields through existing JSONB columns.
+
+### Backend — RAG / indexing ACL contract
+- `backend/crates/core/src/services/ai/indexing.rs` — `NoteAclPayload`, `AclSearchFilter`, ACL-aware `index_note`, `search_with_acl`, `update_note_acl`, `remove_note_chunks`, tests.
+- `backend/crates/core/src/services/ai/embedding.rs` — `Send` future return for object-safe sink usage.
+- `backend/server/src/services/note_index_sink.rs` — `NoteIndexSink` trait, `NoOpNoteIndexSink`, `ContentIndexerNoteSink`.
+- `backend/server/src/bootstrap.rs` — wires shared `ContentIndexer` into both `AiService` and `NoteService`.
+
+### Backend tests
+- `backend/tests/notes_test.rs` — OKF creation, stable id, H1 no-rename, explicit rename, external reconciliation, migration dry-run/idempotency, duplicate-id detection.
+- `backend/tests/module_service_test.rs` — module/template registry defaults, OKF frontmatter shape validation.
+
+### Frontend
+- `frontend/src/lib/api/types.ts` — added `okf_id`, `conflict`, `acl_hash`, `acl_version` to note types.
+- `frontend/src/lib/editor/adapter/frontmatter.ts` — split/wrap OKF frontmatter helper.
+- `frontend/src/lib/editor/adapter/frontmatter.test.ts` — unit tests.
+- `frontend/src/lib/editor/components/MarkdownDocumentPage.svelte` — hides frontmatter in rich mode, raw-Markdown toggle, preserves frontmatter on save.
+- `frontend/src/routes/(app)/modules/[key]/[id]/+page.svelte` — title from metadata/name, conflict banner, subtitle from H1/excerpt.
+- `frontend/src/lib/modules/registry.ts`, `workspaceSurface.ts` — predefined notes module updated to `okf-note` / `okf-markdown`.
+- `frontend/src/routes/admin/modules/+page.svelte`, `[key]/edit/+page.svelte` — display OKF config, AI indexing source, permission-aware flag.
+- `frontend/src/routes/admin/templates/+page.svelte` — shows OKF note template details.
+- `frontend/src/lib/api/admin-modules.test.ts`, `frontend/src/routes/admin/modules/page.test.ts`, `NotesModuleView.test.ts`, `MarkdownDocumentPage.test.ts` — updated/new tests.
+
+### Documentation
+- `docs/implementation/okf-notes-implementation-map.md` — audit map.
+- `docs/implementation/okf-notes-implementation-summary.md` — this file.
+- `docs/adr/0019-notes-as-okf-documents.md`
+- `docs/adr/0020-okf-notes-reconciliation-and-rag-safety.md`
+- `CHANGELOG.md` — added entry under `[Unreleased]`.
+
+## Migration instructions
+
+1. Build the new CLI:
+   ```bash
+   cd backend
+   SQLX_OFFLINE=true cargo build --bin rustshare
+   ```
+
+2. Run the migration in dry-run mode first:
+   ```bash
+   ./target/debug/rustshare migrate-notes-okf --dry-run --format json
+   ```
+   Review the JSON report for planned changes, conflicts, and skipped files.
+
+3. If the dry-run is clean, run the real migration:
+   ```bash
+   ./target/debug/rustshare migrate-notes-okf --format json
+   ```
+
+4. Re-run the command; after a clean migration it should report no new changes (idempotent).
+
+5. Restart the RustShare server so the updated default module/template definitions are seeded and the shared `ContentIndexer` is wired into `NoteService`.
+
+## Rollback notes
+
+- The migration only writes to `note.md`, `_rustshare/manifest.json`, and `note.md.rustshare.json`. No notes are deleted.
+- Back up object storage for `/Workspace/Notes` before running the real migration.
+- The migration preserves unknown frontmatter fields and never overwrites an existing valid `rustshare.id`.
+- To roll back content changes, restore `note.md` from backup; sidecars can be regenerated by opening/saving each note.
+- Registry changes (renderer, template key) are idempotent in `ensure_default_modules`/`ensure_default_templates`; reverting requires an admin to change them back via the Admin UI or a database update.
+
+## Test results
+
+- `cd backend && SQLX_OFFLINE=true cargo check --workspace` — passes.
+- `cd backend && SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings` — passes.
+- `cd backend && SQLX_OFFLINE=true cargo test --workspace --lib --bins` — passes (all crates, including new OKF frontmatter, note service, and ACL indexing tests).
+- `cd backend && SQLX_OFFLINE=true cargo test --test notes_test --no-run` — compiles.
+- `cd backend && SQLX_OFFLINE=true cargo test --test module_service_test --no-run` — compiles.
+- `cd frontend && npm run check` — 0 errors.
+- `cd frontend && npm run lint` — 0 errors, 137 pre-existing warnings.
+- `cd frontend && npm run test` — 76 test files passed, 840 tests passed, 5 skipped.
+
+Integration tests under `backend/tests/` are marked `#[ignore]` because they require Postgres + S3, matching the existing repo convention.
+
+## Known limitations
+
+1. **ACL `read_acl` is a placeholder.** The indexer currently emits `owner:{user_id}` principals. Wiring the real permission resolver to populate group/user ACL entries is a follow-up.
+2. **Vector DB is in-memory.** The ACL contract is implemented on the existing `ContentIndexer`; a persistent vector database should adopt the same `NoteAclPayload` shape and `search_with_acl` semantics.
+3. **Conflict resolution UI is basic.** The backend supports `PreferYaml`, `PreferFolder`, and `Custom` resolutions; the frontend banner is informational and exposes the conflict state. A full conflict-resolution workflow can be added later.
+4. **Migration is folder-backed-note only.** Legacy standalone `.md` files in `/Workspace/Notes` are scanned and get frontmatter on save/migration, but the migration CLI focuses on folder-backed bundles.
+5. **`resource` workspace id uses tenant id.** There is no separate workspace entity yet; the resource URI uses `tenant_id` as the workspace identifier.
+
+## Follow-up issues
+
+1. Wire the permission resolver into `NoteAclPayload.read_acl` and add group-principal support to `AclSearchFilter`.
+2. Implement a persistent vector database adapter that honors the `NoteAclPayload` contract and `search_with_acl` pre-filtering semantics.
+3. Add a background job queue for async ACL projection updates when note permissions change.
+4. Enhance frontend conflict resolution with action buttons that call `resolve_note_conflict`.
+5. Add end-to-end smoke tests for the migration CLI against a real Postgres/S3 environment.

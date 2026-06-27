@@ -20,7 +20,8 @@
 		ChevronRight,
 		FolderInput,
 		Copy,
-		Trash2
+		Trash2,
+		FileCode
 	} from 'lucide-svelte';
 	import type {
 		EditorMode,
@@ -38,6 +39,7 @@
 	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 	import { insertAttachmentIntoEditor } from '../adapter/attachments';
 	import { downloadTextFile, formatExportFilename, triggerPrint } from '../adapter/export';
+	import { splitFrontmatter, wrapFrontmatter } from '../adapter/frontmatter';
 	import { toastStore } from '$lib/stores/toast';
 
 	/** Purposeful Colors from CSS */
@@ -118,22 +120,32 @@
 		flush?(): void;
 	}
 	let editorComponent: EditorComponent | undefined = $state();
-	let currentMarkdown: string = $state(content);
 	let isAttachmentsOpen = $state(initialAttachmentsOpen);
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let lastDocId = $state(docId);
 	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
+	let showRawMarkdown = $state(false);
+	let preservedFrontmatter = $state(splitFrontmatter(content).frontmatter);
+	let currentMarkdown: string = $state(splitFrontmatter(content).body);
 
 	import { untrack } from 'svelte';
 
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
+	let frontmatterResult = $derived(splitFrontmatter(content));
+	let hasFrontmatter = $derived(frontmatterResult.hasFrontmatter);
+	let bodyContent = $derived(frontmatterResult.body);
+	let frontmatterBlock = $derived(frontmatterResult.frontmatter);
+
 	$effect(() => {
 		if (docId !== lastDocId) {
 			const newDocId = docId;
 			const newContent = content;
+			const { frontmatter, body, hasFrontmatter: docHasFrontmatter } = splitFrontmatter(newContent);
 			untrack(() => {
-				currentMarkdown = newContent;
+				preservedFrontmatter = frontmatter;
+				currentMarkdown = docHasFrontmatter ? body : newContent;
+				showRawMarkdown = false;
 				saveStatus = 'saved';
 				lastDocId = newDocId;
 			});
@@ -149,7 +161,7 @@
 		const newMode: EditorMode = mode === 'read' ? 'edit' : 'read';
 
 		// If switching from edit to read, ensure any pending autosave is flushed
-		if (mode === 'edit' && editorComponent) {
+		if (mode === 'edit' && editorComponent && !showRawMarkdown) {
 			currentMarkdown = editorComponent.getMarkdown();
 			if (collab && editorComponent && typeof editorComponent.flush === 'function') {
 				editorComponent.flush();
@@ -159,11 +171,33 @@
 		}
 
 		if (mode === 'read') {
-			currentMarkdown = content;
+			currentMarkdown = currentMarkdown || (hasFrontmatter ? bodyContent : content);
 		}
 
 		mode = newMode;
 		dispatch('modechange', { mode: newMode });
+	}
+
+	function toggleRawMarkdown() {
+		if (!hasFrontmatter) {
+			showRawMarkdown = false;
+			return;
+		}
+
+		if (showRawMarkdown) {
+			// Leaving raw mode: parse any frontmatter edits and edit the body only.
+			const { frontmatter, body } = splitFrontmatter(currentMarkdown);
+			preservedFrontmatter = frontmatter || preservedFrontmatter;
+			currentMarkdown = body;
+		} else {
+			// Entering raw mode: expose the full Markdown including frontmatter.
+			if (mode === 'edit' && editorComponent) {
+				currentMarkdown = editorComponent.getMarkdown();
+			}
+			currentMarkdown = wrapFrontmatter(preservedFrontmatter, currentMarkdown);
+		}
+
+		showRawMarkdown = !showRawMarkdown;
 	}
 
 	function handleSave() {
@@ -172,11 +206,43 @@
 			autosaveTimer = null;
 		}
 
-		if (!editorComponent || saveStatus === 'saving') return;
+		if (saveStatus === 'saving') return;
 
-		const md = editorComponent.getMarkdown();
+		let md: string;
+		if (showRawMarkdown) {
+			md = currentMarkdown;
+		} else {
+			if (!editorComponent) return;
+			md = editorComponent.getMarkdown();
+			if (preservedFrontmatter) {
+				md = wrapFrontmatter(preservedFrontmatter, md);
+			}
+		}
+
 		saveStatus = 'saving';
 		dispatch('save', { content: md, revision, docId });
+	}
+
+	function handleRawInput() {
+		// In collab mode, CollabEditor owns the autosave trigger.
+		if (collab) {
+			if (saveStatus !== 'saving') {
+				saveStatus = 'unsaved';
+			}
+			return;
+		}
+
+		if (saveStatus !== 'unsaved') {
+			saveStatus = 'unsaved';
+		}
+
+		// Trigger autosave
+		if (autosaveDelay > 0) {
+			if (autosaveTimer) clearTimeout(autosaveTimer);
+			autosaveTimer = setTimeout(() => {
+				handleSave();
+			}, autosaveDelay);
+		}
 	}
 
 	function handleEditorChange(event: CustomEvent<{ markdown: string }>) {
@@ -226,7 +292,11 @@
 
 	function handleExportMarkdown() {
 		const filename = formatExportFilename(title, 'md');
-		downloadTextFile(filename, currentMarkdown || content);
+		let exportContent = currentMarkdown || content;
+		if (!showRawMarkdown && preservedFrontmatter) {
+			exportContent = wrapFrontmatter(preservedFrontmatter, exportContent);
+		}
+		downloadTextFile(filename, exportContent);
 		dispatch('export', { format: 'markdown' });
 	}
 
@@ -450,6 +520,17 @@
 						<span>Edit</span>
 					{/if}
 				</button>
+
+				{#if hasFrontmatter}
+					<button
+						class="btn btn-sm {showRawMarkdown ? 'btn-primary' : 'btn-ghost'}"
+						onclick={toggleRawMarkdown}
+						title={showRawMarkdown ? 'Switch to rich editor' : 'Edit raw Markdown'}
+					>
+						<FileCode size={14} />
+						<span>{showRawMarkdown ? 'Rich' : 'Raw'}</span>
+					</button>
+				{/if}
 			{/if}
 
 			<!-- Extra actions -->
@@ -558,15 +639,22 @@
 		<!-- Content -->
 		<main class="doc-content">
 			{#if isEditing}
-				{#if collab && docId}
+				{#if showRawMarkdown}
+					<textarea
+						class="raw-markdown-editor"
+						bind:value={currentMarkdown}
+						oninput={handleRawInput}
+						aria-label="Raw Markdown editor"
+					></textarea>
+				{:else if collab && docId}
 					{#key docId}
 						<CollabEditor
 							bind:this={editorComponent}
 							{docId}
-							{content}
+							content={hasFrontmatter ? bodyContent : content}
 							editable={true}
 							hasAttachmentHandler={true}
-							{currentMarkdown}
+							currentMarkdown={currentMarkdown || bodyContent || content}
 							on:change={handleEditorChange}
 							on:save={handleCollabSave}
 							on:ready
@@ -580,11 +668,11 @@
 					{#key docId}
 						<RichMarkdownEditor
 							bind:this={editorComponent}
-							{content}
+							content={hasFrontmatter ? bodyContent : content}
 							editable={true}
 							hasAttachmentHandler={true}
 							syncExternalContent={false}
-							{currentMarkdown}
+							currentMarkdown={currentMarkdown || bodyContent || content}
 							on:change={handleEditorChange}
 							on:attachment={toggleAttachments}
 							on:sketch={handleSketch}
@@ -593,9 +681,12 @@
 						/>
 					{/key}
 				{/if}
+			{:else if showRawMarkdown}
+				<pre class="raw-markdown-viewer" aria-label="Raw Markdown"><code>{currentMarkdown}</code
+					></pre>
 			{:else}
 				<RichMarkdownViewer
-					content={currentMarkdown || content}
+					content={currentMarkdown || bodyContent || content}
 					{attachments}
 					on:open={handleOpenAttachment}
 				/>
@@ -765,6 +856,38 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
+	}
+
+	.raw-markdown-editor {
+		width: 100%;
+		height: 100%;
+		resize: none;
+		padding: 1rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		background: var(--color-base-100, #fff);
+		color: var(--color-base-content, #1f2937);
+		border: none;
+		outline: none;
+	}
+
+	.raw-markdown-viewer {
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		padding: 1rem;
+		overflow-y: auto;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		background: var(--color-base-100, #fff);
+		color: var(--color-base-content, #1f2937);
+		white-space: pre-wrap;
+	}
+
+	.raw-markdown-viewer code {
+		font-family: inherit;
 	}
 
 	@media (max-width: 640px) {

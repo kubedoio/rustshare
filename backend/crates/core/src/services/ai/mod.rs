@@ -14,4 +14,6 @@ pub mod embedding;
 pub mod indexing;
 
 pub use embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
-pub use indexing::{ContentIndex, ContentIndexer, IndexedDocument};
+pub use indexing::{
+    AclSearchFilter, ContentIndex, ContentIndexer, IndexedDocument, NoteAclPayload,
+};

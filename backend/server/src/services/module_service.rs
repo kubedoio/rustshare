@@ -30,16 +30,19 @@ fn default_modules() -> Vec<(
         (
             "notes",
             "Notes",
-            "Capture file-backed notes and reusable knowledge.",
+            "Write OKF-compatible, file-backed notes for durable company memory.",
             "/Workspace/Notes",
-            "notes",
-            "template_default_note",
+            "okf-note",
+            "template_default_okf_note",
             "sticky-note",
             true,
             json!({
+                "documentFormat": "okf-markdown",
+                "okf": { "enabled": true, "conceptType": "Note", "frontmatterRequired": true, "preserveUnknownFields": true },
                 "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
-                "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_note" } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note" }
+                "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent OKF notes.", "summaryMode": "latest-notes", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" }, "widget": { "enabled": true, "type": "latest-notes", "title": "Notes", "description": "Recent OKF notes.", "size": "small", "columns": { "desktop": 3, "tablet": 6, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" } } },
+                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note" },
+                "page": { "enabled": true, "route": "/modules/notes", "renderer": "okf-note", "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note", "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" }, "searchPlaceholder": "Search notes...", "filterLabel": "All notes", "sortLabel": "Modified", "itemSingular": "note", "itemPlural": "notes" }
             }),
         ),
         (
@@ -276,6 +279,16 @@ impl ModuleService {
             .await?;
             let exists = row.exists.unwrap_or(false);
 
+            let ai_indexing = if key == "notes" {
+                json!({
+                    "enabled": true,
+                    "source": "okf-frontmatter-and-markdown",
+                    "permission_aware": true
+                })
+            } else {
+                json!({"enabled": true})
+            };
+
             if !exists {
                 let module = Module {
                     id: Uuid::new_v4(),
@@ -294,7 +307,7 @@ impl ModuleService {
                         "allow_public_share": false,
                         "allow_internal_share": true
                     }),
-                    ai_indexing: json!({"enabled": true}),
+                    ai_indexing,
                     audit: json!({"enabled": true}),
                     ui_config,
                     created_at: Utc::now(),
@@ -349,6 +362,48 @@ impl ModuleService {
             "#,
             tenant_id
         )
+        .execute(self.metadata_store.pool())
+        .await?;
+
+        // Migrate legacy Notes modules to the OKF-native defaults without overwriting
+        // admin UI config changes for other fields.
+        let notes_okf_config = json!({
+            "enabled": true,
+            "conceptType": "Note",
+            "frontmatterRequired": true,
+            "preserveUnknownFields": true
+        });
+        let notes_ai_indexing = json!({
+            "enabled": true,
+            "source": "okf-frontmatter-and-markdown",
+            "permission_aware": true
+        });
+        sqlx::query(
+            r#"
+            UPDATE modules
+            SET renderer = 'okf-note',
+                default_template = 'template_default_okf_note',
+                ai_indexing = $1,
+                ui_config = jsonb_set(
+                    jsonb_set(
+                        COALESCE(ui_config, '{}'),
+                        '{okf}',
+                        $2,
+                        true
+                    ),
+                    '{documentFormat}',
+                    $3,
+                    true
+                )
+            WHERE module_key = 'notes'
+              AND tenant_id = $4
+              AND (renderer = 'notes' OR default_template = 'template_default_note')
+            "#,
+        )
+        .bind(&notes_ai_indexing)
+        .bind(&notes_okf_config)
+        .bind(json!("okf-markdown"))
+        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -1426,14 +1481,19 @@ fn normalize_module_ui_config(
         .map(|value| value.to_string())
         .unwrap_or_else(|| display_name.to_lowercase());
 
-    json!({
-        "sidebar": {
+    let mut result = existing.clone();
+    result.insert(
+        "sidebar".to_string(),
+        json!({
             "enabled": sidebar.get("enabled").and_then(|value| value.as_bool()).unwrap_or(true),
             "order": sidebar.get("order").and_then(|value| value.as_i64()).unwrap_or(default_sidebar_order(module_key)),
             "icon": sidebar.get("icon").and_then(|value| value.as_str()).unwrap_or(icon),
             "label": sidebar.get("label").and_then(|value| value.as_str()).unwrap_or(display_name)
-        },
-        "dashboard": {
+        }),
+    );
+    result.insert(
+        "dashboard".to_string(),
+        json!({
             "enabled": dashboard_enabled,
             "order": dashboard_order,
             "cardTitle": widget_title,
@@ -1451,14 +1511,20 @@ fn normalize_module_ui_config(
                 "maxItems": max_items,
                 "primaryAction": widget_primary_action
             }
-        },
-        "modulePage": {
+        }),
+    );
+    result.insert(
+        "modulePage".to_string(),
+        json!({
             "layout": page_layout,
             "emptyStateTitle": page_empty_title,
             "emptyStateDescription": page_empty_description,
             "emptyStateAction": page_empty_action
-        },
-        "page": {
+        }),
+    );
+    result.insert(
+        "page".to_string(),
+        json!({
             "enabled": page_enabled,
             "route": page_route,
             "renderer": page_renderer,
@@ -1472,8 +1538,10 @@ fn normalize_module_ui_config(
             "sortLabel": page_sort_label,
             "itemSingular": page_item_singular,
             "itemPlural": page_item_plural
-        }
-    })
+        }),
+    );
+
+    serde_json::Value::Object(result)
 }
 
 fn default_widget_type(module_key: &str) -> &str {
@@ -1594,15 +1662,18 @@ mod tests {
         let ui = normalize_module_ui_config(
             "notes",
             "Notes",
-            "Capture file-backed notes.",
+            "Write OKF-compatible, file-backed notes for durable company memory.",
             "sticky-note",
             "/Workspace/Notes",
-            "notes",
-            Some("template_default_note"),
+            "okf-note",
+            Some("template_default_okf_note"),
             Some(serde_json::json!({
+                "documentFormat": "okf-markdown",
+                "okf": {"enabled": true, "conceptType": "Note", "frontmatterRequired": true, "preserveUnknownFields": true},
                 "sidebar": {"enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes"},
-                "dashboard": {"enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent file-backed notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_note"}},
-                "modulePage": {"layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first file-backed note.", "emptyStateAction": "New note"}
+                "dashboard": {"enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent OKF notes.", "summaryMode": "latest-notes", "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}, "widget": {"enabled": true, "type": "latest-notes", "title": "Notes", "description": "Recent OKF notes.", "size": "small", "columns": {"desktop": 3, "tablet": 6, "mobile": 12}, "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}}},
+                "modulePage": {"layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note"},
+                "page": {"enabled": true, "route": "/modules/notes", "renderer": "okf-note", "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note", "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}, "searchPlaceholder": "Search notes...", "filterLabel": "All notes", "sortLabel": "Modified", "itemSingular": "note", "itemPlural": "notes"}
             })),
         );
 
@@ -1615,13 +1686,19 @@ mod tests {
             ui_obj.contains_key("modulePage"),
             "legacy 'modulePage' alias missing"
         );
+        // OKF metadata must be preserved
+        assert!(ui_obj.contains_key("okf"), "okf config missing");
+        assert_eq!(
+            ui_obj.get("documentFormat").unwrap().as_str().unwrap(),
+            "okf-markdown"
+        );
 
         let page = ui_obj.get("page").unwrap().as_object().unwrap();
         assert_eq!(
             page.get("route").unwrap().as_str().unwrap(),
             "/modules/notes"
         );
-        assert_eq!(page.get("renderer").unwrap().as_str().unwrap(), "notes");
+        assert_eq!(page.get("renderer").unwrap().as_str().unwrap(), "okf-note");
         assert_eq!(page.get("layout").unwrap().as_str().unwrap(), "list-grid");
         assert!(page.get("enabled").unwrap().as_bool().unwrap());
 
@@ -1629,10 +1706,20 @@ mod tests {
         let widget = dashboard.get("widget").unwrap().as_object().unwrap();
         assert_eq!(
             widget.get("type").unwrap().as_str().unwrap(),
-            "recent-items"
+            "latest-notes"
         );
         assert_eq!(widget.get("size").unwrap().as_str().unwrap(), "small");
         assert_eq!(widget.get("maxItems").unwrap().as_i64().unwrap(), 4);
+        assert_eq!(
+            widget
+                .get("primaryAction")
+                .unwrap()
+                .get("template")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "template_default_okf_note"
+        );
 
         // Columns must be present
         let columns = widget.get("columns").unwrap().as_object().unwrap();
@@ -1674,6 +1761,68 @@ mod tests {
             page.get("route").unwrap().as_str().unwrap(),
             "/modules/kanban"
         );
+    }
+
+    #[test]
+    fn notes_default_module_is_okf_native() {
+        let defaults = default_modules();
+        let notes = defaults
+            .iter()
+            .find(|(k, _, _, _, _, _, _, _, _)| *k == "notes")
+            .expect("notes module must exist");
+        let (
+            _,
+            display_name,
+            description,
+            root_path,
+            renderer,
+            default_template,
+            icon,
+            enabled,
+            ui_config,
+        ) = notes;
+
+        assert_eq!(*display_name, "Notes");
+        assert_eq!(
+            *description,
+            "Write OKF-compatible, file-backed notes for durable company memory."
+        );
+        assert_eq!(*root_path, "/Workspace/Notes");
+        assert_eq!(*renderer, "okf-note");
+        assert_eq!(*default_template, "template_default_okf_note");
+        assert_eq!(*icon, "sticky-note");
+        assert!(*enabled);
+
+        let ui = ui_config.as_object().expect("ui_config must be an object");
+        assert_eq!(
+            ui.get("documentFormat").unwrap().as_str().unwrap(),
+            "okf-markdown"
+        );
+        let okf = ui.get("okf").unwrap().as_object().unwrap();
+        assert!(okf.get("enabled").unwrap().as_bool().unwrap());
+        assert_eq!(okf.get("conceptType").unwrap().as_str().unwrap(), "Note");
+        assert!(okf.get("frontmatterRequired").unwrap().as_bool().unwrap());
+        assert!(okf.get("preserveUnknownFields").unwrap().as_bool().unwrap());
+    }
+
+    #[test]
+    fn non_notes_default_modules_are_unaffected_by_okf_change() {
+        let defaults = default_modules();
+        for (key, _, _, _, renderer, default_template, _, _, _) in &defaults {
+            if *key == "notes" {
+                continue;
+            }
+            assert_ne!(
+                *renderer, "okf-note",
+                "module {} should not use the notes renderer",
+                key
+            );
+            assert_ne!(
+                *default_template, "template_default_okf_note",
+                "module {} should not use the notes default template",
+                key
+            );
+        }
     }
 
     #[test]

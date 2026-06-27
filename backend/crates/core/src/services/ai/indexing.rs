@@ -10,13 +10,58 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use serde::{Deserialize, Serialize};
+
 use super::embedding::{Embedding, EmbeddingGenerator};
+use crate::okf::frontmatter::split_frontmatter;
 
 /// Maximum content length to index per document (to prevent memory issues).
 const MAX_CONTENT_LENGTH: usize = 100_000;
 
 /// Maximum number of documents to keep in the index.
 const MAX_DOCUMENTS: usize = 10_000;
+
+/// ACL payload stored on indexed note chunks.
+///
+/// This is a filterable projection of the note's OKF access-control state.
+/// It is intentionally denormalized into the index so retrieval can enforce
+/// ACLs without a per-document permission round-trip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NoteAclPayload {
+    pub tenant_id: Uuid,
+    pub workspace_id: Uuid,
+    /// Stable OKF note identity (`rustshare.id`).
+    pub note_id: Uuid,
+    /// The `note.md` file id.
+    pub source_file_id: Uuid,
+    /// The note bundle folder id, when available.
+    pub source_folder_id: Option<Uuid>,
+    /// Owner of the note (the `note.md` file owner).
+    pub owner_id: Uuid,
+    /// Resolved read principals, e.g. `["owner:<uuid>", "group_engineering"]`.
+    ///
+    /// TODO(#118): wire in the real permission resolver instead of the
+    /// placeholder owner principal.
+    pub read_acl: Vec<String>,
+    /// Visibility level: `"private"`, `"workspace"`, or `"public"`.
+    pub visibility: String,
+    /// Hash of the access-control list at the time of indexing.
+    pub acl_hash: String,
+    /// Monotonically increasing ACL version; search can reject stale chunks.
+    pub acl_version: i64,
+    /// Embedding policy: `"allowed"` or `"denied"`.
+    pub embedding_policy: String,
+}
+
+/// Filter supplied by the caller during permission-aware search.
+#[derive(Debug, Clone, Default)]
+pub struct AclSearchFilter {
+    pub tenant_id: Uuid,
+    pub caller_user_id: Uuid,
+    pub caller_groups: Vec<String>,
+    /// note_id -> minimum accepted acl_version.
+    pub min_acl_versions: HashMap<Uuid, i64>,
+}
 
 /// An indexed document with its embedding and metadata.
 #[derive(Debug, Clone)]
@@ -39,6 +84,10 @@ pub struct IndexedDocument {
     pub tenant_id: Uuid,
     /// When this document was indexed
     pub indexed_at: chrono::DateTime<chrono::Utc>,
+    /// ACL payload for OKF notes; `None` for legacy/non-note files.
+    pub acl: Option<NoteAclPayload>,
+    /// Chunk identity. For notes this is currently the source file id.
+    pub chunk_id: Uuid,
 }
 
 /// A content index entry for a tenant.
@@ -117,6 +166,8 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             owner_id,
             tenant_id,
             indexed_at: chrono::Utc::now(),
+            acl: None,
+            chunk_id: file_id,
         };
 
         let mut indexes = self.indexes.write().await;
@@ -137,6 +188,169 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         index.document_count = index.documents.len();
 
         Ok(())
+    }
+
+    /// Index a note's content with an ACL payload.
+    ///
+    /// Frontmatter is stripped before embedding generation so that YAML metadata
+    /// does not dominate the semantic vector. If `acl.embedding_policy` is
+    /// `"denied"`, the note is removed from the index instead of inserted.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn index_note(
+        &self,
+        file_id: Uuid,
+        file_name: String,
+        file_path: String,
+        content: String,
+        mime_type: String,
+        owner_id: Uuid,
+        acl: NoteAclPayload,
+    ) -> anyhow::Result<()> {
+        if acl.embedding_policy == "denied" {
+            self.remove_note_chunks(acl.tenant_id, acl.note_id).await;
+            return Ok(());
+        }
+
+        let body = strip_frontmatter(&content);
+        let body = if body.len() > MAX_CONTENT_LENGTH {
+            body[..MAX_CONTENT_LENGTH].to_string()
+        } else {
+            body
+        };
+
+        let combined_text = format!("{} {} {}", file_name, file_path, body);
+        let embedding = self.embedding_generator.generate(&combined_text).await;
+
+        let tenant_id = acl.tenant_id;
+        let document = IndexedDocument {
+            file_id,
+            file_name: file_name.clone(),
+            file_path: file_path.clone(),
+            content: body,
+            embedding,
+            mime_type,
+            owner_id,
+            tenant_id,
+            indexed_at: chrono::Utc::now(),
+            acl: Some(acl),
+            chunk_id: file_id,
+        };
+
+        let mut indexes = self.indexes.write().await;
+        let index = indexes.entry(tenant_id).or_default();
+
+        if index.documents.len() >= MAX_DOCUMENTS && !index.documents.contains_key(&file_id) {
+            if let Some((oldest_id, _)) =
+                index.documents.iter().min_by_key(|(_, doc)| doc.indexed_at)
+            {
+                let oldest_id = *oldest_id;
+                index.documents.remove(&oldest_id);
+            }
+        }
+
+        index.documents.insert(file_id, document);
+        index.document_count = index.documents.len();
+
+        Ok(())
+    }
+
+    /// Search for documents similar to the query, pre-filtered by ACL.
+    ///
+    /// Documents without an ACL payload retain the legacy tenant-only behavior
+    /// for backward compatibility.
+    pub async fn search_with_acl(
+        &self,
+        filter: &AclSearchFilter,
+        query: &str,
+        limit: usize,
+    ) -> Vec<(IndexedDocument, f32)> {
+        let query_embedding = self.embedding_generator.generate(query).await;
+
+        let indexes = self.indexes.read().await;
+        let index = match indexes.get(&filter.tenant_id) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+
+        let mut results: Vec<(IndexedDocument, f32)> = index
+            .documents
+            .values()
+            .filter(|doc| {
+                match &doc.acl {
+                    Some(acl) => can_access(acl, filter),
+                    // Legacy / non-note files: keep tenant-only behavior.
+                    None => true,
+                }
+            })
+            .map(|doc| {
+                let similarity = self
+                    .embedding_generator
+                    .similarity(&query_embedding, &doc.embedding);
+                (doc.clone(), similarity)
+            })
+            .filter(|(_, score)| *score > 0.1)
+            .collect();
+
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit);
+        results
+    }
+
+    /// Update the ACL projection for every indexed chunk of a note.
+    ///
+    /// Returns the number of chunks that were updated.
+    pub async fn update_note_acl(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+        new_acl: NoteAclPayload,
+    ) -> usize {
+        let mut indexes = self.indexes.write().await;
+        let index = match indexes.get_mut(&tenant_id) {
+            Some(idx) => idx,
+            None => return 0,
+        };
+
+        let mut updated = 0;
+        for doc in index.documents.values_mut() {
+            if let Some(acl) = &doc.acl {
+                if acl.note_id == note_id {
+                    doc.acl = Some(new_acl.clone());
+                    updated += 1;
+                }
+            }
+        }
+        updated
+    }
+
+    /// Remove every indexed chunk belonging to a note.
+    ///
+    /// Returns the number of chunks that were removed.
+    pub async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> usize {
+        let mut indexes = self.indexes.write().await;
+        let index = match indexes.get_mut(&tenant_id) {
+            Some(idx) => idx,
+            None => return 0,
+        };
+
+        let to_remove: Vec<Uuid> = index
+            .documents
+            .iter()
+            .filter(|(_, doc)| {
+                doc.acl
+                    .as_ref()
+                    .map(|acl| acl.note_id == note_id)
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        let removed = to_remove.len();
+        for id in to_remove {
+            index.documents.remove(&id);
+        }
+        index.document_count = index.documents.len();
+        removed
     }
 
     /// Remove a file from the index.
@@ -286,6 +500,66 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             }
         }
     }
+}
+
+/// Check whether a caller can access a note chunk according to its ACL.
+///
+/// Access is granted when any of the following holds:
+/// - the caller is the document owner;
+/// - the note visibility is `"public"`;
+/// - the caller belongs to a group listed in `read_acl`;
+/// - `read_acl` contains an explicit `owner:<caller_user_id>` principal.
+///
+/// Chunks with `embedding_policy != "allowed"` or a stale `acl_version` are
+/// rejected by the caller before this helper is invoked.
+pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
+    if acl.embedding_policy != "allowed" {
+        return false;
+    }
+
+    if let Some(min_version) = filter.min_acl_versions.get(&acl.note_id) {
+        if acl.acl_version < *min_version {
+            return false;
+        }
+    }
+
+    // Owner match.
+    if filter.caller_user_id == acl.owner_id {
+        return true;
+    }
+
+    // Explicit owner principal in the ACL list.
+    let owner_principal = format!("owner:{}", filter.caller_user_id);
+    if acl.read_acl.contains(&owner_principal) {
+        return true;
+    }
+
+    // Group membership match.
+    if !filter.caller_groups.is_empty()
+        && acl
+            .read_acl
+            .iter()
+            .any(|p| filter.caller_groups.contains(p))
+    {
+        return true;
+    }
+
+    // Public visibility match.
+    if acl.visibility == "public" {
+        return true;
+    }
+
+    false
+}
+
+/// Strip YAML frontmatter from a Markdown document, returning the body.
+///
+/// If the document does not start with a frontmatter block, the original text
+/// is returned unchanged.
+fn strip_frontmatter(doc: &str) -> String {
+    split_frontmatter(doc)
+        .map(|(_, body)| body)
+        .unwrap_or_else(|| doc.to_string())
 }
 
 /// Basic RTF text extraction.
@@ -444,5 +718,332 @@ mod tests {
         let doc = indexer.get_document(file_id, tenant_id).await;
         assert!(doc.is_some());
         assert_eq!(doc.unwrap().file_name, "test.txt");
+    }
+
+    fn make_acl_payload(
+        tenant_id: Uuid,
+        note_id: Uuid,
+        source_file_id: Uuid,
+        owner_id: Uuid,
+        visibility: &str,
+        embedding_policy: &str,
+        acl_version: i64,
+    ) -> NoteAclPayload {
+        NoteAclPayload {
+            tenant_id,
+            workspace_id: tenant_id,
+            note_id,
+            source_file_id,
+            source_folder_id: None,
+            owner_id,
+            read_acl: vec![format!("owner:{}", owner_id)],
+            visibility: visibility.to_string(),
+            acl_hash: format!("hash-{}", acl_version),
+            acl_version,
+            embedding_policy: embedding_policy.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_note_acl_payload_serializes() {
+        let acl = make_acl_payload(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "private",
+            "allowed",
+            1,
+        );
+        let json = serde_json::to_value(&acl).unwrap();
+        assert_eq!(json["tenant_id"], acl.tenant_id.to_string());
+        assert_eq!(json["visibility"], "private");
+        assert_eq!(json["embedding_policy"], "allowed");
+        assert_eq!(json["acl_version"], 1);
+
+        let decoded: NoteAclPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(acl, decoded);
+    }
+
+    #[tokio::test]
+    async fn test_index_note_includes_acl_fields() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let acl = make_acl_payload(
+            tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
+        );
+
+        let content = "---\ntitle: Secret\n---\n# Secret\n\nconfidential content".to_string();
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/Workspace/Notes/Secret/note.md".to_string(),
+                content,
+                "text/markdown".to_string(),
+                owner_id,
+                acl.clone(),
+            )
+            .await
+            .unwrap();
+
+        let doc = indexer.get_document(file_id, tenant_id).await.unwrap();
+        assert_eq!(doc.chunk_id, file_id);
+        assert!(doc.acl.is_some());
+        let stored_acl = doc.acl.unwrap();
+        assert_eq!(stored_acl.note_id, note_id);
+        assert_eq!(stored_acl.source_file_id, file_id);
+        assert_eq!(stored_acl.owner_id, owner_id);
+        // Frontmatter should have been stripped from the indexed body.
+        assert!(!doc.content.contains("title: Secret"));
+        assert!(doc.content.contains("confidential content"));
+    }
+
+    #[tokio::test]
+    async fn test_search_with_acl_excludes_other_tenant() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+
+        let file_a = Uuid::new_v4();
+        let note_a = Uuid::new_v4();
+        indexer
+            .index_note(
+                file_a,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "tenant a content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_a,
+                    note_a,
+                    file_a,
+                    owner_id,
+                    "workspace",
+                    "allowed",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let file_b = Uuid::new_v4();
+        let note_b = Uuid::new_v4();
+        indexer
+            .index_note(
+                file_b,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "tenant b content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_b,
+                    note_b,
+                    file_b,
+                    owner_id,
+                    "workspace",
+                    "allowed",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let filter = AclSearchFilter {
+            tenant_id: tenant_a,
+            caller_user_id: owner_id,
+            caller_groups: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer.search_with_acl(&filter, "content", 10).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.acl.as_ref().unwrap().note_id, note_a);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_acl_excludes_unauthorized_caller() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let stranger_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "private note content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: stranger_id,
+            caller_groups: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer.search_with_acl(&filter, "private", 10).await;
+        assert!(results.is_empty());
+
+        // The owner should still see it.
+        let owner_filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: owner_id,
+            caller_groups: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer.search_with_acl(&owner_filter, "private", 10).await;
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_acl_excludes_stale_acl_version() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "shared engineering content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_id,
+                    note_id,
+                    file_id,
+                    owner_id,
+                    "workspace",
+                    "allowed",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let mut min_acl_versions = HashMap::new();
+        min_acl_versions.insert(note_id, 2);
+
+        let filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: owner_id,
+            caller_groups: vec!["engineering".to_string()],
+            min_acl_versions,
+        };
+        let results = indexer.search_with_acl(&filter, "engineering", 10).await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_note_acl_updates_all_chunks() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let mut new_acl = make_acl_payload(
+            tenant_id, note_id, file_id, owner_id, "public", "allowed", 2,
+        );
+        new_acl.read_acl = vec!["group_engineering".to_string()];
+
+        let updated = indexer
+            .update_note_acl(tenant_id, note_id, new_acl.clone())
+            .await;
+        assert_eq!(updated, 1);
+
+        let doc = indexer.get_document(file_id, tenant_id).await.unwrap();
+        let stored = doc.acl.unwrap();
+        assert_eq!(stored.visibility, "public");
+        assert_eq!(stored.acl_version, 2);
+        assert_eq!(stored.read_acl, vec!["group_engineering".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_embedding_policy_denied_prevents_indexing() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let indexer = ContentIndexer::new(generator);
+
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+
+        // First index as allowed.
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexer.document_count(tenant_id).await, 1);
+
+        // Then flip to denied.
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                make_acl_payload(
+                    tenant_id, note_id, file_id, owner_id, "private", "denied", 2,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexer.document_count(tenant_id).await, 0);
     }
 }

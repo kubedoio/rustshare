@@ -68,5 +68,3 @@ impl FsWatcher {
         Ok(())
     }
 }
-
-

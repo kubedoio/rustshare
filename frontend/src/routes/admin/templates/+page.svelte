@@ -88,6 +88,7 @@
 					>
 						<th class="px-4 py-3 font-semibold">Template</th>
 						<th class="px-4 py-3 font-semibold">Module</th>
+						<th class="px-4 py-3 font-semibold">Renderer</th>
 						<th class="px-4 py-3 font-semibold">Version</th>
 						<th class="px-4 py-3 font-semibold">Created</th>
 						<th class="px-4 py-3 font-semibold">Enabled</th>
@@ -113,6 +114,16 @@
 								</div>
 							</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">{template.module_key}</td>
+							<td class="px-4 py-3 text-sm text-base-content/70">
+								{template.renderer || '-'}
+								{#if template.template_key === 'template_default_okf_note'}
+									<span
+										class="ml-2 rounded bg-info/10 px-1 py-0.5 text-[8px] font-bold tracking-tight text-info uppercase"
+									>
+										OKF
+									</span>
+								{/if}
+							</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">{template.version}</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">
 								{formatDate(template.created_at)}

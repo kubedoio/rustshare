@@ -23,7 +23,8 @@ mod vault_service;
 mod vault_sync_service;
 
 pub use ai::{
-    ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument, SimpleEmbeddingGenerator,
+    AclSearchFilter, ContentIndex, ContentIndexer, EmbeddingGenerator, IndexedDocument,
+    NoteAclPayload, SimpleEmbeddingGenerator,
 };
 pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,

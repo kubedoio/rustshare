@@ -84,23 +84,38 @@ mod tests {
         // If the backend drifts from the contract, this test will fail.
         let template = Template {
             id: Uuid::nil(),
-            template_key: "template_default_note".to_string(),
-            name: "Default Note".to_string(),
+            template_key: "template_default_okf_note".to_string(),
+            name: "Default OKF Note".to_string(),
             module_key: "notes".to_string(),
             version: "1.0".to_string(),
-            description: "Default template for notes.".to_string(),
+            description: "Default OKF-native template for notes.".to_string(),
             ui_config: serde_json::json!({
                 "createLabel": "New Note",
                 "icon": "sticky-note"
             }),
-            folder_structure: serde_json::json!(["attachments", "drawings"]),
-            default_files: serde_json::json!([
-                {"path": "note.md", "content": "# {{title}}\n\n", "contentType": "text/markdown"}
+            folder_structure: serde_json::json!([
+                "attachments",
+                "drawings",
+                "exports",
+                "_rustshare"
             ]),
-            metadata_schema: serde_json::json!({"type": "rustshare.note"}),
-            renderer: Some("notes".to_string()),
+            default_files: serde_json::json!([
+                {"path": "note.md", "content": "---\ntype: Note\ntitle: \"{{title}}\"\n...", "contentType": "text/markdown"}
+            ]),
+            metadata_schema: serde_json::json!({
+                "type": "rustshare.note",
+                "okf": {
+                    "conceptType": "Note",
+                    "frontmatterRequired": true
+                }
+            }),
+            renderer: Some("okf-note".to_string()),
             visibility_policy: "workspace".to_string(),
-            ai_indexing_policy: serde_json::json!({"enabled": true}),
+            ai_indexing_policy: serde_json::json!({
+                "enabled": true,
+                "source": "okf-frontmatter-and-markdown",
+                "permission_aware": true
+            }),
             audit_logging_policy: serde_json::json!({"enabled": true}),
             module_config: serde_json::json!({}),
             created_by: None,
@@ -157,6 +172,38 @@ mod tests {
         assert!(
             !first_file.contains_key("content_type"),
             "snake_case content_type leaked into default_files serialization"
+        );
+
+        // Notes template must be OKF-native
+        assert_eq!(
+            obj.get("template_key").unwrap().as_str().unwrap(),
+            "template_default_okf_note"
+        );
+        assert_eq!(obj.get("renderer").unwrap().as_str().unwrap(), "okf-note");
+        let ai_policy = obj.get("ai_indexing_policy").unwrap().as_object().unwrap();
+        assert_eq!(
+            ai_policy.get("source").unwrap().as_str().unwrap(),
+            "okf-frontmatter-and-markdown"
+        );
+        assert!(ai_policy
+            .get("permission_aware")
+            .unwrap()
+            .as_bool()
+            .unwrap());
+        let schema = obj.get("metadata_schema").unwrap().as_object().unwrap();
+        assert_eq!(
+            schema.get("type").unwrap().as_str().unwrap(),
+            "rustshare.note"
+        );
+        assert_eq!(
+            schema
+                .get("okf")
+                .unwrap()
+                .get("conceptType")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "Note"
         );
     }
 }
