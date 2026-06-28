@@ -4,7 +4,7 @@
   Reusable across Notes, Decisions, Meetings and file browser.
 -->
 <script lang="ts">
-	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { createEventDispatcher, onDestroy, tick } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
@@ -106,7 +106,7 @@
 		upload: { files: File[] };
 		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
-		rename: void;
+		rename: { title?: string } | undefined;
 		move: void;
 		duplicate: void;
 		deleteDocument: void;
@@ -129,6 +129,10 @@
 	let preservedFrontmatter = $state(splitFrontmatter(content).frontmatter);
 	let currentMarkdown: string = $state(splitFrontmatter(content).body);
 
+	let isTitleEditing = $state(false);
+	let titleDraft = $state('');
+	let titleInputRef = $state<HTMLInputElement | undefined>(undefined);
+
 	import { untrack } from 'svelte';
 
 	let canEdit = $derived(permissions.canEdit);
@@ -137,6 +141,46 @@
 	let hasFrontmatter = $derived(frontmatterResult.hasFrontmatter);
 	let bodyContent = $derived(frontmatterResult.body);
 	let frontmatterBlock = $derived(frontmatterResult.frontmatter);
+
+	function startTitleEdit() {
+		if (!canEdit || isTitleEditing) return;
+		titleDraft = title;
+		isTitleEditing = true;
+		void tick().then(() => {
+			titleInputRef?.focus();
+			titleInputRef?.select();
+		});
+	}
+
+	function confirmTitleEdit() {
+		if (!isTitleEditing) return;
+		const trimmed = titleDraft.trim();
+		if (!trimmed || trimmed === title) {
+			cancelTitleEdit();
+			return;
+		}
+		isTitleEditing = false;
+		dispatch('rename', { title: trimmed });
+	}
+
+	function cancelTitleEdit() {
+		isTitleEditing = false;
+		titleDraft = title;
+	}
+
+	function handleTitleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			confirmTitleEdit();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelTitleEdit();
+		}
+	}
+
+	function handleTitleBlur() {
+		confirmTitleEdit();
+	}
 
 	$effect(() => {
 		if (docId !== lastDocId) {
@@ -437,7 +481,25 @@
 				<span class="doc-label">{label}</span>
 				<span class="doc-label-sep">·</span>
 			{/if}
-			<h1 class="doc-title">{title}</h1>
+			{#if isTitleEditing}
+				<input
+					bind:this={titleInputRef}
+					type="text"
+					class="doc-title-input"
+					bind:value={titleDraft}
+					onkeydown={handleTitleKeydown}
+					onblur={handleTitleBlur}
+				/>
+			{:else}
+				<h1
+					class="doc-title"
+					class:cursor-pointer={canEdit}
+					class:hover:opacity-80={canEdit}
+					onclick={() => startTitleEdit()}
+				>
+					{title}
+				</h1>
+			{/if}
 			{#if subtitle}
 				<span class="doc-subtitle">{subtitle}</span>
 			{/if}
@@ -784,6 +846,20 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-title-input {
+		font-size: 1.125rem;
+		font-weight: 600;
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid var(--rs-brand-500, #3b82f6);
+		color: inherit;
+		min-width: 120px;
+		max-width: 400px;
+		padding: 0;
+		margin: 0;
+		outline: none;
 	}
 
 	.doc-subtitle {
