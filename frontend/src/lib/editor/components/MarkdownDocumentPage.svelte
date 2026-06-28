@@ -492,10 +492,9 @@
 					<h1 class="doc-title-wrapper">
 						<button
 							type="button"
-							class="doc-title doc-title-button"
-							class:hover:opacity-80={canEdit}
+							class="doc-title doc-title-button hover:opacity-80"
 							onclick={startTitleEdit}
-							aria-label="Edit title"
+							aria-label="{title}, edit title"
 						>
 							{title}
 						</button>
