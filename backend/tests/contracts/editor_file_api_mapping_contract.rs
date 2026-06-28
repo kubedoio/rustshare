@@ -169,7 +169,9 @@ async fn test_note_save_maps_to_note_service_save() {
         .expect("save_note should succeed");
 
     // save_note persists and returns the full OKF note.md document (frontmatter + body).
-    assert!(saved.content.contains("# Updated heading\n\nNew paragraph."));
+    assert!(saved
+        .content
+        .contains("# Updated heading\n\nNew paragraph."));
     assert!(
         saved.current_version >= initial_version,
         "Note version should increment or stay same after save"
