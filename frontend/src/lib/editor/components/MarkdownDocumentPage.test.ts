@@ -258,6 +258,8 @@ describe('MarkdownDocumentPage', () => {
 			expect(renameHandler).not.toHaveBeenCalled();
 		});
 		expect(container.querySelector('input.doc-title-input')).toBeNull();
-		expect(container.querySelector('h1.doc-title')?.textContent?.trim()).toBe('Test Doc');
+		expect(
+			container.querySelector('h1.doc-title, h1.doc-title-wrapper')?.textContent?.trim()
+		).toBe('Test Doc');
 	});
 });

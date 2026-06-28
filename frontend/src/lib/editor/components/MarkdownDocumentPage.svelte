@@ -176,13 +176,6 @@
 		}
 	}
 
-	function handleTitleButtonKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			startTitleEdit();
-		}
-	}
-
 	$effect(() => {
 		if (docId !== lastDocId) {
 			const newDocId = docId;
@@ -496,16 +489,16 @@
 				/>
 			{:else}
 				{#if canEdit}
-					<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
-					<h1
-						class="doc-title cursor-pointer hover:opacity-80"
-						role="button"
-						tabindex="0"
-						aria-label="Edit title"
-						onkeydown={handleTitleButtonKeydown}
-						onclick={startTitleEdit}
-					>
-						{title}
+					<h1 class="doc-title-wrapper">
+						<button
+							type="button"
+							class="doc-title doc-title-button"
+							class:hover:opacity-80={canEdit}
+							onclick={startTitleEdit}
+							aria-label="Edit title"
+						>
+							{title}
+						</button>
 					</h1>
 				{:else}
 					<h1 class="doc-title">
@@ -859,6 +852,19 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-title-wrapper {
+		margin: 0;
+	}
+
+	.doc-title-button {
+		background: transparent;
+		border: none;
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
 	}
 
 	.doc-title-input {
