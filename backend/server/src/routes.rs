@@ -126,6 +126,10 @@ pub fn file_routes() -> Router<AppState> {
             post(crate::handlers::rename_file),
         )
         .route(
+            "/api/v1/files/{id}/color",
+            patch(crate::handlers::set_file_color),
+        )
+        .route(
             "/api/v1/files/{id}/thumbnail",
             get(crate::handlers::get_file_thumbnail),
         )

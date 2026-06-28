@@ -38,6 +38,7 @@
 		onDownloadFile?: (file: FileType) => void;
 		onReplaceFile?: (file: FileType) => void;
 		onEditFile?: (file: FileType) => void;
+		onSetColorFile?: (file: FileType, color: string | null) => void;
 		selectionMode?: boolean;
 		activeSortField?: SortField;
 		activeSortOrder?: SortOrder;
@@ -74,6 +75,7 @@
 		onDownloadFile = () => {},
 		onReplaceFile = () => {},
 		onEditFile = () => {},
+		onSetColorFile = () => {},
 		selectionMode = false,
 		activeSortField = 'name',
 		activeSortOrder = 'asc',
@@ -347,6 +349,7 @@
 						onEdit={() => {
 							onEditFile(file);
 						}}
+						onSetColor={(color) => onSetColorFile(file, color)}
 						onDragStart={() =>
 							handleDragStart({
 								id: file.id,

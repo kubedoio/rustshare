@@ -102,8 +102,9 @@
 		--rs-accent-green: #10b981;
 		--rs-accent-red: #ef4444;
 		--rs-accent-orange: #f59e0b;
+		--rs-accent-yellow: #eab308;
 		--rs-accent-purple: #8b5cf6;
-		--rs-accent-pink: #ec4899;
+		--rs-accent-gray: #6b7280;
 	}
 
 	html[data-theme='rustshare-dark'] {
@@ -131,8 +132,9 @@
 		--rs-accent-green: #34d399;
 		--rs-accent-red: #f87171;
 		--rs-accent-orange: #fbbf24;
+		--rs-accent-yellow: #facc15;
 		--rs-accent-purple: #a78bfa;
-		--rs-accent-pink: #f472b6;
+		--rs-accent-gray: #9ca3af;
 	}
 
 	html {

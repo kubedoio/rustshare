@@ -47,12 +47,13 @@
 
 	const PURPOSEFUL_COLORS = [
 		{ name: 'Default', value: null, class: 'bg-base-300' },
-		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
-		{ name: 'Green', value: 'green', class: 'bg-[var(--rs-accent-green)]' },
 		{ name: 'Red', value: 'red', class: 'bg-[var(--rs-accent-red)]' },
 		{ name: 'Orange', value: 'orange', class: 'bg-[var(--rs-accent-orange)]' },
+		{ name: 'Yellow', value: 'yellow', class: 'bg-[var(--rs-accent-yellow)]' },
+		{ name: 'Green', value: 'green', class: 'bg-[var(--rs-accent-green)]' },
+		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
 		{ name: 'Purple', value: 'purple', class: 'bg-[var(--rs-accent-purple)]' },
-		{ name: 'Pink', value: 'pink', class: 'bg-[var(--rs-accent-pink)]' }
+		{ name: 'Gray', value: 'gray', class: 'bg-[var(--rs-accent-gray)]' }
 	];
 
 	let {

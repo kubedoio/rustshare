@@ -82,6 +82,7 @@ fn create_note_service(
         metadata_store,
         object_store,
         permission_resolver,
+        pool.clone(),
     ))
 }
 

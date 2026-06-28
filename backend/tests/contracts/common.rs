@@ -148,6 +148,7 @@ impl TestContext {
             self.metadata_store.clone(),
             self.object_store.clone(),
             permission_resolver,
+            self.pool.clone(),
         )
     }
 

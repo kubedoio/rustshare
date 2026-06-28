@@ -15,7 +15,9 @@
 		History,
 		RefreshCw,
 		RotateCcw,
-		Star
+		Star,
+		Palette,
+		X
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -25,6 +27,7 @@
 		position?: { x: number; y: number };
 		onClose?: () => void;
 		onAction?: (action: string) => void;
+		onSetColor?: (color: string | null) => void;
 	}
 
 	let {
@@ -33,8 +36,22 @@
 		isOpen = false,
 		position = { x: 0, y: 0 },
 		onClose = () => {},
-		onAction = () => {}
+		onAction = () => {},
+		onSetColor = () => {}
 	}: Props = $props();
+
+	const COLOR_PALETTE = [
+		{ key: 'red', class: 'bg-red-500', label: 'Red' },
+		{ key: 'orange', class: 'bg-orange-500', label: 'Orange' },
+		{ key: 'yellow', class: 'bg-yellow-500', label: 'Yellow' },
+		{ key: 'green', class: 'bg-green-500', label: 'Green' },
+		{ key: 'blue', class: 'bg-blue-500', label: 'Blue' },
+		{ key: 'purple', class: 'bg-purple-500', label: 'Purple' },
+		{ key: 'gray', class: 'bg-gray-500', label: 'Gray' }
+	];
+
+	let showColorPicker = $state(false);
+	let pickerRef = $state<HTMLDivElement | undefined>(undefined);
 
 	let isFolder = $derived('parent_folder_id' in item && !('mime_type' in item));
 	let fileItem = $derived(isFolder ? null : (item as FileType));
@@ -171,13 +188,25 @@
 			}
 
 			if (canManage) {
+				items.push({
+					id: 'star',
+					label: isStarred ? 'Remove from starred' : 'Add to starred',
+					icon: Star,
+					onClick: () => onAction('star')
+				});
+
+				if (!isFolder) {
+					items.push({
+						id: 'setColor',
+						label: 'Set color',
+						icon: Palette,
+						onClick: () => {
+							showColorPicker = true;
+						}
+					});
+				}
+
 				items.push(
-					{
-						id: 'star',
-						label: isStarred ? 'Remove from starred' : 'Add to starred',
-						icon: Star,
-						onClick: () => onAction('star')
-					},
 					{ id: 'sep2', label: '', separator: true, onClick: () => {} },
 					{
 						id: 'delete',
@@ -193,6 +222,73 @@
 
 		return items;
 	}
+
+	function handleColorSelect(color: string | null) {
+		onSetColor(color);
+		showColorPicker = false;
+	}
+
+	function handlePickerClickOutside(e: MouseEvent) {
+		if (pickerRef && !pickerRef.contains(e.target as Node)) {
+			showColorPicker = false;
+		}
+	}
+
+	function handlePickerKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			showColorPicker = false;
+		}
+	}
 </script>
 
-<MenuComponent items={menuItems} x={position.x} y={position.y} visible={isOpen} {onClose} />
+<svelte:window onclick={handlePickerClickOutside} onkeydown={handlePickerKeyDown} />
+
+<MenuComponent
+	items={menuItems}
+	x={position.x}
+	y={position.y}
+	visible={isOpen && !showColorPicker}
+	{onClose}
+/>
+
+{#if showColorPicker}
+	<div
+		bind:this={pickerRef}
+		class="fixed z-[9999] w-44 rounded-xl border border-base-300/70 bg-base-100 p-2 shadow-xl shadow-black/20"
+		style="left: {position.x}px; top: {position.y}px;"
+		role="dialog"
+		tabindex="-1"
+		aria-label="Set color"
+		onclick={(e) => e.stopPropagation()}
+		onkeydown={(e) => e.stopPropagation()}
+	>
+		<div class="mb-2 flex items-center justify-between px-1">
+			<span class="text-xs font-medium text-base-content/70">Set color</span>
+			<button
+				type="button"
+				class="rounded-md p-1 text-base-content/50 hover:bg-base-200"
+				onclick={() => (showColorPicker = false)}
+			>
+				<X size={12} />
+			</button>
+		</div>
+		<div class="grid grid-cols-4 gap-1.5">
+			{#each COLOR_PALETTE as color}
+				<button
+					type="button"
+					class="h-7 w-7 rounded-full {color.class} ring-offset-2 hover:ring-2 hover:ring-base-content/30 focus:outline-hidden focus:ring-2 focus:ring-base-content/30"
+					aria-label={color.label}
+					onclick={() => handleColorSelect(color.key)}
+				></button>
+			{/each}
+			<button
+				type="button"
+				class="flex h-7 w-7 items-center justify-center rounded-full border border-base-300 text-base-content/50 hover:bg-base-200"
+				aria-label="Clear color"
+				onclick={() => handleColorSelect(null)}
+			>
+				<X size={14} />
+			</button>
+		</div>
+	</div>
+{/if}

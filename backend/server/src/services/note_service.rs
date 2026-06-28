@@ -240,6 +240,7 @@ pub struct NoteService {
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    db_pool: sqlx::PgPool,
     pub workspace_name: String,
     pub folder_name: String,
     index_sink: Option<Arc<dyn NoteIndexSink>>,
@@ -265,6 +266,7 @@ impl NoteService {
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
         permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+        db_pool: sqlx::PgPool,
     ) -> Self {
         Self {
             file_service,
@@ -272,6 +274,7 @@ impl NoteService {
             metadata_store,
             object_store,
             permission_resolver,
+            db_pool,
             workspace_name: "Workspace".to_string(),
             folder_name: "Notes".to_string(),
             index_sink: None,
@@ -1609,7 +1612,13 @@ impl NoteService {
             });
 
         if let Some(new_color) = color {
-            meta.color = Some(new_color);
+            meta.color = Some(new_color.clone());
+            sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2")
+                .bind(&new_color)
+                .bind(file_id)
+                .execute(&self.db_pool)
+                .await
+                .map_err(|e| NoteError::Storage(e.to_string()))?;
         }
 
         if let Some(new_attachments) = attachments {

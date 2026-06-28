@@ -593,6 +593,7 @@ pub async fn get_user_shared_folder_contents(
             modified_at: f.modified_at,
             starred_at: f.starred_at,
             deleted_at: f.deleted_at,
+            color: None,
             is_shared: share_info.0,
             share_count: share_info.1,
             share_expires_at: share_info.2,

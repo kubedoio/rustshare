@@ -32,6 +32,7 @@
 		onDownloadFile?: (file: FileType) => void;
 		onReplaceFile?: (file: FileType) => void;
 		onEditFile?: (file: FileType) => void;
+		onSetColorFile?: (file: FileType, color: string | null) => void;
 		selectionMode?: boolean;
 		isSharedRoot?: boolean;
 	}
@@ -64,6 +65,7 @@
 		onDownloadFile = () => {},
 		onReplaceFile = () => {},
 		onEditFile = () => {},
+		onSetColorFile = () => {},
 		selectionMode = false,
 		isSharedRoot = false
 	}: Props = $props();
@@ -288,6 +290,7 @@
 				onEdit={() => {
 					onEditFile(file);
 				}}
+				onSetColor={(color) => onSetColorFile(file, color)}
 				onDragStart={() =>
 					handleDragStart({ id: file.id, isFolder: false, parentFolderId: file.parent_folder_id })}
 				onDragEnd={handleDragEnd}

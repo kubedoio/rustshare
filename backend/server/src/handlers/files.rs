@@ -534,6 +534,63 @@ pub struct RestoreVersionRequest {
     pub version: i32,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SetFileColorRequest {
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FileColorResponse {
+    pub id: Uuid,
+    pub color: Option<String>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/files/{id}/color",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = SetFileColorRequest,
+    responses(
+        (status = 200, description = "Color updated", body = FileColorResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn set_file_color(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<SetFileColorRequest>,
+) -> Result<Json<FileColorResponse>, AppError> {
+    // Verify the file exists and is accessible by the user
+    let _file = state
+        .file_service
+        .get_file(file_id, auth.user_id)
+        .await
+        .map_err(|e| match e {
+            rustshare_core::services::FileError::NotFound(_) => {
+                AppError::not_found(format!("File not found: {}", file_id))
+            }
+            _ => AppError::internal(format!("Failed to get file: {}", e)),
+        })?;
+
+    sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2 AND owner_id = $3 AND tenant_id = $4")
+        .bind(&req.color)
+        .bind(file_id)
+        .bind(auth.user_id)
+        .bind(auth.tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to set file color: {}", e)))?;
+
+    Ok(Json(FileColorResponse {
+        id: file_id,
+        color: req.color,
+    }))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FileRestoreResponse {
     pub id: Uuid,
@@ -854,6 +911,8 @@ pub struct FileWithShares {
     pub modified_at: chrono::DateTime<chrono::Utc>,
     pub starred_at: Option<chrono::DateTime<chrono::Utc>>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
@@ -889,6 +948,7 @@ pub async fn list_files(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -1103,6 +1163,7 @@ pub async fn list_starred_items(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -1223,6 +1284,7 @@ pub async fn list_deleted_items(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id

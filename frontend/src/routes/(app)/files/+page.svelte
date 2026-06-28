@@ -32,7 +32,8 @@
 		uploadFile,
 		listAllFiles,
 		getTrashSummary,
-		emptyTrash
+		emptyTrash,
+		setFileColor
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
 	import {
@@ -1540,6 +1541,15 @@
 		$fileStarMutation.mutate({ fileId: file.id, starred: !file.starred_at });
 	}
 
+	async function handleSetColor(file: File, color: string | null) {
+		try {
+			await setFileColor(file.id, color);
+			await $filesQuery.refetch();
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : 'Failed to set color', 'error');
+		}
+	}
+
 	function handleToggleFolderStar(folder: Folder) {
 		$folderStarMutation.mutate({ folderId: folder.id, starred: !folder.starred_at });
 	}
@@ -1827,6 +1837,7 @@
 			onDownloadFile={handleDownloadFile}
 			onReplaceFile={handleReplaceFile}
 			onEditFile={handleEditFile}
+			onSetColor={handleSetColor}
 			onRenameFolder={handleRenameFolderInline}
 			onDeleteFolder={handleDeleteFolder}
 			onToggleFolderStar={handleToggleFolderStar}

@@ -5,6 +5,8 @@
 	import FilePreview from './FilePreview.svelte';
 	import ShareIndicator from '$lib/components/files/ShareIndicator.svelte';
 	import FileContextMenu from '$lib/explorer/FileContextMenu.svelte';
+	import { setFileColor } from '$lib/api/files';
+	import { toastStore } from '$lib/stores/toast';
 	import {
 		MoveVertical as MoreVertical,
 		CreditCard as Edit,
@@ -19,10 +21,36 @@
 		Star,
 		Check,
 		X,
-		ChevronRight
+		ChevronRight,
+		Palette
 	} from 'lucide-svelte';
 	import { tick } from 'svelte';
 	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
+
+	const COLOR_PALETTE = [
+		{ key: 'red', borderClass: 'border-l-red-500', bgClass: 'bg-red-500', label: 'Red' },
+		{
+			key: 'orange',
+			borderClass: 'border-l-orange-500',
+			bgClass: 'bg-orange-500',
+			label: 'Orange'
+		},
+		{
+			key: 'yellow',
+			borderClass: 'border-l-yellow-500',
+			bgClass: 'bg-yellow-500',
+			label: 'Yellow'
+		},
+		{ key: 'green', borderClass: 'border-l-green-500', bgClass: 'bg-green-500', label: 'Green' },
+		{ key: 'blue', borderClass: 'border-l-blue-500', bgClass: 'bg-blue-500', label: 'Blue' },
+		{
+			key: 'purple',
+			borderClass: 'border-l-purple-500',
+			bgClass: 'bg-purple-500',
+			label: 'Purple'
+		},
+		{ key: 'gray', borderClass: 'border-l-gray-500', bgClass: 'bg-gray-500', label: 'Gray' }
+	];
 
 	// Props
 	interface Props {
@@ -54,6 +82,7 @@
 		onDrop?: (e: DragEvent) => void;
 		onDragOver?: () => void;
 		onDragLeave?: () => void;
+		onSetColor?: (color: string | null) => void;
 	}
 
 	let {
@@ -84,7 +113,8 @@
 		onDragEnd = () => {},
 		onDrop = () => {},
 		onDragOver = () => {},
-		onDragLeave = () => {}
+		onDragLeave = () => {},
+		onSetColor = () => {}
 	}: Props = $props();
 
 	// Derived values
@@ -126,6 +156,20 @@
 	let contextMenuVisible = $state(false);
 	let contextMenuX = $state(0);
 	let contextMenuY = $state(0);
+
+	// Color state
+	let showColorPicker = $state(false);
+	let optimisticColor = $state<string | null>(null);
+
+	$effect(() => {
+		optimisticColor = fileItem?.color ?? null;
+	});
+
+	let colorBorderClass = $derived(
+		!isFolder && optimisticColor
+			? (COLOR_PALETTE.find((c) => c.key === optimisticColor)?.borderClass ?? '')
+			: ''
+	);
 
 	// Inline rename state
 	let isRenaming = $state(false);
@@ -174,6 +218,23 @@
 			case 'permanentDelete':
 				onPermanentDelete();
 				break;
+		}
+	}
+
+	async function handleSetColor(color: string | null) {
+		if (isFolder || !fileItem) return;
+		const previousColor = optimisticColor;
+		optimisticColor = color;
+		showColorPicker = false;
+		try {
+			const result = await setFileColor(fileItem.id, color);
+			if (fileItem) {
+				(fileItem as FileType).color = result.color;
+			}
+			onSetColor(result.color);
+		} catch (err) {
+			optimisticColor = previousColor;
+			toastStore.show(err instanceof Error ? err.message : 'Failed to set color', 'error');
 		}
 	}
 
@@ -369,7 +430,8 @@
 				? 'bg-brand-500/10 ring-1 ring-brand-500/30 ring-inset'
 				: 'bg-error/10 ring-1 ring-error/30 ring-inset'
 			: ''}
-		{!isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}"
+		{!isRenaming ? 'cursor-grab active:cursor-grabbing' : ''}
+		{colorBorderClass ? `border-l-4 ${colorBorderClass}` : ''}"
 		onclick={handleClick}
 		oncontextmenu={handleContextMenu}
 		draggable={!isRenaming}
@@ -610,6 +672,68 @@
 									<Move size={14} />
 									Move
 								</button>
+								{#if !isFolder}
+									{#if showColorPicker}
+										<div
+											class="flex flex-col gap-2 px-4 py-2"
+											role="dialog"
+											tabindex="-1"
+											aria-label="Set color"
+											onclick={(e) => e.stopPropagation()}
+											onkeydown={(e) => e.stopPropagation()}
+										>
+											<div class="flex items-center justify-between">
+												<span class="text-xs font-medium text-base-content/70">Set color</span>
+												<button
+													type="button"
+													class="rounded-md p-1 text-base-content/50 hover:bg-base-200"
+													onclick={(e) => {
+														e.stopPropagation();
+														showColorPicker = false;
+													}}
+												>
+													<X size={12} />
+												</button>
+											</div>
+											<div class="grid grid-cols-4 gap-1.5">
+												{#each COLOR_PALETTE as color}
+													<button
+														type="button"
+														class="h-6 w-6 rounded-full {color.bgClass} ring-offset-2 hover:ring-2 hover:ring-base-content/30 focus:outline-hidden focus:ring-2 focus:ring-base-content/30"
+														aria-label={color.label}
+														onclick={(e) => {
+															e.stopPropagation();
+															handleSetColor(color.key);
+														}}
+													></button>
+												{/each}
+												<button
+													type="button"
+													class="flex h-6 w-6 items-center justify-center rounded-full border border-base-300 text-base-content/50 hover:bg-base-200"
+													aria-label="Clear color"
+													onclick={(e) => {
+														e.stopPropagation();
+														handleSetColor(null);
+													}}
+												>
+													<X size={12} />
+												</button>
+											</div>
+										</div>
+									{:else}
+										<button
+											type="button"
+											class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+											onclick={(e) => {
+												e.stopPropagation();
+												showColorPicker = true;
+											}}
+										>
+											<Palette size={14} />
+											Set color
+										</button>
+									{/if}
+								{/if}
 								<div class="my-1 border-t border-base-200"></div>
 								<button
 									type="button"
@@ -635,5 +759,6 @@
 		position={{ x: contextMenuX, y: contextMenuY }}
 		onClose={() => (contextMenuVisible = false)}
 		onAction={handleContextMenuAction}
+		onSetColor={handleSetColor}
 	/>
 {/if}
