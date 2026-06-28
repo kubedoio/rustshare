@@ -35,7 +35,7 @@ jobs:
     needs: [generate-secrets]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
