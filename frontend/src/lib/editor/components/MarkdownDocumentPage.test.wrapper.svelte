@@ -24,7 +24,7 @@
 		initialAttachmentsOpen?: boolean;
 		subtitle?: string;
 		onSave?: (event: CustomEvent<{ content: string; docId?: string }>) => void;
-		onRename?: () => void;
+		onRename?: (event: CustomEvent<{ title: string } | undefined>) => void;
 	}
 
 	let { onSave = () => {}, onRename = () => {}, ...props }: Props = $props();
