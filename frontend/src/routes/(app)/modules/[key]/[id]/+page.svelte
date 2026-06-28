@@ -539,6 +539,7 @@
 					showRenameModal = false;
 					renameError = '';
 					$query.refetch();
+					queryClient.invalidateQueries({ queryKey: [key] });
 				}
 			}
 		);
@@ -701,9 +702,14 @@
 			on:upload={handleUpload}
 			on:delete={handleDeleteAttachment}
 			on:sketch={handleSketch}
-			on:rename={() => {
-				showRenameModal = true;
-				renameError = '';
+			on:rename={(event) => {
+				const newTitle = event.detail?.title;
+				if (newTitle) {
+					handleRenameConfirm(newTitle);
+				} else {
+					showRenameModal = true;
+					renameError = '';
+				}
 			}}
 			on:move={() => {
 				showMoveModal = true;
