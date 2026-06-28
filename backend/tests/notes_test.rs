@@ -1957,16 +1957,17 @@ async fn contract_reconcile_external_yaml_title_updates_manifest_and_folder() {
     // Simulate external edit: rewrite note.md with a new title but same OKF id.
     let okf_id = note.okf_id.unwrap();
     let edited_doc = format!(
-        "---\n\
-         type: Note\n\
-         title: YAML Edited Title\n\
-         rustshare:\n\
-           id: {okf_id}\n\
-           module: notes\n\
-           bundle_name: YAML Edited Title\n\
-         ---\n\
-         # YAML Edited Title\n\n\
-         body"
+        r#"---
+type: Note
+title: YAML Edited Title
+rustshare:
+  id: {okf_id}
+  module: notes
+  bundle_name: YAML Edited Title
+---
+# YAML Edited Title
+
+body"#
     );
     file_service
         .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
@@ -2130,16 +2131,17 @@ async fn contract_reconcile_both_title_and_folder_changed_creates_conflict() {
 
     // External YAML title edit.
     let edited_doc = format!(
-        "---\n\
-         type: Note\n\
-         title: YAML Title\n\
-         rustshare:\n\
-           id: {okf_id}\n\
-           module: notes\n\
-           bundle_name: YAML Title\n\
-         ---\n\
-         # YAML Title\n\n\
-         body"
+        r#"---
+type: Note
+title: YAML Title
+rustshare:
+  id: {okf_id}
+  module: notes
+  bundle_name: YAML Title
+---
+# YAML Title
+
+body"#
     );
     file_service
         .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
@@ -2262,16 +2264,16 @@ async fn contract_reconcile_preserves_unknown_frontmatter_fields() {
 
     let okf_id = note.okf_id.unwrap();
     let edited_doc = format!(
-        "---\n\
-         type: Note\n\
-         title: Original Title\n\
-         custom_field: preserved_value\n\
-         rustshare:\n\
-           id: {okf_id}\n\
-           module: notes\n\
-           custom_nested: also_preserved\n\
-         ---\n\
-         body"
+        r#"---
+type: Note
+title: Original Title
+custom_field: preserved_value
+rustshare:
+  id: {okf_id}
+  module: notes
+  custom_nested: also_preserved
+---
+body"#
     );
     file_service
         .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
@@ -2317,14 +2319,14 @@ async fn contract_reconcile_identity_mismatch_creates_conflict() {
     assert_ne!(tampered_okf_id, original_okf_id);
 
     let edited_doc = format!(
-        "---\n\
-         type: Note\n\
-         title: Original Title\n\
-         rustshare:\n\
-           id: {tampered_okf_id}\n\
-           module: notes\n\
-         ---\n\
-         body"
+        r#"---
+type: Note
+title: Original Title
+rustshare:
+  id: {tampered_okf_id}
+  module: notes
+---
+body"#
     );
     file_service
         .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
@@ -2383,14 +2385,14 @@ async fn contract_resolve_note_conflict_clears_conflict_and_persists_choice() {
 
     // Create a title/folder conflict.
     let edited_doc = format!(
-        "---\n\
-         type: Note\n\
-         title: YAML Title\n\
-         rustshare:\n\
-           id: {okf_id}\n\
-           module: notes\n\
-         ---\n\
-         body"
+        r#"---
+type: Note
+title: YAML Title
+rustshare:
+  id: {okf_id}
+  module: notes
+---
+body"#
     );
     file_service
         .edit_file(note.id, user.id, Bytes::from(edited_doc), "overwrite", None)
