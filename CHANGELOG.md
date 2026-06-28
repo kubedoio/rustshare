@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Persisted the AI vector index in PostgreSQL using pgvector. Added `note_index_chunks` table and `PgVectorStore` implementation; production builds use the database backend while in-memory storage remains available for tests.
 - Added frontend conflict-resolution actions for OKF notes, allowing users to choose YAML, folder-name, or a custom title when the note frontmatter and bundle metadata disagree.
 - Added purpose color tags for files and notes. Users can assign a color to a file from the file browser and to a note from the note editor; colors are persisted on the file record (for files) and in note sidecar metadata (for notes) and returned in folder/share listings.
+- Added full item action menus to Decisions, Meetings, and Standups module lists, matching the Notes module: Show attachments, Rename, Move to folder, Duplicate, and Delete. Added backend `move` and `duplicate` endpoints for all three module types.
 
 ### Changed
 

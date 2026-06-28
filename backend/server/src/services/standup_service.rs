@@ -495,4 +495,145 @@ impl StandupService {
 
         self.get_standup(id, user_id, tenant_id).await
     }
+
+    /// Move a standup folder to a different parent folder.
+    pub async fn move_standup(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        target_folder_id: Option<Uuid>,
+    ) -> Result<StandupRecord, StandupError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
+        self.folder_service
+            .move_folder(id, target_folder_id, user_id)
+            .await?;
+        self.get_standup(id, user_id, tenant_id).await
+    }
+
+    /// Duplicate a standup in the same parent folder with a regenerated date folder name.
+    pub async fn duplicate_standup(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<StandupRecord, StandupError> {
+        let original = self.get_standup(id, user_id, tenant_id).await?;
+        let original_folder = self.folder_service.get_folder(id, user_id).await?;
+        if original_folder.tenant_id != tenant_id {
+            return Err(StandupError::PermissionDenied);
+        }
+
+        let parent_folder_id = original_folder.parent_folder_id;
+        let copy_title = format!("{} (copy)", original.metadata.title);
+        // Design choice: a duplicated standup represents a new day, so use the
+        // current date for both the folder name and the standup metadata.
+        let new_date = Utc::now();
+        let new_folder_name = self
+            .unique_standup_folder_name(parent_folder_id, user_id, tenant_id, &new_date)
+            .await?;
+
+        let new_folder = self
+            .folder_service
+            .create_folder(new_folder_name, parent_folder_id, user_id, tenant_id)
+            .await?;
+
+        // Copy index.md
+        self.file_service
+            .upload_file(
+                user_id,
+                "index.md".to_string(),
+                Some(new_folder.id),
+                Bytes::from(original.content),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        // Copy events.jsonl if it exists
+        let files = self
+            .metadata_store
+            .list_files_by_parent(Some(id), tenant_id)
+            .await
+            .map_err(|e| StandupError::Database(e.to_string()))?;
+        let events_content =
+            if let Some(events_file) = files.iter().find(|f| f.name == "events.jsonl") {
+                self.object_store
+                    .get(&events_file.storage_key())
+                    .await
+                    .map_err(|e| StandupError::Storage(e.to_string()))?
+            } else {
+                Bytes::new()
+            };
+        self.file_service
+            .upload_file(
+                user_id,
+                "events.jsonl".to_string(),
+                Some(new_folder.id),
+                events_content,
+                "application/jsonlines".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        // Copy .rustshare.json with updated title/timestamps
+        let mut meta = original.metadata.clone();
+        meta.title = copy_title;
+        meta.date = new_date;
+        meta.created_at = Utc::now();
+        meta.updated_at = Utc::now();
+        let meta_data = serde_json::to_vec_pretty(&meta)
+            .map_err(|e| StandupError::InvalidData(e.to_string()))?;
+        self.file_service
+            .upload_file(
+                user_id,
+                ".rustshare.json".to_string(),
+                Some(new_folder.id),
+                Bytes::from(meta_data),
+                "application/json".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        self.get_standup(new_folder.id, user_id, tenant_id).await
+    }
+
+    async fn unique_standup_folder_name(
+        &self,
+        parent_id: Option<Uuid>,
+        user_id: UserId,
+        tenant_id: Uuid,
+        date: &DateTime<Utc>,
+    ) -> Result<String, StandupError> {
+        let base = date.format("%Y-%m-%d").to_string();
+        let siblings = self
+            .metadata_store
+            .list_folders(parent_id, user_id, tenant_id)
+            .await
+            .map_err(|e| StandupError::Database(e.to_string()))?;
+        if !siblings.iter().any(|f| f.name == base) {
+            return Ok(base);
+        }
+        for n in 1.. {
+            let candidate = if n == 1 {
+                format!("{}-copy", base)
+            } else {
+                format!("{}-copy-{}", base, n)
+            };
+            if !siblings.iter().any(|f| f.name == candidate) {
+                return Ok(candidate);
+            }
+            if n > 1000 {
+                return Err(StandupError::Storage(
+                    "Could not generate unique standup folder name".to_string(),
+                ));
+            }
+        }
+        Err(StandupError::Storage(
+            "Could not generate unique standup folder name".to_string(),
+        ))
+    }
 }

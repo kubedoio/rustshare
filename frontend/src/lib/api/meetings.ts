@@ -69,5 +69,21 @@ export const meetingsApi = {
 
 	update: async (id: string, req: { title?: string; content?: string; attendees?: string[] }) => {
 		return apiClient.put<MeetingNote>(`/meetings/${id}`, req);
+	},
+
+	rename: async (id: string, req: { title: string }) => {
+		return apiClient.put<MeetingNote>(`/meetings/${id}`, { title: req.title });
+	},
+
+	delete: async (id: string) => {
+		return apiClient.delete(`/meetings/${id}`);
+	},
+
+	move: async (id: string, req: { target_folder_id: string | null }) => {
+		return apiClient.post<MeetingNote>(`/meetings/${id}/move`, req);
+	},
+
+	duplicate: async (id: string) => {
+		return apiClient.post<MeetingNote>(`/meetings/${id}/duplicate`);
 	}
 };

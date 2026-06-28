@@ -70,6 +70,22 @@ export const standupsApi = {
 		return apiClient.put<StandupRecord>(`/standups/${id}`, req);
 	},
 
+	rename: async (id: string, req: { title: string }) => {
+		return apiClient.put<StandupRecord>(`/standups/${id}`, { title: req.title });
+	},
+
+	delete: async (id: string) => {
+		return apiClient.delete(`/standups/${id}`);
+	},
+
+	move: async (id: string, req: { target_folder_id: string | null }) => {
+		return apiClient.post<StandupRecord>(`/standups/${id}/move`, req);
+	},
+
+	duplicate: async (id: string) => {
+		return apiClient.post<StandupRecord>(`/standups/${id}/duplicate`);
+	},
+
 	// Fallback file-level ops for legacy single-file standups
 	getLegacy: async (id: string) => {
 		const [file, content] = await Promise.all([getFile(id), getFileContent(id)]);

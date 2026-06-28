@@ -553,4 +553,119 @@ impl MeetingService {
 
         self.get_meeting(id, user_id, tenant_id).await
     }
+
+    /// Move a meeting folder to a different parent folder.
+    pub async fn move_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        target_folder_id: Option<Uuid>,
+    ) -> Result<MeetingNote, MeetingError> {
+        let folder = self.folder_service.get_folder(id, user_id).await?;
+        if folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
+        self.folder_service
+            .move_folder(id, target_folder_id, user_id)
+            .await?;
+        self.get_meeting(id, user_id, tenant_id).await
+    }
+
+    /// Duplicate a meeting in the same parent folder with a regenerated folder name.
+    pub async fn duplicate_meeting(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<MeetingNote, MeetingError> {
+        let original = self.get_meeting(id, user_id, tenant_id).await?;
+        let original_folder = self.folder_service.get_folder(id, user_id).await?;
+        if original_folder.tenant_id != tenant_id {
+            return Err(MeetingError::PermissionDenied);
+        }
+
+        let parent_folder_id = original_folder.parent_folder_id;
+        let copy_title = format!("{} (copy)", original.metadata.title);
+        let new_folder_name = self
+            .unique_meeting_folder_name(
+                parent_folder_id,
+                user_id,
+                tenant_id,
+                &original.metadata.date,
+                &copy_title,
+            )
+            .await?;
+
+        let new_folder = self
+            .folder_service
+            .create_folder(new_folder_name, parent_folder_id, user_id, tenant_id)
+            .await?;
+
+        // Copy index.md
+        self.file_service
+            .upload_file(
+                user_id,
+                "index.md".to_string(),
+                Some(new_folder.id),
+                Bytes::from(original.content),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        // Copy .rustshare.json with updated title/timestamps
+        let mut meta = original.metadata.clone();
+        meta.title = copy_title;
+        meta.created_at = Utc::now();
+        meta.updated_at = Utc::now();
+        let meta_data = serde_json::to_vec_pretty(&meta)
+            .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+        self.file_service
+            .upload_file(
+                user_id,
+                ".rustshare.json".to_string(),
+                Some(new_folder.id),
+                Bytes::from(meta_data),
+                "application/json".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        self.get_meeting(new_folder.id, user_id, tenant_id).await
+    }
+
+    async fn unique_meeting_folder_name(
+        &self,
+        parent_id: Option<Uuid>,
+        user_id: UserId,
+        tenant_id: Uuid,
+        date: &DateTime<Utc>,
+        title: &str,
+    ) -> Result<String, MeetingError> {
+        let slug = slug::slugify(title);
+        let base = format!(
+            "{}-{}-{}",
+            date.format("%Y-%m-%d"),
+            slug,
+            &Uuid::new_v4().to_string()[0..8]
+        );
+        let siblings = self
+            .metadata_store
+            .list_folders(parent_id, user_id, tenant_id)
+            .await
+            .map_err(|e| MeetingError::Database(e.to_string()))?;
+        if !siblings.iter().any(|f| f.name == base) {
+            return Ok(base);
+        }
+        for n in 2.. {
+            let candidate = format!("{}-{}", base, n);
+            if !siblings.iter().any(|f| f.name == candidate) {
+                return Ok(candidate);
+            }
+        }
+        Err(MeetingError::Storage(
+            "Could not generate unique meeting folder name".to_string(),
+        ))
+    }
 }
