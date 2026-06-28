@@ -149,6 +149,8 @@ export function normalizeModuleUiConfig(module: ModuleConfig): ModuleUiConfig {
 	};
 
 	return {
+		documentFormat: ui.documentFormat,
+		okf: ui.okf,
 		sidebar,
 		dashboard: normalizedDashboard,
 		modulePage: {

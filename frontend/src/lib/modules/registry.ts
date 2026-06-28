@@ -92,6 +92,13 @@ export interface WorkspaceSurfaceDefinition {
 	sections: WorkspaceSurfaceSection[];
 }
 
+export interface OkfModuleConfig {
+	enabled: boolean;
+	conceptType: string;
+	frontmatterRequired: boolean;
+	preserveUnknownFields?: boolean;
+}
+
 export interface ModuleDefinition {
 	id: string;
 	key: string;
@@ -100,11 +107,13 @@ export interface ModuleDefinition {
 	enabled: boolean;
 	rootPath: string;
 	renderer: string;
+	documentFormat?: string;
 	defaultTemplate: string | null;
 	icon: string;
 	schemaVersion: string;
 	permissions: ModulePermissions;
 	ui: ModuleUiDefinition;
+	okf?: OkfModuleConfig;
 	aiIndexing: { enabled: boolean };
 	audit: { enabled: boolean };
 }
@@ -136,11 +145,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 		id: 'module_notes',
 		key: 'notes',
 		displayName: 'Notes',
-		description: 'Write and keep file-backed notes in your workspace.',
+		description: 'Write OKF-compatible, file-backed notes for durable company memory.',
 		enabled: true,
 		rootPath: getModuleRoot('Notes'),
-		renderer: 'notes',
-		defaultTemplate: 'template_default_note',
+		renderer: 'okf-note',
+		documentFormat: 'okf-markdown',
+		defaultTemplate: 'template_default_okf_note',
 		icon: 'sticky-note',
 		schemaVersion: '1.0',
 		permissions: {
@@ -149,6 +159,12 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			allowPublicShare: false,
 			allowInternalShare: true
 		},
+		okf: {
+			enabled: true,
+			conceptType: 'Note',
+			frontmatterRequired: true,
+			preserveUnknownFields: true
+		},
 		ui: {
 			sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' },
 			dashboard: {
@@ -156,31 +172,31 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 				order: 10,
 				widget: {
 					enabled: true,
-					type: 'notes-recent',
+					type: 'latest-notes',
 					title: 'Notes',
-					description: 'Recent file-backed notes.',
+					description: 'Recent OKF notes.',
 					size: 'medium',
 					columns: { desktop: 6, tablet: 12, mobile: 12 },
 					maxItems: 4,
 					primaryAction: {
 						label: 'New note',
 						action: 'create-from-template',
-						template: 'template_default_note'
+						template: 'template_default_okf_note'
 					}
 				}
 			},
 			page: {
 				enabled: true,
 				route: '/modules/notes',
-				renderer: 'notes',
+				renderer: 'okf-note',
 				layout: 'list-grid',
 				emptyStateTitle: 'No notes yet',
 				emptyStateDescription:
-					'No notes yet. Create your first note to capture ideas, documentation, or working knowledge.',
+					'No notes yet. Create your first OKF note to capture ideas, documentation, or working knowledge.',
 				primaryAction: {
 					label: 'New note',
 					action: 'create-from-template',
-					template: 'template_default_note'
+					template: 'template_default_okf_note'
 				}
 			}
 		},
@@ -550,6 +566,8 @@ export function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition
 	const widget = dashboard.widget!;
 	const page = ui.page!;
 
+	const uiConfig = config.ui_config ?? {};
+
 	return {
 		id: config.id,
 		key: config.module_key,
@@ -558,6 +576,7 @@ export function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition
 		enabled: config.enabled,
 		rootPath: config.root_path,
 		renderer: config.renderer,
+		documentFormat: (uiConfig.documentFormat as string) || undefined,
 		defaultTemplate: config.default_template,
 		icon: config.icon,
 		schemaVersion: config.schema_version,
@@ -567,6 +586,7 @@ export function moduleConfigToDefinition(config: ModuleConfig): ModuleDefinition
 			allowPublicShare: config.permissions.allow_public_share,
 			allowInternalShare: config.permissions.allow_internal_share
 		},
+		okf: (uiConfig.okf as OkfModuleConfig) || undefined,
 		ui: {
 			sidebar: ui.sidebar!,
 			dashboard: {

@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added operational runbooks for backup/restore and security incidents.
 - Added production-readiness documentation (`docs/PRODUCTION_READINESS.md`) summarizing completed workstreams, residual risks, and operator checklists.
 - Implemented a functional admin SMTP test action. `POST /api/v1/admin/config/smtp/test` now sends a real test email to the acting admin's address using the stored SMTP configuration, replacing the previous `501 Not Implemented` stub.
+- Added ACL-aware indexing contract for OKF notes. Indexed note chunks now carry `NoteAclPayload` (tenant, workspace, note id, source file/folder ids, owner, read ACL, visibility, ACL hash/version, embedding policy). `ContentIndexer` supports `index_note`, `search_with_acl`, `update_note_acl`, and `remove_note_chunks`. `NoteService` emits indexing callbacks through an optional `NoteIndexSink`, wired to the shared `ContentIndexer` when AI is enabled.
+- Wired real permission-resolver principals into the AI index. `NoteIndexSink` now resolves owner, direct-share, group-share, and public principals so indexed chunks carry accurate `read_acl` values instead of the owner placeholder.
+- Persisted the AI vector index in PostgreSQL using pgvector. Added `note_index_chunks` table and `PgVectorStore` implementation; production builds use the database backend while in-memory storage remains available for tests.
+- Added frontend conflict-resolution actions for OKF notes, allowing users to choose YAML, folder-name, or a custom title when the note frontmatter and bundle metadata disagree.
 
 ### Changed
 
@@ -42,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Removed the no-op PostgreSQL RLS context middleware. The middleware set `app.current_tenant_id` / `app.current_user_id` on a connection that was returned to the pool before handlers ran, so handler queries never saw the context. Repository-level tenant filtering remains the primary isolation mechanism.
+- Removed the `rustshare migrate-notes-okf` CLI binary and the OKF notes migration helpers (`NoteMigrationReport`, `migrate_notes_to_okf`, migration integration tests). No production deployments have legacy notes to migrate, so the migration path is unnecessary.
 
 ### Fixed
 
@@ -51,12 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed concurrent resumable chunk uploads by using conditional chunk object writes and merging upload-session chunk state.
 - Fixed ignored backend tests by re-enabling, replacing, or removing them with documented justifications.
 - Resolved clippy warnings across all targets.
+- Renamed the notes module primary action from "Create from Template" to "New note" and made the action label respect the module configuration instead of a hardcoded string.
 - Addressed `cargo audit` advisories for `rustls-webpki` and RSA.
 - Fixed permission resolver caching so source-aware lookups preserve owner, direct-share, group-share, inherited, and no-permission sources.
 - Fixed inherited folder permission aggregation to select the highest active user share instead of an arbitrary share.
 - Added object-store integrity checks for content-addressed `blobs/{sha256}` uploads and downloads.
 - Fixed Markdown table preprocessing so backslashes no longer multiply on each save/load round-trip. Cell content is now rendered through markdown-it, preserving inline formatting and consuming escape sequences correctly.
 - Fixed Markdown table serialization so cell content is treated as inline text. This prevents unnecessary escaping of block markers such as `1.`, `-`, and `#` at the start of a table cell.
+- Fixed the Notes module list so clicking a note opens the note editor (`note.md`) instead of the folder bundle.
 
 ### Security
 

@@ -110,7 +110,7 @@ jobs:
     needs: [generate-secrets]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
@@ -167,7 +167,7 @@ jobs:
     needs: [generate-secrets]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
@@ -211,7 +211,7 @@ jobs:
         run: cargo install sqlx-cli --features postgres
       - name: Start PostgreSQL
         run: |
-          docker run -d -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" -p 5432:5432 postgres:16-alpine
+          docker run -d -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" -p 5432:5432 pgvector/pgvector:pg16
           sleep 5
       - name: Run migrations
         run: cd backend && sqlx migrate run
@@ -228,7 +228,7 @@ jobs:
     needs: [generate-secrets]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-

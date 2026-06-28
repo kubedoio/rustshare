@@ -446,6 +446,61 @@
 				</div>
 			</div>
 
+			{#if $moduleQuery.data?.ui_config?.okf?.enabled}
+				<div class="rounded-2xl border border-info/20 bg-info/5 p-6 shadow-sm">
+					<h2 class="mb-4 text-sm font-semibold tracking-wider text-info uppercase">
+						OKF Configuration
+					</h2>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70">Concept Type</span>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ui_config.okf.conceptType}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70">Document Format</span>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ui_config?.documentFormat || '-'}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70">Frontmatter Required</span>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ui_config.okf.frontmatterRequired ? 'Yes' : 'No'}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70">Preserve Unknown Fields</span
+							>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ui_config.okf.preserveUnknownFields ? 'Yes' : 'No'}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70">AI Indexing Source</span>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ai_indexing?.source || '-'}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-xs font-semibold text-base-content/70"
+								>Permission-Aware Indexing</span
+							>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.ai_indexing?.permission_aware ? 'Yes' : 'No'}
+							</span>
+						</div>
+						<div class="flex flex-col gap-1 sm:col-span-2">
+							<span class="text-xs font-semibold text-base-content/70">Default Template</span>
+							<span class="text-sm text-base-content">
+								{$moduleQuery.data.default_template || '-'}
+							</span>
+						</div>
+					</div>
+				</div>
+			{/if}
+
 			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
 					Sidebar

@@ -152,6 +152,65 @@ async fn contract_ensure_default_modules_creates_canonical_roots() {
 }
 
 #[tokio::test]
+async fn contract_notes_module_is_okf_native() {
+    let (pool, event_store, metadata_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(&metadata_store, "module_okf_user_1", tenant_id).await;
+
+    let folder_service = Arc::new(create_folder_service(
+        event_store,
+        metadata_store.clone(),
+        &pool,
+    ));
+    let module_service = ModuleService::new(folder_service, metadata_store.clone());
+
+    module_service
+        .ensure_default_modules(tenant_id)
+        .await
+        .expect("ensure_default_modules should succeed");
+
+    let notes = module_service
+        .get_module("notes", tenant_id)
+        .await
+        .expect("notes module should exist");
+
+    assert_eq!(notes.renderer, "okf-note");
+    assert_eq!(
+        notes.default_template,
+        Some("template_default_okf_note".to_string())
+    );
+    let ai = notes
+        .ai_indexing
+        .as_object()
+        .expect("ai_indexing must be an object");
+    assert_eq!(
+        ai.get("source").unwrap().as_str().unwrap(),
+        "okf-frontmatter-and-markdown"
+    );
+    assert!(ai.get("permission_aware").unwrap().as_bool().unwrap());
+
+    let ui = notes
+        .ui_config
+        .as_object()
+        .expect("ui_config must be an object");
+    assert_eq!(
+        ui.get("documentFormat").unwrap().as_str().unwrap(),
+        "okf-markdown"
+    );
+    let okf = ui.get("okf").unwrap().as_object().unwrap();
+    assert!(okf.get("enabled").unwrap().as_bool().unwrap());
+    assert_eq!(okf.get("conceptType").unwrap().as_str().unwrap(), "Note");
+    assert!(okf.get("frontmatterRequired").unwrap().as_bool().unwrap());
+
+    let okf_config = notes.okf_config();
+    assert!(okf_config.enabled);
+    assert_eq!(okf_config.concept_type, Some("Note".to_string()));
+
+    cleanup_modules_and_folders(&pool, tenant_id, user.id).await;
+    cleanup_user(&pool, user.id).await;
+}
+
+#[tokio::test]
 async fn contract_ensure_default_modules_is_idempotent_no_duplicate_roots() {
     let (pool, event_store, metadata_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();

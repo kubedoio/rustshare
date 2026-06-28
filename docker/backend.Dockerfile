@@ -77,7 +77,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates libssl3 wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary and frontend build
+# Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 

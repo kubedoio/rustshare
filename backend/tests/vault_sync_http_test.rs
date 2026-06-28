@@ -141,6 +141,7 @@ async fn setup_test_env() -> AppState {
         folder_service.clone(),
         metadata_store.clone(),
         object_store.clone(),
+        permission_resolver.clone(),
     ));
 
     let decision_service = Arc::new(

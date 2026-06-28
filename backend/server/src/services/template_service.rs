@@ -167,11 +167,11 @@ impl TemplateService {
     pub async fn ensure_default_templates(&self, tenant_id: Uuid) -> Result<(), TemplateError> {
         let defaults = vec![
             (
-                "template_default_note",
-                "Default Note",
+                "template_default_okf_note",
+                "Default OKF Note",
                 "notes",
                 "1.0",
-                "Default template for notes.",
+                "Default OKF-native template for notes.",
                 vec![
                     "attachments".to_string(),
                     "drawings".to_string(),
@@ -181,19 +181,49 @@ impl TemplateService {
                 vec![
                     TemplateDefaultFile {
                         path: "note.md".to_string(),
-                        content: Some("# {{title}}\n\n".to_string()),
+                        content: Some(
+                            r#"---
+type: Note
+title: "{{title}}"
+description: ""
+resource: "rustshare://workspace/{{workspace_id}}/notes/{{okf_id}}"
+tags: []
+timestamp: "1970-01-01T00:00:00Z"
+rustshare:
+  id: "{{okf_id}}"
+  module: notes
+  source_kind: note
+  source_id: "{{okf_id}}"
+  bundle_name: "{{title}}"
+  main: note.md
+  visibility: private
+  acl_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+  embedding_policy: allowed
+  verification_status: draft
+---
+
+# {{title}}
+"#
+                            .to_string(),
+                        ),
                         content_type: Some("text/markdown".to_string()),
                     },
                     TemplateDefaultFile {
                         path: "_rustshare/manifest.json".to_string(),
                         content: Some(
-                            r#"{"type":"rustshare.note","version":1,"id":"{{id}}","title":"{{title}}","main":"note.md","created_at":"{{created_at}}","updated_at":"{{updated_at}}","attachments":[],"drawings":[],"exports":[]}"#.to_string(),
+                            r#"{"type":"rustshare.note","version":1,"id":"{{okf_id}}","rustshare_id":"{{okf_id}}","title":"{{title}}","main":"note.md","created_at":"{{created_at}}","updated_at":"{{updated_at}}","attachments":[],"drawings":[],"exports":[]}"#.to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
                     },
                 ],
-                json!({}),
-                Some("notes"),
+                json!({
+                    "type": "rustshare.note",
+                    "okf": {
+                        "conceptType": "Note",
+                        "frontmatterRequired": true
+                    }
+                }),
+                Some("okf-note"),
             ),
             (
                 "template_default_meeting",
@@ -484,6 +514,15 @@ impl TemplateService {
             } else {
                 json!({})
             };
+            let ai_indexing_policy = if key == "template_default_okf_note" {
+                json!({
+                    "enabled": true,
+                    "source": "okf-frontmatter-and-markdown",
+                    "permission_aware": true
+                })
+            } else {
+                json!({"enabled": true})
+            };
 
             if !exists {
                 let template = Template {
@@ -499,7 +538,7 @@ impl TemplateService {
                     metadata_schema: metadata_schema.clone(),
                     renderer: renderer.map(|s| s.to_string()),
                     visibility_policy: "workspace".to_string(),
-                    ai_indexing_policy: json!({"enabled": true}),
+                    ai_indexing_policy,
                     audit_logging_policy: json!({"enabled": true}),
                     module_config,
                     created_by: None,
@@ -565,6 +604,16 @@ impl TemplateService {
                     key,
                     tenant_id
                 )
+                .execute(self.metadata_store.pool())
+                .await?;
+
+                // Propagate AI indexing policy fixes to existing system templates.
+                sqlx::query(
+                    "UPDATE templates SET ai_indexing_policy = $1 WHERE template_key = $2 AND tenant_id = $3",
+                )
+                .bind(&ai_indexing_policy)
+                .bind(key)
+                .bind(tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
 
@@ -1134,7 +1183,7 @@ impl TemplateService {
 
         for subfolder_name in folder_structure {
             self.folder_service
-                .create_folder(
+                .create_folder_or_get(
                     render_template_string(subfolder_name, &name, &name),
                     Some(object_folder.id),
                     owner_id,
@@ -1143,11 +1192,18 @@ impl TemplateService {
                 .await?;
         }
 
+        // Per-object OKF identity. For OKF-native note templates this replaces
+        // the hard-coded nil UUIDs in frontmatter and manifest.
+        let object_okf_id = Uuid::new_v4();
+
         for file in default_files {
             let content =
                 render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
-            // Replace folder-specific placeholders for brainstorming board metadata
+            // Replace OKF note placeholders first so they don't collide with the
+            // generic {{id}} placeholder used by other module templates.
             let content = content
+                .replace("{{okf_id}}", &object_okf_id.to_string())
+                .replace("{{workspace_id}}", &tenant_id.to_string())
                 .replace("{{id}}", &object_folder.id.to_string())
                 .replace("{{slug}}", &slugify(&name))
                 .replace("{{created_at}}", &object_folder.created_at.to_rfc3339())
@@ -1157,11 +1213,16 @@ impl TemplateService {
                 .clone()
                 .unwrap_or_else(|| "text/plain".to_string());
 
+            let rendered_path = render_template_string(&file.path, &name, &name);
+            let (parent_folder_id, file_name) = self
+                .resolve_template_path(object_folder.id, &rendered_path, owner_id, tenant_id)
+                .await?;
+
             self.file_service
                 .upload_file(
                     owner_id,
-                    render_template_string(&file.path, &name, &name),
-                    Some(object_folder.id),
+                    file_name,
+                    parent_folder_id,
                     Bytes::from(content),
                     mime_type,
                     tenant_id,
@@ -1174,6 +1235,33 @@ impl TemplateService {
             object_type: "folder".to_string(),
             path: object_folder.path,
         })
+    }
+
+    /// Resolve a template file path that may contain `/` into a target parent
+    /// folder and a plain file name. Intermediate segments are created (or
+    /// reused) under `object_folder_id`.
+    async fn resolve_template_path(
+        &self,
+        object_folder_id: Uuid,
+        path: &str,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(Option<Uuid>, String), TemplateError> {
+        let segments: Vec<&str> = path.split('/').collect();
+        if segments.len() == 1 {
+            return Ok((Some(object_folder_id), segments[0].to_string()));
+        }
+
+        let mut parent_id = object_folder_id;
+        for segment in &segments[..segments.len() - 1] {
+            let folder = self
+                .folder_service
+                .create_folder_or_get(segment.to_string(), Some(parent_id), owner_id, tenant_id)
+                .await?;
+            parent_id = folder.id;
+        }
+
+        Ok((Some(parent_id), segments.last().unwrap().to_string()))
     }
 
     async fn create_single_file_object(
@@ -1510,6 +1598,7 @@ fn slugify(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustshare_core::okf::frontmatter::parse_frontmatter;
 
     #[test]
     fn test_template_error_display() {
@@ -1619,6 +1708,112 @@ mod tests {
         assert!(validate_icon_key("file-text").is_ok());
         assert!(validate_icon_key("calendar-days").is_ok());
         assert!(validate_icon_key("share-2").is_ok());
+    }
+
+    #[test]
+    fn default_okf_note_template_definition_matches_contract() {
+        // Mirror the default entry used by ensure_default_templates.
+        let expected_key = "template_default_okf_note";
+        let expected_name = "Default OKF Note";
+        let expected_module = "notes";
+        let expected_renderer = "okf-note";
+        let expected_metadata_schema = json!({
+            "type": "rustshare.note",
+            "okf": {
+                "conceptType": "Note",
+                "frontmatterRequired": true
+            }
+        });
+        let expected_ai_indexing_policy = json!({
+            "enabled": true,
+            "source": "okf-frontmatter-and-markdown",
+            "permission_aware": true
+        });
+
+        assert_eq!(expected_key, "template_default_okf_note");
+        assert_eq!(expected_name, "Default OKF Note");
+        assert_eq!(expected_module, "notes");
+        assert_eq!(expected_renderer, "okf-note");
+        assert_eq!(
+            expected_metadata_schema.get("type").unwrap(),
+            "rustshare.note"
+        );
+        assert_eq!(
+            expected_metadata_schema
+                .get("okf")
+                .unwrap()
+                .get("conceptType")
+                .unwrap(),
+            "Note"
+        );
+        assert_eq!(
+            expected_ai_indexing_policy.get("source").unwrap(),
+            "okf-frontmatter-and-markdown"
+        );
+        assert!(expected_ai_indexing_policy
+            .get("permission_aware")
+            .unwrap()
+            .as_bool()
+            .unwrap());
+    }
+
+    #[test]
+    fn default_okf_note_template_content_parses_as_okf_frontmatter() {
+        let template_content = r#"---
+type: Note
+title: "{{title}}"
+description: ""
+resource: "rustshare://workspace/00000000-0000-0000-0000-000000000000/notes/00000000-0000-0000-0000-000000000000"
+tags: []
+timestamp: "1970-01-01T00:00:00Z"
+rustshare:
+  id: "00000000-0000-0000-0000-000000000000"
+  module: notes
+  source_kind: note
+  source_id: "00000000-0000-0000-0000-000000000000"
+  bundle_name: "{{title}}"
+  main: note.md
+  visibility: private
+  acl_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+  embedding_policy: allowed
+  verification_status: draft
+---
+
+# {{title}}
+"#;
+
+        let rendered = render_template_string(template_content, "My Note", "My Note");
+        let (frontmatter, body) = parse_frontmatter(&rendered)
+            .expect("default note content must parse as OKF frontmatter");
+
+        assert_eq!(frontmatter.okf_type, Some("Note".to_string()));
+        assert_eq!(frontmatter.title, Some("My Note".to_string()));
+        assert!(frontmatter.tags.is_empty());
+        let rustshare = frontmatter
+            .rustshare
+            .expect("rustshare block must be present");
+        assert_eq!(rustshare.module, Some("notes".to_string()));
+        assert_eq!(rustshare.bundle_name, Some("My Note".to_string()));
+        assert_eq!(body.trim(), "# My Note");
+    }
+
+    #[test]
+    fn non_notes_default_templates_keep_legacy_renderers() {
+        // The OKF-native change must not leak into other module templates.
+        let non_notes_renderers = [
+            "meetings",
+            "standups",
+            "kanban-board",
+            "decisions",
+            "shares",
+            "brainstorming",
+        ];
+        for renderer in non_notes_renderers {
+            assert_ne!(
+                renderer, "okf-note",
+                "only notes should use the okf-note renderer"
+            );
+        }
     }
 
     #[test]

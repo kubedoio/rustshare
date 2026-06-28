@@ -162,5 +162,4 @@ mod tests {
         assert!(paths.contains(&"subdir".to_string()));
         assert!(paths.contains(&"subdir/file2.txt".to_string()));
     }
-
 }

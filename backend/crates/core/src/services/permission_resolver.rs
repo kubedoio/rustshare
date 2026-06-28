@@ -106,6 +106,34 @@ pub trait PermissionResolverOps: Send + Sync {
 
     /// Get all group IDs that a user is a member of, scoped to a tenant.
     async fn get_user_group_ids(&self, user_id: UserId, tenant_id: Uuid) -> Result<Vec<Uuid>>;
+
+    /// Find all active user shares on a file (no recipient filter).
+    async fn find_all_user_shares_for_file(
+        &self,
+        file_id: FileId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>>;
+
+    /// Find all active group shares on a file (no recipient filter).
+    async fn find_all_group_shares_for_file(
+        &self,
+        file_id: FileId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>>;
+
+    /// Find all active user shares on any of the given folders.
+    async fn find_all_user_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>>;
+
+    /// Find all active group shares on any of the given folders.
+    async fn find_all_group_shares_for_folders(
+        &self,
+        folder_ids: &[FolderId],
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>>;
 }
 
 /// PermissionResolver service handles permission checks with caching and folder inheritance.
@@ -640,6 +668,116 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
                 }
             }
         }
+    }
+
+    /// Resolve every principal that has at least View access to a file.
+    ///
+    /// Returns a list of strings such as:
+    /// - `owner:{user_id}`
+    /// - `user:{user_id}`
+    /// - `group:{group_id}`
+    ///
+    /// Public visibility is handled separately by the ACL filter.
+    /// Expired or revoked shares are ignored.
+    pub async fn resolve_read_principals(
+        &self,
+        file: &File,
+        tenant_id: Uuid,
+    ) -> Result<Vec<String>> {
+        use std::collections::HashSet;
+
+        let mut principals = HashSet::new();
+        principals.insert(format!("owner:{}", file.owner_id));
+
+        // Direct shares on the file.
+        let user_shares = self
+            .ops
+            .find_all_user_shares_for_file(file.id, tenant_id)
+            .await?;
+        for share in user_shares {
+            if Self::is_share_active(&share) && share.permissions >= SharePermissions::View {
+                if let Some(uid) = share.recipient_user_id {
+                    principals.insert(format!("user:{uid}"));
+                }
+            }
+        }
+
+        let group_shares = self
+            .ops
+            .find_all_group_shares_for_file(file.id, tenant_id)
+            .await?;
+        for share in group_shares {
+            if Self::is_share_active(&share) && share.permissions >= SharePermissions::View {
+                if let Some(gid) = share.recipient_group_id {
+                    principals.insert(format!("group:{gid}"));
+                }
+            }
+        }
+
+        // Inherited shares from folder ancestry.
+        if let Some(parent_folder_id) = file.parent_folder_id {
+            let folder = match self
+                .ops
+                .find_folder_by_id(parent_folder_id, tenant_id)
+                .await?
+            {
+                Some(f) => f,
+                None => {
+                    return Ok(principals.into_iter().collect());
+                }
+            };
+
+            let mut folder_ids = vec![parent_folder_id];
+            if let Some(ref ancestor_ids) = folder.ancestor_ids {
+                folder_ids.extend(ancestor_ids.iter().copied());
+            } else {
+                let mut current_id = folder.parent_folder_id;
+                let mut depth = 0;
+                const MAX_DEPTH: usize = 50;
+                while let Some(id) = current_id {
+                    if depth >= MAX_DEPTH {
+                        break;
+                    }
+                    folder_ids.push(id);
+                    if let Some(parent) = self.ops.find_folder_by_id(id, tenant_id).await? {
+                        current_id = parent.parent_folder_id;
+                    } else {
+                        break;
+                    }
+                    depth += 1;
+                }
+            }
+
+            if !folder_ids.is_empty() {
+                let folder_user_shares = self
+                    .ops
+                    .find_all_user_shares_for_folders(&folder_ids, tenant_id)
+                    .await?;
+                for share in folder_user_shares {
+                    if Self::is_share_active(&share) && share.permissions >= SharePermissions::View
+                    {
+                        if let Some(uid) = share.recipient_user_id {
+                            principals.insert(format!("user:{uid}"));
+                        }
+                    }
+                }
+
+                let folder_group_shares = self
+                    .ops
+                    .find_all_group_shares_for_folders(&folder_ids, tenant_id)
+                    .await?;
+                for share in folder_group_shares {
+                    if Self::is_share_active(&share) && share.permissions >= SharePermissions::View
+                    {
+                        if let Some(gid) = share.recipient_group_id {
+                            principals.insert(format!("group:{gid}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(principals.into_iter().collect())
     }
 
     /// Resolve permission with detailed source information.
@@ -1269,6 +1407,78 @@ mod tests {
         async fn get_user_group_ids(&self, user_id: UserId, _tenant_id: Uuid) -> Result<Vec<Uuid>> {
             let map = self.user_groups.lock().await;
             Ok(map.get(&user_id).cloned().unwrap_or_default())
+        }
+
+        async fn find_all_user_shares_for_file(
+            &self,
+            file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().await;
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == Some(file_id)
+                        && s.folder_id.is_none()
+                        && s.recipient_user_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_group_shares_for_file(
+            &self,
+            file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().await;
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id == Some(file_id)
+                        && s.folder_id.is_none()
+                        && s.recipient_group_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_user_shares_for_folders(
+            &self,
+            folder_ids: &[FolderId],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().await;
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
+                        && s.recipient_user_id.is_some()
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn find_all_group_shares_for_folders(
+            &self,
+            folder_ids: &[FolderId],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            let shares = self.shares.lock().await;
+            Ok(shares
+                .iter()
+                .filter(|s| {
+                    s.file_id.is_none()
+                        && s.folder_id
+                            .map(|fid| folder_ids.contains(&fid))
+                            .unwrap_or(false)
+                        && s.recipient_group_id.is_some()
+                })
+                .cloned()
+                .collect())
         }
     }
 
@@ -2318,5 +2528,260 @@ mod tests {
         assert_eq!(result.permission, Some(SharePermissions::Admin));
         assert_eq!(result.source, PermissionSource::Inherited);
         assert_eq!(result.share_id, Some(admin_share_id));
+    }
+
+    struct ReadPrincipalOps {
+        file_shares: Vec<Share>,
+        folder_shares: Vec<Share>,
+        folder: Option<Folder>,
+    }
+
+    impl PermissionResolverOps for ReadPrincipalOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _recipient_user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _group_ids: &[Uuid],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+        async fn find_all_user_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(self
+                .file_shares
+                .iter()
+                .filter(|s| s.recipient_user_id.is_some())
+                .cloned()
+                .collect())
+        }
+        async fn find_all_group_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(self
+                .file_shares
+                .iter()
+                .filter(|s| s.recipient_group_id.is_some())
+                .cloned()
+                .collect())
+        }
+        async fn find_all_user_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(self
+                .folder_shares
+                .iter()
+                .filter(|s| s.recipient_user_id.is_some())
+                .cloned()
+                .collect())
+        }
+        async fn find_all_group_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(self
+                .folder_shares
+                .iter()
+                .filter(|s| s.recipient_group_id.is_some())
+                .cloned()
+                .collect())
+        }
+        async fn find_file_by_id(&self, _id: FileId, _tenant_id: Uuid) -> Result<Option<File>> {
+            Ok(None)
+        }
+        async fn find_folder_by_id(
+            &self,
+            _id: FolderId,
+            _tenant_id: Uuid,
+        ) -> Result<Option<Folder>> {
+            Ok(self.folder.clone())
+        }
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: Uuid,
+        ) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_read_principals_includes_owner_and_shares() {
+        let owner = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let group = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "note.md".to_string(),
+            "/Workspace/Notes/X/note.md".to_string(),
+            "hash".to_string(),
+            100,
+            "text/markdown".to_string(),
+            None,
+            owner,
+            tenant_id,
+        );
+
+        let ops = ReadPrincipalOps {
+            file_shares: vec![Share {
+                id: Uuid::new_v4(),
+                file_id: Some(file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: Some(user),
+                recipient_group_id: None,
+                created_by: owner,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id,
+            }],
+            folder_shares: vec![Share {
+                id: Uuid::new_v4(),
+                file_id: None,
+                folder_id: Some(Uuid::new_v4()),
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group),
+                created_by: owner,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id,
+            }],
+            folder: None,
+        };
+
+        let resolver = PermissionResolver::new(Arc::new(ops));
+        let mut principals = resolver
+            .resolve_read_principals(&file, tenant_id)
+            .await
+            .unwrap();
+        principals.sort();
+
+        assert_eq!(
+            principals,
+            vec![format!("owner:{owner}"), format!("user:{user}"),]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_read_principals_includes_inherited_folder_shares() {
+        let owner = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let group = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let folder_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "note.md".to_string(),
+            "/Workspace/Notes/X/note.md".to_string(),
+            "hash".to_string(),
+            100,
+            "text/markdown".to_string(),
+            Some(folder_id),
+            owner,
+            tenant_id,
+        );
+
+        let folder = Folder::new_root_with_name("X".to_string(), owner, tenant_id);
+
+        let ops = ReadPrincipalOps {
+            file_shares: vec![Share {
+                id: Uuid::new_v4(),
+                file_id: Some(file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: Some(user),
+                recipient_group_id: None,
+                created_by: owner,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id,
+            }],
+            folder_shares: vec![Share {
+                id: Uuid::new_v4(),
+                file_id: None,
+                folder_id: Some(folder_id),
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group),
+                created_by: owner,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id,
+            }],
+            folder: Some(folder),
+        };
+
+        let resolver = PermissionResolver::new(Arc::new(ops));
+        let mut principals = resolver
+            .resolve_read_principals(&file, tenant_id)
+            .await
+            .unwrap();
+        principals.sort();
+
+        let mut expected = vec![
+            format!("owner:{owner}"),
+            format!("group:{group}"),
+            format!("user:{user}"),
+        ];
+        expected.sort();
+
+        assert_eq!(principals, expected);
     }
 }

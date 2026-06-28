@@ -13,6 +13,7 @@
 
 	const rendererMap: Record<string, any> = {
 		notes: NotesModuleView,
+		'okf-note': NotesModuleView,
 		meetings: MeetingsModuleView,
 		standups: StandupsModuleView,
 		kanban: KanbanModuleView,

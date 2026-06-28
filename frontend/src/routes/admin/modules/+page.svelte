@@ -83,7 +83,9 @@
 						<th class="px-4 py-3 font-semibold">Description</th>
 						<th class="px-4 py-3 font-semibold">Root Path</th>
 						<th class="px-4 py-3 font-semibold">Renderer</th>
+						<th class="px-4 py-3 font-semibold">Document Format</th>
 						<th class="px-4 py-3 font-semibold">Default Template</th>
+						<th class="px-4 py-3 font-semibold">OKF</th>
 						<th class="px-4 py-3 font-semibold">Enabled</th>
 						<th class="px-4 py-3 font-semibold">Actions</th>
 					</tr>
@@ -113,7 +115,21 @@
 							</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">{module.renderer}</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">
+								{module.ui_config?.documentFormat || '-'}
+							</td>
+							<td class="px-4 py-3 text-sm text-base-content/70">
 								{module.default_template || '-'}
+							</td>
+							<td class="px-4 py-3">
+								{#if module.ui_config?.okf?.enabled}
+									<span
+										class="inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-info uppercase"
+									>
+										OKF {module.ui_config.okf.conceptType}
+									</span>
+								{:else}
+									<span class="text-sm text-base-content/40">-</span>
+								{/if}
 							</td>
 							<td class="px-4 py-3">
 								{#if module.enabled}

@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use rustshare_core::domain::{File, Share, SharePermissions};
 use rustshare_core::services::{
-    AiService, ContentIndexer, EmbeddingGenerator, PermissionResolver, PermissionResolverOps,
+    AiService, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore, PermissionResolver,
+    PermissionResolverOps,
 };
 
 // Mock embedding generator
@@ -110,6 +111,38 @@ impl PermissionResolverOps for MockPermissionOps {
     ) -> anyhow::Result<Vec<Uuid>> {
         Ok(Vec::new())
     }
+
+    async fn find_all_user_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_file(
+        &self,
+        _file_id: Uuid,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_user_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
+
+    async fn find_all_group_shares_for_folders(
+        &self,
+        _folder_ids: &[Uuid],
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<Share>> {
+        Ok(Vec::new())
+    }
 }
 
 fn make_file(id: Uuid, name: &str, owner_id: Uuid, tenant_id: Uuid) -> File {
@@ -161,7 +194,10 @@ fn build_service(
     ops: std::sync::Arc<MockPermissionOps>,
 ) -> AiService<MockEmbeddingGenerator, MockPermissionOps> {
     let generator = std::sync::Arc::new(MockEmbeddingGenerator);
-    let indexer = std::sync::Arc::new(ContentIndexer::new(generator));
+    let indexer = std::sync::Arc::new(ContentIndexer::new(
+        generator,
+        std::sync::Arc::new(InMemoryVectorStore::new()),
+    ));
     let permission_resolver = std::sync::Arc::new(PermissionResolver::new(ops));
     AiService::new(indexer, permission_resolver)
 }

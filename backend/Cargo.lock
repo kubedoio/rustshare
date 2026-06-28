@@ -3574,6 +3574,7 @@ name = "rustshare-core"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "chrono",
  "hex",
@@ -3584,6 +3585,7 @@ dependencies = [
  "rustshare-crypto",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.11.0",
  "sqlx",
  "thiserror 2.0.18",
@@ -3613,6 +3615,7 @@ name = "rustshare-infrastructure"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "rustshare-core",
  "serde",

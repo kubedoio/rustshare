@@ -97,7 +97,7 @@ pub use meetings::{create_meeting, delete_meeting, get_meeting, list_meetings, u
 pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
-    list_recent_notes, move_note, rename_note, save_note, toggle_visibility,
+    list_recent_notes, move_note, rename_note, resolve_conflict, save_note, toggle_visibility,
 };
 pub use standups::{create_standup, delete_standup, get_standup, list_standups, update_standup};
 pub use user_shares::{

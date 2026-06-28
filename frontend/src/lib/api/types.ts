@@ -181,6 +181,16 @@ export interface NoteAttachment {
 	created_at: string;
 }
 
+export interface NoteConflict {
+	kind: string;
+	message: string;
+	yaml_title?: string | null;
+	folder_name?: string | null;
+	manifest_title?: string | null;
+	yaml_id?: string | null;
+	sidecar_id?: string | null;
+}
+
 export interface NoteMetadata {
 	kind: 'note';
 	title: string;
@@ -195,6 +205,10 @@ export interface NoteMetadata {
 	icon?: string | null;
 	color?: string | null;
 	attachments?: NoteAttachment[];
+	okf_id?: string | null;
+	acl_hash?: string | null;
+	acl_version?: number | null;
+	conflict?: NoteConflict | null;
 }
 
 export interface Note {
@@ -208,6 +222,8 @@ export interface Note {
 	current_version: number;
 	created_at: string;
 	modified_at: string;
+	okf_id?: string | null;
+	conflict?: NoteConflict | null;
 }
 
 export interface NoteSummary {
@@ -224,6 +240,8 @@ export interface NoteSummary {
 	attachment_count?: number;
 	drawing_count?: number;
 	export_count?: number;
+	okf_id?: string | null;
+	conflict?: NoteConflict | null;
 }
 
 export class ApiError extends Error {
@@ -259,7 +277,16 @@ export interface ModuleConfig {
 	updated_at: string;
 }
 
+export interface OkfModuleUiConfig {
+	enabled: boolean;
+	conceptType: string;
+	frontmatterRequired: boolean;
+	preserveUnknownFields?: boolean;
+}
+
 export interface ModuleUiConfig {
+	documentFormat?: string;
+	okf?: OkfModuleUiConfig;
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
 	modulePage?: ModulePageConfig;
@@ -367,6 +394,8 @@ export interface ModulePermissions {
 
 export interface AiIndexingPolicy {
 	enabled: boolean;
+	source?: string;
+	permission_aware?: boolean;
 }
 
 export interface AuditPolicy {

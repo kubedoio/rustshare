@@ -153,6 +153,7 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         folder_service.clone(),
         metadata_store.clone(),
         object_store.clone(),
+        permission_resolver.clone(),
     ));
 
     let decision_service = Arc::new(

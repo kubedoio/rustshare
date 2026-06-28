@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { listNotes } from '$lib/api/notes';
+import { listNotes, resolveConflict } from '$lib/api/notes';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
-		get: vi.fn()
+		get: vi.fn(),
+		post: vi.fn()
 	}
 }));
 
@@ -38,5 +39,28 @@ describe('notes API', () => {
 		await expect(listNotes()).resolves.toHaveLength(101);
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/notes?page=1&per_page=100');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/notes?page=2&per_page=100');
+	});
+
+	describe('resolveConflict', () => {
+		it('sends the resolution payload', async () => {
+			vi.mocked(apiClient.post).mockResolvedValueOnce({ id: 'note-1', metadata: {} });
+
+			await resolveConflict('note-1', { strategy: 'prefer_yaml' });
+
+			expect(apiClient.post).toHaveBeenCalledWith('/notes/note-1/resolve-conflict', {
+				strategy: 'prefer_yaml'
+			});
+		});
+
+		it('sends a custom title resolution payload', async () => {
+			vi.mocked(apiClient.post).mockResolvedValueOnce({ id: 'note-1', metadata: {} });
+
+			await resolveConflict('note-1', { strategy: 'custom', title: 'My Title' });
+
+			expect(apiClient.post).toHaveBeenCalledWith('/notes/note-1/resolve-conflict', {
+				strategy: 'custom',
+				title: 'My Title'
+			});
+		});
 	});
 });

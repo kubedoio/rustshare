@@ -3,7 +3,15 @@
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
-	import { notesApi, renameNote, moveNote, deleteNote, duplicateNote } from '$lib/api/notes';
+	import {
+		notesApi,
+		renameNote,
+		moveNote,
+		deleteNote,
+		duplicateNote,
+		resolveConflict,
+		type ConflictResolutionStrategy
+	} from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
 	import { standupsApi } from '$lib/api/standups';
@@ -11,7 +19,7 @@
 	import { getFolderContents } from '$lib/api/folders';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { goto, beforeNavigate } from '$app/navigation';
-	import { Folder, Share2, Pencil } from 'lucide-svelte';
+	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -26,9 +34,11 @@
 		restoreRelativePaths,
 		generateUniqueFilename
 	} from '$lib/editor/adapter/attachments';
+	import { extractH1, splitFrontmatter } from '$lib/editor/adapter/frontmatter';
 	import type {
 		NoteAttachment,
 		NoteMetadata,
+		NoteConflict,
 		Folder as ApiFolder,
 		File as ApiFile
 	} from '$lib/api/types';
@@ -66,9 +76,11 @@
 			attachments?: NoteAttachment[];
 			date?: string;
 			attendees?: string[];
+			conflict?: NoteConflict | null;
 		};
 		modified_at?: string;
 		parent_folder_id?: string | null;
+		conflict?: NoteConflict | null;
 	}
 
 	let key = $derived(($page.params.key || '') as string);
@@ -94,10 +106,19 @@
 		});
 	});
 
+	let dismissedConflict = $state(false);
+
 	let item = $derived($query.data as ModuleItem | undefined);
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
-	let subtitle = $derived(key === 'notes' ? item?.metadata?.excerpt || '' : '');
+	let subtitle = $derived.by(() => {
+		if (key !== 'notes') return '';
+		const body = splitFrontmatter(item?.content ?? '').body;
+		return extractH1(body) || item?.metadata?.excerpt || '';
+	});
+	let conflict = $derived(
+		(key === 'notes' && !dismissedConflict && (item?.metadata?.conflict || item?.conflict)) || null
+	);
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
@@ -117,6 +138,14 @@
 			mode = key === 'notes' ? 'edit' : 'read';
 		});
 	});
+
+	$effect(() => {
+		// Reset dismissed conflict state when the note identity changes
+		void id;
+		untrack(() => {
+			dismissedConflict = false;
+		});
+	});
 	let showShareModal = $state(false);
 	let showRenameModal = $state(false);
 	let renameError = $state('');
@@ -126,6 +155,9 @@
 	let showDeleteModal = $state(false);
 	let isDeleting = $state(false);
 	let isDuplicating = $state(false);
+	let isResolvingConflict = $state(false);
+	let showCustomConflictTitle = $state(false);
+	let customConflictTitle = $state('');
 	let attachments = $state<RichMarkdownAttachment[]>([]);
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
 
@@ -521,6 +553,23 @@
 		);
 	}
 
+	async function handleResolveConflict(resolution: ConflictResolutionStrategy) {
+		if (isResolvingConflict || !item) return;
+		await withToastLoading(
+			(v) => (isResolvingConflict = v),
+			() => resolveConflict(id, resolution),
+			{
+				successMessage: 'Conflict resolved',
+				errorMessage: 'Failed to resolve conflict',
+				onSuccess: () => {
+					showCustomConflictTitle = false;
+					customConflictTitle = '';
+					$query.refetch();
+				}
+			}
+		);
+	}
+
 	async function handleDeleteConfirm() {
 		if (isDeleting || !item) return;
 		await withToastLoading(
@@ -551,6 +600,53 @@
 			<button class="btn mt-4 btn-ghost" onclick={() => $query.refetch()}>Retry</button>
 		</div>
 	{:else if item}
+		{#if conflict}
+			<div class="alert alert-warning mb-2 rounded-lg" role="alert">
+				<AlertTriangle size={18} />
+				<div class="flex-1">
+					<strong class="font-semibold">Conflict: {conflict.kind}</strong>
+					<p class="text-sm">{conflict.message}</p>
+					{#if conflict.kind === 'title_mismatch'}
+						<div class="mt-2 flex flex-wrap gap-2">
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => handleResolveConflict({ strategy: 'prefer_yaml' })}
+							>
+								Use YAML title{conflict.yaml_title ? ` (${conflict.yaml_title})` : ''}
+							</button>
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => handleResolveConflict({ strategy: 'prefer_folder' })}
+							>
+								Use folder name{conflict.folder_name ? ` (${conflict.folder_name})` : ''}
+							</button>
+							<button
+								class="btn btn-ghost btn-xs"
+								disabled={isResolvingConflict}
+								onclick={() => {
+									customConflictTitle = conflict.yaml_title ?? conflict.folder_name ?? '';
+									showCustomConflictTitle = true;
+								}}
+							>
+								Custom title
+							</button>
+						</div>
+					{:else if conflict.kind === 'identity_mismatch'}
+						<p class="text-sm">Identity conflict: manual file edit required.</p>
+					{/if}
+				</div>
+				<button
+					class="btn btn-ghost btn-xs"
+					onclick={() => (dismissedConflict = true)}
+					aria-label="Dismiss conflict warning"
+				>
+					<X size={14} />
+				</button>
+			</div>
+		{/if}
+
 		<MarkdownDocumentPage
 			bind:this={documentPage}
 			{title}
@@ -666,6 +762,20 @@
 				itemType="file"
 				onClose={() => (showDeleteModal = false)}
 				onConfirm={handleDeleteConfirm}
+			/>
+
+			<PromptModal
+				open={showCustomConflictTitle}
+				title="Resolve conflict"
+				message="Enter a title for this note"
+				defaultValue={customConflictTitle}
+				confirmLabel="Resolve"
+				isLoading={isResolvingConflict}
+				onConfirm={(title) => handleResolveConflict({ strategy: 'custom', title })}
+				onCancel={() => {
+					showCustomConflictTitle = false;
+					customConflictTitle = '';
+				}}
 			/>
 		{/if}
 	{/if}

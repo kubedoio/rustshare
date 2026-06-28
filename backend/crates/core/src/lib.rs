@@ -4,6 +4,7 @@
 
 pub mod domain;
 pub mod events;
+pub mod okf;
 pub mod services;
 pub mod validation;
 

@@ -278,7 +278,6 @@ impl ApiClient {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]

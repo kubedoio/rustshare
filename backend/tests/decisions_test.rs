@@ -168,11 +168,16 @@ fn create_note_service(
         pool,
     ));
 
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool.clone()),
+    )));
+
     Arc::new(NoteService::new(
         file_service,
         folder_service,
         metadata_store,
         object_store,
+        permission_resolver,
     ))
 }
 
