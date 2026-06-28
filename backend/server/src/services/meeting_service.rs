@@ -587,15 +587,8 @@ impl MeetingService {
 
         let parent_folder_id = original_folder.parent_folder_id;
         let copy_title = format!("{} (copy)", original.metadata.title);
-        let new_folder_name = self
-            .unique_meeting_folder_name(
-                parent_folder_id,
-                user_id,
-                tenant_id,
-                &original.metadata.date,
-                &copy_title,
-            )
-            .await?;
+        let new_folder_name =
+            Self::unique_meeting_folder_name(&original.metadata.date, &copy_title);
 
         let new_folder = self
             .folder_service
@@ -635,37 +628,13 @@ impl MeetingService {
         self.get_meeting(new_folder.id, user_id, tenant_id).await
     }
 
-    async fn unique_meeting_folder_name(
-        &self,
-        parent_id: Option<Uuid>,
-        user_id: UserId,
-        tenant_id: Uuid,
-        date: &DateTime<Utc>,
-        title: &str,
-    ) -> Result<String, MeetingError> {
+    fn unique_meeting_folder_name(date: &DateTime<Utc>, title: &str) -> String {
         let slug = slug::slugify(title);
-        let base = format!(
+        format!(
             "{}-{}-{}",
             date.format("%Y-%m-%d"),
             slug,
             &Uuid::new_v4().to_string()[0..8]
-        );
-        let siblings = self
-            .metadata_store
-            .list_folders(parent_id, user_id, tenant_id)
-            .await
-            .map_err(|e| MeetingError::Database(e.to_string()))?;
-        if !siblings.iter().any(|f| f.name == base) {
-            return Ok(base);
-        }
-        for n in 2.. {
-            let candidate = format!("{}-{}", base, n);
-            if !siblings.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-        }
-        Err(MeetingError::Storage(
-            "Could not generate unique meeting folder name".to_string(),
-        ))
+        )
     }
 }

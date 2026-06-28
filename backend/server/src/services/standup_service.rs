@@ -532,9 +532,7 @@ impl StandupService {
         // Design choice: a duplicated standup represents a new day, so use the
         // current date for both the folder name and the standup metadata.
         let new_date = Utc::now();
-        let new_folder_name = self
-            .unique_standup_folder_name(parent_folder_id, user_id, tenant_id, &new_date)
-            .await?;
+        let new_folder_name = Self::unique_standup_folder_name(&new_date);
 
         let new_folder = self
             .folder_service
@@ -601,39 +599,11 @@ impl StandupService {
         self.get_standup(new_folder.id, user_id, tenant_id).await
     }
 
-    async fn unique_standup_folder_name(
-        &self,
-        parent_id: Option<Uuid>,
-        user_id: UserId,
-        tenant_id: Uuid,
-        date: &DateTime<Utc>,
-    ) -> Result<String, StandupError> {
-        let base = date.format("%Y-%m-%d").to_string();
-        let siblings = self
-            .metadata_store
-            .list_folders(parent_id, user_id, tenant_id)
-            .await
-            .map_err(|e| StandupError::Database(e.to_string()))?;
-        if !siblings.iter().any(|f| f.name == base) {
-            return Ok(base);
-        }
-        for n in 1.. {
-            let candidate = if n == 1 {
-                format!("{}-copy", base)
-            } else {
-                format!("{}-copy-{}", base, n)
-            };
-            if !siblings.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-            if n > 1000 {
-                return Err(StandupError::Storage(
-                    "Could not generate unique standup folder name".to_string(),
-                ));
-            }
-        }
-        Err(StandupError::Storage(
-            "Could not generate unique standup folder name".to_string(),
-        ))
+    fn unique_standup_folder_name(date: &DateTime<Utc>) -> String {
+        format!(
+            "{}-{}",
+            date.format("%Y-%m-%d"),
+            &Uuid::new_v4().to_string()[0..8]
+        )
     }
 }

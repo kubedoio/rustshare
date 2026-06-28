@@ -20,37 +20,13 @@
 		RotateCcw,
 		Star,
 		Check,
-		X,
 		ChevronRight,
 		Palette
 	} from 'lucide-svelte';
 	import { tick } from 'svelte';
 	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
-
-	const COLOR_PALETTE = [
-		{ key: 'red', borderClass: 'border-l-red-500', bgClass: 'bg-red-500', label: 'Red' },
-		{
-			key: 'orange',
-			borderClass: 'border-l-orange-500',
-			bgClass: 'bg-orange-500',
-			label: 'Orange'
-		},
-		{
-			key: 'yellow',
-			borderClass: 'border-l-yellow-500',
-			bgClass: 'bg-yellow-500',
-			label: 'Yellow'
-		},
-		{ key: 'green', borderClass: 'border-l-green-500', bgClass: 'bg-green-500', label: 'Green' },
-		{ key: 'blue', borderClass: 'border-l-blue-500', bgClass: 'bg-blue-500', label: 'Blue' },
-		{
-			key: 'purple',
-			borderClass: 'border-l-purple-500',
-			bgClass: 'bg-purple-500',
-			label: 'Purple'
-		},
-		{ key: 'gray', borderClass: 'border-l-gray-500', bgClass: 'bg-gray-500', label: 'Gray' }
-	];
+	import { getColorOption } from '$lib/utils/colorPalette';
+	import ColorPicker from '$lib/components/common/ColorPicker.svelte';
 
 	// Props
 	interface Props {
@@ -166,9 +142,7 @@
 	});
 
 	let colorBorderClass = $derived(
-		!isFolder && optimisticColor
-			? (COLOR_PALETTE.find((c) => c.key === optimisticColor)?.borderClass ?? '')
-			: ''
+		!isFolder && optimisticColor ? (getColorOption(optimisticColor)?.borderClass ?? '') : ''
 	);
 
 	// Inline rename state
@@ -674,52 +648,11 @@
 								</button>
 								{#if !isFolder}
 									{#if showColorPicker}
-										<div
-											class="flex flex-col gap-2 px-4 py-2"
-											role="dialog"
-											tabindex="-1"
-											aria-label="Set color"
-											onclick={(e) => e.stopPropagation()}
-											onkeydown={(e) => e.stopPropagation()}
-										>
-											<div class="flex items-center justify-between">
-												<span class="text-xs font-medium text-base-content/70">Set color</span>
-												<button
-													type="button"
-													class="rounded-md p-1 text-base-content/50 hover:bg-base-200"
-													onclick={(e) => {
-														e.stopPropagation();
-														showColorPicker = false;
-													}}
-												>
-													<X size={12} />
-												</button>
-											</div>
-											<div class="grid grid-cols-4 gap-1.5">
-												{#each COLOR_PALETTE as color}
-													<button
-														type="button"
-														class="h-6 w-6 rounded-full {color.bgClass} ring-offset-2 hover:ring-2 hover:ring-base-content/30 focus:outline-hidden focus:ring-2 focus:ring-base-content/30"
-														aria-label={color.label}
-														onclick={(e) => {
-															e.stopPropagation();
-															handleSetColor(color.key);
-														}}
-													></button>
-												{/each}
-												<button
-													type="button"
-													class="flex h-6 w-6 items-center justify-center rounded-full border border-base-300 text-base-content/50 hover:bg-base-200"
-													aria-label="Clear color"
-													onclick={(e) => {
-														e.stopPropagation();
-														handleSetColor(null);
-													}}
-												>
-													<X size={12} />
-												</button>
-											</div>
-										</div>
+										<ColorPicker
+											value={optimisticColor}
+											onSelect={handleSetColor}
+											onClose={() => (showColorPicker = false)}
+										/>
 									{:else}
 										<button
 											type="button"
