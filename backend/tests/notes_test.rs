@@ -1195,6 +1195,8 @@ async fn contract_duplicate_note_generates_new_okf_id() {
     assert!(duplicated
         .content
         .contains(&format!("id: {duplicated_okf_id}")));
+    assert!(duplicated.content.contains("title: Original (copy)"));
+    assert!(duplicated.content.contains("# Original (copy)"));
 
     cleanup_user(&pool, user.id).await;
 }

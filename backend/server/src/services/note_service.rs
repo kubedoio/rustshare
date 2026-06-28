@@ -1423,9 +1423,19 @@ impl NoteService {
                     .await
                     .map_err(|e| NoteError::Database(e.to_string()))?
                     .ok_or(NoteError::NotFound(parent_id))?;
-                let unique_name = self
-                    .unique_folder_name(user_id, tenant_id, bundle_folder.parent_folder_id, &title)
-                    .await?;
+                // If the resolved title already matches the current bundle folder
+                // name, keep it. Otherwise generate a collision-safe name.
+                let unique_name = if title == bundle_folder.name {
+                    bundle_folder.name.clone()
+                } else {
+                    self.unique_folder_name(
+                        user_id,
+                        tenant_id,
+                        bundle_folder.parent_folder_id,
+                        &title,
+                    )
+                    .await?
+                };
                 if unique_name != bundle_folder.name {
                     self.folder_service
                         .rename_folder(parent_id, unique_name, user_id)
@@ -1965,7 +1975,7 @@ impl NoteService {
             let new_okf_id = Uuid::new_v4();
             let new_acl_hash = compute_acl_hash(tenant_id, tenant_id, new_okf_id, "private");
             let duplicated_content =
-                update_note_frontmatter_id(&original.content, new_okf_id, tenant_id)
+                duplicate_note_content(&original.content, new_okf_id, tenant_id, &copy_title)
                     .unwrap_or_else(|| original.content.clone());
             let new_file = self
                 .file_service
@@ -2018,6 +2028,7 @@ impl NoteService {
             // Build new metadata
             let mut meta = original.metadata.clone();
             meta.title = copy_title.clone();
+            meta.excerpt = generate_excerpt(&duplicated_content);
             meta.visibility = NoteVisibility::Private;
             meta.public_share_id = None;
             meta.attachments = new_attachments;
@@ -2514,16 +2525,42 @@ fn merge_incoming_frontmatter(
 }
 
 /// Rewrite a note document's frontmatter with a new rustshare.id and resource.
-fn update_note_frontmatter_id(doc: &str, new_okf_id: Uuid, workspace_id: Uuid) -> Option<String> {
+fn duplicate_note_content(
+    doc: &str,
+    new_okf_id: Uuid,
+    workspace_id: Uuid,
+    new_title: &str,
+) -> Option<String> {
     let (mut fm, body) = parse_frontmatter(doc).ok()?;
+    fm.title = Some(new_title.to_string());
     let mut rs = fm.rustshare.take().unwrap_or_default();
     rs.id = Some(new_okf_id);
+    rs.bundle_name = Some(new_title.to_string());
     fm.resource = Some(format!(
         "rustshare://workspace/{}/notes/{}",
         workspace_id, new_okf_id
     ));
     fm.rustshare = Some(rs);
+    let body = rewrite_first_h1(&body, new_title).unwrap_or(body);
     to_document(&fm, &body).ok()
+}
+
+/// Rewrite the first Markdown H1 heading in `content` to `new_title`.
+/// Returns `None` if no H1 heading is found.
+fn rewrite_first_h1(content: &str, new_title: &str) -> Option<String> {
+    let mut replaced = false;
+    let lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if !replaced && line.trim_start().starts_with("# ") {
+                replaced = true;
+                format!("# {}", new_title)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    replaced.then(|| lines.join("\n"))
 }
 
 fn generate_excerpt(content: &str) -> String {

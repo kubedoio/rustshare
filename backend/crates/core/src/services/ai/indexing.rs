@@ -392,7 +392,9 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
 /// - the caller is the document owner;
 /// - the note visibility is `"public"`;
 /// - the caller belongs to a group listed in `read_acl`;
-/// - `read_acl` contains an explicit `owner:<caller_user_id>` principal.
+/// - `read_acl` contains an explicit `owner:<caller_user_id>` principal;
+/// - `read_acl` contains an explicit `user:<caller_user_id>` principal (direct
+///   user share).
 ///
 /// Chunks with `embedding_policy != "allowed"` or a stale `acl_version` are
 /// rejected by the caller before this helper is invoked.
@@ -415,6 +417,12 @@ pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
     // Explicit owner principal in the ACL list.
     let owner_principal = format!("owner:{}", filter.caller_user_id);
     if acl.read_acl.contains(&owner_principal) {
+        return true;
+    }
+
+    // Explicit direct-user principal in the ACL list.
+    let user_principal = format!("user:{}", filter.caller_user_id);
+    if acl.read_acl.contains(&user_principal) {
         return true;
     }
 
@@ -813,6 +821,51 @@ mod tests {
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&owner_filter, "private", 10).await;
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_acl_includes_direct_user_share() {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
+
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let shared_user_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+
+        let mut acl = make_acl_payload(
+            tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
+        );
+        acl.read_acl = vec![
+            format!("owner:{owner_id}"),
+            format!("user:{shared_user_id}"),
+        ];
+
+        indexer
+            .index_note(
+                file_id,
+                "note.md".to_string(),
+                "/note.md".to_string(),
+                "shared user content".to_string(),
+                "text/markdown".to_string(),
+                owner_id,
+                acl,
+            )
+            .await
+            .unwrap();
+
+        let filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: shared_user_id,
+            caller_group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer
+            .search_with_acl(&filter, "shared user content", 10)
+            .await;
         assert_eq!(results.len(), 1);
     }
 
