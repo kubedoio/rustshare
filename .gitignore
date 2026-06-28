@@ -53,6 +53,7 @@ dist/
 *.pkg
 *.msi
 bin/
+!backend/server/src/bin/rustshare.rs
 
 # Backup files
 *.bak
