@@ -21,9 +21,12 @@ use rustshare_core::{
     },
 };
 use rustshare_crypto::SecretEncryptionKey;
-use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
-    ShareRepository, UserRepository,
+use rustshare_infrastructure::{
+    repositories::{
+        FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
+        ShareRepository, UserRepository,
+    },
+    PgVectorStore,
 };
 use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
 use sqlx::postgres::PgPoolOptions;
@@ -261,7 +264,8 @@ async fn init_services(
     let shared_content_indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>> =
         if ai_service_enabled {
             let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
-            Some(Arc::new(ContentIndexer::new(embedding_generator)))
+            let store = Arc::new(PgVectorStore::new(db_pool.clone()));
+            Some(Arc::new(ContentIndexer::new(embedding_generator, store)))
         } else {
             None
         };

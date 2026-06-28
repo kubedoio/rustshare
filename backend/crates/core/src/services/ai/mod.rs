@@ -12,8 +12,8 @@
 
 pub mod embedding;
 pub mod indexing;
+pub mod vector_store;
 
 pub use embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
-pub use indexing::{
-    AclSearchFilter, ContentIndex, ContentIndexer, IndexedDocument, NoteAclPayload,
-};
+pub use indexing::{can_access, AclSearchFilter, ContentIndexer, IndexedDocument, NoteAclPayload};
+pub use vector_store::{InMemoryVectorStore, VectorStore};

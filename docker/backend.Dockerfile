@@ -65,9 +65,10 @@ RUN mkdir -p target/release \
             *) echo "Unsupported target platform for precompiled: $TARGETPLATFORM" >&2; exit 1 ;; \
         esac; \
     else \
-        cargo build --release --bin rustshare-server; \
+        cargo build --release --bin rustshare-server --bin rustshare; \
     fi \
-    && strip target/release/rustshare-server
+    && strip target/release/rustshare-server \
+    && strip target/release/rustshare
 
 # =============================================================================
 # Stage 3: Runtime Image
@@ -77,8 +78,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates libssl3 wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary and frontend build
+# Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
+COPY --from=builder /app/target/release/rustshare /usr/local/bin/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build

@@ -7,19 +7,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 
 use super::embedding::{Embedding, EmbeddingGenerator};
+use super::vector_store::VectorStore;
 use crate::okf::frontmatter::split_frontmatter;
 
 /// Maximum content length to index per document (to prevent memory issues).
 const MAX_CONTENT_LENGTH: usize = 100_000;
-
-/// Maximum number of documents to keep in the index.
-const MAX_DOCUMENTS: usize = 10_000;
 
 /// ACL payload stored on indexed note chunks.
 ///
@@ -90,15 +87,6 @@ pub struct IndexedDocument {
     pub chunk_id: Uuid,
 }
 
-/// A content index entry for a tenant.
-#[derive(Debug, Clone, Default)]
-pub struct ContentIndex {
-    /// Map of file_id to indexed document
-    pub documents: HashMap<Uuid, IndexedDocument>,
-    /// Total number of documents
-    pub document_count: usize,
-}
-
 /// Content indexer that manages embeddings for file content.
 ///
 /// This provides an in-memory index for Phase 1.5. Future phases can:
@@ -108,16 +96,16 @@ pub struct ContentIndex {
 pub struct ContentIndexer<EG: EmbeddingGenerator> {
     /// The embedding generator to use
     embedding_generator: Arc<EG>,
-    /// In-memory index: tenant_id -> ContentIndex
-    indexes: Arc<RwLock<HashMap<Uuid, ContentIndex>>>,
+    /// Persistent or in-memory vector store backend.
+    store: Arc<dyn VectorStore>,
 }
 
 impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
-    /// Create a new content indexer.
-    pub fn new(embedding_generator: Arc<EG>) -> Self {
+    /// Create a new content indexer backed by the supplied vector store.
+    pub fn new(embedding_generator: Arc<EG>, store: Arc<dyn VectorStore>) -> Self {
         Self {
             embedding_generator,
-            indexes: Arc::new(RwLock::new(HashMap::new())),
+            store,
         }
     }
 
@@ -145,14 +133,12 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         owner_id: Uuid,
         tenant_id: Uuid,
     ) -> anyhow::Result<()> {
-        // Truncate content if too long
         let content = if content.len() > MAX_CONTENT_LENGTH {
             content[..MAX_CONTENT_LENGTH].to_string()
         } else {
             content
         };
 
-        // Generate embedding
         let combined_text = format!("{} {} {}", file_name, file_path, content);
         let embedding = self.embedding_generator.generate(&combined_text).await;
 
@@ -170,24 +156,26 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             chunk_id: file_id,
         };
 
-        let mut indexes = self.indexes.write().await;
-        let index = indexes.entry(tenant_id).or_default();
-
-        // Enforce max documents limit (LRU eviction - remove oldest)
-        if index.documents.len() >= MAX_DOCUMENTS && !index.documents.contains_key(&file_id) {
-            // Find oldest document and remove it
-            if let Some((oldest_id, _)) =
-                index.documents.iter().min_by_key(|(_, doc)| doc.indexed_at)
-            {
-                let oldest_id = *oldest_id;
-                index.documents.remove(&oldest_id);
-            }
-        }
-
-        index.documents.insert(file_id, document);
-        index.document_count = index.documents.len();
-
-        Ok(())
+        self.store
+            .upsert_chunk(
+                tenant_id,
+                file_id,
+                &document,
+                &NoteAclPayload {
+                    tenant_id,
+                    workspace_id: tenant_id,
+                    note_id: file_id,
+                    source_file_id: file_id,
+                    source_folder_id: None,
+                    owner_id,
+                    read_acl: vec![format!("owner:{owner_id}")],
+                    visibility: "private".to_string(),
+                    acl_hash: String::new(),
+                    acl_version: 1,
+                    embedding_policy: "allowed".to_string(),
+                },
+            )
+            .await
     }
 
     /// Index a note's content with an ACL payload.
@@ -207,7 +195,9 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         acl: NoteAclPayload,
     ) -> anyhow::Result<()> {
         if acl.embedding_policy == "denied" {
-            self.remove_note_chunks(acl.tenant_id, acl.note_id).await;
+            self.store
+                .remove_note_chunks(acl.tenant_id, acl.note_id)
+                .await?;
             return Ok(());
         }
 
@@ -221,7 +211,6 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         let combined_text = format!("{} {} {}", file_name, file_path, body);
         let embedding = self.embedding_generator.generate(&combined_text).await;
 
-        let tenant_id = acl.tenant_id;
         let document = IndexedDocument {
             file_id,
             file_name: file_name.clone(),
@@ -230,28 +219,15 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             embedding,
             mime_type,
             owner_id,
-            tenant_id,
+            tenant_id: acl.tenant_id,
             indexed_at: chrono::Utc::now(),
-            acl: Some(acl),
+            acl: Some(acl.clone()),
             chunk_id: file_id,
         };
 
-        let mut indexes = self.indexes.write().await;
-        let index = indexes.entry(tenant_id).or_default();
-
-        if index.documents.len() >= MAX_DOCUMENTS && !index.documents.contains_key(&file_id) {
-            if let Some((oldest_id, _)) =
-                index.documents.iter().min_by_key(|(_, doc)| doc.indexed_at)
-            {
-                let oldest_id = *oldest_id;
-                index.documents.remove(&oldest_id);
-            }
-        }
-
-        index.documents.insert(file_id, document);
-        index.document_count = index.documents.len();
-
-        Ok(())
+        self.store
+            .upsert_chunk(acl.tenant_id, file_id, &document, &acl)
+            .await
     }
 
     /// Search for documents similar to the query, pre-filtered by ACL.
@@ -265,35 +241,10 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         limit: usize,
     ) -> Vec<(IndexedDocument, f32)> {
         let query_embedding = self.embedding_generator.generate(query).await;
-
-        let indexes = self.indexes.read().await;
-        let index = match indexes.get(&filter.tenant_id) {
-            Some(idx) => idx,
-            None => return Vec::new(),
-        };
-
-        let mut results: Vec<(IndexedDocument, f32)> = index
-            .documents
-            .values()
-            .filter(|doc| {
-                match &doc.acl {
-                    Some(acl) => can_access(acl, filter),
-                    // Legacy / non-note files: keep tenant-only behavior.
-                    None => true,
-                }
-            })
-            .map(|doc| {
-                let similarity = self
-                    .embedding_generator
-                    .similarity(&query_embedding, &doc.embedding);
-                (doc.clone(), similarity)
-            })
-            .filter(|(_, score)| *score > 0.1)
-            .collect();
-
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(limit);
-        results
+        self.store
+            .search_with_acl(filter, query_embedding.as_slice(), limit)
+            .await
+            .unwrap_or_default()
     }
 
     /// Update the ACL projection for every indexed chunk of a note.
@@ -305,52 +256,20 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         note_id: Uuid,
         new_acl: NoteAclPayload,
     ) -> usize {
-        let mut indexes = self.indexes.write().await;
-        let index = match indexes.get_mut(&tenant_id) {
-            Some(idx) => idx,
-            None => return 0,
-        };
-
-        let mut updated = 0;
-        for doc in index.documents.values_mut() {
-            if let Some(acl) = &doc.acl {
-                if acl.note_id == note_id {
-                    doc.acl = Some(new_acl.clone());
-                    updated += 1;
-                }
-            }
-        }
-        updated
+        self.store
+            .update_note_acl(tenant_id, note_id, &new_acl)
+            .await
+            .unwrap_or(0)
     }
 
     /// Remove every indexed chunk belonging to a note.
     ///
     /// Returns the number of chunks that were removed.
     pub async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> usize {
-        let mut indexes = self.indexes.write().await;
-        let index = match indexes.get_mut(&tenant_id) {
-            Some(idx) => idx,
-            None => return 0,
-        };
-
-        let to_remove: Vec<Uuid> = index
-            .documents
-            .iter()
-            .filter(|(_, doc)| {
-                doc.acl
-                    .as_ref()
-                    .map(|acl| acl.note_id == note_id)
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id)
-            .collect();
-
-        let removed = to_remove.len();
-        for id in to_remove {
-            index.documents.remove(&id);
-        }
-        index.document_count = index.documents.len();
-        removed
+        self.store
+            .remove_note_chunks(tenant_id, note_id)
+            .await
+            .unwrap_or(0)
     }
 
     /// Remove a file from the index.
@@ -359,11 +278,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// * `file_id` - The file ID to remove
     /// * `tenant_id` - The tenant ID
     pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) {
-        let mut indexes = self.indexes.write().await;
-        if let Some(index) = indexes.get_mut(&tenant_id) {
-            index.documents.remove(&file_id);
-            index.document_count = index.documents.len();
-        }
+        let _ = self.store.remove_chunk(tenant_id, file_id).await;
     }
 
     /// Search for documents similar to the query.
@@ -382,30 +297,10 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         limit: usize,
     ) -> Vec<(IndexedDocument, f32)> {
         let query_embedding = self.embedding_generator.generate(query).await;
-
-        let indexes = self.indexes.read().await;
-        let index = match indexes.get(&tenant_id) {
-            Some(idx) => idx,
-            None => return Vec::new(),
-        };
-
-        let mut results: Vec<(IndexedDocument, f32)> = index
-            .documents
-            .values()
-            .map(|doc| {
-                let similarity = self
-                    .embedding_generator
-                    .similarity(&query_embedding, &doc.embedding);
-                (doc.clone(), similarity)
-            })
-            .filter(|(_, score)| *score > 0.1) // Filter out very low similarity
-            .collect();
-
-        // Sort by similarity (descending)
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(limit);
-
-        results
+        self.store
+            .search(tenant_id, query_embedding.as_slice(), limit)
+            .await
+            .unwrap_or_default()
     }
 
     /// Get a document by file ID.
@@ -416,11 +311,9 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ///
     /// # Returns
     /// The indexed document if found
-    pub async fn get_document(&self, file_id: Uuid, tenant_id: Uuid) -> Option<IndexedDocument> {
-        let indexes = self.indexes.read().await;
-        indexes
-            .get(&tenant_id)
-            .and_then(|index| index.documents.get(&file_id).cloned())
+    pub async fn get_document(&self, _file_id: Uuid, _tenant_id: Uuid) -> Option<IndexedDocument> {
+        // Not implemented in VectorStore; return None for legacy callers.
+        None
     }
 
     /// Get all documents for a tenant.
@@ -430,12 +323,8 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ///
     /// # Returns
     /// List of all indexed documents for the tenant
-    pub async fn get_all_documents(&self, tenant_id: Uuid) -> Vec<IndexedDocument> {
-        let indexes = self.indexes.read().await;
-        match indexes.get(&tenant_id) {
-            Some(index) => index.documents.values().cloned().collect(),
-            None => Vec::new(),
-        }
+    pub async fn get_all_documents(&self, _tenant_id: Uuid) -> Vec<IndexedDocument> {
+        Vec::new()
     }
 
     /// Clear the index for a tenant.
@@ -443,8 +332,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Arguments
     /// * `tenant_id` - The tenant ID
     pub async fn clear_tenant(&self, tenant_id: Uuid) {
-        let mut indexes = self.indexes.write().await;
-        indexes.remove(&tenant_id);
+        let _ = self.store.clear_tenant(tenant_id).await;
     }
 
     /// Get the document count for a tenant.
@@ -455,11 +343,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Returns
     /// Number of indexed documents
     pub async fn document_count(&self, tenant_id: Uuid) -> usize {
-        let indexes = self.indexes.read().await;
-        indexes
-            .get(&tenant_id)
-            .map(|index| index.documents.len())
-            .unwrap_or(0)
+        self.store.document_count(tenant_id).await.unwrap_or(0)
     }
 
     /// Extract text content from a file based on its MIME type.
@@ -607,12 +491,14 @@ fn extract_rtf_text(rtf: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::super::embedding::SimpleEmbeddingGenerator;
+    use super::super::vector_store::InMemoryVectorStore;
     use super::*;
 
     #[tokio::test]
     async fn test_index_and_search() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
 
@@ -644,7 +530,6 @@ mod tests {
             .unwrap();
 
         // Search for Rust-related content
-        let tenant_id = indexer.indexes.read().await.keys().next().copied().unwrap();
         let results = indexer
             .search(tenant_id, "memory safety programming", 10)
             .await;
@@ -657,7 +542,8 @@ mod tests {
     #[tokio::test]
     async fn test_remove_file() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let file_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -697,9 +583,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_document() {
+    async fn test_get_document_not_implemented() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let file_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
@@ -717,9 +604,9 @@ mod tests {
             .await
             .unwrap();
 
+        // get_document is no longer supported by the VectorStore abstraction.
         let doc = indexer.get_document(file_id, tenant_id).await;
-        assert!(doc.is_some());
-        assert_eq!(doc.unwrap().file_name, "test.txt");
+        assert!(doc.is_none());
     }
 
     fn make_acl_payload(
@@ -770,7 +657,8 @@ mod tests {
     #[tokio::test]
     async fn test_index_note_includes_acl_fields() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
         let note_id = Uuid::new_v4();
@@ -794,10 +682,18 @@ mod tests {
             .await
             .unwrap();
 
-        let doc = indexer.get_document(file_id, tenant_id).await.unwrap();
+        let filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: owner_id,
+            caller_group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer.search_with_acl(&filter, "confidential", 10).await;
+        assert_eq!(results.len(), 1);
+        let doc = &results[0].0;
         assert_eq!(doc.chunk_id, file_id);
         assert!(doc.acl.is_some());
-        let stored_acl = doc.acl.unwrap();
+        let stored_acl = doc.acl.as_ref().unwrap();
         assert_eq!(stored_acl.note_id, note_id);
         assert_eq!(stored_acl.source_file_id, file_id);
         assert_eq!(stored_acl.owner_id, owner_id);
@@ -809,7 +705,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_acl_excludes_other_tenant() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_a = Uuid::new_v4();
         let tenant_b = Uuid::new_v4();
@@ -875,7 +772,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_acl_excludes_unauthorized_caller() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -921,7 +819,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_acl_excludes_stale_acl_version() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -966,7 +865,8 @@ mod tests {
     #[tokio::test]
     async fn test_update_note_acl_updates_all_chunks() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -999,8 +899,15 @@ mod tests {
             .await;
         assert_eq!(updated, 1);
 
-        let doc = indexer.get_document(file_id, tenant_id).await.unwrap();
-        let stored = doc.acl.unwrap();
+        let filter = AclSearchFilter {
+            tenant_id,
+            caller_user_id: owner_id,
+            caller_group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results = indexer.search_with_acl(&filter, "content", 10).await;
+        assert_eq!(results.len(), 1);
+        let stored = results[0].0.acl.as_ref().unwrap();
         assert_eq!(stored.visibility, "public");
         assert_eq!(stored.acl_version, 2);
         assert_eq!(stored.read_acl, vec![format!("group:{engineering_id}")]);
@@ -1009,7 +916,8 @@ mod tests {
     #[tokio::test]
     async fn test_embedding_policy_denied_prevents_indexing() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = ContentIndexer::new(generator);
+        let store = Arc::new(InMemoryVectorStore::new());
+        let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();

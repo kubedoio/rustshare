@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use rustshare_core::domain::{File, Share, SharePermissions};
 use rustshare_core::services::{
-    AiService, ContentIndexer, EmbeddingGenerator, PermissionResolver, PermissionResolverOps,
+    AiService, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore, PermissionResolver,
+    PermissionResolverOps,
 };
 
 // Mock embedding generator
@@ -193,7 +194,10 @@ fn build_service(
     ops: std::sync::Arc<MockPermissionOps>,
 ) -> AiService<MockEmbeddingGenerator, MockPermissionOps> {
     let generator = std::sync::Arc::new(MockEmbeddingGenerator);
-    let indexer = std::sync::Arc::new(ContentIndexer::new(generator));
+    let indexer = std::sync::Arc::new(ContentIndexer::new(
+        generator,
+        std::sync::Arc::new(InMemoryVectorStore::new()),
+    ));
     let permission_resolver = std::sync::Arc::new(PermissionResolver::new(ops));
     AiService::new(indexer, permission_resolver)
 }

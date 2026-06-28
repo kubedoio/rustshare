@@ -562,6 +562,15 @@ fn generate_rag_answer(query: &str, results: &[SemanticSearchResult]) -> String 
 mod tests {
     use super::*;
     use crate::services::ai::embedding::SimpleEmbeddingGenerator;
+    use crate::services::{ContentIndexer, InMemoryVectorStore};
+
+    fn test_indexer() -> Arc<ContentIndexer<SimpleEmbeddingGenerator>> {
+        let generator = Arc::new(SimpleEmbeddingGenerator::new());
+        Arc::new(ContentIndexer::new(
+            generator,
+            Arc::new(InMemoryVectorStore::new()),
+        ))
+    }
 
     // Mock PermissionResolverOps for testing
     struct MockPermissionOps;
@@ -673,12 +682,10 @@ mod tests {
     }
 
     fn create_test_service() -> AiService<SimpleEmbeddingGenerator, MockPermissionOps> {
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
         let permission_ops = Arc::new(MockPermissionOps);
         let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
 
-        AiService::new(indexer, permission_resolver)
+        AiService::new(test_indexer(), permission_resolver)
     }
 
     #[tokio::test]
@@ -936,8 +943,7 @@ mod tests {
     }
 
     fn create_configurable_service() -> AiService<SimpleEmbeddingGenerator, ConfigurableMockOps> {
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let permission_ops = Arc::new(ConfigurableMockOps::new());
         let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
         AiService::new(indexer, permission_resolver)
@@ -1027,8 +1033,7 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let file_id = Uuid::new_v4();
 
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let ops = Arc::new(ConfigurableMockOps::new());
         ops.add_file(make_file(file_id, "revoked.txt", owner_id, tenant_id));
         ops.add_share(make_share(
@@ -1067,8 +1072,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_excludes_expired_content() {
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let ops = Arc::new(ConfigurableMockOps::new());
 
         let owner_id = Uuid::new_v4();
@@ -1114,8 +1118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_uses_normal_effective_permissions() {
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let ops = Arc::new(ConfigurableMockOps::new());
 
         let owner_id = Uuid::new_v4();
@@ -1167,8 +1170,7 @@ mod tests {
         // This is an AppState-level behavior verified by readiness tests.
         // At the service level, semantic_search simply requires an AiService instance.
         // We verify that an AiService with no indexed docs returns empty.
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let ops = Arc::new(ConfigurableMockOps::new());
         let permission_resolver = Arc::new(PermissionResolver::new(ops));
         let service = AiService::new(indexer, permission_resolver);
@@ -1186,8 +1188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_summarize_denies_deleted_file() {
-        let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let indexer = Arc::new(ContentIndexer::new(generator));
+        let indexer = test_indexer();
         let ops = Arc::new(ConfigurableMockOps::new());
 
         let user_id = Uuid::new_v4();

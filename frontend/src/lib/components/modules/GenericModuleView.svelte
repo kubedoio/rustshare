@@ -96,7 +96,7 @@
 	let emptyDescription = $derived(
 		module.ui.page.emptyStateDescription ?? 'Create your first item from a template to get started.'
 	);
-	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'Create from Template');
+	let emptyAction = $derived(module.ui.page.primaryAction?.label ?? 'New item');
 
 	let isGallery = $derived(module.ui.page.layout === 'gallery-grid');
 </script>
@@ -109,7 +109,7 @@
 			disabled={!module.defaultTemplate}
 		>
 			<Plus size={14} />
-			<span>Create from Template</span>
+			<span>{emptyAction}</span>
 		</button>
 	</div>
 	<div slot="secondaryActions">
@@ -227,7 +227,7 @@
 
 <PromptModal
 	open={showPromptModal}
-	title="Create from Template"
+	title={emptyAction}
 	message="Enter a name for the new item:"
 	confirmLabel="Create"
 	onConfirm={handleCreateFromTemplateConfirm}

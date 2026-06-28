@@ -4059,6 +4059,7 @@ name = "rustshare-core"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "chrono",
  "hex",
@@ -4126,6 +4127,7 @@ name = "rustshare-infrastructure"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "rustshare-core",
  "serde",

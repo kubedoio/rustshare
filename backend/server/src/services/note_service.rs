@@ -141,7 +141,7 @@ impl NoteConflictResolution {
 }
 
 /// Report produced by [`NoteService::migrate_notes_to_okf`].
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteMigrationReport {
     pub notes_scanned: usize,
     pub already_okf: usize,
@@ -2477,7 +2477,12 @@ impl NoteService {
         tenant_id: Uuid,
         dry_run: bool,
     ) -> Result<NoteMigrationReport, NoteError> {
-        let mut report = self.build_migration_plan(tenant_id).await?;
+        let notes_folder = match self.find_notes_folder(tenant_id).await? {
+            Some(folder) => folder,
+            None => return Ok(NoteMigrationReport::default()),
+        };
+
+        let mut report = self.build_migration_plan(tenant_id, &notes_folder).await?;
 
         if dry_run {
             return Ok(report);
@@ -2488,7 +2493,10 @@ impl NoteService {
             if change.frontmatter_action == "none" && change.manifest_action == "none" {
                 continue;
             }
-            if let Err(e) = self.apply_okf_migration_change(&change, tenant_id).await {
+            if let Err(e) = self
+                .apply_okf_migration_change(&change, tenant_id, notes_folder.id)
+                .await
+            {
                 report.skipped.push(NoteMigrationSkip {
                     path: change.path,
                     reason: format!("Failed to apply migration: {}", e),
@@ -2497,7 +2505,7 @@ impl NoteService {
         }
 
         // Verify idempotency: a second planning pass must produce no changes.
-        let verify = self.build_migration_plan(tenant_id).await?;
+        let verify = self.build_migration_plan(tenant_id, &notes_folder).await?;
         let remaining: Vec<&NoteMigrationChange> = verify
             .planned_changes
             .iter()
@@ -2513,49 +2521,55 @@ impl NoteService {
         Ok(report)
     }
 
-    async fn build_migration_plan(
+    async fn find_notes_folder(
         &self,
         tenant_id: Uuid,
-    ) -> Result<NoteMigrationReport, NoteError> {
-        let mut report = NoteMigrationReport {
-            notes_scanned: 0,
-            already_okf: 0,
-            missing_frontmatter: 0,
-            frontmatter_to_merge: 0,
-            planned_changes: Vec::new(),
-            conflicts: Vec::new(),
-            skipped: Vec::new(),
-        };
-
-        let workspace = match self
+    ) -> Result<Option<rustshare_core::domain::Folder>, NoteError> {
+        let workspace = self
             .metadata_store
             .list_folders_by_parent(None, tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?
             .into_iter()
-            .find(|f| f.name == self.workspace_name)
-        {
+            .find(|f| f.name == self.workspace_name);
+
+        let workspace = match workspace {
             Some(w) => w,
-            None => return Ok(report),
+            None => return Ok(None),
         };
 
-        let notes_folder = match self
+        let notes_folder = self
             .metadata_store
             .list_folders_by_parent(Some(workspace.id), tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?
             .into_iter()
-            .find(|f| f.name == self.folder_name)
-        {
-            Some(n) => n,
-            None => return Ok(report),
-        };
+            .find(|f| f.name == self.folder_name);
+
+        Ok(notes_folder)
+    }
+
+    async fn build_migration_plan(
+        &self,
+        tenant_id: Uuid,
+        notes_folder: &rustshare_core::domain::Folder,
+    ) -> Result<NoteMigrationReport, NoteError> {
+        let mut report = NoteMigrationReport::default();
 
         let bundles = self
             .metadata_store
             .list_folders_by_parent(Some(notes_folder.id), tenant_id)
             .await
             .map_err(|e| NoteError::Database(e.to_string()))?;
+
+        let loose_files = self
+            .metadata_store
+            .list_files_by_parent(Some(notes_folder.id), tenant_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?
+            .into_iter()
+            .filter(|f| f.name.ends_with(".md"))
+            .collect::<Vec<_>>();
 
         for bundle in bundles {
             let files = match self
@@ -2573,151 +2587,177 @@ impl NoteService {
                 }
             };
 
-            let Some(note_file) = files.into_iter().find(|f| f.name == "note.md") else {
-                continue;
-            };
-
-            report.notes_scanned += 1;
-            let owner_id = note_file.owner_id;
-
-            let content = match self.object_store.get(&note_file.storage_key()).await {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                Err(e) => {
-                    report.skipped.push(NoteMigrationSkip {
-                        path: note_file.path.clone(),
-                        reason: format!("Failed to read note content: {}", e),
-                    });
-                    continue;
-                }
-            };
-
-            let (fm, _body) = match parse_frontmatter(&content) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    report.conflicts.push(NoteMigrationConflict {
-                        path: note_file.path.clone(),
-                        kind: "invalid_yaml".to_string(),
-                        message: e.to_string(),
-                    });
-                    continue;
-                }
-            };
-
-            let manifest_title = self
-                .load_manifest_title(Some(bundle.id), owner_id, tenant_id)
-                .await;
-            let bundle_name = bundle.name.clone();
-
-            let title_source = if fm.title.clone().filter(|s| !s.is_empty()).is_some() {
-                "yaml".to_string()
-            } else if manifest_title.clone().filter(|s| !s.is_empty()).is_some() {
-                "manifest".to_string()
-            } else if !bundle_name.is_empty() {
-                "folder".to_string()
-            } else {
-                "filename".to_string()
-            };
-
-            let yaml_id = fm
-                .rustshare
-                .as_ref()
-                .and_then(|rs| rs.id)
-                .filter(|id| !id.is_nil());
-            let sidecar_id = self
-                .load_sidecar_okf_id(note_file.id, owner_id, tenant_id)
-                .await;
-            let manifest_id = self
-                .load_manifest_okf_id(Some(bundle.id), owner_id, tenant_id)
-                .await;
-
-            // Detect identity conflicts between frontmatter, sidecar, and manifest.
-            if let (Some(y), Some(s)) = (yaml_id, sidecar_id) {
-                if y != s {
-                    report.conflicts.push(NoteMigrationConflict {
-                        path: note_file.path.clone(),
-                        kind: "identity_conflict".to_string(),
-                        message: format!(
-                            "Frontmatter rustshare.id ({}) does not match sidecar okf_id ({}).",
-                            y, s
-                        ),
-                    });
-                    continue;
-                }
+            if let Some(note_file) = files.into_iter().find(|f| f.name == "note.md") {
+                self.plan_note_migration(&mut report, note_file, Some(bundle), tenant_id)
+                    .await;
             }
-            if let (Some(y), Some(m)) = (yaml_id, manifest_id) {
-                if y != m {
-                    report.conflicts.push(NoteMigrationConflict {
-                        path: note_file.path.clone(),
-                        kind: "identity_conflict".to_string(),
-                        message: format!(
-                            "Frontmatter rustshare.id ({}) does not match manifest rustshare_id ({}).",
-                            y, m
-                        ),
-                    });
-                    continue;
-                }
-            }
+        }
 
-            let has_frontmatter = split_frontmatter(&content).is_some();
-            let is_already_okf =
-                has_frontmatter && fm.okf_type.as_deref() == Some("Note") && yaml_id.is_some();
-
-            let manifest_exists = self
-                .load_manifest(Some(bundle.id), owner_id, tenant_id)
-                .await
-                .is_some();
-
-            if is_already_okf {
-                report.already_okf += 1;
-                report.planned_changes.push(NoteMigrationChange {
-                    path: note_file.path.clone(),
-                    note_id: note_file.id,
-                    generated_okf_id: yaml_id,
-                    title_source,
-                    frontmatter_action: "none".to_string(),
-                    manifest_action: "none".to_string(),
-                    risk_level: "low".to_string(),
-                });
-                continue;
-            }
-
-            let (frontmatter_action, risk_level) = if has_frontmatter {
-                report.frontmatter_to_merge += 1;
-                ("merge".to_string(), "medium".to_string())
-            } else {
-                report.missing_frontmatter += 1;
-                ("inject".to_string(), "low".to_string())
-            };
-
-            let manifest_action = if manifest_exists {
-                "update".to_string()
-            } else {
-                "create".to_string()
-            };
-
-            let generated_okf_id = sidecar_id
-                .or(yaml_id)
-                .or(manifest_id)
-                .or_else(|| Some(Uuid::new_v4()));
-
-            report.planned_changes.push(NoteMigrationChange {
-                path: note_file.path,
-                note_id: note_file.id,
-                generated_okf_id,
-                title_source,
-                frontmatter_action,
-                manifest_action,
-                risk_level,
-            });
+        for file in loose_files {
+            self.plan_note_migration(&mut report, file, None, tenant_id)
+                .await;
         }
 
         Ok(report)
+    }
+
+    async fn plan_note_migration(
+        &self,
+        report: &mut NoteMigrationReport,
+        note_file: rustshare_core::domain::File,
+        bundle: Option<rustshare_core::domain::Folder>,
+        tenant_id: Uuid,
+    ) {
+        report.notes_scanned += 1;
+        let owner_id = note_file.owner_id;
+
+        let content = match self.object_store.get(&note_file.storage_key()).await {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            Err(e) => {
+                report.skipped.push(NoteMigrationSkip {
+                    path: note_file.path.clone(),
+                    reason: format!("Failed to read note content: {}", e),
+                });
+                return;
+            }
+        };
+
+        let (fm, _body) = match parse_frontmatter(&content) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                report.conflicts.push(NoteMigrationConflict {
+                    path: note_file.path.clone(),
+                    kind: "invalid_yaml".to_string(),
+                    message: e.to_string(),
+                });
+                return;
+            }
+        };
+
+        let manifest_title = if let Some(ref b) = bundle {
+            self.load_manifest_title(Some(b.id), owner_id, tenant_id)
+                .await
+        } else {
+            None
+        };
+        let bundle_name = bundle.as_ref().map(|b| b.name.clone());
+
+        let title_source = if fm.title.as_ref().filter(|s| !s.is_empty()).is_some() {
+            "yaml".to_string()
+        } else if manifest_title.as_ref().filter(|s| !s.is_empty()).is_some() {
+            "manifest".to_string()
+        } else if bundle_name.as_ref().filter(|s| !s.is_empty()).is_some() {
+            "folder".to_string()
+        } else {
+            "filename".to_string()
+        };
+
+        let yaml_id = fm
+            .rustshare
+            .as_ref()
+            .and_then(|rs| rs.id)
+            .filter(|id| !id.is_nil());
+        let sidecar_id = self
+            .load_sidecar_okf_id(note_file.id, owner_id, tenant_id)
+            .await;
+        let manifest_id = if let Some(ref b) = bundle {
+            self.load_manifest_okf_id(Some(b.id), owner_id, tenant_id)
+                .await
+        } else {
+            None
+        };
+
+        // Detect identity conflicts between frontmatter, sidecar, and manifest.
+        if let (Some(y), Some(s)) = (yaml_id, sidecar_id) {
+            if y != s {
+                report.conflicts.push(NoteMigrationConflict {
+                    path: note_file.path.clone(),
+                    kind: "identity_conflict".to_string(),
+                    message: format!(
+                        "Frontmatter rustshare.id ({}) does not match sidecar okf_id ({}).",
+                        y, s
+                    ),
+                });
+                return;
+            }
+        }
+        if let (Some(y), Some(m)) = (yaml_id, manifest_id) {
+            if y != m {
+                report.conflicts.push(NoteMigrationConflict {
+                    path: note_file.path.clone(),
+                    kind: "identity_conflict".to_string(),
+                    message: format!(
+                        "Frontmatter rustshare.id ({}) does not match manifest rustshare_id ({}).",
+                        y, m
+                    ),
+                });
+                return;
+            }
+        }
+
+        let has_frontmatter = split_frontmatter(&content).is_some();
+        let is_already_okf =
+            has_frontmatter && fm.okf_type.as_deref() == Some("Note") && yaml_id.is_some();
+
+        let manifest_exists = if let Some(ref b) = bundle {
+            self.load_manifest(Some(b.id), owner_id, tenant_id)
+                .await
+                .is_some()
+        } else {
+            false
+        };
+
+        if is_already_okf {
+            report.already_okf += 1;
+            report.planned_changes.push(NoteMigrationChange {
+                path: note_file.path.clone(),
+                note_id: note_file.id,
+                generated_okf_id: yaml_id,
+                title_source,
+                frontmatter_action: "none".to_string(),
+                manifest_action: "none".to_string(),
+                risk_level: "low".to_string(),
+            });
+            return;
+        }
+
+        let (frontmatter_action, risk_level) = if has_frontmatter {
+            report.frontmatter_to_merge += 1;
+            ("merge".to_string(), "medium".to_string())
+        } else {
+            report.missing_frontmatter += 1;
+            ("inject".to_string(), "low".to_string())
+        };
+
+        let manifest_action = if manifest_exists {
+            "update".to_string()
+        } else if bundle.is_some() {
+            "create".to_string()
+        } else {
+            "none".to_string()
+        };
+
+        let generated_okf_id = sidecar_id
+            .or(yaml_id)
+            .or(manifest_id)
+            .or_else(|| Some(Uuid::new_v4()));
+
+        report.planned_changes.push(NoteMigrationChange {
+            path: note_file.path,
+            note_id: note_file.id,
+            generated_okf_id,
+            title_source,
+            frontmatter_action,
+            manifest_action,
+            risk_level,
+        });
     }
 
     async fn apply_okf_migration_change(
         &self,
         change: &NoteMigrationChange,
         tenant_id: Uuid,
+        notes_folder_id: Uuid,
     ) -> Result<(), NoteError> {
         let file = self
             .metadata_store
@@ -2788,10 +2828,14 @@ impl NoteService {
             .edit_file(file.id, owner_id, Bytes::from(document), "overwrite", None)
             .await?;
 
-        // Ensure the bundle has a _rustshare folder so save_metadata can write the manifest.
-        if let Some(parent_id) = file.parent_folder_id {
-            self.get_or_create_subfolder(parent_id, "_rustshare", owner_id, tenant_id)
-                .await?;
+        // Ensure folder-backed notes have a _rustshare folder so save_metadata can
+        // write the manifest. Loose .md files live directly under /Workspace/Notes
+        // and do not get a bundle subfolder.
+        if file.parent_folder_id != Some(notes_folder_id) {
+            if let Some(parent_id) = file.parent_folder_id {
+                self.get_or_create_subfolder(parent_id, "_rustshare", owner_id, tenant_id)
+                    .await?;
+            }
         }
 
         let mut meta = self
@@ -3298,5 +3342,44 @@ mod tests {
 
         assert!(acl.read_acl.contains(&format!("owner:{owner_id}")));
         assert!(acl.read_acl.contains(&format!("user:{user_id}")));
+    }
+
+    #[test]
+    fn note_migration_change_supports_loose_file() {
+        let change = NoteMigrationChange {
+            path: "/Workspace/Notes/standalone.md".to_string(),
+            note_id: Uuid::nil(),
+            generated_okf_id: Some(Uuid::nil()),
+            title_source: "filename".to_string(),
+            frontmatter_action: "inject".to_string(),
+            manifest_action: "none".to_string(),
+            risk_level: "low".to_string(),
+        };
+        let json = serde_json::to_value(&change).unwrap();
+        assert_eq!(json["manifest_action"], "none");
+        assert_eq!(json["title_source"], "filename");
+    }
+
+    #[test]
+    fn note_migration_title_source_prefers_yaml_over_filename() {
+        let report = NoteMigrationReport {
+            notes_scanned: 1,
+            already_okf: 0,
+            missing_frontmatter: 1,
+            frontmatter_to_merge: 0,
+            planned_changes: vec![NoteMigrationChange {
+                path: "/Workspace/Notes/standalone.md".to_string(),
+                note_id: Uuid::nil(),
+                generated_okf_id: Some(Uuid::nil()),
+                title_source: "filename".to_string(),
+                frontmatter_action: "inject".to_string(),
+                manifest_action: "none".to_string(),
+                risk_level: "low".to_string(),
+            }],
+            conflicts: vec![],
+            skipped: vec![],
+        };
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["planned_changes"][0]["title_source"], "filename");
     }
 }
