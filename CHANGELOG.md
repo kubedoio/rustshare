@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed the back button in the Markdown editor to return to the previous `/files` location (including folder and filter state) instead of always going to `/notes`.
 - Fixed the Markdown editor formatting toolbar so it remains visible (sticky) at the top of the editor while scrolling through long documents.
+- Fixed the app layout height for non-files pages so the Markdown editor fills the available viewport and scrolls internally, keeping both the document header and formatting toolbar visible on long notes.
 - Sanitized `Content-Disposition` filename parameters to strip control characters, backslashes, and quotes.
 - Fixed resumable upload chunk integrity validation so `Content-MD5` is verified as MD5 instead of being compared to SHA-256 chunk hashes.
 - Fixed resumable upload completion to assemble chunks through streaming temporary files instead of materializing full files in memory.
