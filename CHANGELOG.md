@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added object-store integrity checks for content-addressed `blobs/{sha256}` uploads and downloads.
 - Fixed Markdown table preprocessing so backslashes no longer multiply on each save/load round-trip. Cell content is now rendered through markdown-it, preserving inline formatting and consuming escape sequences correctly.
 - Fixed Markdown table serialization so cell content is treated as inline text. This prevents unnecessary escaping of block markers such as `1.`, `-`, and `#` at the start of a table cell.
+- Fixed the Notes module list so clicking a note opens the note editor (`note.md`) instead of the folder bundle.
 
 ### Security
 
