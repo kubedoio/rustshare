@@ -311,9 +311,11 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ///
     /// # Returns
     /// The indexed document if found
-    pub async fn get_document(&self, _file_id: Uuid, _tenant_id: Uuid) -> Option<IndexedDocument> {
-        // Not implemented in VectorStore; return None for legacy callers.
-        None
+    pub async fn get_document(&self, file_id: Uuid, tenant_id: Uuid) -> Option<IndexedDocument> {
+        self.store
+            .get_chunk(tenant_id, file_id)
+            .await
+            .unwrap_or(None)
     }
 
     /// Get all documents for a tenant.
@@ -591,7 +593,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_document_not_implemented() {
+    async fn test_get_document_returns_indexed_file() {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
         let store = Arc::new(InMemoryVectorStore::new());
         let indexer = ContentIndexer::new(generator, store);
@@ -612,9 +614,9 @@ mod tests {
             .await
             .unwrap();
 
-        // get_document is no longer supported by the VectorStore abstraction.
         let doc = indexer.get_document(file_id, tenant_id).await;
-        assert!(doc.is_none());
+        assert!(doc.is_some());
+        assert_eq!(doc.unwrap().file_id, file_id);
     }
 
     fn make_acl_payload(

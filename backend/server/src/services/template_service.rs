@@ -186,14 +186,14 @@ impl TemplateService {
 type: Note
 title: "{{title}}"
 description: ""
-resource: "rustshare://workspace/00000000-0000-0000-0000-000000000000/notes/00000000-0000-0000-0000-000000000000"
+resource: "rustshare://workspace/{{workspace_id}}/notes/{{okf_id}}"
 tags: []
 timestamp: "1970-01-01T00:00:00Z"
 rustshare:
-  id: "00000000-0000-0000-0000-000000000000"
+  id: "{{okf_id}}"
   module: notes
   source_kind: note
-  source_id: "00000000-0000-0000-0000-000000000000"
+  source_id: "{{okf_id}}"
   bundle_name: "{{title}}"
   main: note.md
   visibility: private
@@ -211,7 +211,7 @@ rustshare:
                     TemplateDefaultFile {
                         path: "_rustshare/manifest.json".to_string(),
                         content: Some(
-                            r#"{"type":"rustshare.note","version":1,"id":"{{id}}","title":"{{title}}","main":"note.md","created_at":"{{created_at}}","updated_at":"{{updated_at}}","attachments":[],"drawings":[],"exports":[]}"#.to_string(),
+                            r#"{"type":"rustshare.note","version":1,"id":"{{okf_id}}","rustshare_id":"{{okf_id}}","title":"{{title}}","main":"note.md","created_at":"{{created_at}}","updated_at":"{{updated_at}}","attachments":[],"drawings":[],"exports":[]}"#.to_string(),
                         ),
                         content_type: Some("application/json".to_string()),
                     },
@@ -1183,7 +1183,7 @@ rustshare:
 
         for subfolder_name in folder_structure {
             self.folder_service
-                .create_folder(
+                .create_folder_or_get(
                     render_template_string(subfolder_name, &name, &name),
                     Some(object_folder.id),
                     owner_id,
@@ -1192,11 +1192,18 @@ rustshare:
                 .await?;
         }
 
+        // Per-object OKF identity. For OKF-native note templates this replaces
+        // the hard-coded nil UUIDs in frontmatter and manifest.
+        let object_okf_id = Uuid::new_v4();
+
         for file in default_files {
             let content =
                 render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
-            // Replace folder-specific placeholders for brainstorming board metadata
+            // Replace OKF note placeholders first so they don't collide with the
+            // generic {{id}} placeholder used by other module templates.
             let content = content
+                .replace("{{okf_id}}", &object_okf_id.to_string())
+                .replace("{{workspace_id}}", &tenant_id.to_string())
                 .replace("{{id}}", &object_folder.id.to_string())
                 .replace("{{slug}}", &slugify(&name))
                 .replace("{{created_at}}", &object_folder.created_at.to_rfc3339())
@@ -1206,11 +1213,16 @@ rustshare:
                 .clone()
                 .unwrap_or_else(|| "text/plain".to_string());
 
+            let rendered_path = render_template_string(&file.path, &name, &name);
+            let (parent_folder_id, file_name) = self
+                .resolve_template_path(object_folder.id, &rendered_path, owner_id, tenant_id)
+                .await?;
+
             self.file_service
                 .upload_file(
                     owner_id,
-                    render_template_string(&file.path, &name, &name),
-                    Some(object_folder.id),
+                    file_name,
+                    parent_folder_id,
                     Bytes::from(content),
                     mime_type,
                     tenant_id,
@@ -1223,6 +1235,33 @@ rustshare:
             object_type: "folder".to_string(),
             path: object_folder.path,
         })
+    }
+
+    /// Resolve a template file path that may contain `/` into a target parent
+    /// folder and a plain file name. Intermediate segments are created (or
+    /// reused) under `object_folder_id`.
+    async fn resolve_template_path(
+        &self,
+        object_folder_id: Uuid,
+        path: &str,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(Option<Uuid>, String), TemplateError> {
+        let segments: Vec<&str> = path.split('/').collect();
+        if segments.len() == 1 {
+            return Ok((Some(object_folder_id), segments[0].to_string()));
+        }
+
+        let mut parent_id = object_folder_id;
+        for segment in &segments[..segments.len() - 1] {
+            let folder = self
+                .folder_service
+                .create_folder_or_get(segment.to_string(), Some(parent_id), owner_id, tenant_id)
+                .await?;
+            parent_id = folder.id;
+        }
+
+        Ok((Some(parent_id), segments.last().unwrap().to_string()))
     }
 
     async fn create_single_file_object(

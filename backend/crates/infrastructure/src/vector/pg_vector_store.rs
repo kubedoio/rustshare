@@ -46,8 +46,8 @@ fn decode_vector(text: &str) -> anyhow::Result<Vec<f32>> {
         .collect()
 }
 
-/// Convert a returned `note_index_chunks` row into an indexed document and similarity score.
-fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
+/// Convert a returned `note_index_chunks` row into an indexed document.
+fn row_to_indexed_doc(row: &PgRow, tenant_id: Uuid) -> Result<IndexedDocument> {
     let acl = NoteAclPayload {
         tenant_id,
         workspace_id: tenant_id,
@@ -65,7 +65,7 @@ fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
     let embedding_text: String = row.try_get("embedding")?;
     let embedding = decode_vector(&embedding_text)?;
 
-    let doc = IndexedDocument {
+    Ok(IndexedDocument {
         file_id: row.try_get("id")?,
         file_name: row.try_get("file_name")?,
         file_path: row.try_get("file_path")?,
@@ -77,8 +77,12 @@ fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
         indexed_at: row.try_get("indexed_at")?,
         acl: Some(acl),
         chunk_id: row.try_get("id")?,
-    };
+    })
+}
 
+/// Convert a returned `note_index_chunks` row into an indexed document and similarity score.
+fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
+    let doc = row_to_indexed_doc(row, tenant_id)?;
     let similarity: f64 = row.try_get("similarity")?;
     Ok((doc, similarity as f32))
 }
@@ -174,6 +178,7 @@ impl VectorStore for PgVectorStore {
             FROM note_index_chunks
             WHERE tenant_id = $2
               AND embedding_policy = 'allowed'
+              AND 1 - (embedding <=> $1::vector) > 0.1
               AND (
                   owner_id = $3
                   OR visibility = 'public'
@@ -224,6 +229,7 @@ impl VectorStore for PgVectorStore {
                 1 - (embedding <=> $1::vector) AS similarity
             FROM note_index_chunks
             WHERE tenant_id = $2
+              AND 1 - (embedding <=> $1::vector) > 0.1
             ORDER BY embedding <=> $1::vector
             LIMIT $3
             "#,
@@ -308,6 +314,29 @@ impl VectorStore for PgVectorStore {
                 .await?;
 
         Ok(count as usize)
+    }
+
+    async fn get_chunk(&self, tenant_id: Uuid, chunk_id: Uuid) -> Result<Option<IndexedDocument>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                id, note_id, source_file_id, file_name, file_path,
+                content, mime_type, owner_id, embedding::text as embedding,
+                acl_hash, acl_version, read_acl,
+                visibility, embedding_policy, indexed_at
+            FROM note_index_chunks
+            WHERE tenant_id = $1 AND id = $2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(chunk_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(row_to_indexed_doc(&row, tenant_id)?)),
+            None => Ok(None),
+        }
     }
 }
 

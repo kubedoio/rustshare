@@ -53,6 +53,13 @@ pub trait VectorStore: Send + Sync {
 
     /// Count chunks for a tenant.
     async fn document_count(&self, tenant_id: Uuid) -> anyhow::Result<usize>;
+
+    /// Look up a single chunk by id.
+    async fn get_chunk(
+        &self,
+        tenant_id: Uuid,
+        chunk_id: Uuid,
+    ) -> anyhow::Result<Option<IndexedDocument>>;
 }
 
 type TenantDocuments = HashMap<Uuid, HashMap<Uuid, IndexedDocument>>;
@@ -207,6 +214,17 @@ impl VectorStore for InMemoryVectorStore {
     async fn document_count(&self, tenant_id: Uuid) -> anyhow::Result<usize> {
         let docs = self.documents.lock().unwrap();
         Ok(docs.get(&tenant_id).map(|m| m.len()).unwrap_or(0))
+    }
+
+    async fn get_chunk(
+        &self,
+        tenant_id: Uuid,
+        chunk_id: Uuid,
+    ) -> anyhow::Result<Option<IndexedDocument>> {
+        let docs = self.documents.lock().unwrap();
+        Ok(docs
+            .get(&tenant_id)
+            .and_then(|tenant| tenant.get(&chunk_id).cloned()))
     }
 }
 
