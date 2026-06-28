@@ -10,10 +10,6 @@
 	}
 
 	let { value = null, onSelect, onClose, title = 'Set color' }: Props = $props();
-
-	function handleSelect(color: string | null) {
-		onSelect(color);
-	}
 </script>
 
 <div
@@ -49,7 +45,7 @@
 				aria-label={color.label}
 				onclick={(e) => {
 					e.stopPropagation();
-					handleSelect(color.key);
+					onSelect(color.key);
 				}}
 			></button>
 		{/each}
@@ -60,7 +56,7 @@
 			aria-label="Clear color"
 			onclick={(e) => {
 				e.stopPropagation();
-				handleSelect(null);
+				onSelect(null);
 			}}
 		>
 			<X size={12} />
