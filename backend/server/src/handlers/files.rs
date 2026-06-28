@@ -278,15 +278,24 @@ async fn stream_file_response(
             AppError::internal("Failed to read file content")
         })?;
 
+    let content_type = content_type
+        .filter(|ct| {
+            !ct.eq_ignore_ascii_case("application/octet-stream")
+                && !ct.eq_ignore_ascii_case("binary/octet-stream")
+        })
+        .unwrap_or_else(|| file.mime_type.clone());
+
     let content_disposition = match disposition {
         FileDisposition::Attachment => super::public_shares::build_content_disposition(&file.name),
-        FileDisposition::Inline => "inline".to_string(),
+        FileDisposition::Inline => {
+            super::public_shares::build_inline_content_disposition(&file.name)
+        }
     };
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type.unwrap_or(file.mime_type))
+        HeaderValue::from_str(&content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(
