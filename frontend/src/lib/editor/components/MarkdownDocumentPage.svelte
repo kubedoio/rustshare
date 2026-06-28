@@ -4,7 +4,7 @@
   Reusable across Notes, Decisions, Meetings and file browser.
 -->
 <script lang="ts">
-	import { createEventDispatcher, onDestroy, tick } from 'svelte';
+	import { createEventDispatcher, onDestroy, tick, untrack } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
@@ -106,7 +106,7 @@
 		upload: { files: File[] };
 		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
-		rename: { title?: string } | undefined;
+		rename: { title: string } | undefined;
 		move: void;
 		duplicate: void;
 		deleteDocument: void;
@@ -132,8 +132,6 @@
 	let isTitleEditing = $state(false);
 	let titleDraft = $state('');
 	let titleInputRef = $state<HTMLInputElement | undefined>(undefined);
-
-	import { untrack } from 'svelte';
 
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
@@ -178,8 +176,11 @@
 		}
 	}
 
-	function handleTitleBlur() {
-		confirmTitleEdit();
+	function handleTitleButtonKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			startTitleEdit();
+		}
 	}
 
 	$effect(() => {
@@ -193,6 +194,8 @@
 				showRawMarkdown = false;
 				saveStatus = 'saved';
 				lastDocId = newDocId;
+				isTitleEditing = false;
+				titleDraft = '';
 			});
 		}
 	});
@@ -486,19 +489,29 @@
 					bind:this={titleInputRef}
 					type="text"
 					class="doc-title-input"
+					aria-label="Edit document title"
 					bind:value={titleDraft}
 					onkeydown={handleTitleKeydown}
-					onblur={handleTitleBlur}
+					onblur={confirmTitleEdit}
 				/>
 			{:else}
-				<h1
-					class="doc-title"
-					class:cursor-pointer={canEdit}
-					class:hover:opacity-80={canEdit}
-					onclick={() => startTitleEdit()}
-				>
-					{title}
-				</h1>
+				{#if canEdit}
+					<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+					<h1
+						class="doc-title cursor-pointer hover:opacity-80"
+						role="button"
+						tabindex="0"
+						aria-label="Edit title"
+						onkeydown={handleTitleButtonKeydown}
+						onclick={startTitleEdit}
+					>
+						{title}
+					</h1>
+				{:else}
+					<h1 class="doc-title">
+						{title}
+					</h1>
+				{/if}
 			{/if}
 			{#if subtitle}
 				<span class="doc-subtitle">{subtitle}</span>
