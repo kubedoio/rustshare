@@ -532,7 +532,7 @@
 		height: 100%;
 		border: 1px solid var(--color-base-300, #e5e7eb);
 		border-radius: 0.5rem;
-		overflow: hidden;
+		overflow: visible;
 		background: var(--color-base-100, #fff);
 		position: relative;
 	}
@@ -540,6 +540,7 @@
 	.editor-wrapper {
 		flex: 1;
 		overflow-y: auto;
+		border-radius: 0 0 0.5rem 0.5rem;
 	}
 
 	.editor-container {

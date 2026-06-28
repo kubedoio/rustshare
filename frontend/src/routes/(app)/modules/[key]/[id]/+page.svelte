@@ -305,7 +305,12 @@
 	}
 
 	function handleBack() {
-		goto(`/modules/${key}`);
+		const returnTo = $page.url.searchParams.get('returnTo');
+		if (returnTo) {
+			goto(returnTo);
+		} else {
+			goto(`/modules/${key}`);
+		}
 	}
 
 	function handleModeChange(event: CustomEvent<{ mode: EditorMode }>) {
