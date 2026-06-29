@@ -530,10 +530,21 @@
 					await renameNote(id, { title: trimmed });
 				} else if (key === 'decisions') {
 					await decisionsApi.rename(id, { title: trimmed });
+				} else if (key === 'meetings') {
+					await meetingsApi.rename(id, { title: trimmed });
+				} else if (key === 'standups') {
+					await standupsApi.rename(id, { title: trimmed });
 				}
 			},
 			{
-				successMessage: key === 'notes' ? 'Note renamed' : 'Decision renamed',
+				successMessage:
+					key === 'notes'
+						? 'Note renamed'
+						: key === 'decisions'
+							? 'Decision renamed'
+							: key === 'meetings'
+								? 'Meeting renamed'
+								: 'Standup renamed',
 				errorMessage: 'Failed to rename',
 				onSuccess: () => {
 					showRenameModal = false;

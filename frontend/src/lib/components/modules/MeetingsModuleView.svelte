@@ -452,7 +452,7 @@
 		<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="More options">
 			<MoreHorizontal size={16} />
 		</button>
-		<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<ul
 			tabindex="0"
 			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"

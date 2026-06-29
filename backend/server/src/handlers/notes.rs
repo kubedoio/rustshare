@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::AuthenticatedUser;
-use crate::handlers::{AppError, ValidatedJson};
+use crate::handlers::{files::validate_color, AppError, ValidatedJson};
 use crate::services::note_service::{NoteAttachment, NoteSummary, NoteVisibility};
 use crate::AppState;
 
@@ -191,6 +191,8 @@ pub async fn save_note(
     Path(note_id): Path<Uuid>,
     Json(req): Json<SaveNoteRequest>,
 ) -> Result<Json<SaveNoteResponse>, AppError> {
+    validate_color(&req.color)?;
+
     let note = state
         .note_service
         .save_note(

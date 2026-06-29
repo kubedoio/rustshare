@@ -42,19 +42,9 @@
 	import { splitFrontmatter, wrapFrontmatter } from '../adapter/frontmatter';
 	import { toastStore } from '$lib/stores/toast';
 
-	/** Purposeful Colors from CSS */
 	const DEFAULT_AUTOSAVE_DELAY_MS = 1500;
 
-	const PURPOSEFUL_COLORS = [
-		{ name: 'Default', value: null, class: 'bg-base-300' },
-		{ name: 'Red', value: 'red', class: 'bg-[var(--rs-accent-red)]' },
-		{ name: 'Orange', value: 'orange', class: 'bg-[var(--rs-accent-orange)]' },
-		{ name: 'Yellow', value: 'yellow', class: 'bg-[var(--rs-accent-yellow)]' },
-		{ name: 'Green', value: 'green', class: 'bg-[var(--rs-accent-green)]' },
-		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
-		{ name: 'Purple', value: 'purple', class: 'bg-[var(--rs-accent-purple)]' },
-		{ name: 'Gray', value: 'gray', class: 'bg-[var(--rs-accent-gray)]' }
-	];
+	import { COLOR_PALETTE } from '$lib/utils/colorPalette';
 
 	let {
 		title = '',
@@ -532,20 +522,35 @@
 							Purpose Color
 						</li>
 						<div class="grid grid-cols-4 gap-1 p-1">
-							{#each PURPOSEFUL_COLORS as c}
+							<button
+								class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
+								onclick={() => {
+									color = null;
+									dispatch('save', { content: currentMarkdown || content, color: null });
+								}}
+								title="Default"
+							>
+								<div
+									class="h-4 w-4 rounded-full bg-base-300 shadow-sm transition-transform group-hover:scale-110"
+									class:ring-2={color === null}
+									class:ring-offset-2={color === null}
+									class:ring-brand={color === null}
+								></div>
+							</button>
+							{#each COLOR_PALETTE as c}
 								<button
 									class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
 									onclick={() => {
-										color = c.value;
-										dispatch('save', { content: currentMarkdown || content, color: c.value });
+										color = c.key;
+										dispatch('save', { content: currentMarkdown || content, color: c.key });
 									}}
-									title={c.name}
+									title={c.label}
 								>
 									<div
-										class="h-4 w-4 rounded-full {c.class} shadow-sm transition-transform group-hover:scale-110"
-										class:ring-2={color === c.value}
-										class:ring-offset-2={color === c.value}
-										class:ring-brand={color === c.value}
+										class="h-4 w-4 rounded-full {c.editorClass} shadow-sm transition-transform group-hover:scale-110"
+										class:ring-2={color === c.key}
+										class:ring-offset-2={color === c.key}
+										class:ring-brand={color === c.key}
 									></div>
 								</button>
 							{/each}

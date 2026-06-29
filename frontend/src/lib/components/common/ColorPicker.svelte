@@ -18,7 +18,12 @@
 	tabindex="-1"
 	aria-label={title}
 	onclick={(e) => e.stopPropagation()}
-	onkeydown={(e) => e.stopPropagation()}
+	onkeydown={(e) => {
+		e.stopPropagation();
+		if (e.key === 'Escape' && onClose) {
+			onClose();
+		}
+	}}
 >
 	<div class="flex items-center justify-between px-1">
 		<span class="text-xs font-medium text-base-content/70">{title}</span>

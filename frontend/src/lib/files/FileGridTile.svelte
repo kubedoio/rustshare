@@ -369,7 +369,10 @@
 						role="presentation"
 						tabindex="-1"
 						onclick={(e) => e.stopPropagation()}
-						onkeydown={(e) => e.stopPropagation()}
+						onkeydown={(e) => {
+							e.stopPropagation();
+							if (e.key === 'Escape') showActions = false;
+						}}
 					>
 						{#if workspaceMode === 'deleted'}
 							<button

@@ -789,15 +789,10 @@ impl NoteService {
             return Ok(base);
         }
 
-        for i in 2..=1000 {
-            let candidate = format!("{} {}.md", base_name, i);
-            if !files.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-        }
-
-        Err(NoteError::InvalidName(
-            "Could not find unique name".to_string(),
+        Ok(format!(
+            "{} {}.md",
+            base_name,
+            &Uuid::new_v4().to_string()[0..8]
         ))
     }
 
@@ -819,15 +814,10 @@ impl NoteService {
             return Ok(base_name.to_string());
         }
 
-        for i in 2..=1000 {
-            let candidate = format!("{} {}", base_name, i);
-            if !folders.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-        }
-
-        Err(NoteError::InvalidName(
-            "Could not find unique folder name".to_string(),
+        Ok(format!(
+            "{} {}",
+            base_name,
+            &Uuid::new_v4().to_string()[0..8]
         ))
     }
 

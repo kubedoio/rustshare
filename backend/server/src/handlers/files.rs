@@ -543,6 +543,23 @@ pub struct RestoreVersionRequest {
     pub version: i32,
 }
 
+/// Allowed file purpose-color keys. Keep in sync with `frontend/src/lib/utils/colorPalette.ts`.
+const ALLOWED_FILE_COLORS: &[&str] =
+    &["red", "orange", "yellow", "green", "blue", "purple", "gray"];
+
+/// Validate a requested color value.
+pub fn validate_color(color: &Option<String>) -> Result<(), AppError> {
+    if let Some(c) = color {
+        if !ALLOWED_FILE_COLORS.contains(&c.as_str()) {
+            return Err(AppError::bad_request(format!(
+                "Invalid color: {}. Allowed values: {:?}",
+                c, ALLOWED_FILE_COLORS
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetFileColorRequest {
     pub color: Option<String>,
@@ -601,6 +618,8 @@ pub async fn set_file_color(
             "Edit permission required to change color",
         ));
     }
+
+    validate_color(&req.color)?;
 
     let result = sqlx::query(
         "UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2 AND tenant_id = $3",
