@@ -571,6 +571,23 @@ impl NoteService {
         Ok(())
     }
 
+    /// Update the color field in a note's sidecar metadata, if the file is a note.
+    pub async fn update_file_color(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        color: Option<String>,
+    ) -> Result<(), NoteError> {
+        if let Some(mut meta) = self.load_metadata(file_id, user_id, tenant_id).await? {
+            meta.color = color;
+            meta.updated_at = Utc::now();
+            self.save_metadata(file_id, user_id, tenant_id, &meta)
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn delete_metadata(
         &self,
         file_id: Uuid,

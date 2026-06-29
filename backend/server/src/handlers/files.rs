@@ -591,17 +591,13 @@ pub async fn set_file_color(
     Path(file_id): Path<Uuid>,
     Json(req): Json<SetFileColorRequest>,
 ) -> Result<Json<FileColorResponse>, AppError> {
-    // Verify the file exists and is accessible by the user
+    // Verify the file exists and is accessible by the user.
+    // `From<FileError>` maps NotFound -> 404 and PermissionDenied -> 403.
     let file = state
         .file_service
         .get_file(file_id, auth.user_id)
         .await
-        .map_err(|e| match e {
-            rustshare_core::services::FileError::NotFound(_) => {
-                AppError::not_found(format!("File not found: {}", file_id))
-            }
-            _ => AppError::internal(format!("Failed to get file: {}", e)),
-        })?;
+        .map_err(AppError::from)?;
 
     // Require Edit permission (owner or shared edit recipient).
     let can_edit = state
@@ -634,6 +630,15 @@ pub async fn set_file_color(
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
+    }
+
+    // For note-backed markdown files, also update the note sidecar metadata
+    // so the color stays in sync between the Files UI and the Notes UI.
+    if file.mime_type == "text/markdown" || file.name.ends_with(".md") {
+        let _ = state
+            .note_service
+            .update_file_color(file_id, auth.user_id, auth.tenant_id, req.color.clone())
+            .await;
     }
 
     Ok(Json(FileColorResponse {
