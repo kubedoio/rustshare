@@ -627,7 +627,7 @@
 				artifactId: data.id,
 				moduleKey: 'notes'
 			});
-			navigateToNote(data.id);
+			navigateToNote(data.id, getFilesReturnUrl());
 		}
 	});
 
@@ -837,6 +837,10 @@
 	// NAVIGATION HANDLERS
 	// ============================================================================
 
+	function getFilesReturnUrl() {
+		return $page.url.pathname + $page.url.search;
+	}
+
 	function handleFolderClick(folder: Folder) {
 		if (activeRoot === 'shared') {
 			// For shared folders, use the shared root navigation
@@ -868,7 +872,7 @@
 	function handleFileClick(file: File) {
 		if (workspaceMode === 'deleted') return;
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
-			navigateToNote(file.id);
+			navigateToNote(file.id, getFilesReturnUrl());
 			return;
 		}
 		previewTarget = file;
@@ -882,7 +886,7 @@
 	function handleEditFile(event: { file: File } | File) {
 		const file = 'file' in event ? event.file : event;
 		if (detectEditorType(file.name, file.mime_type) === 'markdown') {
-			navigateToNote(file.id);
+			navigateToNote(file.id, getFilesReturnUrl());
 			return;
 		}
 		editorTarget = file;
@@ -1499,7 +1503,7 @@
 					parent_folder_id: targetFolderId
 				});
 				showCreateFileModal = false;
-				navigateToNote(note.id);
+				navigateToNote(note.id, getFilesReturnUrl());
 			} else {
 				showNotification(`File creation for ${fileType} not yet implemented`, 'info');
 				showCreateFileModal = false;
@@ -1534,6 +1538,13 @@
 
 	function handleToggleFileStar(file: File) {
 		$fileStarMutation.mutate({ fileId: file.id, starred: !file.starred_at });
+	}
+
+	function handleSetColor(_file: File, _color: string | null) {
+		// The child tile/row already calls setFileColor and only notifies us
+		// so the query can be invalidated. Avoid a second API request here.
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 	}
 
 	function handleToggleFolderStar(folder: Folder) {
@@ -1823,6 +1834,7 @@
 			onDownloadFile={handleDownloadFile}
 			onReplaceFile={handleReplaceFile}
 			onEditFile={handleEditFile}
+			onSetColor={handleSetColor}
 			onRenameFolder={handleRenameFolderInline}
 			onDeleteFolder={handleDeleteFolder}
 			onToggleFolderStar={handleToggleFolderStar}

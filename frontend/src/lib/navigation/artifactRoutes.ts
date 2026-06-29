@@ -1,7 +1,10 @@
 import { goto } from '$app/navigation';
 
-export function navigateToNote(noteId: string) {
-	goto(`/modules/notes/${noteId}`);
+export function navigateToNote(noteId: string, returnTo?: string) {
+	const url = returnTo
+		? `/modules/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`
+		: `/modules/notes/${noteId}`;
+	goto(url);
 }
 
 export function navigateToMeeting(meetingId: string) {

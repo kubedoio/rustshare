@@ -122,6 +122,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         metadata_store.clone(),
         object_store.clone(),
         permission_resolver.clone(),
+        pool.clone(),
     ));
 
     let decision_service = Arc::new(

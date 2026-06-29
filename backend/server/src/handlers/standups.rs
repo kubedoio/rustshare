@@ -216,3 +216,99 @@ pub async fn list_standups(
 
     Ok(Json(standups))
 }
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MoveStandupRequest {
+    pub target_folder_id: Option<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/standups/{id}/move",
+    tag = "Standups",
+    params(("standup_id" = Uuid, Path, description = "Standup Id")),
+    request_body = MoveStandupRequest,
+    responses(
+        (status = 200, description = "Success", body = StandupRecord),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn move_standup(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(standup_id): Path<Uuid>,
+    Json(req): Json<MoveStandupRequest>,
+) -> Result<Json<StandupRecord>, AppError> {
+    let standup = state
+        .standup_service
+        .move_standup(
+            standup_id,
+            auth.user_id,
+            auth.tenant_id,
+            req.target_folder_id,
+        )
+        .await?;
+
+    let payload = StandupModifiedPayload {
+        standup_id: standup_id.to_string(),
+        title: standup.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::StandupModified,
+        standup_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(Json(standup))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/standups/{id}/duplicate",
+    tag = "Standups",
+    params(("standup_id" = Uuid, Path, description = "Standup Id")),
+    responses(
+        (status = 201, description = "Created", body = StandupRecord),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn duplicate_standup(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(standup_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<StandupRecord>), AppError> {
+    let standup = state
+        .standup_service
+        .duplicate_standup(standup_id, auth.user_id, auth.tenant_id)
+        .await?;
+
+    let payload = StandupModifiedPayload {
+        standup_id: standup.id.to_string(),
+        title: standup.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::StandupModified,
+        standup.id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok((StatusCode::CREATED, Json(standup)))
+}

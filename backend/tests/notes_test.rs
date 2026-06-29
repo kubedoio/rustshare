@@ -158,6 +158,7 @@ fn create_note_service(
         metadata_store,
         object_store,
         permission_resolver,
+        pool.clone(),
     ))
 }
 
@@ -267,8 +268,9 @@ async fn contract_create_note_uses_collision_safe_naming() {
     assert_ne!(folder1.name, folder2.name);
     assert_ne!(folder2.name, folder3.name);
     assert!(note1.name.ends_with(".md"));
-    assert!(folder2.name.contains("Untitled Note 2"));
-    assert!(folder3.name.contains("Untitled Note 3"));
+    assert_eq!(folder1.name, "Untitled Note");
+    assert!(folder2.name.starts_with("Untitled Note "));
+    assert!(folder3.name.starts_with("Untitled Note "));
 
     cleanup_user(&pool, user.id).await;
 }

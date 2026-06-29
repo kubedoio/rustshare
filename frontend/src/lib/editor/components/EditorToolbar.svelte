@@ -101,7 +101,7 @@
 </script>
 
 {#if editor}
-	<div class="editor-toolbar" role="toolbar" aria-label="Formatting toolbar">
+	<div class="editor-toolbar editor-toolbar--sticky" role="toolbar" aria-label="Formatting toolbar">
 		<!-- History -->
 		<div class="toolbar-group">
 			<button
@@ -339,6 +339,12 @@
 		border-bottom: 1px solid var(--color-base-300, #e5e7eb);
 		background: var(--color-base-200, #f3f4f6);
 		flex-wrap: wrap;
+	}
+
+	.editor-toolbar--sticky {
+		position: sticky;
+		top: 0;
+		z-index: 10;
 	}
 
 	.toolbar-group {

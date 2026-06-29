@@ -42,6 +42,7 @@
 		onDownloadFile?: (file: FileType) => void;
 		onReplaceFile?: (file: FileType) => void;
 		onEditFile?: (file: FileType) => void;
+		onSetColor?: (file: FileType, color: string | null) => void;
 		onRenameFolder?: (folder: Folder, newName: string) => void;
 		onDeleteFolder?: (folder: Folder) => void;
 		onToggleFolderStar?: (folder: Folder) => void;
@@ -83,6 +84,7 @@
 		onDownloadFile = () => {},
 		onReplaceFile = () => {},
 		onEditFile = () => {},
+		onSetColor = () => {},
 		onRenameFolder = () => {},
 		onDeleteFolder = () => {},
 		onToggleFolderStar = () => {},
@@ -168,6 +170,7 @@
 			}}
 			{onShareFile}
 			{onVersionHistory}
+			onSetColorFile={onSetColor}
 		/>
 	{:else}
 		<FileList
@@ -205,6 +208,7 @@
 			}}
 			{onShareFile}
 			{onVersionHistory}
+			onSetColorFile={onSetColor}
 		/>
 	{/if}
 </div>

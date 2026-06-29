@@ -240,6 +240,7 @@ pub struct NoteService {
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    db_pool: sqlx::PgPool,
     pub workspace_name: String,
     pub folder_name: String,
     index_sink: Option<Arc<dyn NoteIndexSink>>,
@@ -265,6 +266,7 @@ impl NoteService {
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
         permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+        db_pool: sqlx::PgPool,
     ) -> Self {
         Self {
             file_service,
@@ -272,6 +274,7 @@ impl NoteService {
             metadata_store,
             object_store,
             permission_resolver,
+            db_pool,
             workspace_name: "Workspace".to_string(),
             folder_name: "Notes".to_string(),
             index_sink: None,
@@ -568,6 +571,23 @@ impl NoteService {
         Ok(())
     }
 
+    /// Update the color field in a note's sidecar metadata, if the file is a note.
+    pub async fn update_file_color(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        color: Option<String>,
+    ) -> Result<(), NoteError> {
+        if let Some(mut meta) = self.load_metadata(file_id, user_id, tenant_id).await? {
+            meta.color = color;
+            meta.updated_at = Utc::now();
+            self.save_metadata(file_id, user_id, tenant_id, &meta)
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn delete_metadata(
         &self,
         file_id: Uuid,
@@ -786,15 +806,10 @@ impl NoteService {
             return Ok(base);
         }
 
-        for i in 2..=1000 {
-            let candidate = format!("{} {}.md", base_name, i);
-            if !files.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-        }
-
-        Err(NoteError::InvalidName(
-            "Could not find unique name".to_string(),
+        Ok(format!(
+            "{} {}.md",
+            base_name,
+            &Uuid::new_v4().to_string()[0..8]
         ))
     }
 
@@ -816,15 +831,10 @@ impl NoteService {
             return Ok(base_name.to_string());
         }
 
-        for i in 2..=1000 {
-            let candidate = format!("{} {}", base_name, i);
-            if !folders.iter().any(|f| f.name == candidate) {
-                return Ok(candidate);
-            }
-        }
-
-        Err(NoteError::InvalidName(
-            "Could not find unique folder name".to_string(),
+        Ok(format!(
+            "{} {}",
+            base_name,
+            &Uuid::new_v4().to_string()[0..8]
         ))
     }
 
@@ -1579,7 +1589,7 @@ impl NoteService {
         user_id: UserId,
         tenant_id: Uuid,
         content: String,
-        color: Option<String>,
+        color: Option<Option<String>>,
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
@@ -1607,10 +1617,6 @@ impl NoteService {
                 fallback.created_at = file.created_at;
                 fallback
             });
-
-        if let Some(new_color) = color {
-            meta.color = Some(new_color);
-        }
 
         if let Some(new_attachments) = attachments {
             meta.attachments = new_attachments;
@@ -1684,6 +1690,26 @@ impl NoteService {
                 None,
             )
             .await?;
+
+        // Apply color only after edit permission has been verified.
+        // color = None means "no change", Some(None) means "clear",
+        // Some(Some(c)) means "set to c".
+        if let Some(color_action) = color {
+            match color_action {
+                Some(ref new_color) => {
+                    meta.color = Some(new_color.clone());
+                }
+                None => {
+                    meta.color = None;
+                }
+            }
+            sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2")
+                .bind(color_action.as_ref())
+                .bind(file_id)
+                .execute(&self.db_pool)
+                .await
+                .map_err(|e| NoteError::Storage(e.to_string()))?;
+        }
 
         meta.updated_at = Utc::now();
         meta.excerpt = generate_excerpt(&new_body);

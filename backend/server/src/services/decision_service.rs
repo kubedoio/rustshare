@@ -586,4 +586,99 @@ impl DecisionService {
         // Return updated decision
         self.get_decision(id, user_id, tenant_id).await
     }
+
+    /// Move a decision (Markdown file + sidecar) to a different folder.
+    pub async fn move_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        target_folder_id: Option<Uuid>,
+    ) -> Result<Decision, DecisionError> {
+        let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+
+        // Locate the sidecar in the original folder before moving the main file.
+        let stem = file.name.trim_end_matches(".md");
+        let sidecar_name = format!("{}.rustshare.json", stem);
+        let siblings = self
+            .metadata_store
+            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .await
+            .map_err(|e| DecisionError::Database(e.to_string()))?;
+        let sidecar = siblings.into_iter().find(|f| f.name == sidecar_name);
+
+        // Move the Markdown file; the sidecar follows to the same destination.
+        self.file_service
+            .move_file(id, target_folder_id, user_id)
+            .await?;
+
+        if let Some(sidecar) = sidecar {
+            self.file_service
+                .move_file(sidecar.id, target_folder_id, user_id)
+                .await?;
+        }
+
+        self.get_decision(id, user_id, tenant_id).await
+    }
+
+    /// Duplicate a decision in the same folder with a fresh DEC-ID and "(copy)" title.
+    pub async fn duplicate_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Decision, DecisionError> {
+        let original = self.get_decision(id, user_id, tenant_id).await?;
+        let original_file = self.file_service.get_file(id, user_id).await?;
+        if original_file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+
+        let parent_folder_id = original_file.parent_folder_id.ok_or_else(|| {
+            DecisionError::InvalidData("Decision has no parent folder".to_string())
+        })?;
+
+        let copy_title = format!("{} (copy)", original.metadata.title);
+        let next_id = self
+            .get_next_decision_id(parent_folder_id, user_id, tenant_id)
+            .await?;
+        let slug = slug::slugify(&copy_title);
+        let file_name = format!("DEC-{:04}-{}.md", next_id, slug);
+        let sidecar_name = format!("DEC-{:04}-{}.rustshare.json", next_id, slug);
+
+        let file = self
+            .file_service
+            .upload_file(
+                user_id,
+                file_name,
+                Some(parent_folder_id),
+                Bytes::from(original.content),
+                "text/markdown".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        let mut meta = original.metadata.clone();
+        meta.title = copy_title;
+        meta.created_at = Utc::now();
+        meta.updated_at = Utc::now();
+
+        let sidecar_data = serde_json::to_vec_pretty(&meta)
+            .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
+        self.file_service
+            .upload_file(
+                user_id,
+                sidecar_name,
+                Some(parent_folder_id),
+                Bytes::from(sidecar_data),
+                "application/json".to_string(),
+                tenant_id,
+            )
+            .await?;
+
+        self.get_decision(file.id, user_id, tenant_id).await
+    }
 }

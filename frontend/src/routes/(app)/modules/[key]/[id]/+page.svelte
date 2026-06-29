@@ -77,6 +77,7 @@
 			date?: string;
 			attendees?: string[];
 			conflict?: NoteConflict | null;
+			color?: string | null;
 		};
 		modified_at?: string;
 		parent_folder_id?: string | null;
@@ -160,6 +161,11 @@
 	let customConflictTitle = $state('');
 	let attachments = $state<RichMarkdownAttachment[]>([]);
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
+	let selectedNoteColor = $state<string | null>(null);
+
+	$effect(() => {
+		selectedNoteColor = item?.metadata?.color ?? null;
+	});
 
 	let isFolderBacked = $derived(item?.name === NOTE_MD_FILENAME);
 
@@ -234,11 +240,12 @@
 	}
 
 	function getUpdateFunction(key: string, itemId: string) {
-		return (data: { title: string; content: string }) => {
+		return (data: { title: string; content: string; color?: string | null }) => {
 			switch (key) {
 				case 'notes':
 					return notesApi.update(itemId, {
 						content: data.content,
+						color: data.color,
 						attachments: serializeNoteAttachments()
 					});
 				case 'decisions':
@@ -253,11 +260,17 @@
 		};
 	}
 
-	const saveMutation = createMutation<unknown, Error, { title: string; content: string }>({
+	const saveMutation = createMutation<
+		unknown,
+		Error,
+		{ title: string; content: string; color?: string | null }
+	>({
 		mutationFn: getUpdateFunction(key, id)
 	});
 
-	async function handleSave(event: CustomEvent<{ content: string; docId?: string }>) {
+	async function handleSave(
+		event: CustomEvent<{ content: string; docId?: string; color?: string | null }>
+	) {
 		if (event.detail.docId && event.detail.docId !== id) {
 			return;
 		}
@@ -270,12 +283,17 @@
 			saveContent = restoreRelativePaths(saveContent, attachments);
 		}
 		try {
-			const saved = await $saveMutation.mutateAsync({ title, content: saveContent });
+			const saved = await $saveMutation.mutateAsync({
+				title,
+				content: saveContent,
+				color: event.detail.color
+			});
 			saveStatus = 'saved';
 			documentPage?.markSaved(editorContent);
 			const modifiedAt =
 				(saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
 			const noteAttachments = key === 'notes' ? serializeNoteAttachments() : undefined;
+			const noteColor = event.detail.color;
 
 			queryClient.setQueryData(
 				['module-item', key, id],
@@ -290,6 +308,7 @@
 						metadata: {
 							...previous.metadata,
 							...(noteAttachments ? { attachments: noteAttachments } : {}),
+							...(noteColor !== undefined ? { color: noteColor } : {}),
 							updated_at: modifiedAt
 						}
 					};
@@ -305,7 +324,12 @@
 	}
 
 	function handleBack() {
-		goto(`/modules/${key}`);
+		const returnTo = $page.url.searchParams.get('returnTo');
+		if (returnTo) {
+			goto(returnTo);
+		} else {
+			goto(`/modules/${key}`);
+		}
 	}
 
 	function handleModeChange(event: CustomEvent<{ mode: EditorMode }>) {
@@ -506,15 +530,27 @@
 					await renameNote(id, { title: trimmed });
 				} else if (key === 'decisions') {
 					await decisionsApi.rename(id, { title: trimmed });
+				} else if (key === 'meetings') {
+					await meetingsApi.rename(id, { title: trimmed });
+				} else if (key === 'standups') {
+					await standupsApi.rename(id, { title: trimmed });
 				}
 			},
 			{
-				successMessage: key === 'notes' ? 'Note renamed' : 'Decision renamed',
+				successMessage:
+					key === 'notes'
+						? 'Note renamed'
+						: key === 'decisions'
+							? 'Decision renamed'
+							: key === 'meetings'
+								? 'Meeting renamed'
+								: 'Standup renamed',
 				errorMessage: 'Failed to rename',
 				onSuccess: () => {
 					showRenameModal = false;
 					renameError = '';
 					$query.refetch();
+					queryClient.invalidateQueries({ queryKey: [key] });
 				}
 			}
 		);
@@ -652,6 +688,7 @@
 			{title}
 			{subtitle}
 			content={editorContent}
+			color={selectedNoteColor}
 			{mode}
 			{saveStatus}
 			{breadcrumb}
@@ -676,9 +713,14 @@
 			on:upload={handleUpload}
 			on:delete={handleDeleteAttachment}
 			on:sketch={handleSketch}
-			on:rename={() => {
-				showRenameModal = true;
-				renameError = '';
+			on:rename={(event) => {
+				const newTitle = event.detail?.title;
+				if (newTitle) {
+					handleRenameConfirm(newTitle);
+				} else {
+					showRenameModal = true;
+					renameError = '';
+				}
 			}}
 			on:move={() => {
 				showMoveModal = true;

@@ -4,7 +4,7 @@
   Reusable across Notes, Decisions, Meetings and file browser.
 -->
 <script lang="ts">
-	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { createEventDispatcher, onDestroy, tick, untrack } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
@@ -42,18 +42,9 @@
 	import { splitFrontmatter, wrapFrontmatter } from '../adapter/frontmatter';
 	import { toastStore } from '$lib/stores/toast';
 
-	/** Purposeful Colors from CSS */
 	const DEFAULT_AUTOSAVE_DELAY_MS = 1500;
 
-	const PURPOSEFUL_COLORS = [
-		{ name: 'Default', value: null, class: 'bg-base-300' },
-		{ name: 'Blue', value: 'blue', class: 'bg-[var(--rs-accent-blue)]' },
-		{ name: 'Green', value: 'green', class: 'bg-[var(--rs-accent-green)]' },
-		{ name: 'Red', value: 'red', class: 'bg-[var(--rs-accent-red)]' },
-		{ name: 'Orange', value: 'orange', class: 'bg-[var(--rs-accent-orange)]' },
-		{ name: 'Purple', value: 'purple', class: 'bg-[var(--rs-accent-purple)]' },
-		{ name: 'Pink', value: 'pink', class: 'bg-[var(--rs-accent-pink)]' }
-	];
+	import { COLOR_PALETTE } from '$lib/utils/colorPalette';
 
 	let {
 		title = '',
@@ -105,7 +96,7 @@
 		upload: { files: File[] };
 		sketch: { blob: Blob; filename: string };
 		delete: { attachment: RichMarkdownAttachment };
-		rename: void;
+		rename: { title: string } | undefined;
 		move: void;
 		duplicate: void;
 		deleteDocument: void;
@@ -128,7 +119,9 @@
 	let preservedFrontmatter = $state(splitFrontmatter(content).frontmatter);
 	let currentMarkdown: string = $state(splitFrontmatter(content).body);
 
-	import { untrack } from 'svelte';
+	let isTitleEditing = $state(false);
+	let titleDraft = $state('');
+	let titleInputRef = $state<HTMLInputElement | undefined>(undefined);
 
 	let canEdit = $derived(permissions.canEdit);
 	let isEditing = $derived(mode === 'edit' && canEdit);
@@ -136,6 +129,42 @@
 	let hasFrontmatter = $derived(frontmatterResult.hasFrontmatter);
 	let bodyContent = $derived(frontmatterResult.body);
 	let frontmatterBlock = $derived(frontmatterResult.frontmatter);
+
+	function startTitleEdit() {
+		if (!canEdit || isTitleEditing) return;
+		titleDraft = title;
+		isTitleEditing = true;
+		void tick().then(() => {
+			titleInputRef?.focus();
+			titleInputRef?.select();
+		});
+	}
+
+	function confirmTitleEdit() {
+		if (!isTitleEditing) return;
+		const trimmed = titleDraft.trim();
+		if (!trimmed || trimmed === title) {
+			cancelTitleEdit();
+			return;
+		}
+		isTitleEditing = false;
+		dispatch('rename', { title: trimmed });
+	}
+
+	function cancelTitleEdit() {
+		isTitleEditing = false;
+		titleDraft = title;
+	}
+
+	function handleTitleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			confirmTitleEdit();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelTitleEdit();
+		}
+	}
 
 	$effect(() => {
 		if (docId !== lastDocId) {
@@ -148,6 +177,8 @@
 				showRawMarkdown = false;
 				saveStatus = 'saved';
 				lastDocId = newDocId;
+				isTitleEditing = false;
+				titleDraft = '';
 			});
 		}
 	});
@@ -436,7 +467,34 @@
 				<span class="doc-label">{label}</span>
 				<span class="doc-label-sep">·</span>
 			{/if}
-			<h1 class="doc-title">{title}</h1>
+			{#if isTitleEditing}
+				<input
+					bind:this={titleInputRef}
+					type="text"
+					class="doc-title-input"
+					aria-label="Edit document title"
+					bind:value={titleDraft}
+					onkeydown={handleTitleKeydown}
+					onblur={confirmTitleEdit}
+				/>
+			{:else}
+				{#if canEdit}
+					<h1 class="doc-title-wrapper">
+						<button
+							type="button"
+							class="doc-title doc-title-button hover:opacity-80"
+							onclick={startTitleEdit}
+							aria-label="{title}, edit title"
+						>
+							{title}
+						</button>
+					</h1>
+				{:else}
+					<h1 class="doc-title">
+						{title}
+					</h1>
+				{/if}
+			{/if}
 			{#if subtitle}
 				<span class="doc-subtitle">{subtitle}</span>
 			{/if}
@@ -445,7 +503,7 @@
 			{/if}
 
 			<!-- Color Picker -->
-			{#if permissions.canEdit}
+			{#if permissions.canEdit && showNoteActions}
 				<div class="dropdown dropdown-end ml-2">
 					<button
 						tabindex="0"
@@ -464,20 +522,35 @@
 							Purpose Color
 						</li>
 						<div class="grid grid-cols-4 gap-1 p-1">
-							{#each PURPOSEFUL_COLORS as c}
+							<button
+								class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
+								onclick={() => {
+									color = null;
+									dispatch('save', { content: currentMarkdown || content, color: null });
+								}}
+								title="Default"
+							>
+								<div
+									class="h-4 w-4 rounded-full bg-base-300 shadow-sm transition-transform group-hover:scale-110"
+									class:ring-2={color === null}
+									class:ring-offset-2={color === null}
+									class:ring-brand={color === null}
+								></div>
+							</button>
+							{#each COLOR_PALETTE as c}
 								<button
 									class="group relative flex h-8 w-full items-center justify-center rounded-lg transition-all hover:bg-base-200"
 									onclick={() => {
-										color = c.value;
-										dispatch('save', { content: currentMarkdown || content, color: c.value });
+										color = c.key;
+										dispatch('save', { content: currentMarkdown || content, color: c.key });
 									}}
-									title={c.name}
+									title={c.label}
 								>
 									<div
-										class="h-4 w-4 rounded-full {c.class} shadow-sm transition-transform group-hover:scale-110"
-										class:ring-2={color === c.value}
-										class:ring-offset-2={color === c.value}
-										class:ring-brand={color === c.value}
+										class="h-4 w-4 rounded-full {c.editorClass} shadow-sm transition-transform group-hover:scale-110"
+										class:ring-2={color === c.key}
+										class:ring-offset-2={color === c.key}
+										class:ring-brand={color === c.key}
 									></div>
 								</button>
 							{/each}
@@ -783,6 +856,33 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.doc-title-wrapper {
+		margin: 0;
+	}
+
+	.doc-title-button {
+		background: transparent;
+		border: none;
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+
+	.doc-title-input {
+		font-size: 1.125rem;
+		font-weight: 600;
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid var(--rs-brand-500, #3b82f6);
+		color: inherit;
+		min-width: 120px;
+		max-width: 400px;
+		padding: 0;
+		margin: 0;
+		outline: none;
 	}
 
 	.doc-subtitle {

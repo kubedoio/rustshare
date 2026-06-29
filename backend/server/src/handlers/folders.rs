@@ -278,6 +278,7 @@ pub async fn get_folder_contents(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -399,6 +400,7 @@ pub async fn get_root_contents(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id

@@ -24,6 +24,7 @@ export interface File {
 	modified_at: string;
 	starred_at?: string | null;
 	deleted_at?: string | null;
+	color?: string | null;
 	// Share indicators
 	is_shared?: boolean;
 	share_count?: number;

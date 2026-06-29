@@ -128,6 +128,15 @@ pub fn build_content_disposition(file_name: &str) -> String {
     )
 }
 
+/// Build a safe `Content-Disposition` header value for inline preview.
+pub fn build_inline_content_disposition(file_name: &str) -> String {
+    format!(
+        "inline; filename=\"{}\"; filename*=UTF-8''{}",
+        sanitize_legacy_filename(file_name),
+        percent_encoding::percent_encode(file_name.as_bytes(), URL_SAFE)
+    )
+}
+
 /// Create anonymous session for share access
 #[utoipa::path(
     post,
@@ -1025,6 +1034,28 @@ mod tests {
         assert!(
             header.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A%20%22v2%22.pdf"),
             "RFC 5987 filename* must percent-encode unicode: {}",
+            header
+        );
+    }
+
+    #[test]
+    fn inline_content_disposition_uses_inline_and_escapes_filename() {
+        let file_name = "report \"v2\".pdf";
+        let header = build_inline_content_disposition(file_name);
+
+        assert!(
+            header.starts_with("inline;"),
+            "inline disposition must start with 'inline;': {}",
+            header
+        );
+        assert!(
+            header.contains("filename=\"report \\\"v2\\\".pdf\""),
+            "legacy filename must escape embedded quotes: {}",
+            header
+        );
+        assert!(
+            header.contains("filename*=UTF-8''report%20%22v2%22.pdf"),
+            "RFC 5987 filename* must URL-encode special characters: {}",
             header
         );
     }

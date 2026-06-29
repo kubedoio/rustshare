@@ -7,6 +7,8 @@
 	import { replicationStateBadgeClass, formatReplicationStateLabel } from '$lib/stores/replication';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
+	import { setFileColor } from '$lib/api/files';
+	import { toastStore } from '$lib/stores/toast';
 	import {
 		MoveVertical as MoreVertical,
 		CreditCard as Edit,
@@ -20,9 +22,12 @@
 		RotateCcw,
 		Star,
 		Check,
-		X
+		X,
+		Palette
 	} from 'lucide-svelte';
 	import { isInternalRustShareFile } from '$lib/utils/artifactVisibility';
+	import { getColorOption } from '$lib/utils/colorPalette';
+	import ColorPicker from '$lib/components/common/ColorPicker.svelte';
 
 	// Props
 	interface Props {
@@ -53,6 +58,7 @@
 		onDragOver?: () => void;
 		onDragLeave?: () => void;
 		onDrop?: (e: DragEvent) => void;
+		onSetColor?: (color: string | null) => void;
 	}
 
 	let {
@@ -82,7 +88,8 @@
 		onDragEnd = () => {},
 		onDragOver = () => {},
 		onDragLeave = () => {},
-		onDrop = () => {}
+		onDrop = () => {},
+		onSetColor = () => {}
 	}: Props = $props();
 
 	// Derived values
@@ -116,6 +123,19 @@
 	let contextMenuX = $state(0);
 	let contextMenuY = $state(0);
 	let tileRef = $state<HTMLDivElement | undefined>(undefined);
+
+	// Color state
+	let showColorPicker = $state(false);
+	let showContextColorPicker = $state(false);
+	let optimisticColor = $state<string | null>(null);
+
+	$effect(() => {
+		optimisticColor = fileItem?.color ?? null;
+	});
+
+	let colorBarClass = $derived(
+		!isFolder && optimisticColor ? (getColorOption(optimisticColor)?.bgClass ?? '') : ''
+	);
 
 	// Inline rename state
 	let isRenaming = $state(false);
@@ -160,6 +180,27 @@
 			case 'permanentDelete':
 				onPermanentDelete();
 				break;
+			case 'setColor':
+				showContextColorPicker = true;
+				break;
+		}
+	}
+
+	async function handleSetColor(color: string | null) {
+		if (isFolder || !fileItem) return;
+		const previousColor = optimisticColor;
+		optimisticColor = color;
+		showColorPicker = false;
+		showContextColorPicker = false;
+		try {
+			const result = await setFileColor(fileItem.id, color);
+			if (fileItem) {
+				(fileItem as FileType).color = result.color;
+			}
+			onSetColor(result.color);
+		} catch (err) {
+			optimisticColor = previousColor;
+			toastStore.show(err instanceof Error ? err.message : 'Failed to set color', 'error');
 		}
 	}
 
@@ -296,6 +337,9 @@
 		ondragleave={handleDragLeave}
 		ondrop={handleDrop}
 	>
+		{#if !isFolder && colorBarClass}
+			<div class="absolute left-0 top-0 bottom-0 w-1.5 {colorBarClass}" aria-hidden="true"></div>
+		{/if}
 		<!-- Checkbox (selection mode) -->
 		{#if selectionMode}
 			<div class="absolute top-2 left-2 z-10">
@@ -330,7 +374,10 @@
 						role="presentation"
 						tabindex="-1"
 						onclick={(e) => e.stopPropagation()}
-						onkeydown={(e) => e.stopPropagation()}
+						onkeydown={(e) => {
+							e.stopPropagation();
+							if (e.key === 'Escape') showActions = false;
+						}}
 					>
 						{#if workspaceMode === 'deleted'}
 							<button
@@ -446,6 +493,27 @@
 									<Move size={14} />
 									Move
 								</button>
+								{#if !isFolder}
+									{#if showColorPicker}
+										<ColorPicker
+											value={optimisticColor}
+											onSelect={handleSetColor}
+											onClose={() => (showColorPicker = false)}
+										/>
+									{:else}
+										<button
+											type="button"
+											class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-base-content/80 transition-colors hover:bg-base-200/60"
+											onclick={(e) => {
+												e.stopPropagation();
+												showColorPicker = true;
+											}}
+										>
+											<Palette size={14} />
+											Set color
+										</button>
+									{/if}
+								{/if}
 								<div class="my-1 border-t border-base-200"></div>
 								<button
 									type="button"
@@ -564,4 +632,17 @@
 		onClose={() => (contextMenuVisible = false)}
 		onAction={handleContextMenuAction}
 	/>
+
+	{#if showContextColorPicker}
+		<div
+			class="fixed z-[9999] w-44 rounded-xl border border-base-300/70 bg-base-100 p-2 shadow-xl shadow-black/20"
+			style="left: {contextMenuX}px; top: {contextMenuY}px;"
+		>
+			<ColorPicker
+				value={optimisticColor}
+				onSelect={handleSetColor}
+				onClose={() => (showContextColorPicker = false)}
+			/>
+		</div>
+	{/if}
 {/if}

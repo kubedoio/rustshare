@@ -24,6 +24,7 @@ export interface StandupSummary {
 	id: string;
 	name: string;
 	path: string;
+	parent_folder_id: string | null;
 	metadata: StandupMetadata;
 	modified_at: string;
 }
@@ -68,6 +69,22 @@ export const standupsApi = {
 
 	update: async (id: string, req: { title?: string; content?: string }) => {
 		return apiClient.put<StandupRecord>(`/standups/${id}`, req);
+	},
+
+	rename: async (id: string, req: { title: string }) => {
+		return apiClient.put<StandupRecord>(`/standups/${id}`, { title: req.title });
+	},
+
+	delete: async (id: string) => {
+		return apiClient.delete(`/standups/${id}`);
+	},
+
+	move: async (id: string, req: { target_folder_id: string | null }) => {
+		return apiClient.post<StandupRecord>(`/standups/${id}/move`, req);
+	},
+
+	duplicate: async (id: string) => {
+		return apiClient.post<StandupRecord>(`/standups/${id}/duplicate`);
 	},
 
 	// Fallback file-level ops for legacy single-file standups

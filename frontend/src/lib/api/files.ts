@@ -180,6 +180,18 @@ export async function setFileStarred(fileId: string, starred: boolean): Promise<
 	return apiClient.patchVoid(`/files/${fileId}/star`, { starred });
 }
 
+export interface SetFileColorResponse {
+	id: string;
+	color: string | null;
+}
+
+export async function setFileColor(
+	fileId: string,
+	color: string | null
+): Promise<SetFileColorResponse> {
+	return apiClient.patch<SetFileColorResponse>(`/files/${fileId}/color`, { color });
+}
+
 export async function updateFile(
 	fileId: string,
 	file: globalThis.File,

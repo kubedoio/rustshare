@@ -126,6 +126,10 @@ pub fn file_routes() -> Router<AppState> {
             post(crate::handlers::rename_file),
         )
         .route(
+            "/api/v1/files/{id}/color",
+            patch(crate::handlers::set_file_color),
+        )
+        .route(
             "/api/v1/files/{id}/thumbnail",
             get(crate::handlers::get_file_thumbnail),
         )
@@ -398,6 +402,14 @@ pub fn decision_routes() -> Router<AppState> {
             "/api/v1/decisions/{id}/rename",
             post(crate::handlers::rename_decision),
         )
+        .route(
+            "/api/v1/decisions/{id}/move",
+            post(crate::handlers::move_decision),
+        )
+        .route(
+            "/api/v1/decisions/{id}/duplicate",
+            post(crate::handlers::duplicate_decision),
+        )
 }
 
 pub fn meeting_routes() -> Router<AppState> {
@@ -414,6 +426,14 @@ pub fn meeting_routes() -> Router<AppState> {
             "/api/v1/meetings/{id}",
             delete(crate::handlers::delete_meeting),
         )
+        .route(
+            "/api/v1/meetings/{id}/move",
+            post(crate::handlers::move_meeting),
+        )
+        .route(
+            "/api/v1/meetings/{id}/duplicate",
+            post(crate::handlers::duplicate_meeting),
+        )
 }
 
 pub fn standup_routes() -> Router<AppState> {
@@ -429,6 +449,14 @@ pub fn standup_routes() -> Router<AppState> {
         .route(
             "/api/v1/standups/{id}",
             delete(crate::handlers::delete_standup),
+        )
+        .route(
+            "/api/v1/standups/{id}/move",
+            post(crate::handlers::move_standup),
+        )
+        .route(
+            "/api/v1/standups/{id}/duplicate",
+            post(crate::handlers::duplicate_standup),
         )
 }
 

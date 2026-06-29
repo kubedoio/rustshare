@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wired real permission-resolver principals into the AI index. `NoteIndexSink` now resolves owner, direct-share, group-share, and public principals so indexed chunks carry accurate `read_acl` values instead of the owner placeholder.
 - Persisted the AI vector index in PostgreSQL using pgvector. Added `note_index_chunks` table and `PgVectorStore` implementation; production builds use the database backend while in-memory storage remains available for tests.
 - Added frontend conflict-resolution actions for OKF notes, allowing users to choose YAML, folder-name, or a custom title when the note frontmatter and bundle metadata disagree.
+- Added purpose color tags for files and notes. Users can assign a color to a file from the file browser and to a note from the note editor; colors are persisted on the file record (for files) and in note sidecar metadata (for notes) and returned in folder/share listings.
+- Added full item action menus to Decisions, Meetings, and Standups module lists, matching the Notes module: Show attachments, Rename, Move to folder, Duplicate, and Delete. Added backend `move` and `duplicate` endpoints for all three module types.
 
 ### Changed
 
@@ -50,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed the back button in the Markdown editor to return to the previous `/files` location (including folder and filter state) instead of always going to `/notes`.
+- Fixed the Markdown editor formatting toolbar so it remains visible (sticky) at the top of the editor while scrolling through long documents.
+- Fixed the app layout height for non-files pages so the Markdown editor fills the available viewport and scrolls internally, keeping both the document header and formatting toolbar visible on long notes.
 - Sanitized `Content-Disposition` filename parameters to strip control characters, backslashes, and quotes.
 - Fixed resumable upload chunk integrity validation so `Content-MD5` is verified as MD5 instead of being compared to SHA-256 chunk hashes.
 - Fixed resumable upload completion to assemble chunks through streaming temporary files instead of materializing full files in memory.

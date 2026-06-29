@@ -192,4 +192,139 @@ describe('MarkdownDocumentPage', () => {
 		});
 		expect(saveHandler.mock.calls[0][0].detail.content).toBe('updated content');
 	});
+
+	it('allows inline title edit and dispatches rename on Enter', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: WRITE_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		expect(titleEl).not.toBeNull();
+		await fireEvent.click(titleEl!);
+
+		const input = container.querySelector('input.doc-title-input') as HTMLInputElement;
+		expect(input).not.toBeNull();
+		expect(input.value).toBe('Test Doc');
+
+		input.value = 'Renamed Doc';
+		await fireEvent.input(input);
+		await fireEvent.keyDown(input, { key: 'Enter' });
+
+		await waitFor(() => {
+			expect(renameHandler).toHaveBeenCalledTimes(1);
+		});
+		expect(renameHandler.mock.calls[0][0].detail).toEqual({ title: 'Renamed Doc' });
+	});
+
+	it('does not allow inline title edit for read-only users', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: READ_ONLY_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		expect(titleEl).toBeNull();
+
+		const readonlyTitle = container.querySelector('h1.doc-title');
+		expect(readonlyTitle).not.toBeNull();
+		await fireEvent.click(readonlyTitle!);
+
+		expect(container.querySelector('input.doc-title-input')).toBeNull();
+		expect(renameHandler).not.toHaveBeenCalled();
+	});
+
+	it('cancels inline title edit on Escape', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: WRITE_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		await fireEvent.click(titleEl!);
+
+		const input = container.querySelector('input.doc-title-input') as HTMLInputElement;
+		input.value = 'New Title';
+		await fireEvent.input(input);
+		await fireEvent.keyDown(input, { key: 'Escape' });
+
+		await waitFor(() => {
+			expect(renameHandler).not.toHaveBeenCalled();
+		});
+		expect(container.querySelector('input.doc-title-input')).toBeNull();
+		expect(container.querySelector('h1.doc-title, h1.doc-title-wrapper')?.textContent?.trim()).toBe(
+			'Test Doc'
+		);
+	});
+
+	it('dispatches rename on blur when title changed', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: WRITE_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		await fireEvent.click(titleEl!);
+
+		const input = container.querySelector('input.doc-title-input') as HTMLInputElement;
+		input.value = 'Blurred Title';
+		await fireEvent.input(input);
+		await fireEvent.blur(input);
+
+		await waitFor(() => {
+			expect(renameHandler).toHaveBeenCalledTimes(1);
+		});
+		expect(renameHandler.mock.calls[0][0].detail).toEqual({ title: 'Blurred Title' });
+	});
+
+	it('does not dispatch rename when title is unchanged', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: WRITE_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		await fireEvent.click(titleEl!);
+
+		const input = container.querySelector('input.doc-title-input') as HTMLInputElement;
+		await fireEvent.blur(input);
+
+		await waitFor(() => {
+			expect(renameHandler).not.toHaveBeenCalled();
+		});
+		expect(container.querySelector('input.doc-title-input')).toBeNull();
+	});
+
+	it('cancels inline edit when title is empty', async () => {
+		const renameHandler = vi.fn();
+		const { container } = render(MarkdownDocumentPageTestWrapper, {
+			...defaultProps,
+			permissions: WRITE_PERMISSIONS,
+			onRename: renameHandler
+		});
+
+		const titleEl = container.querySelector('button.doc-title-button');
+		await fireEvent.click(titleEl!);
+
+		const input = container.querySelector('input.doc-title-input') as HTMLInputElement;
+		input.value = '   ';
+		await fireEvent.input(input);
+		await fireEvent.keyDown(input, { key: 'Enter' });
+
+		await waitFor(() => {
+			expect(renameHandler).not.toHaveBeenCalled();
+		});
+		expect(container.querySelector('input.doc-title-input')).toBeNull();
+		expect(container.querySelector('h1.doc-title-wrapper')?.textContent?.trim()).toBe('Test Doc');
+	});
 });

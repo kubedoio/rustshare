@@ -73,5 +73,17 @@ export const decisionsApi = {
 
 	rename: async (id: string, req: { title: string }) => {
 		return apiClient.post<Decision>(`/decisions/${id}/rename`, req);
+	},
+
+	delete: async (id: string) => {
+		return apiClient.delete(`/decisions/${id}`);
+	},
+
+	move: async (id: string, req: { target_folder_id: string | null }) => {
+		return apiClient.post<Decision>(`/decisions/${id}/move`, req);
+	},
+
+	duplicate: async (id: string) => {
+		return apiClient.post<Decision>(`/decisions/${id}/duplicate`);
 	}
 };

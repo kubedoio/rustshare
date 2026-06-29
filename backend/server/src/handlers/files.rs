@@ -278,15 +278,24 @@ async fn stream_file_response(
             AppError::internal("Failed to read file content")
         })?;
 
+    let content_type = content_type
+        .filter(|ct| {
+            !ct.eq_ignore_ascii_case("application/octet-stream")
+                && !ct.eq_ignore_ascii_case("binary/octet-stream")
+        })
+        .unwrap_or_else(|| file.mime_type.clone());
+
     let content_disposition = match disposition {
         FileDisposition::Attachment => super::public_shares::build_content_disposition(&file.name),
-        FileDisposition::Inline => "inline".to_string(),
+        FileDisposition::Inline => {
+            super::public_shares::build_inline_content_disposition(&file.name)
+        }
     };
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type.unwrap_or(file.mime_type))
+        HeaderValue::from_str(&content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(
@@ -532,6 +541,110 @@ pub async fn restore_file_version(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RestoreVersionRequest {
     pub version: i32,
+}
+
+/// Allowed file purpose-color keys. Keep in sync with `frontend/src/lib/utils/colorPalette.ts`.
+const ALLOWED_FILE_COLORS: &[&str] = &[
+    "pink", "red", "orange", "yellow", "green", "blue", "purple", "gray",
+];
+
+/// Validate a requested color value.
+pub fn validate_color(color: &Option<String>) -> Result<(), AppError> {
+    if let Some(c) = color {
+        if !ALLOWED_FILE_COLORS.contains(&c.as_str()) {
+            return Err(AppError::bad_request(format!(
+                "Invalid color: {}. Allowed values: {:?}",
+                c, ALLOWED_FILE_COLORS
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SetFileColorRequest {
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FileColorResponse {
+    pub id: Uuid,
+    pub color: Option<String>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/files/{id}/color",
+    tag = "Files",
+    params(("file_id" = Uuid, Path, description = "File Id")),
+    request_body = SetFileColorRequest,
+    responses(
+        (status = 200, description = "Color updated", body = FileColorResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn set_file_color(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(file_id): Path<Uuid>,
+    Json(req): Json<SetFileColorRequest>,
+) -> Result<Json<FileColorResponse>, AppError> {
+    // Verify the file exists and is accessible by the user.
+    // `From<FileError>` maps NotFound -> 404 and PermissionDenied -> 403.
+    let file = state
+        .file_service
+        .get_file(file_id, auth.user_id)
+        .await
+        .map_err(AppError::from)?;
+
+    // Require Edit permission (owner or shared edit recipient).
+    let can_edit = state
+        .permission_resolver
+        .check_file_permission(
+            auth.user_id,
+            auth.tenant_id,
+            file_id,
+            rustshare_core::domain::SharePermissions::Edit,
+        )
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to check file permission: {}", e)))?;
+    if !can_edit {
+        return Err(AppError::forbidden(
+            "Edit permission required to change color",
+        ));
+    }
+
+    validate_color(&req.color)?;
+
+    let result = sqlx::query(
+        "UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2 AND tenant_id = $3",
+    )
+    .bind(&req.color)
+    .bind(file_id)
+    .bind(file.tenant_id)
+    .execute(&state.db_pool)
+    .await
+    .map_err(|e| AppError::internal(format!("Failed to set file color: {}", e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::not_found(format!("File not found: {}", file_id)));
+    }
+
+    // For note-backed markdown files, also update the note sidecar metadata
+    // so the color stays in sync between the Files UI and the Notes UI.
+    if file.mime_type == "text/markdown" || file.name.ends_with(".md") {
+        let _ = state
+            .note_service
+            .update_file_color(file_id, auth.user_id, auth.tenant_id, req.color.clone())
+            .await;
+    }
+
+    Ok(Json(FileColorResponse {
+        id: file_id,
+        color: req.color,
+    }))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -854,6 +967,8 @@ pub struct FileWithShares {
     pub modified_at: chrono::DateTime<chrono::Utc>,
     pub starred_at: Option<chrono::DateTime<chrono::Utc>>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     // Share info
     pub is_shared: bool,
     pub share_count: i64,
@@ -889,6 +1004,7 @@ pub async fn list_files(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -1103,6 +1219,7 @@ pub async fn list_starred_items(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id
@@ -1223,6 +1340,7 @@ pub async fn list_deleted_items(
             f.id, f.name, f.path, f.size, f.mime_type,
             f.parent_folder_id, f.owner_id, f.current_version,
             f.created_at, f.modified_at, f.starred_at, f.deleted_at,
+            f.color,
             EXISTS(
                 SELECT 1 FROM shares
                 WHERE file_id = f.id

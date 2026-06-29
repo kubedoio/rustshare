@@ -251,6 +251,108 @@ pub async fn delete_decision(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MoveDecisionRequest {
+    pub target_folder_id: Option<Uuid>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/decisions/{id}/move",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    request_body = MoveDecisionRequest,
+    responses(
+        (status = 200, description = "Success", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn move_decision(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(decision_id): Path<Uuid>,
+    Json(req): Json<MoveDecisionRequest>,
+) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
+    let decision = state
+        .decision_service
+        .move_decision(
+            decision_id,
+            auth.user_id,
+            auth.tenant_id,
+            req.target_folder_id,
+        )
+        .await?;
+
+    let payload = DecisionModifiedPayload {
+        decision_id: decision_id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision_id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok(Json(decision))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/decisions/{id}/duplicate",
+    tag = "Decisions",
+    params(("decision_id" = Uuid, Path, description = "Decision Id")),
+    responses(
+        (status = 201, description = "Created", body = crate::services::decision_service::Decision),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn duplicate_decision(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(decision_id): Path<Uuid>,
+) -> Result<
+    (
+        StatusCode,
+        Json<crate::services::decision_service::Decision>,
+    ),
+    AppError,
+> {
+    let decision = state
+        .decision_service
+        .duplicate_decision(decision_id, auth.user_id, auth.tenant_id)
+        .await?;
+
+    let payload = DecisionModifiedPayload {
+        decision_id: decision.id.to_string(),
+        title: decision.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = Event::new(
+        EventType::DecisionModified,
+        decision.id,
+        AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
+    Ok((StatusCode::CREATED, Json(decision)))
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/decisions",

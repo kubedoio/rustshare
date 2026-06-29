@@ -71,8 +71,11 @@
 			{@render children?.()}
 		</div>
 	{:else}
-		<!-- Other pages use standard padding -->
-		<div class="mx-auto w-full max-w-[88rem] p-4 md:p-6 lg:px-8 lg:py-7">
+		<!-- Other pages use standard padding, but still fill available height so -->
+		<!-- full-height views (e.g. the markdown editor) can scroll internally. -->
+		<div
+			class="mx-auto flex h-full min-h-0 w-full max-w-[88rem] flex-col p-4 md:p-6 lg:px-8 lg:py-7"
+		>
 			{@render children?.()}
 		</div>
 	{/if}

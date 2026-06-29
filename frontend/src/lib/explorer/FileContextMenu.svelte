@@ -15,7 +15,8 @@
 		History,
 		RefreshCw,
 		RotateCcw,
-		Star
+		Star,
+		Palette
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -171,13 +172,23 @@
 			}
 
 			if (canManage) {
+				items.push({
+					id: 'star',
+					label: isStarred ? 'Remove from starred' : 'Add to starred',
+					icon: Star,
+					onClick: () => onAction('star')
+				});
+
+				if (!isFolder) {
+					items.push({
+						id: 'setColor',
+						label: 'Set color',
+						icon: Palette,
+						onClick: () => onAction('setColor')
+					});
+				}
+
 				items.push(
-					{
-						id: 'star',
-						label: isStarred ? 'Remove from starred' : 'Add to starred',
-						icon: Star,
-						onClick: () => onAction('star')
-					},
 					{ id: 'sep2', label: '', separator: true, onClick: () => {} },
 					{
 						id: 'delete',

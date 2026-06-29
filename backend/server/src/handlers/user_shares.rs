@@ -13,6 +13,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use rustshare_core::{domain::SharePermissions, services::Resource};
@@ -524,6 +525,24 @@ pub async fn get_user_shared_folder_contents(
         .list_contents(folder_id, auth.user_id)
         .await?;
 
+    // Fetch stored colors for child files in one query. The shared folder
+    // may contain files owned by other users, so we read by id/tenant_id.
+    let file_ids: Vec<Uuid> = contents.files.iter().map(|f| f.id).collect();
+    let colors: HashMap<Uuid, Option<String>> = if file_ids.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (Uuid, Option<String>)>(
+            "SELECT id, color FROM files WHERE id = ANY($1) AND tenant_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(&file_ids)
+        .bind(auth.tenant_id)
+        .fetch_all(&state.db_pool)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to load file colors: {}", e)))?
+        .into_iter()
+        .collect()
+    };
+
     // 2. Decorate folders with share information
     let mut folders_with_shares = Vec::with_capacity(contents.folders.len());
     for f in contents.folders {
@@ -593,6 +612,7 @@ pub async fn get_user_shared_folder_contents(
             modified_at: f.modified_at,
             starred_at: f.starred_at,
             deleted_at: f.deleted_at,
+            color: colors.get(&f.id).cloned().unwrap_or(None),
             is_shared: share_info.0,
             share_count: share_info.1,
             share_expires_at: share_info.2,

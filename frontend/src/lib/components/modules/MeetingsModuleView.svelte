@@ -6,6 +6,9 @@
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
+	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import MoveModal from '$lib/components/modals/MoveModal.svelte';
+	import DeleteConfirmation from '$lib/components/modals/DeleteConfirmation.svelte';
 	import {
 		CalendarDays,
 		Plus,
@@ -16,14 +19,19 @@
 		List,
 		Grid3X3,
 		ArrowUpDown,
-		MoreHorizontal
+		MoreHorizontal,
+		Paperclip,
+		Pencil,
+		FolderInput,
+		Copy,
+		Trash2
 	} from 'lucide-svelte';
 
 	import { meetingsApi } from '$lib/api/meetings';
 	import { activityStore } from '$lib/stores/activity';
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import type { ModuleDefinition } from '$lib/modules/registry';
-	import PromptModal from '$lib/components/common/PromptModal.svelte';
+	import { toastStore } from '$lib/stores/toast';
 
 	let { module }: { module: ModuleDefinition } = $props();
 
@@ -68,6 +76,16 @@
 	let isCreating = $state(false);
 	let autoCreateTriggered = $state(false);
 	let showPromptModal = $state(false);
+
+	let activeItem = $state<any>(null);
+	let showRenameModal = $state(false);
+	let showMoveModal = $state(false);
+	let showDeleteModal = $state(false);
+	let renameError = $state('');
+	let isRenaming = $state(false);
+	let isMoving = $state(false);
+	let isDeleting = $state(false);
+	let isDuplicating = $state(false);
 
 	$effect(() => {
 		const action = $page.url.searchParams.get('action');
@@ -139,6 +157,100 @@
 			if (folderId) {
 				goto(`/files?folder=${folderId}`);
 			}
+		}
+	}
+
+	function itemTitle(item: any): string {
+		return (item.metadata?.title || item.name || '').replace(/\.md$/i, '');
+	}
+
+	function handleShowAttachments(item: any) {
+		goto(`/modules/${module.key}/${item.id}?attachments=open`);
+	}
+
+	function openRenameModal(item: any) {
+		activeItem = item;
+		showRenameModal = true;
+		renameError = '';
+	}
+
+	function openMoveModal(item: any) {
+		activeItem = item;
+		showMoveModal = true;
+	}
+
+	function openDeleteModal(item: any) {
+		activeItem = item;
+		showDeleteModal = true;
+	}
+
+	async function handleRenameConfirm(newTitle: string) {
+		if (isRenaming || !activeItem) return;
+		const trimmed = newTitle.trim();
+		if (!trimmed) {
+			renameError = 'Title is required';
+			return;
+		}
+		isRenaming = true;
+		renameError = '';
+		try {
+			await meetingsApi.rename(activeItem.id, { title: trimmed });
+			toastStore.show('Meeting note renamed', 'success');
+			showRenameModal = false;
+			$meetingsQuery.refetch();
+		} catch (err) {
+			console.error('Failed to rename meeting:', err);
+			renameError = err instanceof Error ? err.message : 'Failed to rename';
+		} finally {
+			isRenaming = false;
+		}
+	}
+
+	async function handleMoveConfirm(payload: { targetFolderId: string | null }) {
+		if (isMoving || !activeItem) return;
+		isMoving = true;
+		try {
+			await meetingsApi.move(activeItem.id, { target_folder_id: payload.targetFolderId });
+			toastStore.show('Meeting note moved', 'success');
+			showMoveModal = false;
+			$meetingsQuery.refetch();
+		} catch (err) {
+			console.error('Failed to move meeting:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to move', 'error');
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function handleDuplicate(item: any) {
+		if (isDuplicating) return;
+		isDuplicating = true;
+		try {
+			const duplicated = await meetingsApi.duplicate(item.id);
+			toastStore.show('Meeting note duplicated', 'success');
+			goto(`/modules/${module.key}/${duplicated.id}`);
+			$meetingsQuery.refetch();
+		} catch (err) {
+			console.error('Failed to duplicate meeting:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to duplicate meeting', 'error');
+		} finally {
+			isDuplicating = false;
+		}
+	}
+
+	async function handleDeleteConfirm() {
+		if (isDeleting || !activeItem) return;
+		isDeleting = true;
+		try {
+			await meetingsApi.delete(activeItem.id);
+			toastStore.show('Meeting note deleted', 'success');
+			showDeleteModal = false;
+			$meetingsQuery.refetch();
+		} catch (err) {
+			console.error('Failed to delete meeting:', err);
+			toastStore.show(err instanceof Error ? err.message : 'Failed to delete', 'error');
+		} finally {
+			isDeleting = false;
 		}
 	}
 
@@ -241,57 +353,82 @@
 					</div>
 				</div>
 
-				<div
-					class={viewMode === 'grid'
-						? 'grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3'
-						: 'divide-y divide-base-200'}
-				>
-					{#each visibleMeetings as meeting}
-						<a
-							href={`/modules/${module.key}/${meeting.id}`}
-							class={viewMode === 'grid'
-								? 'rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30'
-								: 'flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40'}
-						>
+				{#if viewMode === 'grid'}
+					<div class="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+						{#each visibleMeetings as meeting}
 							<div
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 {viewMode ===
-								'grid'
-									? 'mb-3'
-									: ''}"
+								class="relative rounded-xl border border-base-300/50 p-4 transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
 							>
-								<CalendarDays size={16} />
-							</div>
-							<div class="flex min-w-0 flex-1 flex-col">
-								<span class="truncate text-sm font-medium text-base-content">
-									{(meeting.metadata?.title || meeting.name || '').replace(/\.md$/i, '')}
-								</span>
-								<div class="flex items-center gap-2 text-xs text-base-content/55">
-									{#if meeting.metadata?.date}
-										<span>{new Date(meeting.metadata.date).toLocaleDateString()}</span>
-									{/if}
-									{#if meeting.metadata?.attendees?.length > 0}
-										<span>•</span>
-										<span class="inline-flex items-center gap-1">
-											<Users size={12} />
-											{meeting.metadata.attendees.length} attendees
+								<a href={`/modules/${module.key}/${meeting.id}`} class="block">
+									<div
+										class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 mb-3"
+									>
+										<CalendarDays size={16} />
+									</div>
+									<div class="flex min-w-0 flex-1 flex-col">
+										<span class="truncate text-sm font-medium text-base-content">
+											{itemTitle(meeting)}
 										</span>
-									{/if}
-								</div>
+										<div class="flex items-center gap-2 text-xs text-base-content/55">
+											{#if meeting.metadata?.date}
+												<span>{new Date(meeting.metadata.date).toLocaleDateString()}</span>
+											{/if}
+											{#if meeting.metadata?.attendees?.length > 0}
+												<span>•</span>
+												<span class="inline-flex items-center gap-1">
+													<Users size={12} />
+													{meeting.metadata.attendees.length} attendees
+												</span>
+											{/if}
+										</div>
+									</div>
+									<span class="mt-3 block text-xs text-base-content/55">
+										{meeting.modified_at ? new Date(meeting.modified_at).toLocaleDateString() : ''}
+									</span>
+								</a>
+								{@render itemActions(meeting, 'grid')}
 							</div>
-							<span
-								class="{viewMode === 'grid'
-									? 'mt-3 block'
-									: 'hidden sm:block'} text-xs text-base-content/55"
-							>
-								{meeting.modified_at ? new Date(meeting.modified_at).toLocaleDateString() : ''}
-							</span>
-							{#if viewMode === 'list'}<MoreHorizontal
-									size={16}
-									class="text-base-content/45"
-								/>{/if}
-						</a>
-					{/each}
-				</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="divide-y divide-base-200">
+						{#each visibleMeetings as meeting}
+							<div class="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-base-200/40">
+								<a
+									href={`/modules/${module.key}/${meeting.id}`}
+									class="flex min-w-0 flex-1 items-center gap-4"
+								>
+									<div
+										class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500"
+									>
+										<CalendarDays size={16} />
+									</div>
+									<div class="flex min-w-0 flex-1 flex-col">
+										<span class="truncate text-sm font-medium text-base-content">
+											{itemTitle(meeting)}
+										</span>
+										<div class="flex items-center gap-2 text-xs text-base-content/55">
+											{#if meeting.metadata?.date}
+												<span>{new Date(meeting.metadata.date).toLocaleDateString()}</span>
+											{/if}
+											{#if meeting.metadata?.attendees?.length > 0}
+												<span>•</span>
+												<span class="inline-flex items-center gap-1">
+													<Users size={12} />
+													{meeting.metadata.attendees.length} attendees
+												</span>
+											{/if}
+										</div>
+									</div>
+									<span class="hidden sm:block text-xs text-base-content/55">
+										{meeting.modified_at ? new Date(meeting.modified_at).toLocaleDateString() : ''}
+									</span>
+								</a>
+								{@render itemActions(meeting, 'list')}
+							</div>
+						{/each}
+					</div>
+				{/if}
 
 				<div
 					class="flex items-center justify-between border-t border-base-200 px-4 py-3 text-sm text-base-content/60"
@@ -310,6 +447,51 @@
 	</div>
 </ModulePageShell>
 
+{#snippet itemActions(item: any, position: 'list' | 'grid')}
+	<div class="dropdown dropdown-end {position === 'grid' ? 'absolute top-3 right-3' : ''}">
+		<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="More options">
+			<MoreHorizontal size={16} />
+		</button>
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<ul
+			tabindex="0"
+			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+		>
+			<li>
+				<button onclick={() => handleShowAttachments(item)}>
+					<Paperclip size={14} />
+					Show attachments
+				</button>
+			</li>
+			<li>
+				<button onclick={() => openRenameModal(item)}>
+					<Pencil size={14} />
+					Rename
+				</button>
+			</li>
+			<li>
+				<button onclick={() => openMoveModal(item)}>
+					<FolderInput size={14} />
+					Move to folder
+				</button>
+			</li>
+			<li>
+				<button onclick={() => handleDuplicate(item)}>
+					<Copy size={14} />
+					Duplicate
+				</button>
+			</li>
+			<div class="divider my-0"></div>
+			<li>
+				<button onclick={() => openDeleteModal(item)} class="text-error">
+					<Trash2 size={14} />
+					Delete
+				</button>
+			</li>
+		</ul>
+	</div>
+{/snippet}
+
 <PromptModal
 	open={showPromptModal}
 	title="New meeting note"
@@ -323,4 +505,39 @@
 		showPromptModal = false;
 		createError = '';
 	}}
+/>
+
+<PromptModal
+	open={showRenameModal}
+	title="Rename meeting note"
+	message="New title"
+	defaultValue={activeItem ? itemTitle(activeItem) : ''}
+	confirmLabel="Rename"
+	error={renameError}
+	isLoading={isRenaming}
+	onConfirm={handleRenameConfirm}
+	onCancel={() => {
+		showRenameModal = false;
+		renameError = '';
+	}}
+/>
+
+<MoveModal
+	open={showMoveModal}
+	loading={isMoving}
+	itemName={activeItem ? itemTitle(activeItem) : ''}
+	itemType="folder"
+	currentFolderId={activeItem?.parent_folder_id ?? null}
+	itemId={activeItem?.id ?? null}
+	onClose={() => (showMoveModal = false)}
+	onConfirm={handleMoveConfirm}
+/>
+
+<DeleteConfirmation
+	open={showDeleteModal}
+	loading={isDeleting}
+	itemName={activeItem ? itemTitle(activeItem) : ''}
+	itemType="folder"
+	onClose={() => (showDeleteModal = false)}
+	onConfirm={handleDeleteConfirm}
 />
