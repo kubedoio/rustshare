@@ -160,7 +160,10 @@ pub async fn get_note(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SaveNoteRequest {
     pub content: String,
-    pub color: Option<String>,
+    /// `None` = omitted/no change, `Some(None)` = explicit `null`/clear,
+    /// `Some(Some(color))` = set to a specific color key.
+    #[serde(default)]
+    pub color: Option<Option<String>>,
     pub attachments: Option<Vec<NoteAttachment>>,
 }
 
@@ -191,7 +194,9 @@ pub async fn save_note(
     Path(note_id): Path<Uuid>,
     Json(req): Json<SaveNoteRequest>,
 ) -> Result<Json<SaveNoteResponse>, AppError> {
-    validate_color(&req.color)?;
+    if let Some(Some(ref c)) = req.color {
+        validate_color(&Some(c.clone()))?;
+    }
 
     let note = state
         .note_service

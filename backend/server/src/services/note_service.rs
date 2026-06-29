@@ -1572,7 +1572,7 @@ impl NoteService {
         user_id: UserId,
         tenant_id: Uuid,
         content: String,
-        color: Option<String>,
+        color: Option<Option<String>>,
         attachments: Option<Vec<NoteAttachment>>,
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
@@ -1675,10 +1675,19 @@ impl NoteService {
             .await?;
 
         // Apply color only after edit permission has been verified.
-        if let Some(new_color) = color {
-            meta.color = Some(new_color.clone());
+        // color = None means "no change", Some(None) means "clear",
+        // Some(Some(c)) means "set to c".
+        if let Some(color_action) = color {
+            match color_action {
+                Some(ref new_color) => {
+                    meta.color = Some(new_color.clone());
+                }
+                None => {
+                    meta.color = None;
+                }
+            }
             sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2")
-                .bind(&new_color)
+                .bind(color_action.as_ref())
                 .bind(file_id)
                 .execute(&self.db_pool)
                 .await
