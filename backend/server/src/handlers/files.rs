@@ -574,7 +574,7 @@ pub async fn set_file_color(
     Json(req): Json<SetFileColorRequest>,
 ) -> Result<Json<FileColorResponse>, AppError> {
     // Verify the file exists and is accessible by the user
-    let _file = state
+    let file = state
         .file_service
         .get_file(file_id, auth.user_id)
         .await
@@ -585,14 +585,36 @@ pub async fn set_file_color(
             _ => AppError::internal(format!("Failed to get file: {}", e)),
         })?;
 
-    sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2 AND owner_id = $3 AND tenant_id = $4")
-        .bind(&req.color)
-        .bind(file_id)
-        .bind(auth.user_id)
-        .bind(auth.tenant_id)
-        .execute(&state.db_pool)
+    // Require Edit permission (owner or shared edit recipient).
+    let can_edit = state
+        .permission_resolver
+        .check_file_permission(
+            auth.user_id,
+            auth.tenant_id,
+            file_id,
+            rustshare_core::domain::SharePermissions::Edit,
+        )
         .await
-        .map_err(|e| AppError::internal(format!("Failed to set file color: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Failed to check file permission: {}", e)))?;
+    if !can_edit {
+        return Err(AppError::forbidden(
+            "Edit permission required to change color",
+        ));
+    }
+
+    let result = sqlx::query(
+        "UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2 AND tenant_id = $3",
+    )
+    .bind(&req.color)
+    .bind(file_id)
+    .bind(file.tenant_id)
+    .execute(&state.db_pool)
+    .await
+    .map_err(|e| AppError::internal(format!("Failed to set file color: {}", e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::not_found(format!("File not found: {}", file_id)));
+    }
 
     Ok(Json(FileColorResponse {
         id: file_id,

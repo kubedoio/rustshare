@@ -1611,16 +1611,6 @@ impl NoteService {
                 fallback
             });
 
-        if let Some(new_color) = color {
-            meta.color = Some(new_color.clone());
-            sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2")
-                .bind(&new_color)
-                .bind(file_id)
-                .execute(&self.db_pool)
-                .await
-                .map_err(|e| NoteError::Storage(e.to_string()))?;
-        }
-
         if let Some(new_attachments) = attachments {
             meta.attachments = new_attachments;
         }
@@ -1693,6 +1683,17 @@ impl NoteService {
                 None,
             )
             .await?;
+
+        // Apply color only after edit permission has been verified.
+        if let Some(new_color) = color {
+            meta.color = Some(new_color.clone());
+            sqlx::query("UPDATE files SET color = $1, modified_at = NOW() WHERE id = $2")
+                .bind(&new_color)
+                .bind(file_id)
+                .execute(&self.db_pool)
+                .await
+                .map_err(|e| NoteError::Storage(e.to_string()))?;
+        }
 
         meta.updated_at = Utc::now();
         meta.excerpt = generate_excerpt(&new_body);
