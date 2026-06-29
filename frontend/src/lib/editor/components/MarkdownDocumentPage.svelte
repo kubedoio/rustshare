@@ -503,7 +503,7 @@
 			{/if}
 
 			<!-- Color Picker -->
-			{#if permissions.canEdit}
+			{#if permissions.canEdit && showNoteActions}
 				<div class="dropdown dropdown-end ml-2">
 					<button
 						tabindex="0"
