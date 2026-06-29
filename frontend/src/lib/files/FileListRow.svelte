@@ -192,6 +192,9 @@
 			case 'permanentDelete':
 				onPermanentDelete();
 				break;
+			case 'setColor':
+				showColorPicker = true;
+				break;
 		}
 	}
 
@@ -692,6 +695,5 @@
 		position={{ x: contextMenuX, y: contextMenuY }}
 		onClose={() => (contextMenuVisible = false)}
 		onAction={handleContextMenuAction}
-		onSetColor={handleSetColor}
 	/>
 {/if}

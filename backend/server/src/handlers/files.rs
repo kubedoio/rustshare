@@ -544,8 +544,9 @@ pub struct RestoreVersionRequest {
 }
 
 /// Allowed file purpose-color keys. Keep in sync with `frontend/src/lib/utils/colorPalette.ts`.
-const ALLOWED_FILE_COLORS: &[&str] =
-    &["red", "orange", "yellow", "green", "blue", "purple", "gray"];
+const ALLOWED_FILE_COLORS: &[&str] = &[
+    "pink", "red", "orange", "yellow", "green", "blue", "purple", "gray",
+];
 
 /// Validate a requested color value.
 pub fn validate_color(color: &Option<String>) -> Result<(), AppError> {

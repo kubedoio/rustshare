@@ -2,7 +2,6 @@
 	import type { File as FileType, Folder } from '$lib/api/types';
 	import { detectEditorType, canEditFileSize } from '$lib/utils/editor';
 	import MenuComponent from '$lib/components/common/ContextMenu.svelte';
-	import ColorPicker from '$lib/components/common/ColorPicker.svelte';
 	import type { ComponentType } from 'svelte';
 	import {
 		Folder as FolderIcon,
@@ -27,7 +26,6 @@
 		position?: { x: number; y: number };
 		onClose?: () => void;
 		onAction?: (action: string) => void;
-		onSetColor?: (color: string | null) => void;
 	}
 
 	let {
@@ -36,11 +34,8 @@
 		isOpen = false,
 		position = { x: 0, y: 0 },
 		onClose = () => {},
-		onAction = () => {},
-		onSetColor = () => {}
+		onAction = () => {}
 	}: Props = $props();
-
-	let showColorPicker = $state(false);
 
 	let isFolder = $derived('parent_folder_id' in item && !('mime_type' in item));
 	let fileItem = $derived(isFolder ? null : (item as FileType));
@@ -189,9 +184,7 @@
 						id: 'setColor',
 						label: 'Set color',
 						icon: Palette,
-						onClick: () => {
-							showColorPicker = true;
-						}
+						onClick: () => onAction('setColor')
 					});
 				}
 
@@ -211,47 +204,6 @@
 
 		return items;
 	}
-
-	let pickerRef = $state<HTMLDivElement | undefined>(undefined);
-
-	function handleColorSelect(color: string | null) {
-		onSetColor(color);
-		showColorPicker = false;
-	}
-
-	function handlePickerClickOutside(e: MouseEvent) {
-		if (pickerRef && !pickerRef.contains(e.target as Node)) {
-			showColorPicker = false;
-		}
-	}
-
-	function handlePickerKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			showColorPicker = false;
-		}
-	}
 </script>
 
-<svelte:window onclick={handlePickerClickOutside} onkeydown={handlePickerKeyDown} />
-
-<MenuComponent
-	items={menuItems}
-	x={position.x}
-	y={position.y}
-	visible={isOpen && !showColorPicker}
-	{onClose}
-/>
-
-{#if showColorPicker}
-	<div
-		bind:this={pickerRef}
-		class="fixed z-[9999] w-44 rounded-xl border border-base-300/70 bg-base-100 p-2 shadow-xl shadow-black/20"
-		style="left: {position.x}px; top: {position.y}px;"
-	>
-		<ColorPicker
-			value={fileItem?.color}
-			onSelect={handleColorSelect}
-			onClose={() => (showColorPicker = false)}
-		/>
-	</div>
-{/if}
+<MenuComponent items={menuItems} x={position.x} y={position.y} visible={isOpen} {onClose} />

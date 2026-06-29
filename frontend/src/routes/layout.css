@@ -98,6 +98,7 @@
 		--rs-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
 		/* Purposeful Colors */
+		--rs-accent-pink: #ec4899;
 		--rs-accent-blue: #3b82f6;
 		--rs-accent-green: #10b981;
 		--rs-accent-red: #ef4444;
@@ -128,6 +129,7 @@
 		--rs-shadow: 0 22px 54px rgba(0, 0, 0, 0.24);
 
 		/* Purposeful Colors (Dark) */
+		--rs-accent-pink: #f472b6;
 		--rs-accent-blue: #60a5fa;
 		--rs-accent-green: #34d399;
 		--rs-accent-red: #f87171;
