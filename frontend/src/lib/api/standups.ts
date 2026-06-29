@@ -24,6 +24,7 @@ export interface StandupSummary {
 	id: string;
 	name: string;
 	path: string;
+	parent_folder_id: string | null;
 	metadata: StandupMetadata;
 	modified_at: string;
 }

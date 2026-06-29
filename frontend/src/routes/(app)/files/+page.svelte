@@ -32,8 +32,7 @@
 		uploadFile,
 		listAllFiles,
 		getTrashSummary,
-		emptyTrash,
-		setFileColor
+		emptyTrash
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
 	import {
@@ -1541,13 +1540,11 @@
 		$fileStarMutation.mutate({ fileId: file.id, starred: !file.starred_at });
 	}
 
-	async function handleSetColor(file: File, color: string | null) {
-		try {
-			await setFileColor(file.id, color);
-			await $filesQuery.refetch();
-		} catch (error) {
-			showNotification(error instanceof Error ? error.message : 'Failed to set color', 'error');
-		}
+	function handleSetColor(_file: File, _color: string | null) {
+		// The child tile/row already calls setFileColor and only notifies us
+		// so the query can be invalidated. Avoid a second API request here.
+		queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
+		queryClient.invalidateQueries({ queryKey: ['all-files'] });
 	}
 
 	function handleToggleFolderStar(folder: Folder) {

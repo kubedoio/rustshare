@@ -157,12 +157,22 @@ pub async fn get_note(
 // Save Note
 // ============================================================================
 
+/// Deserializer that distinguishes a missing field (`None`) from an
+/// explicit JSON `null` (`Some(None)`) from a string value (`Some(Some(s))`).
+fn deserialize_optional_color<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(Some(value))
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SaveNoteRequest {
     pub content: String,
     /// `None` = omitted/no change, `Some(None)` = explicit `null`/clear,
     /// `Some(Some(color))` = set to a specific color key.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_color")]
     pub color: Option<Option<String>>,
     pub attachments: Option<Vec<NoteAttachment>>,
 }

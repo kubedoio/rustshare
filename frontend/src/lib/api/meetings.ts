@@ -25,6 +25,7 @@ export interface MeetingSummary {
 	id: string;
 	name: string;
 	path: string;
+	parent_folder_id: string | null;
 	metadata: MeetingMetadata;
 	modified_at: string;
 }

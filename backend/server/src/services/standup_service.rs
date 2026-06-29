@@ -69,6 +69,7 @@ pub struct StandupSummary {
     pub id: Uuid,
     pub name: String,
     pub path: String,
+    pub parent_folder_id: Option<Uuid>,
     pub metadata: StandupMetadata,
     pub modified_at: DateTime<Utc>,
 }
@@ -249,6 +250,7 @@ impl StandupService {
                     id: folder.id,
                     name: folder.name,
                     path: folder.path,
+                    parent_folder_id: folder.parent_folder_id,
                     metadata: meta,
                     modified_at: folder.updated_at,
                 });
