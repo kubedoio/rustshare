@@ -135,6 +135,7 @@
 
 	// Color state
 	let showColorPicker = $state(false);
+	let showContextColorPicker = $state(false);
 	let optimisticColor = $state<string | null>(null);
 
 	$effect(() => {
@@ -193,7 +194,7 @@
 				onPermanentDelete();
 				break;
 			case 'setColor':
-				showColorPicker = true;
+				showContextColorPicker = true;
 				break;
 		}
 	}
@@ -203,6 +204,7 @@
 		const previousColor = optimisticColor;
 		optimisticColor = color;
 		showColorPicker = false;
+		showContextColorPicker = false;
 		try {
 			const result = await setFileColor(fileItem.id, color);
 			if (fileItem) {
@@ -696,4 +698,17 @@
 		onClose={() => (contextMenuVisible = false)}
 		onAction={handleContextMenuAction}
 	/>
+
+	{#if showContextColorPicker}
+		<div
+			class="fixed z-[9999] w-44 rounded-xl border border-base-300/70 bg-base-100 p-2 shadow-xl shadow-black/20"
+			style="left: {contextMenuX}px; top: {contextMenuY}px;"
+		>
+			<ColorPicker
+				value={optimisticColor}
+				onSelect={handleSetColor}
+				onClose={() => (showContextColorPicker = false)}
+			/>
+		</div>
+	{/if}
 {/if}
