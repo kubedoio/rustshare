@@ -1,6 +1,6 @@
 {
   "name": "rustshare-vault-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "RustShare Vault Sync for Obsidian. Obsidian is a trademark of Dynalist Inc. RustShare is not affiliated with, endorsed by, or sponsored by Obsidian.",
   "main": "main.js",
   "scripts": {

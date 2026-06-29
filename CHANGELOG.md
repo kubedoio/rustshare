@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-29
+
 ### Added
 
 - Added streaming download support for object storage via `ObjectStore::get_stream`, preserving Content-Type and preserving Content-Length when integrity verification does not require EOF validation. Authenticated file downloads, file previews, and public-share downloads now return a streaming body instead of buffering the entire object in memory.
@@ -214,7 +216,8 @@ Stable release for the `0.3.0` release line.
 - **Backend tests:** Hardened integration tests for cross-user isolation, validated JSON doctests, and brainstorming handler formatting.
 - **CI:** Added `RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS` to integration test workflow; fixed DCO sign-off checks.
 
-[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/kubedoio/rustshare/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/kubedoio/rustshare/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/kubedoio/rustshare/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/kubedoio/rustshare/compare/v0.3.0...v0.4.0
