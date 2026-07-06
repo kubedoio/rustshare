@@ -1,17 +1,48 @@
 # RustShare
 
-> Durable company memory for technical teams: files, notes, decisions, diagrams, and long-lived artifacts.
+**Open-source company memory workspace for durable team knowledge, files, notes, documents, and future permission-aware AI workflows.**
 
-RustShare is an open-source artifact and workspace system with a Rust backend and a modern web interface. It is designed for teams that want self-hosted control over durable company memory: files, notes, diagrams, meeting records, decisions, technical documents, and operational knowledge.
+> [!NOTE]
+> RustShare is currently in **Public Preview**: early, actively evolving, and not yet intended for production use. Feedback, testing, and first contributions are welcome.
 
-RustShare is part of the broader **Kubedo.io Company Memory Infrastructure** direction, together with RustChat and future permission-aware Company RAG.
+---
 
-| Field | Value |
-|---|---|
-| Status | Public Preview / Active Development |
-| Latest Release | [v0.5.0](https://github.com/kubedoio/rustshare/releases/tag/v0.5.0) |
-| License | Apache-2.0 core |
-| Website | [rustshare.io](https://rustshare.io) |
+[Getting Started](#getting-started) • [Community](#community) • [Deployment](#deployment)
+
+## Public Preview Status
+
+RustShare is currently in **Public Preview**. The codebase is early, actively evolving, and open for feedback, testing, beta users, and first contributors.
+
+It should not be treated as finished, production-ready, or enterprise-ready yet.
+
+### Current focus
+
+RustShare currently exists as an MVP and is being refined toward a stronger production design. The current work focuses on:
+
+- polishing the existing implementation instead of rewriting blindly
+- identifying gaps between the MVP and the intended product direction
+- enforcing clearer architecture and behavior contracts
+- converging on a secure, multi-tenant, integration-friendly design
+
+## How to Report Useful Feedback
+
+The fastest way to help us improve RustShare is to report what you actually tried and what happened.
+
+A useful bug report or feedback item usually includes:
+
+- **What you were trying to do** — the task, feature, or workflow you were exploring
+- **What happened instead** — the error, unexpected behavior, or missing capability you saw
+- **What you expected to happen** — the behavior or result you were hoping for
+- **Operating system and setup method** — for example, Docker Compose, local dev build, or the macOS desktop CLI
+- **Safe error messages** — logs, stack traces, or screenshots are welcome, but please remove passwords, tokens, private URLs, customer data, and other sensitive values first
+
+For questions and general support, see [SUPPORT.md](SUPPORT.md). For development setup and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security and Sensitive Data
+
+Please do not post passwords, access tokens, private URLs, customer data, confidential logs, or other sensitive information in public GitHub issues.
+
+If you believe you found a security problem, please see [SECURITY.md](SECURITY.md) to report it privately.
 
 ## What this is
 
@@ -39,19 +70,6 @@ It is not presented as a fully mature enterprise content platform yet. It is a p
 [![Rust](https://img.shields.io/badge/rust-1.95.0-orange.svg)](rust-toolchain.toml)
 
 ---
-
-## Project status
-
-RustShare currently exists as an MVP and is being refined toward a stronger production design.
-
-The current work focuses on:
-
-- polishing the existing implementation instead of rewriting blindly
-- identifying gaps between the MVP and the intended product direction
-- enforcing clearer architecture and behavior contracts
-- converging on a secure, multi-tenant, integration-friendly design
-
-We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ## Getting Started
 
