@@ -129,7 +129,7 @@ jobs:
             for (const name of requiredWorkflows) {
               let latest = await findLatestRun(name);
               let attempts = 0;
-              const maxAttempts = 40; // ~10 minutes
+              const maxAttempts = 120; // ~30 minutes
 
               while ((!latest || latest.status !== 'completed') && attempts < maxAttempts) {
                 if (!latest) {
