@@ -75,14 +75,13 @@ See [apps/desktop/docs/CLI_USAGE.md](apps/desktop/docs/CLI_USAGE.md) and [apps/d
 
 The `crates/` directory at the repository root contains shared libraries:
 
+- `sync-domain` — shared sync domain models
 - `sync-engine` — synchronization logic
 - `sync-protocol` — wire protocol for sync
 - `client-state` — client-side state management
 - `file-ops` — file operation utilities
 - `platform` — platform abstractions
-- `vfs-macos` / `vfs-win` — virtual filesystem implementations
 - `test-support` — shared test helpers
-- `editor-npp` — Notepad++ editor integration
 
 ## Quality Checks
 

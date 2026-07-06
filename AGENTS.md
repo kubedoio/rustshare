@@ -7,7 +7,7 @@ This file contains project-specific guidance for coding agents working in the Ru
 - `backend/` — Rust workspace containing the Axum web server (`backend/server`), internal crates (`backend/crates/*`), migrations, and SQLx query metadata.
 - `frontend/` — SvelteKit / TypeScript frontend.
 - `apps/desktop/` — Rust Tauri/CLI desktop client.
-- `crates/` — Shared client-side Rust crates (sync engine, VFS adapters, etc.).
+- `crates/` — Shared client-side Rust crates (sync engine, sync protocol, file operations, platform abstractions, client state, test support, etc.).
 - `rustshare-obsidian-plugin/` — Git submodule containing the separate repository for the Obsidian vault synchronization plugin.
 - `docs/` — Architecture Decision Records (ADRs), specifications, implementation notes, and plans.
   - `docs/agent-guides/` — Quick-reference guides for AI agents (testing, code quality, PR workflow, safety boundaries).

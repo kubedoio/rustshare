@@ -294,10 +294,9 @@ This repository includes design and planning documents that define the target sh
 
 Recommended order:
 
-1. `03-design.md`
-2. `01-product-spec.md`
-3. `02-contract.md`
-4. `0001-ADR.md`
+1. `docs/DESIGN.md`
+2. `docs/SPEC.md`
+3. `docs/adr/0001-ADR.md`
 
 Then instruct the LLM to:
 
