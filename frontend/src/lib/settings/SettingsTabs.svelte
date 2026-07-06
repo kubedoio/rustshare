@@ -1,12 +1,6 @@
 <script lang="ts" module>
 	export type TabId =
-		| 'general'
-		| 'security'
-		| 'devices'
-		| 'appearance'
-		| 'sharing'
-		| 'activity'
-		| 'modules';
+		'general' | 'security' | 'devices' | 'appearance' | 'sharing' | 'activity' | 'modules';
 </script>
 
 <script lang="ts">

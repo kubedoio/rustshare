@@ -359,9 +359,7 @@
 
 	function handleRecipientPermissionSelect(shareId: string, event: Event) {
 		const permission = (event.currentTarget as HTMLSelectElement).value as
-			| 'View'
-			| 'Edit'
-			| 'Admin';
+			'View' | 'Edit' | 'Admin';
 		handleRecipientPermissionChange(shareId, permission);
 	}
 

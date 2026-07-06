@@ -559,8 +559,7 @@
 										e.preventDefault();
 										submitComment();
 									}
-								}}
-							></textarea>
+								}}></textarea>
 							<div class="comment-actions">
 								<button
 									class="btn btn-sm btn-primary gap-1"

@@ -68,12 +68,7 @@ export interface WebSocketEvent {
 }
 
 export type ReplicationStateValue =
-	| 'primary_written'
-	| 'queued'
-	| 'syncing'
-	| 'fully_replicated'
-	| 'degraded'
-	| 'failed';
+	'primary_written' | 'queued' | 'syncing' | 'fully_replicated' | 'degraded' | 'failed';
 
 // Event payload interfaces
 export interface FileUploadedPayload {

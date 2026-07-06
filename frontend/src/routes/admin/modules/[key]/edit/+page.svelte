@@ -370,8 +370,7 @@
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="What this module does..."
 							bind:value={description}
-							rows={2}
-						></textarea>
+							rows={2}></textarea>
 					</div>
 
 					<div class="grid gap-4 sm:grid-cols-2">
@@ -599,8 +598,7 @@
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="Short description shown on the dashboard card..."
 							bind:value={dashboardCardDescription}
-							rows={2}
-						></textarea>
+							rows={2}></textarea>
 					</div>
 
 					<div class="grid gap-4 sm:grid-cols-2">
@@ -846,8 +844,7 @@
 							id="empty-state-description"
 							class="textarea-bordered textarea textarea-sm"
 							bind:value={modulePageEmptyStateDescription}
-							rows={2}
-						></textarea>
+							rows={2}></textarea>
 					</div>
 					<div class="grid gap-4 sm:grid-cols-3">
 						<div class="flex flex-col gap-1">

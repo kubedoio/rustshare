@@ -85,8 +85,7 @@
 						class="textarea-bordered textarea"
 						rows="3"
 						bind:value={description}
-						placeholder="Optional description..."
-					></textarea>
+						placeholder="Optional description..."></textarea>
 				</div>
 
 				{#if $mutation.isError}
