@@ -1,12 +1,7 @@
 import { writable } from 'svelte/store';
 
 export type ReplicationState =
-	| 'primary_written'
-	| 'queued'
-	| 'syncing'
-	| 'fully_replicated'
-	| 'degraded'
-	| 'failed';
+	'primary_written' | 'queued' | 'syncing' | 'fully_replicated' | 'degraded' | 'failed';
 
 export interface ReplicationStatus {
 	fileId: string;

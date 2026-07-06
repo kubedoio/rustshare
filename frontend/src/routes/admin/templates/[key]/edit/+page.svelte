@@ -375,8 +375,7 @@
 							class="textarea-bordered textarea textarea-sm"
 							placeholder="What this template creates..."
 							bind:value={description}
-							rows={2}
-						></textarea>
+							rows={2}></textarea>
 					</div>
 
 					<div class="grid gap-4 sm:grid-cols-4">
@@ -455,8 +454,7 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={folderStructureJson}
 							rows={4}
-							disabled={isSystemTemplate}
-						></textarea>
+							disabled={isSystemTemplate}></textarea>
 					</div>
 
 					<div class="flex flex-col gap-1">
@@ -468,8 +466,7 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={defaultFilesJson}
 							rows={6}
-							disabled={isSystemTemplate}
-						></textarea>
+							disabled={isSystemTemplate}></textarea>
 					</div>
 
 					<div class="flex flex-col gap-1">
@@ -482,8 +479,7 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={metadataSchemaJson}
 							rows={4}
-							disabled={isSystemTemplate}
-						></textarea>
+							disabled={isSystemTemplate}></textarea>
 					</div>
 				</div>
 			</div>
@@ -647,8 +643,7 @@
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
 							bind:value={moduleConfigJson}
 							rows={4}
-							disabled={isSystemTemplate}
-						></textarea>
+							disabled={isSystemTemplate}></textarea>
 					</div>
 				{/if}
 			</div>

@@ -111,8 +111,7 @@
 								id="grp-desc"
 								class="textarea-bordered textarea"
 								rows="3"
-								bind:value={editDescription}
-							></textarea>
+								bind:value={editDescription}></textarea>
 						</div>
 						{#if $updateMutation.isError}
 							<div class="alert text-sm alert-error">

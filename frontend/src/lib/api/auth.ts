@@ -27,9 +27,7 @@ export interface DeviceRequestResponse {
 }
 
 export type DevicePollResponse =
-	| { status: 'pending' }
-	| { status: 'approved'; token: string }
-	| { status: 'expired' };
+	{ status: 'pending' } | { status: 'approved'; token: string } | { status: 'expired' };
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
 	return apiClient.post<LoginResponse>('/auth/login', { email, password });
