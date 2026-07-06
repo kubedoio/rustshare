@@ -91,6 +91,7 @@ Before opening a pull request, ensure all quality checks pass.
 ### Backend
 
 ```bash
+cd backend
 cargo fmt --check
 SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
 SQLX_OFFLINE=true cargo test --all-features --lib
@@ -100,14 +101,14 @@ SQLX_OFFLINE=true cargo build --release --all-features
 ### Frontend
 
 ```bash
-npm install && npm run check && npm run lint && npm run test && npm run build
+cd frontend && npm install && npm run check && npm run lint && npm run test && npm run build
 ```
 
 ## Testing
 
 RustShare has multiple levels of testing. Please add tests for new features and bug fixes.
 
-- **Unit tests**: `cargo test --lib`
+- **Unit tests**: `cd backend && SQLX_OFFLINE=true cargo test --all-features --lib`
 - **Integration tests**: `cargo test --all-features` (requires running DB + RustFS)
 - **Contract tests**: `cargo test --test contracts -- --ignored` (requires DB + RustFS)
 - **Frontend tests**: `npm run test`
@@ -127,6 +128,8 @@ Use descriptive branch names that communicate the intent of the change:
 | `fix/description`      | Bug fixes             |
 | `docs/description`     | Documentation changes |
 | `refactor/description` | Code refactoring      |
+| `test/description`     | Test changes          |
+| `chore/description`    | Maintenance, deps, CI |
 
 Examples: `feat/share-link-expiration`, `fix/auth-token-refresh-race`, `docs/deployment-guide`
 
