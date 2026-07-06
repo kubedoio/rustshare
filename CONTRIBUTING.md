@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to RustShare! This guide will help you get started with the development environment, quality checks, and contribution workflow.
 
+For the AI-agent / quick-reference version of this guide, see [`AGENTS.md`](AGENTS.md) and [`docs/agent-guides/`](docs/agent-guides/).
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -90,20 +92,15 @@ Before opening a pull request, ensure all quality checks pass.
 
 ```bash
 cargo fmt --check
-cargo clippy -- -D warnings
-cargo test --all-features
-cargo build
+SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
+SQLX_OFFLINE=true cargo test --all-features --lib
+SQLX_OFFLINE=true cargo build --release --all-features
 ```
-
-> **Note:** `cargo build --release` is only needed for release verification or deployment testing.
 
 ### Frontend
 
 ```bash
-npm run check    # svelte-check + TypeScript
-npm run lint     # prettier + eslint
-npm run test     # vitest
-npm run build
+npm install && npm run check && npm run lint && npm run test && npm run build
 ```
 
 ## Testing
@@ -124,12 +121,12 @@ For deeper integration and contract test guidance, see [backend/TESTING.md](back
 
 Use descriptive branch names that communicate the intent of the change:
 
-| Prefix | Purpose |
-|--------|---------|
-| `feat/description` | New features |
-| `fix/description` | Bug fixes |
-| `docs/description` | Documentation changes |
-| `refactor/description` | Code refactoring |
+| Prefix                 | Purpose               |
+| ---------------------- | --------------------- |
+| `feat/description`     | New features          |
+| `fix/description`      | Bug fixes             |
+| `docs/description`     | Documentation changes |
+| `refactor/description` | Code refactoring      |
 
 Examples: `feat/share-link-expiration`, `fix/auth-token-refresh-race`, `docs/deployment-guide`
 
@@ -186,7 +183,8 @@ git push --force-with-lease
 4. **Commit with sign-off** using `git commit -s`.
 5. **Push your branch** and open a pull request against `main`.
 6. **Fill out the PR template** completely.
-7. **Wait for CI** and maintainer review. Address feedback promptly.
+7. **Fill out the Safety Checklist** in the PR template, especially for changes touching permissions, indexing, connectors, RAG boundaries, storage, or migrations.
+8. **Wait for CI** and maintainer review. Address feedback promptly.
 
 ## Reporting Bugs
 
@@ -197,6 +195,8 @@ Use GitHub Issues with the bug report template. Please include:
 - Clear steps to reproduce
 - Expected behavior vs. actual behavior
 - Relevant logs (with secrets and credentials redacted)
+
+Please do not include passwords, tokens, private URLs, customer data, or confidential logs in public issues; see [`SECURITY.md`](SECURITY.md) to report security problems privately.
 
 ## Requesting Features
 

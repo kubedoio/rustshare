@@ -7,7 +7,9 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report a bug. Please fill out the sections below.
-        
+
+        > **Do not post secrets.** Please do not include passwords, tokens, private URLs, customer data, or confidential logs in public issues. If you are reporting a security problem, see [SECURITY.md](../../SECURITY.md) to report it privately.
+
   - type: textarea
     id: description
     attributes:
@@ -16,7 +18,7 @@ body:
       placeholder: What happened?
     validations:
       required: true
-      
+
   - type: input
     id: version
     attributes:
@@ -25,7 +27,7 @@ body:
       placeholder: e.g., v0.1.0 or abc1234
     validations:
       required: true
-      
+
   - type: dropdown
     id: deployment
     attributes:
@@ -37,7 +39,7 @@ body:
         - Other
     validations:
       required: true
-      
+
   - type: textarea
     id: reproduce
     attributes:
@@ -49,7 +51,7 @@ body:
         3. See error
     validations:
       required: true
-      
+
   - type: textarea
     id: expected
     attributes:
@@ -57,7 +59,7 @@ body:
       description: What you expected to happen.
     validations:
       required: true
-      
+
   - type: textarea
     id: actual
     attributes:
@@ -65,20 +67,20 @@ body:
       description: What actually happened.
     validations:
       required: true
-      
+
   - type: textarea
     id: logs
     attributes:
       label: Logs
       description: Relevant log output. Please redact secrets, tokens, and passwords before posting.
       render: text
-      
+
   - type: textarea
     id: context
     attributes:
       label: Additional Context
       description: Any other context, screenshots, or configuration details.
-      
+
   - type: checkboxes
     id: checks
     attributes:

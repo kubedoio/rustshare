@@ -36,7 +36,7 @@ A useful bug report or feedback item usually includes:
 - **Operating system and setup method** — for example, Docker Compose, local dev build, or the macOS desktop CLI
 - **Safe error messages** — logs, stack traces, or screenshots are welcome, but please remove passwords, tokens, private URLs, customer data, and other sensitive values first
 
-For questions and general support, see [SUPPORT.md](SUPPORT.md). For development setup and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For questions and general support, see [SUPPORT.md](SUPPORT.md). For development setup and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md). For contributor and AI-agent workflow guidance, see [`AGENTS.md`](AGENTS.md) and [`docs/agent-guides/`](docs/agent-guides/).
 
 ## Security and Sensitive Data
 
@@ -50,14 +50,14 @@ RustShare is a durable memory and artifact layer for technical teams that need c
 
 It focuses on:
 
-* durable company memory
-* files, notes, diagrams, and technical artifacts
-* markdown-based knowledge work
-* meeting notes and decision records
-* self-hosted deployment
-* audit-friendly artifact storage
-* API-driven integrations
-* future permission-aware AI memory foundations
+- durable company memory
+- files, notes, diagrams, and technical artifacts
+- markdown-based knowledge work
+- meeting notes and decision records
+- self-hosted deployment
+- audit-friendly artifact storage
+- API-driven integrations
+- future permission-aware AI memory foundations
 
 ## What this is not
 
