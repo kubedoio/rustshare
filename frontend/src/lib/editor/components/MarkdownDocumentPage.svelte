@@ -717,8 +717,7 @@
 						class="raw-markdown-editor"
 						bind:value={currentMarkdown}
 						oninput={handleRawInput}
-						aria-label="Raw Markdown editor"
-					></textarea>
+						aria-label="Raw Markdown editor"></textarea>
 				{:else if collab && docId}
 					{#key docId}
 						<CollabEditor

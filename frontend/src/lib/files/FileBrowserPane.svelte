@@ -52,8 +52,7 @@
 		onShareFile?: (file: FileType) => void;
 		onVersionHistory?: (file: FileType) => void;
 		onMoveFile?:
-			| ((file: FileType) => void)
-			| ((file: FileType, targetFolderId: string | null) => void);
+			((file: FileType) => void) | ((file: FileType, targetFolderId: string | null) => void);
 		onDownloadFile?: (file: FileType) => void;
 		onReplaceFile?: (file: FileType) => void;
 		onEditFile?: (file: FileType) => void;
@@ -64,8 +63,7 @@
 		onPermanentDeleteFolder?: (folder: Folder) => void;
 		onShareFolder?: (folder: Folder) => void;
 		onMoveFolder?:
-			| ((folder: Folder) => void)
-			| ((folder: Folder, targetFolderId: string | null) => void);
+			((folder: Folder) => void) | ((folder: Folder, targetFolderId: string | null) => void);
 		onbreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
 		pagination?: import('svelte').Snippet;
 	}
