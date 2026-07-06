@@ -172,6 +172,10 @@ name = "tokio-rustls"
 reason = "tokio-rustls 0.24 vs 0.26 split via AWS SDK (smithy-http-client) and reqwest/hyper-rustls"
 
 [[bans.skip]]
+name = "tower-http"
+reason = "reqwest 0.12 pulls tower-http 0.6 while rustshare-server uses tower-http 0.7"
+
+[[bans.skip]]
 name = "untrusted"
 reason = "ring version split via AWS SDK (rustls 0.21) and other deps"
 
