@@ -79,7 +79,7 @@ impl MailService {
             return Err(MailError::InvalidSource("Empty .eml source".to_string()));
         }
 
-        let mut parsed =
+        let parsed =
             EmlParser::parse(&raw_source).map_err(|e| MailError::InvalidSource(e.to_string()))?;
 
         let source_hash = hex::encode(Sha256::digest(&raw_source));
@@ -88,7 +88,7 @@ impl MailService {
 
         // Persist the raw source blob first (content-addressed).
         self.object_store
-            .put(&source_key, bytes::Bytes::from(raw_source.clone()))
+            .put(&source_key, bytes::Bytes::copy_from_slice(&raw_source))
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
@@ -147,12 +147,27 @@ impl MailService {
                 .await?;
         }
 
-        let attachments = std::mem::take(&mut parsed.attachments);
-        for (idx, att) in attachments.into_iter().enumerate() {
+        for (idx, att) in parsed.attachments.into_iter().enumerate() {
             let hash = hex::encode(Sha256::digest(&att.data));
             let key = format!("blobs/{hash}");
+            let bytes = bytes::Bytes::from(att.data);
+
             self.object_store
-                .put(&key, bytes::Bytes::from(att.data))
+                .put(&key, bytes.clone())
+                .await
+                .map_err(|e| MailError::Storage(e.to_string()))?;
+
+            let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
+            let file = self
+                .file_service
+                .upload_file(
+                    owner_id,
+                    filename.clone(),
+                    Some(message_folder.id),
+                    bytes,
+                    att.mime_type.clone(),
+                    tenant_id,
+                )
                 .await
                 .map_err(|e| MailError::Storage(e.to_string()))?;
 
@@ -160,8 +175,8 @@ impl MailService {
                 id: Uuid::new_v4(),
                 tenant_id,
                 message_id: msg.id,
-                file_id: None,
-                filename: att.filename.unwrap_or_else(|| format!("attachment-{idx}")),
+                file_id: Some(file.id),
+                filename,
                 mime_type: Some(att.mime_type),
                 size_bytes: Some(att.size_bytes as i64),
                 part_index: None,
@@ -191,6 +206,7 @@ impl MailService {
         let bytes = body.as_bytes().to_vec();
         let hash = hex::encode(Sha256::digest(&bytes));
         let key = format!("blobs/{hash}");
+        let size_bytes = bytes.len() as i64;
         self.object_store
             .put(&key, bytes::Bytes::from(bytes))
             .await
@@ -205,7 +221,7 @@ impl MailService {
             charset: Some("utf-8".to_string()),
             blob_key: Some(key),
             blob_sha256: Some(hash),
-            size_bytes: Some(body.len() as i64),
+            size_bytes: Some(size_bytes),
             is_body: true,
             created_at: Utc::now(),
         };
@@ -249,13 +265,17 @@ impl MailService {
         Ok(vec![])
     }
 
-    /// Placeholder: list attachments for a message.
+    /// List attachments for a message, scoped to the owning user and tenant.
     pub async fn list_attachments(
         &self,
-        _tenant_id: Uuid,
-        _message_id: Uuid,
-    ) -> anyhow::Result<Vec<MailAttachment>> {
-        Ok(vec![])
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<Vec<MailAttachment>, MailError> {
+        self.metadata_store
+            .list_mail_attachments_by_message_id(message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
     }
 
     /// Ensure the canonical `/Workspace/Mail` folder exists.
@@ -355,6 +375,7 @@ fn addresses_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustshare_core::domain::MailSourceMode;
     use rustshare_core::services::eml_parser::{EmlParser, ParsedAddress};
     use serde_json::json;
 
@@ -388,7 +409,7 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let imported_by = Uuid::new_v4();
-        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, "eml_upload");
+        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, MailSourceMode::EmlUpload);
         msg.message_id = parsed.message_id.clone();
         msg.in_reply_to = parsed.in_reply_to.clone();
         msg.references = Some(parsed.references.clone()).filter(|v| !v.is_empty());
@@ -412,6 +433,25 @@ mod tests {
         assert_eq!(msg.bcc_addresses, json!([]));
         assert!(!msg.has_attachments);
         assert_eq!(parsed.body_text.as_deref(), Some("This is the body.\r\n"));
+    }
+
+    #[test]
+    fn parse_attachment_eml_decodes_attachment_fields() {
+        let raw = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: With attachment\r\nMessage-ID: <attach789@example.com>\r\nDate: Mon, 06 Jul 2026 14:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"boundary123\"\r\n\r\n--boundary123\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached file.\r\n\r\n--boundary123\r\nContent-Type: text/plain; name=\"note.txt\"\r\nContent-Disposition: attachment; filename=\"note.txt\"\r\nContent-Transfer-Encoding: base64\r\n\r\nYXR0YWNobWVudCBjb250ZW50\r\n\r\n--boundary123--\r\n";
+        let parsed = EmlParser::parse(raw.as_slice()).expect("parse .eml with attachment");
+
+        assert!(!parsed.attachments.is_empty());
+        assert_eq!(parsed.attachments.len(), 1);
+
+        let att = &parsed.attachments[0];
+        assert_eq!(att.filename, Some("note.txt".to_string()));
+        assert_eq!(att.mime_type, "text/plain");
+        assert_eq!(att.data, b"attachment content");
+        assert_eq!(att.size_bytes, att.data.len());
+        assert_eq!(
+            att.content_disposition,
+            Some("attachment; filename=\"note.txt\"".to_string())
+        );
     }
 
     #[tokio::test]

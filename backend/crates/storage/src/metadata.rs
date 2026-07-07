@@ -257,6 +257,33 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// List all attachments for a mail message, scoped to the owning user and tenant.
+    pub async fn list_mail_attachments_by_message_id(
+        &self,
+        message_id: Uuid,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<MailAttachment>> {
+        let rows = sqlx::query_as!(
+            MailAttachment,
+            r#"
+            SELECT
+                a.id, a.tenant_id, a.message_id, a.file_id, a.filename, a.mime_type,
+                a.size_bytes, a.part_index, a.content_disposition, a.blob_key, a.created_at
+            FROM mail_attachments a
+            JOIN mail_messages m ON m.id = a.message_id
+            WHERE a.message_id = $1 AND m.tenant_id = $2 AND m.owner_id = $3
+            ORDER BY a.filename
+            "#,
+            message_id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn find_mail_message_by_id(
         &self,
         id: Uuid,
