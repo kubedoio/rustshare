@@ -69,10 +69,6 @@ pub async fn upload_mail(
         .await
         .map_err(|e| AppError::internal(format!("Failed to read uploaded file: {e}")))?;
 
-    if raw.is_empty() {
-        return Err(AppError::bad_request("Uploaded file is empty"));
-    }
-
     let msg = state
         .mail_service
         .import_eml(auth.tenant_id, auth.user_id, auth.user_id, raw)
@@ -93,6 +89,16 @@ pub async fn upload_mail(
     ))
 }
 
+/// List imported mail messages.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Mail messages", body = serde_json::Value),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn list_mail_messages(
     State(_state): State<AppState>,
     _auth: AuthenticatedUser,
