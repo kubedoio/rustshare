@@ -2013,6 +2013,120 @@
         }
       }
     },
+    "/api/v1/decisions/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "operationId": "duplicate_decision",
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "description": "Decision Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/decisions/{id}/move": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "operationId": "move_decision",
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "description": "Decision Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/decisions/{id}/rename": {
       "post": {
         "tags": [
@@ -2473,6 +2587,78 @@
           },
           "404": {
             "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/color": {
+      "patch": {
+        "tags": [
+          "Files"
+        ],
+        "operationId": "set_file_color",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "File Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetFileColorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Color updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileColorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -4920,6 +5106,120 @@
         "responses": {
           "204": {
             "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "duplicate_meeting",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingNote"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/move": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "move_meeting",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveMeetingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingNote"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8709,6 +9009,120 @@
         }
       }
     },
+    "/api/v1/standups/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Standups"
+        ],
+        "operationId": "duplicate_standup",
+        "parameters": [
+          {
+            "name": "standup_id",
+            "in": "path",
+            "description": "Standup Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandupRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/standups/{id}/move": {
+      "post": {
+        "tags": [
+          "Standups"
+        ],
+        "operationId": "move_standup",
+        "parameters": [
+          {
+            "name": "standup_id",
+            "in": "path",
+            "description": "Standup Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveStandupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandupRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/trash/empty": {
       "delete": {
         "tags": [
@@ -9551,6 +9965,170 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault-sync/v1/vaults/{vault_id}/content/{*path}": {
+      "get": {
+        "tags": [
+          "Vault Sync"
+        ],
+        "summary": "Get file content for WebUI editing.",
+        "description": "GET /api/vault-sync/v1/vaults/:vault_id/content/:path",
+        "operationId": "get_file_content",
+        "parameters": [
+          {
+            "name": "vault_id",
+            "in": "path",
+            "description": "Vault Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "description": "Path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultFileContentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden/not editable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Vault Sync"
+        ],
+        "summary": "Save file content from the WebUI.",
+        "description": "PUT /api/vault-sync/v1/vaults/:vault_id/content/:path",
+        "operationId": "save_file_content",
+        "parameters": [
+          {
+            "name": "vault_id",
+            "in": "path",
+            "description": "Vault Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "description": "Path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveVaultFileContentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultFileContentSavedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden/not editable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -12312,6 +12890,24 @@
           }
         }
       },
+      "FileColorResponse": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "FileDeletedPayload": {
         "type": "object",
         "description": "File deleted event payload",
@@ -12712,6 +13308,12 @@
           "share_count"
         ],
         "properties": {
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -14514,6 +15116,13 @@
           "name": {
             "type": "string"
           },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "path": {
             "type": "string"
           }
@@ -14709,6 +15318,18 @@
           }
         }
       },
+      "MoveDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "target_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "MoveFileRequest": {
         "type": "object",
         "properties": {
@@ -14733,7 +15354,31 @@
           }
         }
       },
+      "MoveMeetingRequest": {
+        "type": "object",
+        "properties": {
+          "target_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "MoveNoteRequest": {
+        "type": "object",
+        "properties": {
+          "target_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "MoveStandupRequest": {
         "type": "object",
         "properties": {
           "target_folder_id": {
@@ -16143,7 +16788,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "`None` = omitted/no change, `Some(None)` = explicit `null`/clear,\n`Some(Some(color))` = set to a specific color key."
           },
           "content": {
             "type": "string"
@@ -16172,6 +16818,23 @@
           },
           "modified_at": {
             "type": "string"
+          }
+        }
+      },
+      "SaveVaultFileContentRequest": {
+        "type": "object",
+        "description": "Request to save vault file content from the WebUI.",
+        "required": [
+          "content",
+          "expected_revision"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -16301,6 +16964,17 @@
           },
           "upload_only": {
             "type": "boolean"
+          }
+        }
+      },
+      "SetFileColorRequest": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -17152,6 +17826,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "parent_folder_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "path": {
             "type": "string"
@@ -18895,6 +19576,7 @@
           "owner_user_id",
           "name",
           "adapter",
+          "write_policy",
           "server_rev",
           "created_at",
           "updated_at"
@@ -18935,6 +19617,9 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "write_policy": {
+            "$ref": "#/components/schemas/VaultWritePolicy"
           }
         }
       },
@@ -19103,6 +19788,60 @@
           }
         }
       },
+      "VaultFileContentResponse": {
+        "type": "object",
+        "description": "Response when loading vault file content for the WebUI.",
+        "required": [
+          "path",
+          "content",
+          "server_rev",
+          "size"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "VaultFileContentSavedResponse": {
+        "type": "object",
+        "description": "Response after saving vault file content from the WebUI.",
+        "required": [
+          "path",
+          "server_rev",
+          "updated_at"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "server_rev": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "VaultFileUploadResponse": {
         "type": "object",
         "description": "Response for a successful vault file upload.",
@@ -19232,6 +19971,15 @@
             "format": "int64"
           }
         }
+      },
+      "VaultWritePolicy": {
+        "type": "string",
+        "description": "Write policy controlling who may modify a vault's files.",
+        "enum": [
+          "read_only",
+          "web_editing_enabled",
+          "sync_client_only"
+        ]
       },
       "VisibilityResponse": {
         "type": "object",
@@ -19585,6 +20333,10 @@
     {
       "name": "Public Shares",
       "description": "Public share access"
+    },
+    {
+      "name": "Vault Sync",
+      "description": "Vault synchronization and WebUI content endpoints"
     }
   ]
 }

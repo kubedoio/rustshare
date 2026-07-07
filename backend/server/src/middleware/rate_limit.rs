@@ -325,7 +325,9 @@ fn matches_vault_sync(method: &Method, path: &str) -> Option<RateLimitScope> {
         && path
             .strip_prefix("/api/vault-sync/v1/vaults/")
             .and_then(|rest| rest.split_once('/'))
-            .map(|(_vault_id, remainder)| remainder.starts_with("files/"))
+            .map(|(_vault_id, remainder)| {
+                remainder.starts_with("files/") || remainder.starts_with("content/")
+            })
             .unwrap_or(false)
     {
         return Some(RateLimitScope::VaultSyncUpload);
