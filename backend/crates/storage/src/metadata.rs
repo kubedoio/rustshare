@@ -6,9 +6,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
-    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession, Vault,
-    VaultDevice, VaultFile, VaultWritePolicy,
+    File, FileVersion, Folder, MailAttachment, MailMessage, MailMessagePart, OidcLoginState,
+    ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget, Share,
+    SharePermissions, User, UserSession, Vault, VaultDevice, VaultFile, VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
 use serde_json;
@@ -151,6 +151,134 @@ impl MetadataStore {
 
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn create_mail_message(&self, msg: &MailMessage) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_messages (
+                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12,
+                $13, $14, $15, $16, $17, $18,
+                $19, $20, $21, $22, $23, $24,
+                $25, $26, $27
+            )
+            "#,
+            msg.id,
+            msg.tenant_id,
+            msg.owner_id,
+            msg.source_mode,
+            msg.source_folder,
+            msg.source_uid,
+            msg.message_id,
+            msg.in_reply_to,
+            msg.references.as_deref(),
+            msg.subject,
+            msg.from_address,
+            msg.from_name,
+            msg.to_addresses,
+            msg.cc_addresses,
+            msg.bcc_addresses,
+            msg.sent_at,
+            msg.imported_at,
+            msg.imported_by,
+            msg.visibility,
+            msg.object_key,
+            msg.blob_key,
+            msg.blob_sha256,
+            msg.size_bytes,
+            msg.has_attachments,
+            msg.deleted_at,
+            msg.created_at,
+            msg.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_mail_message_part(&self, part: &MailMessagePart) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_message_parts (
+                id, tenant_id, message_id, part_index, content_type, charset,
+                blob_key, blob_sha256, size_bytes, is_body, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+            part.id,
+            part.tenant_id,
+            part.message_id,
+            part.part_index,
+            part.content_type,
+            part.charset,
+            part.blob_key,
+            part.blob_sha256,
+            part.size_bytes,
+            part.is_body,
+            part.created_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_mail_attachment(&self, attachment: &MailAttachment) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_attachments (
+                id, tenant_id, message_id, file_id, filename, mime_type,
+                size_bytes, part_index, content_disposition, blob_key, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+            attachment.id,
+            attachment.tenant_id,
+            attachment.message_id,
+            attachment.file_id,
+            attachment.filename,
+            attachment.mime_type,
+            attachment.size_bytes,
+            attachment.part_index,
+            attachment.content_disposition,
+            attachment.blob_key,
+            attachment.created_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn find_mail_message_by_id(
+        &self,
+        id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Option<MailMessage>> {
+        let row = sqlx::query_as!(
+            MailMessage,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
