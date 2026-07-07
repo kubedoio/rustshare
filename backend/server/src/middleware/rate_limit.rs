@@ -337,7 +337,7 @@ fn matches_vault_sync(method: &Method, path: &str) -> Option<RateLimitScope> {
         return Some(RateLimitScope::VaultSyncRead);
     }
 
-    if *method == Method::POST || *method == Method::DELETE {
+    if *method == Method::POST || *method == Method::PATCH || *method == Method::DELETE {
         return Some(RateLimitScope::VaultSyncWrite);
     }
 
@@ -559,7 +559,14 @@ mod tests {
         );
         assert_eq!(
             classify_request(&Method::PATCH, "/api/vault-sync/v1/vaults/vault-id"),
-            None
+            Some(RateLimitScope::VaultSyncWrite)
+        );
+        assert_eq!(
+            classify_request(
+                &Method::PATCH,
+                "/api/vault-sync/v1/vaults/vault-id/write-policy"
+            ),
+            Some(RateLimitScope::VaultSyncWrite)
         );
         assert_eq!(classify_request(&Method::GET, "/api/v1/me"), None);
     }
