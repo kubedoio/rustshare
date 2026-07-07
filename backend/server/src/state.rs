@@ -109,6 +109,7 @@ pub struct ServiceState {
     pub user_repository: Arc<rustshare_infrastructure::repositories::UserRepository>,
     pub vault_sync_service:
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
+    pub mail_service: Arc<services::mail_service::MailService>,
 }
 
 /// Application configuration and runtime state.
@@ -193,6 +194,7 @@ pub struct AppState {
     pub vault_sync_service:
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub chat_integration_service: Arc<AppChatIntegrationService>,
+    pub mail_service: Arc<services::mail_service::MailService>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }
@@ -236,6 +238,7 @@ impl FromRef<AppState> for ServiceState {
             brainstorming_service: state.brainstorming_service.clone(),
             user_repository: state.user_repository.clone(),
             vault_sync_service: state.vault_sync_service.clone(),
+            mail_service: state.mail_service.clone(),
         }
     }
 }
