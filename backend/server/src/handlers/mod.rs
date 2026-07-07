@@ -18,6 +18,7 @@ pub mod health;
 pub mod invites;
 pub mod kanban;
 pub mod meetings;
+pub mod mail;
 pub mod modules;
 pub mod notes;
 pub mod notifications;
