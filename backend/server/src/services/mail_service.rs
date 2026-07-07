@@ -4,6 +4,28 @@ use rustshare_core::domain::{MailAttachment, MailMessage, MailMessagePart};
 use rustshare_storage::MetadataStore;
 use uuid::Uuid;
 
+// ============================================================================
+// Errors
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+pub enum MailError {
+    #[error("Mail message not found: {0}")]
+    NotFound(uuid::Uuid),
+    #[error("Permission denied")]
+    PermissionDenied,
+    #[error("Invalid mail source: {0}")]
+    InvalidSource(String),
+    #[error("Storage error: {0}")]
+    Storage(String),
+    #[error("Database error: {0}")]
+    Database(String),
+}
+
+// ============================================================================
+// Service
+// ============================================================================
+
 #[derive(Clone)]
 pub struct MailService {
     #[allow(dead_code)]
