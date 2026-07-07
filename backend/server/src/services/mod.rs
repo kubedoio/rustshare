@@ -2,6 +2,7 @@ pub mod brainstorming_service;
 pub mod decision_service;
 pub mod icon_registry;
 pub mod kanban_service;
+pub mod mail_service;
 pub mod meeting_service;
 pub mod module_service;
 pub mod note_index_sink;
