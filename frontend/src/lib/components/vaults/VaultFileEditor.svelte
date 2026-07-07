@@ -18,6 +18,7 @@
 	let loadedRev = $state<number | null>(null);
 	let saveError = $state<string | null>(null);
 	let saveSuccess = $state(false);
+	let successTimeout = $state<ReturnType<typeof setTimeout> | null>(null);
 	let loadedContent = $state<string | null>(null);
 	let dirty = $derived(file !== null && localContent !== (loadedContent ?? ''));
 
@@ -54,7 +55,8 @@
 			saveSuccess = true;
 			saveError = null;
 			queryClient.invalidateQueries({ queryKey: ['vault-manifest', vaultId] });
-			setTimeout(() => (saveSuccess = false), 3000);
+			if (successTimeout) clearTimeout(successTimeout);
+			successTimeout = setTimeout(() => (saveSuccess = false), 3000);
 		},
 		onError: (err: { status?: number; message?: string }) => {
 			if (err.status === 409) {
@@ -67,6 +69,12 @@
 		}
 	});
 
+	$effect(() => {
+		return () => {
+			if (successTimeout) clearTimeout(successTimeout);
+		};
+	});
+
 	const canEdit = $derived(
 		file !== null && isEditableVaultFile(file) && isEditableVaultPolicy(policy)
 	);
@@ -75,7 +83,7 @@
 	function handleKeyDown(event: KeyboardEvent) {
 		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
 			event.preventDefault();
-			if (canSave) $saveMutation.mutate();
+			if (canSave) $saveMutation.mutate().catch(() => {});
 		}
 	}
 </script>
@@ -109,7 +117,7 @@
 				<button
 					class="btn btn-primary btn-sm rounded-xl"
 					disabled={!canSave}
-					onclick={() => $saveMutation.mutate()}
+					onclick={() => $saveMutation.mutate().catch(() => {})}
 				>
 					{#if $saveMutation.isPending}
 						<Loader class="h-4 w-4 animate-spin" />
