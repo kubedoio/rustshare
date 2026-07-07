@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE vaults\n            SET name = $1, adapter = $2, root_path = $3, write_policy = $4, server_rev = $5, updated_at = $6\n            WHERE id = $7 AND tenant_id = $8\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Int8",
+        "Timestamptz",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bfcf55d74a14d09891b16d4a71b4a2d7a877776a4c84e32cd5685e48733534b7"
+}

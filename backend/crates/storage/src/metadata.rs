@@ -2959,6 +2959,74 @@ impl MetadataStore {
         Ok(vault.clone())
     }
 
+    /// Update an existing vault row.
+    pub async fn update_vault(&self, vault: &Vault) -> sqlx::Result<Vault> {
+        sqlx::query!(
+            r#"
+            UPDATE vaults
+            SET name = $1, adapter = $2, root_path = $3, write_policy = $4, server_rev = $5, updated_at = $6
+            WHERE id = $7 AND tenant_id = $8
+            "#,
+            vault.name,
+            vault.adapter.to_string(),
+            vault.root_path,
+            vault.write_policy.to_string(),
+            vault.server_rev,
+            vault.updated_at,
+            vault.id,
+            vault.tenant_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(vault.clone())
+    }
+
+    /// Find an existing WebUI device for a user/vault pair.
+    pub async fn get_webui_device(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        vault_id: Uuid,
+    ) -> sqlx::Result<Option<VaultDevice>> {
+        sqlx::query_as!(
+            VaultDevice,
+            r#"
+            SELECT id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at
+            FROM vault_devices
+            WHERE tenant_id = $1 AND user_id = $2 AND vault_id = $3 AND client_type = 'web_ui' AND revoked_at IS NULL
+            "#,
+            tenant_id,
+            user_id,
+            vault_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Create a WebUI device row for a vault.
+    pub async fn create_webui_device(&self, device: &VaultDevice) -> sqlx::Result<VaultDevice> {
+        sqlx::query!(
+            r#"
+            INSERT INTO vault_devices (id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+            device.id,
+            device.tenant_id,
+            device.user_id,
+            device.vault_id,
+            device.device_name,
+            device.client_type,
+            device.client_version,
+            device.last_sync_rev,
+            device.revoked_at,
+            device.created_at,
+            device.last_seen_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(device.clone())
+    }
+
     /// Get a vault by ID.
     pub async fn get_vault(&self, vault_id: Uuid, tenant_id: Uuid) -> sqlx::Result<Option<Vault>> {
         let vault = sqlx::query_as!(

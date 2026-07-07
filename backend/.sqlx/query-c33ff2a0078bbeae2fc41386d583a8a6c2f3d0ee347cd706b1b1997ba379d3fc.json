@@ -1,0 +1,84 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at\n            FROM vault_devices\n            WHERE tenant_id = $1 AND user_id = $2 AND vault_id = $3 AND client_type = 'web_ui' AND revoked_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "vault_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "device_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "client_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "client_version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_sync_rev",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "revoked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c33ff2a0078bbeae2fc41386d583a8a6c2f3d0ee347cd706b1b1997ba379d3fc"
+}
