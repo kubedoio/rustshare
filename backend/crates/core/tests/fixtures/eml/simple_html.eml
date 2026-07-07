@@ -1,0 +1,10 @@
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Cc: Carol <carol@example.com>
+Subject: HTML email
+Message-ID: <html456@example.com>
+Date: Mon, 06 Jul 2026 13:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>This is an HTML email.</p></body></html>
