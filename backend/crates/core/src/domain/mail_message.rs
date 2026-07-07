@@ -6,19 +6,14 @@ use uuid::Uuid;
 
 use super::{MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MailSourceMode {
+    #[default]
     EmlUpload,
     ImapSelected,
     ImapArchive,
     InboundAddress,
-}
-
-impl Default for MailSourceMode {
-    fn default() -> Self {
-        Self::EmlUpload
-    }
 }
 
 impl From<MailSourceMode> for String {
@@ -32,19 +27,14 @@ impl From<MailSourceMode> for String {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MailVisibility {
+    #[default]
     Private,
     Workspace,
     Project,
     AdminArchive,
-}
-
-impl Default for MailVisibility {
-    fn default() -> Self {
-        Self::Private
-    }
 }
 
 impl From<MailVisibility> for String {
