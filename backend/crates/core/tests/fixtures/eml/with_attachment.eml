@@ -1,0 +1,21 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: With attachment
+Message-ID: <attach789@example.com>
+Date: Mon, 06 Jul 2026 14:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary123"
+
+--boundary123
+Content-Type: text/plain; charset=utf-8
+
+See attached file.
+
+--boundary123
+Content-Type: text/plain; name="note.txt"
+Content-Disposition: attachment; filename="note.txt"
+Content-Transfer-Encoding: base64
+
+YXR0YWNobWVudCBjb250ZW50
+
+--boundary123--
