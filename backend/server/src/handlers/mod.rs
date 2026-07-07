@@ -644,6 +644,9 @@ impl From<VaultSyncError> for AppError {
             VaultSyncError::ManifestTooLarge { .. } => AppError::PayloadTooLarge(err.to_string()),
             VaultSyncError::InvalidPath(_) => AppError::BadRequest(err.to_string()),
             VaultSyncError::InvalidName(_) => AppError::BadRequest(err.to_string()),
+            VaultSyncError::WritePolicyDenied { .. } | VaultSyncError::NotEditable(_) => {
+                AppError::Forbidden(err.to_string())
+            }
             VaultSyncError::Unauthorized | VaultSyncError::DeviceRevoked => {
                 AppError::Forbidden(err.to_string())
             }
