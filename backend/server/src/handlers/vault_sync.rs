@@ -23,8 +23,9 @@ use uuid::Uuid;
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 use rustshare_core::domain::{
-    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest, SaveVaultFileContentRequest,
-    Vault, VaultDevice, VaultFileContentResponse, VaultFileContentSavedResponse,
+    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest,
+    SaveVaultFileContentRequest, Vault, VaultDevice, VaultFileContentResponse,
+    VaultFileContentSavedResponse,
 };
 
 // ============================================================================

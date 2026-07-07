@@ -1128,6 +1128,14 @@ pub fn vault_sync_routes() -> Router<AppState> {
             delete(crate::handlers::vault_sync::delete_file),
         )
         .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/content/{*path}",
+            get(crate::handlers::vault_sync::get_file_content),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/content/{*path}",
+            put(crate::handlers::vault_sync::save_file_content),
+        )
+        .route(
             "/api/vault-sync/v1/vaults/{vault_id}/rename",
             post(crate::handlers::vault_sync::rename_file),
         )
