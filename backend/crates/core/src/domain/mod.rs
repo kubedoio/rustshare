@@ -41,10 +41,10 @@ pub use user::{DashboardConfig, Theme, User};
 pub use user_module_preference::UserModulePreference;
 pub use user_session::UserSession;
 pub use vault::{
-    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest, SaveVaultFileContentRequest,
-    UploadVaultFileRequest, Vault, VaultAdapter, VaultDevice, VaultFile, VaultFileContentResponse,
-    VaultFileContentSavedResponse, VaultManifest, VaultManifestEntry, VaultManifestResult,
-    VaultWritePolicy,
+    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest,
+    SaveVaultFileContentRequest, UploadVaultFileRequest, Vault, VaultAdapter, VaultDevice,
+    VaultFile, VaultFileContentResponse, VaultFileContentSavedResponse, VaultManifest,
+    VaultManifestEntry, VaultManifestResult, VaultWritePolicy,
 };
 
 use uuid::Uuid;

@@ -254,13 +254,22 @@ mod tests {
     #[test]
     fn test_vault_write_policy_display() {
         assert_eq!(VaultWritePolicy::ReadOnly.to_string(), "read_only");
-        assert_eq!(VaultWritePolicy::WebEditingEnabled.to_string(), "web_editing_enabled");
-        assert_eq!(VaultWritePolicy::SyncClientOnly.to_string(), "sync_client_only");
+        assert_eq!(
+            VaultWritePolicy::WebEditingEnabled.to_string(),
+            "web_editing_enabled"
+        );
+        assert_eq!(
+            VaultWritePolicy::SyncClientOnly.to_string(),
+            "sync_client_only"
+        );
     }
 
     #[test]
     fn test_vault_write_policy_from_str() {
-        assert_eq!(VaultWritePolicy::from_str("read_only").unwrap(), VaultWritePolicy::ReadOnly);
+        assert_eq!(
+            VaultWritePolicy::from_str("read_only").unwrap(),
+            VaultWritePolicy::ReadOnly
+        );
         assert_eq!(
             VaultWritePolicy::from_str("web_editing_enabled").unwrap(),
             VaultWritePolicy::WebEditingEnabled
@@ -270,9 +279,14 @@ mod tests {
 
     #[test]
     fn test_vault_write_policy_roundtrip() {
-        let policy = VaultWritePolicy::WebEditingEnabled;
-        let s = policy.to_string();
-        let parsed = VaultWritePolicy::from_str(&s).unwrap();
-        assert_eq!(policy, parsed);
+        for policy in [
+            VaultWritePolicy::ReadOnly,
+            VaultWritePolicy::WebEditingEnabled,
+            VaultWritePolicy::SyncClientOnly,
+        ] {
+            let s = policy.to_string();
+            let parsed = VaultWritePolicy::from_str(&s).unwrap();
+            assert_eq!(policy, parsed);
+        }
     }
 }
