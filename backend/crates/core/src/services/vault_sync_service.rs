@@ -2760,7 +2760,10 @@ mod tests {
             .get_file_content_for_webui(vault.id, "notes/image.png", tenant_id, owner_id)
             .await
             .unwrap_err();
-        assert!(matches!(err, VaultSyncError::NotEditable(_)));
+        match err {
+            VaultSyncError::NotEditable(msg) => assert!(msg.contains("notes/image.png")),
+            _ => panic!("Expected NotEditable, got {:?}", err),
+        }
     }
 
     #[tokio::test]
@@ -2838,6 +2841,9 @@ mod tests {
             )
             .await
             .unwrap();
+        let mut updated = vault.clone();
+        updated.write_policy = VaultWritePolicy::ReadOnly;
+        service.store.update_vault(&updated).await.unwrap();
 
         let content = Bytes::from_static(b"text");
         upload_test_file(
@@ -2859,7 +2865,10 @@ mod tests {
             .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
             .await
             .unwrap_err();
-        assert!(matches!(err, VaultSyncError::WritePolicyDenied { .. }));
+        assert!(matches!(
+            err,
+            VaultSyncError::WritePolicyDenied { policy } if policy == "read_only"
+        ));
     }
 
     #[tokio::test]
@@ -3012,7 +3021,10 @@ mod tests {
             .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
             .await
             .unwrap_err();
-        assert!(matches!(err, VaultSyncError::WritePolicyDenied { .. }));
+        assert!(matches!(
+            err,
+            VaultSyncError::WritePolicyDenied { policy } if policy == "sync_client_only"
+        ));
     }
 
     #[tokio::test]
@@ -3089,7 +3101,16 @@ mod tests {
             .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
             .await
             .unwrap_err();
-        assert!(matches!(err, VaultSyncError::NotEditable(_)));
+        match err {
+            VaultSyncError::NotEditable(msg) => {
+                assert!(msg.contains("file exceeds"));
+                assert!(msg.contains(
+                    &VaultSyncService::<MockVaultStore, MockObjectStore>::MAX_WEBUI_EDIT_SIZE
+                        .to_string()
+                ));
+            }
+            _ => panic!("Expected NotEditable, got {:?}", err),
+        }
     }
 
     #[tokio::test]
