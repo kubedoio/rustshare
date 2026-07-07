@@ -167,15 +167,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         user_id: Uuid,
         vault_id: Uuid,
     ) -> Result<VaultDevice, VaultSyncError> {
-        if let Some(device) = self
+        if let Some(mut device) = self
             .store
             .get_webui_device(tenant_id, user_id, vault_id)
             .await?
         {
+            device.last_seen_at = Utc::now();
+            self.store
+                .update_vault_device_last_seen_at(device.id, device.last_seen_at)
+                .await?;
             return Ok(device);
         }
         let device = Self::webui_device(tenant_id, user_id, vault_id);
-        self.store.create_webui_device(&device).await
+        self.store.create_webui_device(&device).await?;
+        self.store
+            .get_webui_device(tenant_id, user_id, vault_id)
+            .await?
+            .ok_or_else(|| {
+                VaultSyncError::Storage("WebUI device not found after creation".to_string())
+            })
     }
 
     // ─────────────────────────────────────────────
@@ -521,11 +531,17 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 server_rev: f.server_rev,
                 updated_at: f.updated_at,
             }),
-            None => Err(VaultSyncError::Conflict {
-                client_rev: expected_revision,
-                current_rev: file.server_rev,
-                server_sha256: file.sha256.clone(),
-            }),
+            None => {
+                let current = self
+                    .store
+                    .get_file_including_deleted(vault_id, relative_path, tenant_id)
+                    .await?;
+                Err(VaultSyncError::Conflict {
+                    client_rev: expected_revision,
+                    current_rev: current.server_rev,
+                    server_sha256: current.sha256.clone(),
+                })
+            }
         }
     }
 
@@ -1218,6 +1234,7 @@ mod tests {
                         && d.user_id == user_id
                         && d.vault_id == Some(vault_id)
                         && d.client_type == "web_ui"
+                        && d.revoked_at.is_none()
                 })
                 .cloned())
         }
@@ -1260,6 +1277,19 @@ mod tests {
                 return Err(VaultSyncError::DeviceNotFound(device_id.to_string()));
             }
             device.last_seen_at = Utc::now();
+            Ok(())
+        }
+
+        async fn update_vault_device_last_seen_at(
+            &self,
+            device_id: Uuid,
+            last_seen_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), VaultSyncError> {
+            let mut devices = self.devices.lock().await;
+            let device = devices
+                .get_mut(&device_id.to_string())
+                .ok_or_else(|| VaultSyncError::DeviceNotFound(device_id.to_string()))?;
+            device.last_seen_at = last_seen_at;
             Ok(())
         }
     }
@@ -2938,5 +2968,216 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, VaultSyncError::FileNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_save_file_content_for_webui_sync_client_only_denied() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "SyncClientOnlyVault".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: "device-1".to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+        let mut updated = vault.clone();
+        updated.write_policy = VaultWritePolicy::SyncClientOnly;
+        service.store.update_vault(&updated).await.unwrap();
+
+        let content = Bytes::from_static(b"text");
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/hello.md",
+            Some("text/markdown".to_string()),
+            content,
+            tenant_id,
+            owner_id,
+        )
+        .await;
+
+        let req = SaveVaultFileContentRequest {
+            content: "updated".to_string(),
+            expected_revision: 1,
+        };
+        let err = service
+            .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VaultSyncError::WritePolicyDenied { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_is_editable_file_txt_with_text_content_type() {
+        let file = VaultFile {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            vault_id: Uuid::new_v4(),
+            relative_path: "notes/hello.txt".to_string(),
+            content_type: Some("text/plain".to_string()),
+            sha256: None,
+            size: Some(10),
+            server_rev: 1,
+            mtime_client: None,
+            mtime_server: Utc::now(),
+            deleted: false,
+            deleted_at: None,
+            last_writer_device_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        assert!(VaultSyncService::<MockVaultStore, MockObjectStore>::is_editable_file(&file));
+    }
+
+    #[tokio::test]
+    async fn test_is_editable_file_txt_without_text_content_type() {
+        let file = VaultFile {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            vault_id: Uuid::new_v4(),
+            relative_path: "notes/data.txt".to_string(),
+            content_type: Some("application/octet-stream".to_string()),
+            sha256: None,
+            size: Some(10),
+            server_rev: 1,
+            mtime_client: None,
+            mtime_server: Utc::now(),
+            deleted: false,
+            deleted_at: None,
+            last_writer_device_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        assert!(!VaultSyncService::<MockVaultStore, MockObjectStore>::is_editable_file(&file));
+    }
+
+    #[tokio::test]
+    async fn test_save_file_content_for_webui_size_exceeded() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
+
+        let original = Bytes::from_static(b"original");
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/hello.md",
+            Some("text/markdown".to_string()),
+            original,
+            tenant_id,
+            owner_id,
+        )
+        .await;
+
+        let oversized = "x".repeat(
+            (VaultSyncService::<MockVaultStore, MockObjectStore>::MAX_WEBUI_EDIT_SIZE + 1) as usize,
+        );
+        let req = SaveVaultFileContentRequest {
+            content: oversized,
+            expected_revision: 1,
+        };
+        let err = service
+            .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VaultSyncError::NotEditable(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_file_content_for_webui_deleted_file() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
+
+        let device = test_device(owner_id, tenant_id);
+        service
+            .register_device(device.clone(), owner_id)
+            .await
+            .unwrap();
+
+        let content = Bytes::from_static(b"hello");
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/hello.md",
+            Some("text/markdown".to_string()),
+            content,
+            tenant_id,
+            owner_id,
+        )
+        .await;
+
+        service
+            .delete_file(
+                DeleteVaultFileRequest {
+                    vault_id: vault.id,
+                    relative_path: "notes/hello.md".to_string(),
+                    base_server_rev: 1,
+                    device_id: device.id.to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        let err = service
+            .get_file_content_for_webui(vault.id, "notes/hello.md", tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VaultSyncError::FileNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_save_file_content_for_webui_last_writer_device_id() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
+
+        let original = Bytes::from_static(b"original");
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/hello.md",
+            Some("text/markdown".to_string()),
+            original,
+            tenant_id,
+            owner_id,
+        )
+        .await;
+
+        let req = SaveVaultFileContentRequest {
+            content: "updated content".to_string(),
+            expected_revision: 1,
+        };
+        service
+            .save_file_content_for_webui(vault.id, "notes/hello.md", req, tenant_id, owner_id)
+            .await
+            .unwrap();
+
+        let device = service
+            .store
+            .get_webui_device(tenant_id, owner_id, vault.id)
+            .await
+            .unwrap()
+            .expect("WebUI device should exist");
+
+        let file = service
+            .store
+            .get_file_including_deleted(vault.id, "notes/hello.md", tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(file.last_writer_device_id, Some(device.id.to_string()));
     }
 }

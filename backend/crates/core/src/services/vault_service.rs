@@ -5,6 +5,7 @@
 
 use crate::domain::{Vault, VaultDevice, VaultFile};
 use crate::services::VaultSyncError;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Trait for vault storage operations.
@@ -130,5 +131,12 @@ pub trait VaultStore: Send + Sync {
         &self,
         device_id: &str,
         tenant_id: Uuid,
+    ) -> Result<(), VaultSyncError>;
+
+    /// Update the last_seen_at timestamp of a vault device to an explicit value.
+    async fn update_vault_device_last_seen_at(
+        &self,
+        device_id: Uuid,
+        last_seen_at: DateTime<Utc>,
     ) -> Result<(), VaultSyncError>;
 }

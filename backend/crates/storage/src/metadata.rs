@@ -3009,6 +3009,7 @@ impl MetadataStore {
             r#"
             INSERT INTO vault_devices (id, tenant_id, user_id, vault_id, device_name, client_type, client_version, last_sync_rev, revoked_at, created_at, last_seen_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT DO NOTHING
             "#,
             device.id,
             device.tenant_id,
@@ -3896,6 +3897,26 @@ impl MetadataStore {
             return Err(sqlx::Error::RowNotFound);
         }
 
+        Ok(())
+    }
+
+    /// Update the last_seen_at timestamp of a vault device to an explicit value.
+    pub async fn update_vault_device_last_seen_at(
+        &self,
+        device_id: Uuid,
+        last_seen_at: DateTime<Utc>,
+    ) -> sqlx::Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE vault_devices
+            SET last_seen_at = $1
+            WHERE id = $2
+            "#,
+            last_seen_at,
+            device_id,
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }
@@ -5679,5 +5700,15 @@ impl rustshare_core::services::VaultStore for MetadataStore {
                 sqlx::Error::RowNotFound => rustshare_core::services::VaultSyncError::DeviceRevoked,
                 _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
             })
+    }
+
+    async fn update_vault_device_last_seen_at(
+        &self,
+        device_id: uuid::Uuid,
+        last_seen_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.update_vault_device_last_seen_at(device_id, last_seen_at)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
     }
 }
