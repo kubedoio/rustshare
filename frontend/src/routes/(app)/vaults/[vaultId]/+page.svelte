@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { createQuery } from '$lib/query-compat';
-	import { getVault, getManifest } from '$lib/api/vaults';
-	import type { Vault, VaultManifest } from '$lib/api/types';
+	import { createQuery, createMutation } from '$lib/query-compat';
+	import { getVault, getManifest, updateVaultWritePolicy } from '$lib/api/vaults';
+	import { queryClient } from '$lib/query-client';
+	import type { Vault, VaultManifest, VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
-	import { Archive, ArrowLeft, FileText, Database, Trash2 } from 'lucide-svelte';
+	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
+	import { Archive, ArrowLeft, FileText, Database, Trash2, Pencil, Eye } from 'lucide-svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
+	import VaultFileEditor from '$lib/components/vaults/VaultFileEditor.svelte';
 
 	let vaultId = $derived($page.params.vaultId);
 
@@ -54,6 +57,30 @@
 	let errorMessage = $derived(
 		$vaultQuery.error?.message || $manifestQuery.error?.message || 'Unknown error'
 	);
+
+	let selectedFile = $state<VaultManifestEntry | null>(null);
+
+	function selectFile(file: VaultManifestEntry) {
+		selectedFile = file;
+	}
+
+	const writePolicyOptions: { value: VaultWritePolicy; label: string }[] = [
+		{ value: 'read_only', label: 'Read-only' },
+		{ value: 'web_editing_enabled', label: 'Web editing enabled' },
+		{ value: 'sync_client_only', label: 'Sync client only' }
+	];
+
+	const updatePolicyMutation = createMutation({
+		mutationFn: (policy: VaultWritePolicy) => updateVaultWritePolicy(vaultId!, policy),
+		onSuccess: (updatedVault) => {
+			queryClient.setQueryData(['vault', vaultId], updatedVault);
+		}
+	});
+
+	function onPolicyChange(event: Event) {
+		const select = event.target as HTMLSelectElement;
+		$updatePolicyMutation.mutate(select.value as VaultWritePolicy);
+	}
 </script>
 
 <svelte:head>
@@ -155,6 +182,26 @@
 			</div>
 		</div>
 
+		<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-4 shadow-sm">
+			<label for="vault-write-policy" class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
+				Write policy
+			</label>
+			<select
+				id="vault-write-policy"
+				class="mt-1 select select-sm select-bordered font-data text-sm"
+				value={vault.write_policy}
+				onchange={onPolicyChange}
+				disabled={$updatePolicyMutation.isPending}
+			>
+				{#each writePolicyOptions as option}
+					<option value={option.value}>{option.label}</option>
+				{/each}
+			</select>
+			{#if $updatePolicyMutation.isError}
+				<p class="mt-2 text-xs text-error">Failed to update policy. Please try again.</p>
+			{/if}
+		</div>
+
 		<!-- Manifest Files -->
 		<div class="space-y-3">
 			<h2 class="px-1 font-display text-2xl text-base-content">Manifest</h2>
@@ -162,8 +209,11 @@
 			{#if manifest && manifest.files.length > 0}
 				<div class="space-y-2">
 					{#each manifest.files as file}
-						<div
-							class="flex items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 shadow-sm"
+						<button
+							class="flex w-full items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 text-left shadow-sm transition-colors hover:bg-base-200/50"
+							class:ring-2={selectedFile?.path === file.path}
+							class:ring-brand-500={selectedFile?.path === file.path}
+							onclick={() => selectFile(file)}
 						>
 							<div
 								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-base-300/70 bg-base-200/70"
@@ -172,8 +222,10 @@
 							>
 								{#if file.deleted}
 									<Trash2 class="h-4 w-4" />
+								{:else if isEditableVaultFile(file)}
+									<Pencil class="h-4 w-4" />
 								{:else}
-									<FileText class="h-4 w-4" />
+									<Eye class="h-4 w-4" />
 								{/if}
 							</div>
 
@@ -206,7 +258,7 @@
 									{/if}
 								</div>
 							</div>
-						</div>
+						</button>
 					{/each}
 				</div>
 			{:else}
@@ -225,6 +277,10 @@
 					</p>
 				</div>
 			{/if}
+		</div>
+
+		<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 shadow-sm lg:p-8">
+			<VaultFileEditor vaultId={vaultId!} policy={vault.write_policy} file={selectedFile} />
 		</div>
 	{:else}
 		<ErrorState title="Vault not found" message="The requested vault does not exist." />
