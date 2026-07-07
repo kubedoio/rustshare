@@ -14,6 +14,7 @@ mod thumbnail;
 mod user;
 mod user_module_preference;
 mod user_session;
+mod mail_message;
 mod vault;
 
 pub use device_token::{DevicePairRequest, DeviceToken};
@@ -46,6 +47,7 @@ pub use vault::{
     VaultAdapter, VaultDevice, VaultFile, VaultFileContentResponse, VaultFileContentSavedResponse,
     VaultManifest, VaultManifestEntry, VaultManifestResult, VaultWritePolicy,
 };
+pub use mail_message::{MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility};
 
 use uuid::Uuid;
 
@@ -62,3 +64,9 @@ pub type ShareId = Uuid;
 pub type VersionId = Uuid;
 /// Unique identifier for a vault.
 pub type VaultId = Uuid;
+/// Unique identifier for a mail message.
+pub type MailMessageId = Uuid;
+/// Unique identifier for a mail message part.
+pub type MailMessagePartId = Uuid;
+/// Unique identifier for a mail attachment.
+pub type MailAttachmentId = Uuid;
