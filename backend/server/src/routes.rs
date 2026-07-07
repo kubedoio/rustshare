@@ -261,8 +261,10 @@ pub fn module_routes() -> Router<AppState> {
 
 pub fn mail_routes() -> Router<AppState> {
     use axum::routing::get;
-    Router::new()
-        .route("/api/v1/mail/messages", get(crate::handlers::mail::list_mail_messages))
+    Router::new().route(
+        "/api/v1/mail/messages",
+        get(crate::handlers::mail::list_mail_messages),
+    )
 }
 
 pub fn kanban_routes() -> Router<AppState> {

@@ -224,9 +224,9 @@ async fn init_services(
         Arc::clone(&object_store),
     ));
 
-    let mail_service = Arc::new(crate::services::mail_service::MailService::new(
-        Arc::clone(&metadata_store),
-    ));
+    let mail_service = Arc::new(crate::services::mail_service::MailService::new(Arc::clone(
+        &metadata_store,
+    )));
 
     let (
         file_service,

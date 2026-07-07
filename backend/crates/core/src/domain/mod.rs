@@ -2,6 +2,7 @@ mod device_token;
 mod file;
 mod file_version;
 mod folder;
+mod mail_message;
 mod module;
 mod notification;
 mod oidc_login_state;
@@ -14,7 +15,6 @@ mod thumbnail;
 mod user;
 mod user_module_preference;
 mod user_session;
-mod mail_message;
 mod vault;
 
 pub use device_token::{DevicePairRequest, DeviceToken};
@@ -22,6 +22,9 @@ pub use device_token::{DevicePairRequest, DeviceToken};
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
+pub use mail_message::{
+    MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility,
+};
 pub use module::{AiIndexingPolicy, AuditPolicy, Module, ModulePermissions};
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use oidc_login_state::OidcLoginState;
@@ -46,7 +49,6 @@ pub use vault::{
     Vault, VaultAdapter, VaultDevice, VaultFile, VaultManifest, VaultManifestEntry,
     VaultManifestResult,
 };
-pub use mail_message::{MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility};
 
 use uuid::Uuid;
 
