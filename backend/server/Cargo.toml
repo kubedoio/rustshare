@@ -182,6 +182,10 @@ path = "../tests/chat_integration_admin_authorization_test.rs"
 name = "e2e_sample"
 path = "tests/e2e_sample.rs"
 
+[[test]]
+name = "mail_import_test"
+path = "../tests/mail_import_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }
