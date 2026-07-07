@@ -8,8 +8,9 @@ use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     File, FileVersion, Folder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
     ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserSession, Vault,
-    VaultDevice, VaultFile,
+    VaultDevice, VaultFile, VaultWritePolicy,
 };
+use rustshare_core::services::VaultSyncError;
 use serde_json;
 use sqlx::PgPool;
 #[cfg(test)]
@@ -2981,6 +2982,31 @@ impl MetadataStore {
         Ok(vault.clone())
     }
 
+    /// Update only the write policy for a vault, leaving server_rev untouched.
+    pub async fn update_vault_write_policy(
+        &self,
+        vault_id: Uuid,
+        tenant_id: Uuid,
+        write_policy: &VaultWritePolicy,
+        updated_at: DateTime<Utc>,
+    ) -> sqlx::Result<Vault> {
+        sqlx::query_as!(
+            Vault,
+            r#"
+            UPDATE vaults
+            SET write_policy = $1, updated_at = $2
+            WHERE id = $3 AND tenant_id = $4
+            RETURNING id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, write_policy as "write_policy: _", server_rev, created_at, updated_at
+            "#,
+            write_policy.to_string(),
+            updated_at,
+            vault_id,
+            tenant_id,
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// Find an existing WebUI device for a user/vault pair.
     pub async fn get_webui_device(
         &self,
@@ -3417,6 +3443,97 @@ impl MetadataStore {
             }
             None => {
                 tx.rollback().await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Atomically increment vault revision and update an existing file ONLY if
+    /// the vault's write_policy is `web_editing_enabled` and the file's current
+    /// server_rev matches base_server_rev.
+    pub async fn update_vault_file_conditional_atomic_for_webui(
+        &self,
+        file: &VaultFile,
+        base_server_rev: i64,
+    ) -> Result<Option<VaultFile>, VaultSyncError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| VaultSyncError::Database(e.to_string()))?;
+
+        let rev_row = sqlx::query!(
+            r#"
+            UPDATE vaults SET server_rev = server_rev + 1, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2 AND write_policy = 'web_editing_enabled'
+            RETURNING server_rev
+            "#,
+            file.vault_id,
+            file.tenant_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| VaultSyncError::Database(e.to_string()))?;
+
+        let Some(rev_row) = rev_row else {
+            tx.rollback()
+                .await
+                .map_err(|e| VaultSyncError::Database(e.to_string()))?;
+            return Err(VaultSyncError::WritePolicyDenied {
+                policy: "web_editing_enabled".to_string(),
+            });
+        };
+
+        let row = sqlx::query!(
+            r#"
+            UPDATE vault_files
+            SET sha256 = $1, size = $2, server_rev = $3, mtime_server = NOW(),
+                updated_at = NOW(), last_writer_device_id = $4, content_type = $5
+            WHERE vault_id = $6 AND relative_path = $7 AND tenant_id = $8
+              AND server_rev = $9 AND deleted = false
+            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at
+            "#,
+            file.sha256,
+            file.size,
+            rev_row.server_rev,
+            file.last_writer_device_id,
+            file.content_type,
+            file.vault_id,
+            file.relative_path,
+            file.tenant_id,
+            base_server_rev,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| VaultSyncError::Database(e.to_string()))?;
+
+        match row {
+            Some(r) => {
+                tx.commit()
+                    .await
+                    .map_err(|e| VaultSyncError::Database(e.to_string()))?;
+                Ok(Some(VaultFile {
+                    id: r.id,
+                    tenant_id: r.tenant_id,
+                    vault_id: r.vault_id,
+                    relative_path: r.relative_path,
+                    content_type: r.content_type,
+                    sha256: r.sha256,
+                    size: r.size,
+                    server_rev: r.server_rev,
+                    mtime_client: r.mtime_client,
+                    mtime_server: r.mtime_server,
+                    deleted: r.deleted,
+                    deleted_at: r.deleted_at,
+                    last_writer_device_id: r.last_writer_device_id,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }))
+            }
+            None => {
+                tx.rollback()
+                    .await
+                    .map_err(|e| VaultSyncError::Database(e.to_string()))?;
                 Ok(None)
             }
         }
@@ -5512,6 +5629,18 @@ impl rustshare_core::services::VaultStore for MetadataStore {
             })
     }
 
+    async fn update_file_conditional_atomic_for_webui(
+        &self,
+        file: &rustshare_core::domain::VaultFile,
+        base_server_rev: i64,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.update_vault_file_conditional_atomic_for_webui(file, base_server_rev)
+            .await
+    }
+
     async fn tombstone_file_conditional_atomic(
         &self,
         vault_id: uuid::Uuid,
@@ -5646,6 +5775,19 @@ impl rustshare_core::services::VaultStore for MetadataStore {
     ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
     {
         self.update_vault(vault)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn update_vault_write_policy(
+        &self,
+        vault_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+        write_policy: &rustshare_core::domain::VaultWritePolicy,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.update_vault_write_policy(vault_id, tenant_id, write_policy, updated_at)
             .await
             .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
     }

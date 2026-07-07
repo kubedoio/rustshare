@@ -125,13 +125,13 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         tenant_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vault, VaultSyncError> {
-        let mut vault = self.store.get_vault(vault_id, tenant_id).await?;
+        let vault = self.store.get_vault(vault_id, tenant_id).await?;
         if vault.owner_user_id != user_id {
             return Err(VaultSyncError::Unauthorized);
         }
-        vault.write_policy = write_policy;
-        vault.updated_at = Utc::now();
-        self.store.update_vault(&vault).await
+        self.store
+            .update_vault_write_policy(vault_id, tenant_id, &write_policy, Utc::now())
+            .await
     }
 
     const MAX_WEBUI_EDIT_SIZE: i64 = 1024 * 1024; // 1 MiB
@@ -517,7 +517,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         let updated = self
             .store
-            .update_file_conditional_atomic(
+            .update_file_conditional_atomic_for_webui(
                 &VaultFile {
                     id: file.id,
                     tenant_id,
@@ -1106,6 +1106,38 @@ mod tests {
             Ok(Some(entry.clone()))
         }
 
+        async fn update_file_conditional_atomic_for_webui(
+            &self,
+            file: &VaultFile,
+            base_server_rev: i64,
+        ) -> Result<Option<VaultFile>, VaultSyncError> {
+            let mut vaults = self.vaults.lock().await;
+            let mut files = self.files.lock().await;
+            let vault = vaults
+                .get_mut(&file.vault_id)
+                .ok_or(VaultSyncError::VaultNotFound(file.vault_id))?;
+            if vault.write_policy != VaultWritePolicy::WebEditingEnabled {
+                return Err(VaultSyncError::WritePolicyDenied {
+                    policy: vault.write_policy.to_string(),
+                });
+            }
+            let entry = files
+                .get_mut(&(file.vault_id, file.relative_path.clone()))
+                .ok_or_else(|| VaultSyncError::FileNotFound(file.relative_path.clone()))?;
+            if entry.server_rev != base_server_rev || entry.deleted {
+                return Ok(None);
+            }
+            vault.server_rev += 1;
+            entry.sha256 = file.sha256.clone();
+            entry.size = file.size;
+            entry.server_rev = vault.server_rev;
+            entry.mtime_server = file.mtime_server;
+            entry.updated_at = file.updated_at;
+            entry.last_writer_device_id = file.last_writer_device_id.clone();
+            entry.content_type = file.content_type.clone();
+            Ok(Some(entry.clone()))
+        }
+
         async fn tombstone_file_conditional_atomic(
             &self,
             vault_id: Uuid,
@@ -1234,6 +1266,25 @@ mod tests {
                 return Err(VaultSyncError::VaultNotFound(vault.id));
             }
             *entry = vault.clone();
+            Ok(entry.clone())
+        }
+
+        async fn update_vault_write_policy(
+            &self,
+            vault_id: Uuid,
+            tenant_id: Uuid,
+            write_policy: &VaultWritePolicy,
+            updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vault, VaultSyncError> {
+            let mut vaults = self.vaults.lock().await;
+            let entry = vaults
+                .get_mut(&vault_id)
+                .ok_or(VaultSyncError::VaultNotFound(vault_id))?;
+            if entry.tenant_id != tenant_id {
+                return Err(VaultSyncError::VaultNotFound(vault_id));
+            }
+            entry.write_policy = *write_policy;
+            entry.updated_at = updated_at;
             Ok(entry.clone())
         }
 
@@ -2709,6 +2760,154 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(VaultSyncError::VaultNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_update_vault_write_policy_preserves_server_rev() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "Policy Rev Preserve".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: Uuid::new_v4().to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        // Bump server_rev by uploading a file through the non-WebUI path.
+        let content = Bytes::from_static(b"hello");
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/hello.md",
+            Some("text/markdown".to_string()),
+            content,
+            tenant_id,
+            owner_id,
+        )
+        .await;
+        let vault_after_upload = service
+            .get_vault(vault.id, tenant_id, owner_id)
+            .await
+            .unwrap();
+        assert!(vault_after_upload.server_rev > vault.server_rev);
+
+        // Update write policy and assert server_rev is preserved.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let updated = service
+            .update_vault_write_policy(
+                vault.id,
+                VaultWritePolicy::WebEditingEnabled,
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.write_policy, VaultWritePolicy::WebEditingEnabled);
+        assert!(updated.updated_at > vault_after_upload.updated_at);
+        assert_eq!(updated.server_rev, vault_after_upload.server_rev);
+    }
+
+    #[tokio::test]
+    async fn test_update_file_conditional_atomic_for_webui_denies_non_web_policy() {
+        let (store, _, _) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = Vault {
+            id: Uuid::new_v4(),
+            tenant_id,
+            owner_user_id: owner_id,
+            name: "ReadOnlyVault".to_string(),
+            adapter: VaultAdapter::ObsidianVault,
+            root_path: None,
+            write_policy: VaultWritePolicy::ReadOnly,
+            server_rev: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.create_vault(&vault).await.unwrap();
+
+        let file = VaultFile {
+            id: Uuid::new_v4(),
+            tenant_id,
+            vault_id: vault.id,
+            relative_path: "notes/hello.md".to_string(),
+            content_type: Some("text/markdown".to_string()),
+            sha256: Some("abc".to_string()),
+            size: Some(3),
+            server_rev: 1,
+            mtime_client: None,
+            mtime_server: Utc::now(),
+            deleted: false,
+            deleted_at: None,
+            last_writer_device_id: Some("device".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.insert_file_atomic(&file).await.unwrap();
+
+        let err = store
+            .update_file_conditional_atomic_for_webui(&file, 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VaultSyncError::WritePolicyDenied { policy } if policy == "read_only"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_update_file_conditional_atomic_for_webui_allows_web_policy() {
+        let (store, _, _) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = Vault {
+            id: Uuid::new_v4(),
+            tenant_id,
+            owner_user_id: owner_id,
+            name: "WebEditableVault".to_string(),
+            adapter: VaultAdapter::ObsidianVault,
+            root_path: None,
+            write_policy: VaultWritePolicy::WebEditingEnabled,
+            server_rev: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.create_vault(&vault).await.unwrap();
+
+        let file = VaultFile {
+            id: Uuid::new_v4(),
+            tenant_id,
+            vault_id: vault.id,
+            relative_path: "notes/hello.md".to_string(),
+            content_type: Some("text/markdown".to_string()),
+            sha256: Some("abc".to_string()),
+            size: Some(3),
+            server_rev: 1,
+            mtime_client: None,
+            mtime_server: Utc::now(),
+            deleted: false,
+            deleted_at: None,
+            last_writer_device_id: Some("device".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let inserted = store.insert_file_atomic(&file).await.unwrap();
+
+        let updated = store
+            .update_file_conditional_atomic_for_webui(&inserted, inserted.server_rev)
+            .await
+            .unwrap()
+            .expect("update should succeed");
+        assert_eq!(updated.server_rev, inserted.server_rev + 1);
     }
 
     async fn create_web_editable_vault(
