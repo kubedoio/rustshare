@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::domain::{
     CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest, UploadVaultFileRequest,
     Vault, VaultDevice, VaultFile, VaultManifest, VaultManifestEntry, VaultManifestResult,
+    VaultWritePolicy,
 };
 use crate::services::{ObjectStoreOps, VaultStore, VaultSyncError};
 
@@ -73,6 +74,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             name,
             adapter: req.adapter,
             root_path: Some(root_path),
+            write_policy: VaultWritePolicy::ReadOnly,
             server_rev: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -36,6 +36,44 @@ impl std::str::FromStr for VaultAdapter {
     }
 }
 
+/// Write policy controlling who may modify a vault's files.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[sqlx(type_name = "VARCHAR", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum VaultWritePolicy {
+    /// No WebUI writes. This is the default.
+    ReadOnly,
+    /// WebUI may edit eligible files.
+    WebEditingEnabled,
+    /// Only sync clients may write; WebUI remains read-only.
+    SyncClientOnly,
+}
+
+impl std::fmt::Display for VaultWritePolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VaultWritePolicy::ReadOnly => write!(f, "read_only"),
+            VaultWritePolicy::WebEditingEnabled => write!(f, "web_editing_enabled"),
+            VaultWritePolicy::SyncClientOnly => write!(f, "sync_client_only"),
+        }
+    }
+}
+
+impl std::str::FromStr for VaultWritePolicy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "read_only" => Ok(VaultWritePolicy::ReadOnly),
+            "web_editing_enabled" => Ok(VaultWritePolicy::WebEditingEnabled),
+            "sync_client_only" => Ok(VaultWritePolicy::SyncClientOnly),
+            _ => Err(format!("Invalid vault write policy: {}", s)),
+        }
+    }
+}
+
 /// A syncable vault container.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Vault {
@@ -45,6 +83,7 @@ pub struct Vault {
     pub name: String,
     pub adapter: VaultAdapter,
     pub root_path: Option<String>,
+    pub write_policy: VaultWritePolicy,
     pub server_rev: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -160,6 +199,31 @@ pub struct VaultManifestEntry {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// Request to save vault file content from the WebUI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SaveVaultFileContentRequest {
+    pub content: String,
+    pub expected_revision: i64,
+}
+
+/// Response when loading vault file content for the WebUI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct VaultFileContentResponse {
+    pub path: String,
+    pub content: String,
+    pub server_rev: i64,
+    pub content_type: Option<String>,
+    pub size: i64,
+}
+
+/// Response after saving vault file content from the WebUI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct VaultFileContentSavedResponse {
+    pub path: String,
+    pub server_rev: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +249,30 @@ mod tests {
         let s = adapter.to_string();
         let parsed = VaultAdapter::from_str(&s).unwrap();
         assert_eq!(adapter, parsed);
+    }
+
+    #[test]
+    fn test_vault_write_policy_display() {
+        assert_eq!(VaultWritePolicy::ReadOnly.to_string(), "read_only");
+        assert_eq!(VaultWritePolicy::WebEditingEnabled.to_string(), "web_editing_enabled");
+        assert_eq!(VaultWritePolicy::SyncClientOnly.to_string(), "sync_client_only");
+    }
+
+    #[test]
+    fn test_vault_write_policy_from_str() {
+        assert_eq!(VaultWritePolicy::from_str("read_only").unwrap(), VaultWritePolicy::ReadOnly);
+        assert_eq!(
+            VaultWritePolicy::from_str("web_editing_enabled").unwrap(),
+            VaultWritePolicy::WebEditingEnabled
+        );
+        assert!(VaultWritePolicy::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn test_vault_write_policy_roundtrip() {
+        let policy = VaultWritePolicy::WebEditingEnabled;
+        let s = policy.to_string();
+        let parsed = VaultWritePolicy::from_str(&s).unwrap();
+        assert_eq!(policy, parsed);
     }
 }

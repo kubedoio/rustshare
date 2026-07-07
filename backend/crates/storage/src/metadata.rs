@@ -2939,8 +2939,8 @@ impl MetadataStore {
     pub async fn create_vault(&self, vault: &Vault) -> sqlx::Result<Vault> {
         sqlx::query!(
             r#"
-            INSERT INTO vaults (id, tenant_id, owner_user_id, name, adapter, root_path, server_rev, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO vaults (id, tenant_id, owner_user_id, name, adapter, root_path, write_policy, server_rev, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
             vault.id,
             vault.tenant_id,
@@ -2948,6 +2948,7 @@ impl MetadataStore {
             vault.name,
             vault.adapter.to_string(),
             vault.root_path,
+            vault.write_policy.to_string(),
             vault.server_rev,
             vault.created_at,
             vault.updated_at,
@@ -2963,7 +2964,7 @@ impl MetadataStore {
         let vault = sqlx::query_as!(
             Vault,
             r#"
-            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, server_rev, created_at, updated_at
+            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, write_policy as "write_policy: _", server_rev, created_at, updated_at
             FROM vaults
             WHERE id = $1 AND tenant_id = $2
             "#,
@@ -2980,7 +2981,7 @@ impl MetadataStore {
         let vaults = sqlx::query_as!(
             Vault,
             r#"
-            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, server_rev, created_at, updated_at
+            SELECT id, tenant_id, owner_user_id, name, adapter as "adapter: _", root_path, write_policy as "write_policy: _", server_rev, created_at, updated_at
             FROM vaults
             WHERE tenant_id = $1 AND owner_user_id = $2
             ORDER BY name ASC
