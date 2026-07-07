@@ -3,12 +3,7 @@ use uuid::Uuid;
 
 #[test]
 fn mail_message_defaults_to_private_visibility_and_eml_upload() {
-    let msg = MailMessage::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        "eml_upload",
-    );
+    let msg = MailMessage::new(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), "eml_upload");
     assert_eq!(msg.visibility, "private");
     assert_eq!(msg.source_mode, "eml_upload");
     assert!(!msg.has_attachments);
