@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct MailService {
+    #[allow(dead_code)]
     metadata_store: Arc<MetadataStore>,
 }
 
