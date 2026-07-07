@@ -135,6 +135,26 @@ fn default_modules() -> Vec<(
                 "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
             }),
         ),
+        (
+            "mail",
+            "Mail",
+            "Import, archive, and reference email inside RustShare workspaces.",
+            "/Workspace/Mail",
+            "mail-list",
+            "template_default_mail_list",
+            "mail",
+            false,
+            json!({
+                "sidebar": {
+                    "enabled": true,
+                    "icon": "mail",
+                    "order": 60
+                },
+                "dashboard": {
+                    "enabled": true
+                }
+            }),
+        ),
     ]
 }
 
