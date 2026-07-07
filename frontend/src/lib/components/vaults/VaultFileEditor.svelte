@@ -4,7 +4,7 @@
 	import { queryClient } from '$lib/query-client';
 	import type { VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
-	import { Save, CircleAlert, Check, Loader } from 'lucide-svelte';
+	import { Save, CircleAlert, Check, Loader, RotateCcw } from 'lucide-svelte';
 
 	interface Props {
 		vaultId: string;
@@ -15,12 +15,19 @@
 	let { vaultId, policy, file }: Props = $props();
 
 	let localContent = $state('');
-	let loadedRev = $state<number | null>(null);
+	// Revision the user is editing against; sent as expected_revision.
+	let editBaseRev = $state<number | null>(null);
+	// Latest known server revision, updated by refetches without resetting the editor.
+	let currentServerRev = $state<number | null>(null);
 	let saveError = $state<string | null>(null);
 	let saveSuccess = $state(false);
 	let successTimeout = $state<ReturnType<typeof setTimeout> | null>(null);
 	let loadedContent = $state<string | null>(null);
+	let loadedPath = $state<string | null>(null);
 	let dirty = $derived(file !== null && localContent !== (loadedContent ?? ''));
+	let hasConflict = $derived(
+		editBaseRev !== null && currentServerRev !== null && editBaseRev !== currentServerRev
+	);
 
 	const contentQuery = $derived(
 		createQuery({
@@ -30,12 +37,38 @@
 		})
 	);
 
+	// Reset editor state when the selected file changes so we never save the
+	// previous file's content/revision against a newly selected path.
+	$effect(() => {
+		const selectedPath = file?.path ?? null;
+		if (selectedPath !== loadedPath) {
+			localContent = '';
+			loadedContent = null;
+			editBaseRev = null;
+			currentServerRev = null;
+			loadedPath = selectedPath;
+			saveError = null;
+			saveSuccess = false;
+		}
+	});
+
+	// Hydrate the editor from the query result. On a fresh file load we copy
+	// server content into the editor. On refetch we only update the latest
+	// known server revision so dirty local edits are preserved. We never
+	// downgrade currentServerRev from cached data to avoid false conflicts
+	// after a successful save.
 	$effect(() => {
 		const data = $contentQuery.data;
-		if (data) {
-			localContent = data.content;
-			loadedContent = data.content;
-			loadedRev = data.server_rev;
+		if (data && file && data.path === file.path && file.path === loadedPath) {
+			if (editBaseRev === null) {
+				localContent = data.content;
+				loadedContent = data.content;
+				editBaseRev = data.server_rev;
+				currentServerRev = data.server_rev;
+			} else {
+				currentServerRev =
+					currentServerRev === null ? data.server_rev : Math.max(currentServerRev, data.server_rev);
+			}
 			saveError = null;
 			saveSuccess = false;
 		}
@@ -43,14 +76,16 @@
 
 	const saveMutation = createMutation({
 		mutationFn: () => {
-			if (!file || loadedRev === null) throw new Error('No file loaded');
+			if (!file || editBaseRev === null) throw new Error('No file loaded');
+			if (hasConflict) throw new Error('File changed since opened');
 			return saveVaultFileContent(vaultId, file.path, {
 				content: localContent,
-				expected_revision: loadedRev
+				expected_revision: editBaseRev
 			});
 		},
 		onSuccess: (data) => {
-			loadedRev = data.server_rev;
+			editBaseRev = data.server_rev;
+			currentServerRev = data.server_rev;
 			loadedContent = localContent;
 			saveSuccess = true;
 			saveError = null;
@@ -69,6 +104,12 @@
 		}
 	});
 
+	function reloadFromServer() {
+		editBaseRev = null;
+		loadedContent = null;
+		queryClient.invalidateQueries({ queryKey: ['vault-file-content', vaultId, file?.path] });
+	}
+
 	$effect(() => {
 		return () => {
 			if (successTimeout) clearTimeout(successTimeout);
@@ -78,7 +119,9 @@
 	const canEdit = $derived(
 		file !== null && isEditableVaultFile(file) && isEditableVaultPolicy(policy)
 	);
-	const canSave = $derived(canEdit && dirty && loadedRev !== null && !$saveMutation.isPending);
+	const canSave = $derived(
+		canEdit && dirty && editBaseRev !== null && !hasConflict && !$saveMutation.isPending
+	);
 
 	function handleKeyDown(event: KeyboardEvent) {
 		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
@@ -105,11 +148,14 @@
 			<div>
 				<h3 class="font-display text-lg">{file.path}</h3>
 				<p class="text-xs text-base-content/50">
-					rev {loadedRev ?? file.server_rev}
+					rev {currentServerRev ?? file.server_rev}
 					{#if !isEditableVaultPolicy(policy)}
 						<span class="ml-2 rounded-full bg-warning/10 px-2 py-0.5 text-warning"
 							>read-only vault</span
 						>
+					{/if}
+					{#if hasConflict}
+						<span class="ml-2 rounded-full bg-error/10 px-2 py-0.5 text-error">stale</span>
 					{/if}
 				</p>
 			</div>
@@ -137,6 +183,21 @@
 			>
 				<CircleAlert class="mt-0.5 h-4 w-4 shrink-0" />
 				<span>{saveError}</span>
+			</div>
+		{/if}
+
+		{#if hasConflict}
+			<div
+				class="flex items-start justify-between gap-3 rounded-xl border border-warning/20 bg-warning/10 p-3 text-sm text-warning"
+			>
+				<div class="flex items-start gap-2">
+					<CircleAlert class="mt-0.5 h-4 w-4 shrink-0" />
+					<span>This file changed since you opened it. Reload to see the latest version.</span>
+				</div>
+				<button class="btn btn-warning btn-xs rounded-lg" onclick={reloadFromServer}>
+					<RotateCcw class="h-3 w-3" />
+					<span>Reload</span>
+				</button>
 			</div>
 		{/if}
 

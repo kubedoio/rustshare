@@ -174,4 +174,173 @@ describe('VaultFileEditor', () => {
 			expect(screen.getByText('You do not have permission to edit this file.')).toBeTruthy();
 		});
 	});
+
+	it('preserves dirty editor content when the query refetches a newer revision', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Hello',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 7
+			})
+			.mockResolvedValue({
+				path: 'note.md',
+				content: '# Changed elsewhere',
+				server_rev: 2,
+				content_type: 'text/markdown',
+				size: 19
+			});
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# Local edit' } });
+
+		queryClient.invalidateQueries({ queryKey: ['vault-file-content', 'v1', 'note.md'] });
+
+		await waitFor(() => {
+			expect(vaultsApi.getVaultFileContent).toHaveBeenCalledWith('v1', 'note.md');
+			expect(vi.mocked(vaultsApi.getVaultFileContent).mock.calls.length).toBeGreaterThanOrEqual(2);
+		});
+
+		expect(screen.getByDisplayValue('# Local edit')).toBeTruthy();
+		await waitFor(() => {
+			expect(screen.getByText('stale')).toBeTruthy();
+		});
+	});
+
+	it('resets loaded revision when switching files and saves with the new file revision', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Hello',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 7
+			})
+			.mockResolvedValueOnce({
+				path: 'other.md',
+				content: '# Other',
+				server_rev: 10,
+				content_type: 'text/markdown',
+				size: 7
+			});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockResolvedValueOnce({
+			path: 'other.md',
+			server_rev: 11,
+			updated_at: '2026-07-07T00:00:00Z'
+		});
+
+		const file1: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		const { rerender } = render(VaultFileEditor, {
+			props: { vaultId: 'v1', policy: 'web_editing_enabled', file: file1 }
+		});
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# Edited note' } });
+
+		const file2: VaultManifestEntry = {
+			path: 'other.md',
+			server_rev: 10,
+			mtime_server: '',
+			deleted: false
+		};
+		await rerender({ vaultId: 'v1', policy: 'web_editing_enabled', file: file2 });
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('# Other')).toBeTruthy();
+		});
+
+		const textarea2 = screen.getByRole('textbox');
+		await fireEvent.input(textarea2, { target: { value: '# Edited other' } });
+
+		const saveButton = screen.getByRole('button', { name: /save/i });
+		await fireEvent.click(saveButton);
+
+		await waitFor(() => {
+			expect(vaultsApi.saveVaultFileContent).toHaveBeenCalledWith('v1', 'other.md', {
+				content: '# Edited other',
+				expected_revision: 10
+			});
+		});
+	});
+
+	it('ignores stale content responses from a previously selected file', async () => {
+		let resolveFirst: (value: Awaited<ReturnType<typeof vaultsApi.getVaultFileContent>>) => void;
+		let resolveSecond: (value: Awaited<ReturnType<typeof vaultsApi.getVaultFileContent>>) => void;
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveFirst = resolve;
+				})
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveSecond = resolve;
+				})
+			);
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockResolvedValueOnce({
+			path: 'other.md',
+			server_rev: 11,
+			updated_at: '2026-07-07T00:00:00Z'
+		});
+
+		const file1: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		const { rerender } = render(VaultFileEditor, {
+			props: { vaultId: 'v1', policy: 'web_editing_enabled', file: file1 }
+		});
+
+		const file2: VaultManifestEntry = {
+			path: 'other.md',
+			server_rev: 10,
+			mtime_server: '',
+			deleted: false
+		};
+		await rerender({ vaultId: 'v1', policy: 'web_editing_enabled', file: file2 });
+
+		resolveFirst!({
+			path: 'note.md',
+			content: '# Stale note',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 12
+		});
+		resolveSecond!({
+			path: 'other.md',
+			content: '# Other',
+			server_rev: 10,
+			content_type: 'text/markdown',
+			size: 7
+		});
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Other'));
+		expect(screen.queryByDisplayValue('# Stale note')).toBeNull();
+
+		await fireEvent.input(textarea, { target: { value: '# Edited other' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		await waitFor(() => {
+			expect(vaultsApi.saveVaultFileContent).toHaveBeenCalledWith('v1', 'other.md', {
+				content: '# Edited other',
+				expected_revision: 10
+			});
+		});
+	});
 });
