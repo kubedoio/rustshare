@@ -105,6 +105,23 @@ pub trait VaultStore: Send + Sync {
         vault_id: Uuid,
     ) -> Result<VaultDevice, VaultSyncError>;
 
+    /// Update an existing vault.
+    async fn update_vault(&self, vault: &Vault) -> Result<Vault, VaultSyncError>;
+
+    /// Look up an existing WebUI device for a user/vault pair.
+    async fn get_webui_device(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        vault_id: Uuid,
+    ) -> Result<Option<VaultDevice>, VaultSyncError>;
+
+    /// Create a WebUI device row for a vault.
+    async fn create_webui_device(
+        &self,
+        device: &VaultDevice,
+    ) -> Result<VaultDevice, VaultSyncError>;
+
     /// Revoke a device.
     async fn revoke_device(&self, device_id: Uuid, tenant_id: Uuid) -> Result<(), VaultSyncError>;
 

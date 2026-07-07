@@ -5619,6 +5619,40 @@ impl rustshare_core::services::VaultStore for MetadataStore {
         }
     }
 
+    async fn update_vault(
+        &self,
+        vault: &rustshare_core::domain::Vault,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.update_vault(vault)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn get_webui_device(
+        &self,
+        tenant_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        vault_id: uuid::Uuid,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultDevice>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.get_webui_device(tenant_id, user_id, vault_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn create_webui_device(
+        &self,
+        device: &rustshare_core::domain::VaultDevice,
+    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
+    {
+        self.create_webui_device(device)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
     async fn revoke_device(
         &self,
         device_id: uuid::Uuid,
