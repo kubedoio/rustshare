@@ -1,0 +1,179 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_mode, source_folder, source_uid,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "source_folder",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_uid",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "message_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "in_reply_to",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "references",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 9,
+        "name": "subject",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "from_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "from_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "to_addresses",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 13,
+        "name": "cc_addresses",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 14,
+        "name": "bcc_addresses",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "sent_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "imported_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "imported_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 18,
+        "name": "visibility",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
+        "name": "object_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "blob_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "blob_sha256",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 22,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "has_attachments",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 24,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 25,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 26,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5324b0d4b0125011a6501e20364ab0339bd4ec4e401abf1abeb22d3d5f97a224"
+}
