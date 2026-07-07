@@ -2626,6 +2626,91 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_update_vault_write_policy_success() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "Policy Test Vault".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: Uuid::new_v4().to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        // Ensure updated_at has a chance to advance.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let updated = service
+            .update_vault_write_policy(
+                vault.id,
+                VaultWritePolicy::WebEditingEnabled,
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.write_policy, VaultWritePolicy::WebEditingEnabled);
+        assert!(updated.updated_at > vault.updated_at);
+    }
+
+    #[tokio::test]
+    async fn test_update_vault_write_policy_unauthorized() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = service
+            .create_vault(
+                CreateVaultRequest {
+                    name: "Policy Test Vault".to_string(),
+                    adapter: VaultAdapter::ObsidianVault,
+                    client_vault_id: None,
+                    device_id: Uuid::new_v4().to_string(),
+                },
+                tenant_id,
+                owner_id,
+            )
+            .await
+            .unwrap();
+
+        let other_user = Uuid::new_v4();
+        let result = service
+            .update_vault_write_policy(
+                vault.id,
+                VaultWritePolicy::WebEditingEnabled,
+                tenant_id,
+                other_user,
+            )
+            .await;
+
+        assert!(matches!(result, Err(VaultSyncError::Unauthorized)));
+    }
+
+    #[tokio::test]
+    async fn test_update_vault_write_policy_vault_not_found() {
+        let (_, _, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let result = service
+            .update_vault_write_policy(
+                Uuid::new_v4(),
+                VaultWritePolicy::WebEditingEnabled,
+                tenant_id,
+                owner_id,
+            )
+            .await;
+
+        assert!(matches!(result, Err(VaultSyncError::VaultNotFound(_))));
+    }
+
     async fn create_web_editable_vault(
         service: &VaultSyncService<MockVaultStore, MockObjectStore>,
         tenant_id: Uuid,
