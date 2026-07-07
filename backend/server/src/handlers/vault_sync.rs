@@ -24,8 +24,8 @@ use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 use rustshare_core::domain::{
     CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest,
-    SaveVaultFileContentRequest, Vault, VaultDevice, VaultFileContentResponse,
-    VaultFileContentSavedResponse,
+    SaveVaultFileContentRequest, UpdateVaultWritePolicyRequest, Vault, VaultDevice,
+    VaultFileContentResponse, VaultFileContentSavedResponse,
 };
 
 // ============================================================================
@@ -177,6 +177,35 @@ pub async fn get_vault(
     let vault = state
         .vault_sync_service
         .get_vault(vault_id, auth.tenant_id, auth.user_id)
+        .await?;
+    Ok(Json(vault))
+}
+
+/// Update the write policy for a vault.
+///
+/// PATCH /api/vault-sync/v1/vaults/:vault_id/write-policy
+#[utoipa::path(
+    patch,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/write-policy",
+    tag = "Vault Sync",
+    request_body = UpdateVaultWritePolicyRequest,
+    params(("vault_id" = Uuid, Path, description = "Vault Id")),
+    responses(
+        (status = 200, description = "Success", body = Vault),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn update_vault_write_policy(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(vault_id): Path<Uuid>,
+    Json(req): Json<UpdateVaultWritePolicyRequest>,
+) -> Result<Json<Vault>, AppError> {
+    let vault = state
+        .vault_sync_service
+        .update_vault_write_policy(vault_id, req.write_policy, auth.tenant_id, auth.user_id)
         .await?;
     Ok(Json(vault))
 }

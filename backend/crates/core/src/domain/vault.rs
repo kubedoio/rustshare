@@ -134,6 +134,12 @@ pub struct CreateVaultRequest {
     pub device_id: String,
 }
 
+/// Request to update a vault's write policy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UpdateVaultWritePolicyRequest {
+    pub write_policy: VaultWritePolicy,
+}
+
 /// Request to upload a file into a vault.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UploadVaultFileRequest {

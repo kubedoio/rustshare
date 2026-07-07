@@ -1097,7 +1097,7 @@ pub fn public_share_routes() -> Router<AppState> {
 /// `VaultSyncUpload` based on method and path.
 pub fn vault_sync_routes() -> Router<AppState> {
     use axum::extract::DefaultBodyLimit;
-    use axum::routing::{delete, get, post, put};
+    use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route(
             "/api/vault-sync/v1/vaults",
@@ -1110,6 +1110,10 @@ pub fn vault_sync_routes() -> Router<AppState> {
         .route(
             "/api/vault-sync/v1/vaults/{vault_id}",
             get(crate::handlers::vault_sync::get_vault),
+        )
+        .route(
+            "/api/vault-sync/v1/vaults/{vault_id}/write-policy",
+            patch(crate::handlers::vault_sync::update_vault_write_policy),
         )
         .route(
             "/api/vault-sync/v1/vaults/{vault_id}/manifest",

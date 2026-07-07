@@ -117,6 +117,23 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         self.store.list_vaults(tenant_id, user_id).await
     }
 
+    /// Update the write policy for a vault.
+    pub async fn update_vault_write_policy(
+        &self,
+        vault_id: Uuid,
+        write_policy: VaultWritePolicy,
+        tenant_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vault, VaultSyncError> {
+        let mut vault = self.store.get_vault(vault_id, tenant_id).await?;
+        if vault.owner_user_id != user_id {
+            return Err(VaultSyncError::Unauthorized);
+        }
+        vault.write_policy = write_policy;
+        vault.updated_at = Utc::now();
+        self.store.update_vault(&vault).await
+    }
+
     const MAX_WEBUI_EDIT_SIZE: i64 = 1024 * 1024; // 1 MiB
     const WEBUI_DEVICE_TYPE: &str = "web_ui";
     const WEBUI_DEVICE_NAME: &str = "RustShare Web UI";

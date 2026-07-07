@@ -10422,6 +10422,80 @@
         }
       }
     },
+    "/api/vault-sync/v1/vaults/{vault_id}/write-policy": {
+      "patch": {
+        "tags": [
+          "Vault Sync"
+        ],
+        "summary": "Update the write policy for a vault.",
+        "description": "PATCH /api/vault-sync/v1/vaults/:vault_id/write-policy",
+        "operationId": "update_vault_write_policy",
+        "parameters": [
+          {
+            "name": "vault_id",
+            "in": "path",
+            "description": "Vault Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVaultWritePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Vault"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/ready": {
       "get": {
         "tags": [
@@ -18884,6 +18958,18 @@
               "null"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "UpdateVaultWritePolicyRequest": {
+        "type": "object",
+        "description": "Request to update a vault's write policy.",
+        "required": [
+          "write_policy"
+        ],
+        "properties": {
+          "write_policy": {
+            "$ref": "#/components/schemas/VaultWritePolicy"
           }
         }
       },
