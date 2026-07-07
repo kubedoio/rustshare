@@ -1,6 +1,5 @@
-import { ApiClient } from './client';
+import { ApiClient, getCsrfToken } from './client';
 import { ApiError } from './types';
-import { getCsrfToken } from './client';
 import type {
 	Vault,
 	VaultManifest,
@@ -17,13 +16,6 @@ const VAULT_SYNC_BASE_URL =
 	(import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1').replace(/\/api\/v1$/, '') +
 	'/api/vault-sync/v1';
 const vaultSyncClient = new ApiClient(VAULT_SYNC_BASE_URL);
-
-function vaultFileContentUrl(vaultId: string, path: string): URL {
-	return new URL(
-		`/vaults/${vaultId}/content/${encodeURIComponent(path)}`,
-		VAULT_SYNC_BASE_URL
-	);
-}
 
 export async function createVault(req: CreateVaultRequest): Promise<Vault> {
 	return vaultSyncClient.post<Vault>('/vaults', req);
@@ -111,15 +103,13 @@ export async function registerVaultDevice(
 	});
 }
 
-export async function getVaultFileContent(vaultId: string, path: string): Promise<VaultFileContent> {
-	const response = await fetch(vaultFileContentUrl(vaultId, path).toString(), {
-		headers: {
-			Authorization: `Bearer ${sessionStorage.getItem('rustshare.websocket_token') || ''}`
-		},
-		credentials: 'include'
-	});
-	if (!response.ok) throw new ApiError(response.status, `Load failed: ${response.status}`);
-	return response.json();
+export async function getVaultFileContent(
+	vaultId: string,
+	path: string
+): Promise<VaultFileContent> {
+	return vaultSyncClient.get<VaultFileContent>(
+		`/vaults/${vaultId}/content/${encodeURIComponent(path)}`
+	);
 }
 
 export async function saveVaultFileContent(
@@ -127,37 +117,17 @@ export async function saveVaultFileContent(
 	path: string,
 	req: SaveVaultFileContentRequest
 ): Promise<SaveVaultFileContentResponse> {
-	const response = await fetch(vaultFileContentUrl(vaultId, path).toString(), {
-		method: 'PUT',
-		headers: {
-			Authorization: `Bearer ${sessionStorage.getItem('rustshare.websocket_token') || ''}`,
-			'Content-Type': 'application/json',
-			'X-Rustshare-Csrf': getCsrfToken() || ''
-		},
-		body: JSON.stringify(req),
-		credentials: 'include'
-	});
-	if (!response.ok) throw new ApiError(response.status, `Save failed: ${response.status}`);
-	return response.json();
+	return vaultSyncClient.put<SaveVaultFileContentResponse>(
+		`/vaults/${vaultId}/content/${encodeURIComponent(path)}`,
+		req
+	);
 }
 
 export async function updateVaultWritePolicy(
 	vaultId: string,
 	writePolicy: VaultWritePolicy
 ): Promise<Vault> {
-	const response = await fetch(
-		new URL(`/vaults/${vaultId}/write-policy`, VAULT_SYNC_BASE_URL).toString(),
-		{
-			method: 'PATCH',
-			headers: {
-				Authorization: `Bearer ${sessionStorage.getItem('rustshare.websocket_token') || ''}`,
-				'Content-Type': 'application/json',
-				'X-Rustshare-Csrf': getCsrfToken() || ''
-			},
-			body: JSON.stringify({ write_policy: writePolicy }),
-			credentials: 'include'
-		}
-	);
-	if (!response.ok) throw new ApiError(response.status, `Update policy failed: ${response.status}`);
-	return response.json();
+	return vaultSyncClient.patch<Vault>(`/vaults/${vaultId}/write-policy`, {
+		write_policy: writePolicy
+	});
 }
