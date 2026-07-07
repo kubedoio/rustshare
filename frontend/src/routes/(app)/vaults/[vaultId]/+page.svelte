@@ -183,7 +183,10 @@
 		</div>
 
 		<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-4 shadow-sm">
-			<label for="vault-write-policy" class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase">
+			<label
+				for="vault-write-policy"
+				class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
+			>
 				Write policy
 			</label>
 			<select
