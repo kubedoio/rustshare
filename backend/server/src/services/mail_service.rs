@@ -102,8 +102,7 @@ impl MailService {
         }
 
         if let Some(html) = &parsed.body_html {
-            part_index = self
-                .persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
+            self.persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
                 .await?;
         }
 
