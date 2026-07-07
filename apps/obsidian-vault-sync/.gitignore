@@ -4,3 +4,5 @@ dist/
 *.log
 .env
 .DS_Store
+main.js
+
