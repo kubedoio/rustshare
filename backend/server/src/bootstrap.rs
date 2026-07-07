@@ -224,11 +224,6 @@ async fn init_services(
         Arc::clone(&object_store),
     ));
 
-    let mail_service = Arc::new(crate::services::mail_service::MailService::new(
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
-
     let (
         file_service,
         folder_service,
@@ -262,6 +257,13 @@ async fn init_services(
         },
         async { Arc::new(NotificationService::new(notification_repository)) },
     );
+
+    let mail_service = Arc::new(crate::services::mail_service::MailService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+    ));
 
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both

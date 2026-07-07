@@ -160,15 +160,15 @@ impl MetadataStore {
                 id, tenant_id, owner_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
-                visibility, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6,
                 $7, $8, $9, $10, $11, $12,
                 $13, $14, $15, $16, $17, $18,
-                $19, $20, $21, $22, $23, $24,
-                $25, $26, $27
+                $19, $20, $21, $22, $23, $24, $25,
+                $26, $27, $28
             )
             "#,
             msg.id,
@@ -190,6 +190,7 @@ impl MetadataStore {
             msg.imported_at,
             msg.imported_by,
             msg.visibility,
+            msg.folder_id,
             msg.object_key,
             msg.blob_key,
             msg.blob_sha256,
@@ -268,7 +269,7 @@ impl MetadataStore {
                 id, tenant_id, owner_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
-                visibility, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL

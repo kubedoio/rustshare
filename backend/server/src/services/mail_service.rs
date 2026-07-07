@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use rustshare_core::domain::{MailAttachment, MailMessage, MailMessagePart, MailVisibility};
+use rustshare_core::domain::{
+    Folder, MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility, UserId,
+};
 use rustshare_core::services::eml_parser::EmlParser;
-use rustshare_storage::{MetadataStore, ObjectStore};
+use rustshare_core::services::{FileService, FolderService};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -33,13 +37,25 @@ pub enum MailError {
 pub struct MailService {
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
+    file_service:
+        Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
+    folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
 }
 
 impl MailService {
-    pub fn new(metadata_store: Arc<MetadataStore>, object_store: Arc<ObjectStore>) -> Self {
+    pub fn new(
+        metadata_store: Arc<MetadataStore>,
+        object_store: Arc<ObjectStore>,
+        file_service: Arc<
+            FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>,
+        >,
+        folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
+    ) -> Self {
         Self {
             metadata_store,
             object_store,
+            file_service,
+            folder_service,
         }
     }
 
@@ -48,6 +64,10 @@ impl MailService {
     /// The raw source, plain-text body, HTML body, and attachment payloads are
     /// persisted as content-addressed blobs. Metadata is written to the
     /// `mail_messages`, `mail_message_parts`, and `mail_attachments` tables.
+    ///
+    /// In addition, a dedicated `/Workspace/Mail/{date}-{subject}-{short-uuid}`
+    /// folder is created and the raw `.eml` source is stored inside it as
+    /// `source.eml`.
     pub async fn import_eml(
         &self,
         tenant_id: Uuid,
@@ -66,12 +86,32 @@ impl MailService {
         let source_key = format!("blobs/{source_hash}");
         let source_size = raw_source.len() as i64;
 
+        // Persist the raw source blob first (content-addressed).
         self.object_store
-            .put(&source_key, bytes::Bytes::from(raw_source))
+            .put(&source_key, bytes::Bytes::from(raw_source.clone()))
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
-        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, "eml_upload");
+        // Create the mail artifact folder and store the source as a File.
+        let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
+        let message_folder = self
+            .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
+            .await?;
+
+        let _source_file = self
+            .file_service
+            .upload_file(
+                owner_id,
+                "source.eml".to_string(),
+                Some(message_folder.id),
+                bytes::Bytes::from(raw_source),
+                "message/rfc822".to_string(),
+                tenant_id,
+            )
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+
+        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, MailSourceMode::EmlUpload);
         msg.blob_key = Some(source_key.clone());
         msg.blob_sha256 = Some(source_hash);
         msg.size_bytes = Some(source_size);
@@ -86,7 +126,8 @@ impl MailService {
         msg.bcc_addresses = addresses_to_json(&parsed.bcc);
         msg.sent_at = parsed.sent_at;
         msg.has_attachments = !parsed.attachments.is_empty();
-        msg.visibility = String::from(MailVisibility::Private);
+        msg.visibility = MailVisibility::Private.into();
+        msg.folder_id = Some(message_folder.id);
 
         self.metadata_store
             .create_mail_message(&msg)
@@ -216,6 +257,83 @@ impl MailService {
     ) -> anyhow::Result<Vec<MailAttachment>> {
         Ok(vec![])
     }
+
+    /// Ensure the canonical `/Workspace/Mail` folder exists.
+    ///
+    /// Legacy module root policy: new writes are always directed to the
+    /// canonical `/Workspace/Mail` path. Legacy roots are read-only.
+    async fn ensure_mail_root_folder(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, MailError> {
+        let workspace_name = "Workspace";
+        let folder_name = "Mail";
+
+        let root_folders = self
+            .metadata_store
+            .list_folders(None, owner_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let workspace =
+            if let Some(ws) = root_folders.into_iter().find(|f| f.name == workspace_name) {
+                ws
+            } else {
+                self.folder_service
+                    .create_folder_or_get(workspace_name.to_string(), None, owner_id, tenant_id)
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?
+            };
+
+        let ws_folders = self
+            .metadata_store
+            .list_folders(Some(workspace.id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if let Some(mail_root) = ws_folders.into_iter().find(|f| f.name == folder_name) {
+            return Ok(mail_root);
+        }
+
+        self.folder_service
+            .create_folder_or_get(
+                folder_name.to_string(),
+                Some(workspace.id),
+                owner_id,
+                tenant_id,
+            )
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))
+    }
+
+    /// Create a unique subfolder under `/Workspace/Mail` for this message.
+    async fn create_message_folder(
+        &self,
+        mail_root_id: Uuid,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        subject: Option<&str>,
+    ) -> Result<Folder, MailError> {
+        let base_name = subject
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(slug::slugify)
+            .unwrap_or_else(|| "message".to_string());
+
+        let short_uuid = &Uuid::new_v4().to_string()[..8];
+        let folder_name = format!(
+            "{}-{}-{}",
+            Utc::now().format("%Y-%m-%d"),
+            base_name,
+            short_uuid
+        );
+
+        self.folder_service
+            .create_folder(folder_name, Some(mail_root_id), owner_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))
+    }
 }
 
 fn addresses_to_json(
@@ -294,5 +412,154 @@ mod tests {
         assert_eq!(msg.bcc_addresses, json!([]));
         assert!(!msg.has_attachments);
         assert_eq!(parsed.body_text.as_deref(), Some("This is the body.\r\n"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+    async fn import_eml_sets_folder_id_when_folder_creation_succeeds() {
+        use rustshare_core::domain::User;
+        use rustshare_core::events::EventBroadcaster;
+        use rustshare_core::services::PermissionResolver;
+        use rustshare_infrastructure::repositories::PermissionResolverRepository;
+
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        });
+        let pool = sqlx::postgres::PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
+        let event_store = Arc::new(EventStore::new(pool.clone()));
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+
+        let s3_endpoint = std::env::var("S3_ENDPOINT")
+            .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+            .unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let s3_region = std::env::var("S3_REGION")
+            .or_else(|_| std::env::var("RUSTFS_REGION"))
+            .unwrap_or_else(|_| "us-east-1".to_string());
+        let s3_bucket = std::env::var("S3_BUCKET")
+            .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+            .unwrap_or_else(|_| "rustshare".to_string());
+
+        let object_store = Arc::new(
+            ObjectStore::new_with_options(
+                s3_endpoint,
+                s3_region,
+                s3_bucket,
+                rustshare_storage::ObjectStoreOptions {
+                    auto_create_bucket: true,
+                },
+            )
+            .await
+            .expect("failed to create object store"),
+        );
+
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(pool.clone()),
+        )));
+
+        let file_service = Arc::new(FileService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            object_store.clone(),
+            broadcaster.clone(),
+            permission_resolver.clone(),
+        ));
+        let folder_service = Arc::new(FolderService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            broadcaster.clone(),
+            permission_resolver,
+        ));
+
+        let mail_service = MailService::new(
+            metadata_store.clone(),
+            object_store.clone(),
+            file_service,
+            folder_service,
+        );
+
+        let tenant_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO tenants (id, name, created_at, updated_at)
+            VALUES ($1, $2, NOW(), NOW())
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(format!("Mail Test Tenant {}", tenant_id))
+        .execute(&pool)
+        .await
+        .expect("failed to create test tenant");
+
+        let user = User::new(
+            format!("mail_user_{}", Uuid::new_v4()),
+            "Mail Test User".to_string(),
+            "test_password_hash".to_string(),
+            format!("mail_{}@test.local", Uuid::new_v4()),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        metadata_store
+            .create_user(&user)
+            .await
+            .expect("failed to create test user");
+
+        let raw = b"From: Alice <alice@example.com>\r\nTo: Bob <bob@example.com>\r\nSubject: Artifact Folder Test\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBody.\r\n";
+
+        let message = mail_service
+            .import_eml(tenant_id, user.id, user.id, raw.to_vec())
+            .await
+            .expect("import_eml should succeed");
+
+        assert!(message.folder_id.is_some(), "folder_id should be set");
+
+        let folder_id = message.folder_id.unwrap();
+        let folder = metadata_store
+            .find_folder_by_id(folder_id, user.id)
+            .await
+            .expect("find_folder_by_id should not fail")
+            .expect("message folder should exist");
+        assert!(folder.path.starts_with("/Workspace/Mail/"));
+
+        let files = metadata_store
+            .list_files(Some(folder_id), user.id, tenant_id)
+            .await
+            .expect("list_files should not fail");
+        assert!(files.iter().any(|f| f.name == "source.eml"));
+
+        // Best-effort cleanup.
+        let _ = sqlx::query("DELETE FROM mail_attachments WHERE message_id = $1")
+            .bind(message.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM mail_message_parts WHERE message_id = $1")
+            .bind(message.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM mail_messages WHERE id = $1")
+            .bind(message.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM files WHERE owner_id = $1")
+            .bind(user.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+            .bind(user.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user.id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await;
     }
 }
