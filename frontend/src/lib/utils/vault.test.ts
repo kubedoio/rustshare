@@ -24,7 +24,9 @@ describe('vault file eligibility', () => {
 
 	it('rejects binary files', () => {
 		expect(isEditableVaultFile(makeFile('image.png', { content_type: 'image/png' }))).toBe(false);
-		expect(isEditableVaultFile(makeFile('doc.pdf', { content_type: 'application/pdf' }))).toBe(false);
+		expect(isEditableVaultFile(makeFile('doc.pdf', { content_type: 'application/pdf' }))).toBe(
+			false
+		);
 	});
 
 	it('rejects large files', () => {
