@@ -589,11 +589,14 @@ export interface KanbanCardDetail extends KanbanCard {
 // Vault Sync Types
 // ---------------------------------------------------------------------------
 
+export type VaultWritePolicy = 'read_only' | 'web_editing_enabled' | 'sync_client_only';
+
 export interface Vault {
 	id: string;
 	name: string;
 	adapter: 'ObsidianVault';
 	root_path?: string;
+	write_policy: VaultWritePolicy;
 	server_rev: number;
 	created_at: string;
 	updated_at: string;
@@ -641,6 +644,29 @@ export interface VaultDevice {
 	revoked_at?: string | null;
 	created_at: string;
 	last_seen_at: string;
+}
+
+export interface VaultFileContent {
+	path: string;
+	content: string;
+	server_rev: number;
+	content_type: string | null;
+	size: number;
+}
+
+export interface SaveVaultFileContentRequest {
+	content: string;
+	expected_revision: number;
+}
+
+export interface SaveVaultFileContentResponse {
+	path: string;
+	server_rev: number;
+	updated_at: string;
+}
+
+export interface UpdateVaultWritePolicyRequest {
+	write_policy: VaultWritePolicy;
 }
 
 export interface CreateVaultRequest {

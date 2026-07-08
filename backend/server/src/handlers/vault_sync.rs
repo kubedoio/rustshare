@@ -23,7 +23,9 @@ use uuid::Uuid;
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 use rustshare_core::domain::{
-    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest, Vault, VaultDevice,
+    CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest,
+    SaveVaultFileContentRequest, UpdateVaultWritePolicyRequest, Vault, VaultDevice,
+    VaultFileContentResponse, VaultFileContentSavedResponse,
 };
 
 // ============================================================================
@@ -175,6 +177,35 @@ pub async fn get_vault(
     let vault = state
         .vault_sync_service
         .get_vault(vault_id, auth.tenant_id, auth.user_id)
+        .await?;
+    Ok(Json(vault))
+}
+
+/// Update the write policy for a vault.
+///
+/// PATCH /api/vault-sync/v1/vaults/:vault_id/write-policy
+#[utoipa::path(
+    patch,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/write-policy",
+    tag = "Vault Sync",
+    request_body = UpdateVaultWritePolicyRequest,
+    params(("vault_id" = Uuid, Path, description = "Vault Id")),
+    responses(
+        (status = 200, description = "Success", body = Vault),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn update_vault_write_policy(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(vault_id): Path<Uuid>,
+    Json(req): Json<UpdateVaultWritePolicyRequest>,
+) -> Result<Json<Vault>, AppError> {
+    let vault = state
+        .vault_sync_service
+        .update_vault_write_policy(vault_id, req.write_policy, auth.tenant_id, auth.user_id)
         .await?;
     Ok(Json(vault))
 }
@@ -384,6 +415,63 @@ pub async fn rename_file(
         .rename_file(req, auth.tenant_id, auth.user_id)
         .await?;
     Ok(Json(file.into()))
+}
+
+/// Get file content for WebUI editing.
+///
+/// GET /api/vault-sync/v1/vaults/:vault_id/content/:path
+#[utoipa::path(
+    get,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/content/{*path}",
+    tag = "Vault Sync",
+    params(("vault_id" = Uuid, Path, description = "Vault Id"), ("path" = String, Path, description = "Path")),
+    responses(
+        (status = 200, description = "Success", body = VaultFileContentResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden/not editable", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_file_content(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((vault_id, path)): Path<(Uuid, String)>,
+) -> Result<Json<VaultFileContentResponse>, AppError> {
+    let response = state
+        .vault_sync_service
+        .get_file_content_for_webui(vault_id, &path, auth.tenant_id, auth.user_id)
+        .await?;
+    Ok(Json(response))
+}
+
+/// Save file content from the WebUI.
+///
+/// PUT /api/vault-sync/v1/vaults/:vault_id/content/:path
+#[utoipa::path(
+    put,
+    path = "/api/vault-sync/v1/vaults/{vault_id}/content/{*path}",
+    tag = "Vault Sync",
+    request_body = SaveVaultFileContentRequest,
+    params(("vault_id" = Uuid, Path, description = "Vault Id"), ("path" = String, Path, description = "Path")),
+    responses(
+        (status = 200, description = "Success", body = VaultFileContentSavedResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden/not editable", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Conflict", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn save_file_content(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((vault_id, path)): Path<(Uuid, String)>,
+    Json(req): Json<SaveVaultFileContentRequest>,
+) -> Result<Json<VaultFileContentSavedResponse>, AppError> {
+    let response = state
+        .vault_sync_service
+        .save_file_content_for_webui(vault_id, &path, req, auth.tenant_id, auth.user_id)
+        .await?;
+    Ok(Json(response))
 }
 
 // ============================================================================

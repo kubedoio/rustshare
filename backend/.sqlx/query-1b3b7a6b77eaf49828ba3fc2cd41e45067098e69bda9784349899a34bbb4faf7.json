@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, tenant_id, owner_user_id, name, adapter as \"adapter: _\", root_path, server_rev, created_at, updated_at\n            FROM vaults\n            WHERE id = $1 AND tenant_id = $2\n            ",
+  "query": "\n            UPDATE vaults\n            SET write_policy = $1, updated_at = $2\n            WHERE id = $3 AND tenant_id = $4\n            RETURNING id, tenant_id, owner_user_id, name, adapter as \"adapter: _\", root_path, write_policy as \"write_policy: _\", server_rev, created_at, updated_at\n            ",
   "describe": {
     "columns": [
       {
@@ -35,22 +35,29 @@
       },
       {
         "ordinal": 6,
+        "name": "write_policy: _",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
         "name": "server_rev",
         "type_info": "Int8"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
+        "Varchar",
+        "Timestamptz",
         "Uuid",
         "Uuid"
       ]
@@ -64,8 +71,9 @@
       true,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "c32b7856be95382dc315d4df31fd7884c61ac21fcb19ec717dad5348d0ac41bf"
+  "hash": "1b3b7a6b77eaf49828ba3fc2cd41e45067098e69bda9784349899a34bbb4faf7"
 }

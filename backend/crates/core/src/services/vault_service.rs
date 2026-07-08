@@ -5,6 +5,7 @@
 
 use crate::domain::{Vault, VaultDevice, VaultFile};
 use crate::services::VaultSyncError;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Trait for vault storage operations.
@@ -58,6 +59,17 @@ pub trait VaultStore: Send + Sync {
         base_server_rev: i64,
     ) -> Result<Option<VaultFile>, VaultSyncError>;
 
+    /// Atomically increment vault revision and update an existing file ONLY if
+    /// the vault's write_policy is `web_editing_enabled` and the file's current
+    /// server_rev matches base_server_rev. Returns the updated file on success,
+    /// `None` if the file revision did not match, or `Err(WritePolicyDenied)`
+    /// if the vault is not in `web_editing_enabled` mode.
+    async fn update_file_conditional_atomic_for_webui(
+        &self,
+        file: &VaultFile,
+        base_server_rev: i64,
+    ) -> Result<Option<VaultFile>, VaultSyncError>;
+
     /// Insert a new file in a vault, atomically incrementing the vault revision.
     /// Returns the inserted file on success.
     async fn insert_file_atomic(&self, file: &VaultFile) -> Result<VaultFile, VaultSyncError>;
@@ -105,6 +117,32 @@ pub trait VaultStore: Send + Sync {
         vault_id: Uuid,
     ) -> Result<VaultDevice, VaultSyncError>;
 
+    /// Update an existing vault.
+    async fn update_vault(&self, vault: &Vault) -> Result<Vault, VaultSyncError>;
+
+    /// Update only the write policy for a vault, leaving server_rev untouched.
+    async fn update_vault_write_policy(
+        &self,
+        vault_id: Uuid,
+        tenant_id: Uuid,
+        write_policy: &crate::domain::VaultWritePolicy,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Vault, VaultSyncError>;
+
+    /// Look up an existing WebUI device for a user/vault pair.
+    async fn get_webui_device(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        vault_id: Uuid,
+    ) -> Result<Option<VaultDevice>, VaultSyncError>;
+
+    /// Create a WebUI device row for a vault.
+    async fn create_webui_device(
+        &self,
+        device: &VaultDevice,
+    ) -> Result<VaultDevice, VaultSyncError>;
+
     /// Revoke a device.
     async fn revoke_device(&self, device_id: Uuid, tenant_id: Uuid) -> Result<(), VaultSyncError>;
 
@@ -113,5 +151,12 @@ pub trait VaultStore: Send + Sync {
         &self,
         device_id: &str,
         tenant_id: Uuid,
+    ) -> Result<(), VaultSyncError>;
+
+    /// Update the last_seen_at timestamp of a vault device to an explicit value.
+    async fn update_vault_device_last_seen_at(
+        &self,
+        device_id: Uuid,
+        last_seen_at: DateTime<Utc>,
     ) -> Result<(), VaultSyncError>;
 }

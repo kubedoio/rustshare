@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, tenant_id, owner_user_id, name, adapter as \"adapter: _\", root_path, server_rev, created_at, updated_at\n            FROM vaults\n            WHERE tenant_id = $1 AND owner_user_id = $2\n            ORDER BY name ASC\n            ",
+  "query": "\n            SELECT id, tenant_id, owner_user_id, name, adapter as \"adapter: _\", root_path, write_policy as \"write_policy: _\", server_rev, created_at, updated_at\n            FROM vaults\n            WHERE tenant_id = $1 AND owner_user_id = $2\n            ORDER BY name ASC\n            ",
   "describe": {
     "columns": [
       {
@@ -35,16 +35,21 @@
       },
       {
         "ordinal": 6,
+        "name": "write_policy: _",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
         "name": "server_rev",
         "type_info": "Int8"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -64,8 +69,9 @@
       true,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "39ad5cb9a5480ad967457299ec4a9d14c2dd7da163ea4bdc03e49a181b7b3d7b"
+  "hash": "a9ff22a5085312d82d3629adb17fcfe6e35f432131c0786fd84836c78a330e04"
 }

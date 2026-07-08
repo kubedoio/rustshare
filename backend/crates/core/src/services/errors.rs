@@ -160,6 +160,14 @@ pub enum VaultSyncError {
     #[error("Invalid vault name: {0}")]
     InvalidName(String),
 
+    /// Write policy does not allow the requested operation.
+    #[error("Write policy denied: vault is {policy}")]
+    WritePolicyDenied { policy: String },
+
+    /// File type or size is not editable from the WebUI.
+    #[error("File not editable: {0}")]
+    NotEditable(String),
+
     /// Database operation failed.
     #[error("Database error: {0}")]
     Database(String),
@@ -376,5 +384,21 @@ mod tests {
         let path = "notes/hello.md";
         let err = VaultSyncError::FileAlreadyExists(path.to_string());
         assert_eq!(err.to_string(), format!("File already exists: {}", path));
+    }
+
+    #[test]
+    fn test_vault_sync_error_write_policy_denied() {
+        let err = VaultSyncError::WritePolicyDenied {
+            policy: "read_only".to_string(),
+        };
+        assert!(err.to_string().contains("Write policy denied"));
+        assert!(err.to_string().contains("read_only"));
+    }
+
+    #[test]
+    fn test_vault_sync_error_not_editable() {
+        let err = VaultSyncError::NotEditable("binary file".to_string());
+        assert!(err.to_string().contains("File not editable"));
+        assert!(err.to_string().contains("binary file"));
     }
 }

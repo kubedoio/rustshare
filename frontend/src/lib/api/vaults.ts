@@ -1,10 +1,13 @@
-import { ApiClient } from './client';
+import { ApiClient, getCsrfToken } from './client';
 import { ApiError } from './types';
-import { getCsrfToken } from './client';
 import type {
 	Vault,
 	VaultManifest,
 	VaultDevice,
+	VaultFileContent,
+	VaultWritePolicy,
+	SaveVaultFileContentRequest,
+	SaveVaultFileContentResponse,
 	CreateVaultRequest,
 	RenameVaultFileRequest
 } from './types';
@@ -97,5 +100,34 @@ export async function registerVaultDevice(
 		device_name: deviceName,
 		client_type: clientType,
 		client_version: clientVersion
+	});
+}
+
+export async function getVaultFileContent(
+	vaultId: string,
+	path: string
+): Promise<VaultFileContent> {
+	return vaultSyncClient.get<VaultFileContent>(
+		`/vaults/${vaultId}/content/${encodeURIComponent(path)}`
+	);
+}
+
+export async function saveVaultFileContent(
+	vaultId: string,
+	path: string,
+	req: SaveVaultFileContentRequest
+): Promise<SaveVaultFileContentResponse> {
+	return vaultSyncClient.put<SaveVaultFileContentResponse>(
+		`/vaults/${vaultId}/content/${encodeURIComponent(path)}`,
+		req
+	);
+}
+
+export async function updateVaultWritePolicy(
+	vaultId: string,
+	writePolicy: VaultWritePolicy
+): Promise<Vault> {
+	return vaultSyncClient.patch<Vault>(`/vaults/${vaultId}/write-policy`, {
+		write_policy: writePolicy
 	});
 }
