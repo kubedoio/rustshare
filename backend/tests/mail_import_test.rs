@@ -28,6 +28,8 @@ async fn import_eml_creates_message_and_persists_source_blob() {
         Arc::clone(&ctx.object_store),
         file_service,
         folder_service,
+        Arc::clone(&ctx.permission_resolver()),
+        Arc::clone(&ctx.event_store),
     );
 
     let message = mail_service
@@ -129,6 +131,8 @@ async fn import_eml_promotes_attachments_to_file_artifacts() {
         Arc::clone(&ctx.object_store),
         file_service,
         folder_service,
+        Arc::clone(&ctx.permission_resolver()),
+        Arc::clone(&ctx.event_store),
     );
 
     let message = mail_service

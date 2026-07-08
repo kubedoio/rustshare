@@ -16,6 +16,7 @@ pub enum AggregateType {
     File,
     Folder,
     Share,
+    MailMessage,
 }
 
 /// Event types in the system
@@ -64,6 +65,10 @@ pub enum EventType {
     StandupModified,
     KanbanModified,
     NoteModified,
+
+    // Mail events
+    MailLinked,
+    MailUnlinked,
 }
 
 impl EventType {
@@ -99,6 +104,8 @@ impl EventType {
             EventType::StandupModified => "StandupModified",
             EventType::KanbanModified => "KanbanModified",
             EventType::NoteModified => "NoteModified",
+            EventType::MailLinked => "MailLinked",
+            EventType::MailUnlinked => "MailUnlinked",
         }
     }
 }
@@ -442,6 +449,30 @@ pub struct NoteModifiedPayload {
     pub title: String,
     #[schema(value_type = Uuid)]
     pub modified_by: UserId,
+}
+
+/// Mail linked event payload
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailLinkedPayload {
+    #[schema(value_type = Uuid)]
+    pub message_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub link_id: Uuid,
+    pub target_type: String,
+    #[schema(value_type = Uuid)]
+    pub target_id: Uuid,
+}
+
+/// Mail unlinked event payload
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailUnlinkedPayload {
+    #[schema(value_type = Uuid)]
+    pub message_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub link_id: Uuid,
+    pub target_type: String,
+    #[schema(value_type = Uuid)]
+    pub target_id: Uuid,
 }
 
 #[cfg(test)]

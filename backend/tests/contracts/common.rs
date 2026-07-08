@@ -104,6 +104,13 @@ impl TestContext {
 }
 
 impl TestContext {
+    /// Create a PermissionResolver instance
+    pub fn permission_resolver(&self) -> Arc<PermissionResolver<PermissionResolverRepository>> {
+        Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(self.pool.clone()),
+        )))
+    }
+
     /// Create a new FileService instance
     pub fn file_service(
         &self,
@@ -149,6 +156,24 @@ impl TestContext {
             self.object_store.clone(),
             permission_resolver,
             self.pool.clone(),
+        )
+    }
+
+    /// Create a new MailService instance
+    pub fn mail_service(&self) -> rustshare_server::services::mail_service::MailService {
+        use rustshare_server::services::mail_service::MailService;
+        let file_service = Arc::new(self.file_service());
+        let folder_service = Arc::new(self.folder_service());
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(self.pool.clone()),
+        )));
+        MailService::new(
+            self.metadata_store.clone(),
+            self.object_store.clone(),
+            file_service,
+            folder_service,
+            permission_resolver,
+            self.event_store.clone(),
         )
     }
 
@@ -513,6 +538,10 @@ pub async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
         "DELETE FROM file_thumbnails WHERE tenant_id = $1",
         "DELETE FROM file_versions WHERE tenant_id = $1",
         "DELETE FROM shares WHERE tenant_id = $1",
+        "DELETE FROM mail_links WHERE tenant_id = $1",
+        "DELETE FROM mail_attachments WHERE tenant_id = $1",
+        "DELETE FROM mail_message_parts WHERE tenant_id = $1",
+        "DELETE FROM mail_messages WHERE tenant_id = $1",
         "DELETE FROM files WHERE tenant_id = $1",
         "DELETE FROM folders WHERE tenant_id = $1",
         "DELETE FROM user_groups WHERE tenant_id = $1",

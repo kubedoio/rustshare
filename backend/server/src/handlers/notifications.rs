@@ -385,6 +385,12 @@ pub async fn list_activity(
                     }
                 }
                 AggregateType::User => false,
+                AggregateType::MailMessage => state
+                    .metadata_store
+                    .find_mail_message_by_id(event.aggregate_id, auth.user_id)
+                    .await
+                    .map(|msg| msg.is_some())
+                    .unwrap_or(false),
             };
             (event, can_access)
         }
@@ -413,7 +419,8 @@ fn build_activity_response(
             continue;
         }
 
-        let resource_name = extract_resource_name(&event.event_type, &event.payload);
+        let resource_name =
+            extract_resource_name(&event.event_type, &event.aggregate_type, &event.payload);
 
         items.push(ActivityItemResponse {
             id: event.id,
@@ -473,6 +480,8 @@ fn event_type_to_action(event_type: &EventType) -> &'static str {
         EventType::StandupModified => "standup_modified",
         EventType::KanbanModified => "kanban_modified",
         EventType::NoteModified => "note_modified",
+        EventType::MailLinked => "linked",
+        EventType::MailUnlinked => "unlinked",
         _ => "unknown",
     }
 }
@@ -495,12 +504,23 @@ fn aggregate_type_to_resource_type(
             AggregateType::Folder => "folder",
             AggregateType::Share => "share",
             AggregateType::User => "user",
+            AggregateType::MailMessage => "mail_message",
         },
     }
 }
 
 /// Extract a display name from the event payload when available.
-fn extract_resource_name(event_type: &EventType, payload: &serde_json::Value) -> Option<String> {
+fn extract_resource_name(
+    event_type: &EventType,
+    aggregate_type: &AggregateType,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    // Mail messages don't carry a title in link/unlink payloads; use a stable
+    // placeholder so the activity feed still shows a readable resource name.
+    if *aggregate_type == AggregateType::MailMessage {
+        return Some("Mail message".to_string());
+    }
+
     match event_type {
         EventType::FileUploaded => payload.get("name")?.as_str().map(String::from),
         EventType::FileDeleted => payload.get("file_name")?.as_str().map(String::from),
@@ -640,20 +660,29 @@ mod tests {
     fn test_extract_resource_name() {
         let payload = serde_json::json!({"name": "test.txt"});
         assert_eq!(
-            extract_resource_name(&EventType::FileUploaded, &payload),
+            extract_resource_name(&EventType::FileUploaded, &AggregateType::File, &payload),
             Some("test.txt".to_string())
         );
 
         let payload = serde_json::json!({"file_name": "old.txt"});
         assert_eq!(
-            extract_resource_name(&EventType::FileDeleted, &payload),
+            extract_resource_name(&EventType::FileDeleted, &AggregateType::File, &payload),
             Some("old.txt".to_string())
         );
 
         let payload = serde_json::json!({"title": "My Decision"});
         assert_eq!(
-            extract_resource_name(&EventType::DecisionModified, &payload),
+            extract_resource_name(&EventType::DecisionModified, &AggregateType::File, &payload),
             Some("My Decision".to_string())
+        );
+
+        assert_eq!(
+            extract_resource_name(
+                &EventType::MailLinked,
+                &AggregateType::MailMessage,
+                &serde_json::json!({})
+            ),
+            Some("Mail message".to_string())
         );
     }
 

@@ -6,9 +6,10 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, MailAttachment, MailMessage, MailMessagePart, OidcLoginState,
-    ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget, Share,
-    SharePermissions, User, UserSession, Vault, VaultDevice, VaultFile, VaultWritePolicy,
+    File, FileVersion, Folder, MailAttachment, MailLink, MailLinkId, MailMessage, MailMessageId,
+    MailMessagePart, OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState,
+    ReplicationTarget, Share, SharePermissions, User, UserSession, Vault, VaultDevice, VaultFile,
+    VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
 use serde_json;
@@ -309,6 +310,100 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Persist a new Mail link inside an existing transaction.
+    ///
+    /// Returns `true` if a new row was inserted, or `false` if an active link
+    /// for the same message/target already exists (unique conflict).
+    pub async fn create_mail_link_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        link: &MailLink,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO mail_links (
+                id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (message_id, target_type, target_id) WHERE deleted_at IS NULL
+            DO NOTHING
+            "#,
+            link.id,
+            link.tenant_id,
+            link.message_id,
+            link.target_type,
+            link.target_id,
+            link.created_by,
+            link.created_at,
+            link.deleted_at,
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Persist a new Mail link.
+    ///
+    /// Returns `true` if a new row was inserted, or `false` if an active link
+    /// for the same message/target already exists.
+    pub async fn create_mail_link(&self, link: &MailLink) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let inserted = self.create_mail_link_in_tx(&mut tx, link).await?;
+        tx.commit().await?;
+        Ok(inserted)
+    }
+
+    /// Soft-delete a Mail link inside an existing transaction and return true if a row was updated.
+    pub async fn soft_delete_mail_link_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        link_id: MailLinkId,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_links
+            SET deleted_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            link_id
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Soft-delete a Mail link and return true if a row was updated.
+    pub async fn soft_delete_mail_link(&self, link_id: MailLinkId) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let updated = self.soft_delete_mail_link_in_tx(&mut tx, link_id).await?;
+        tx.commit().await?;
+        Ok(updated)
+    }
+
+    /// List active links for a Mail message, scoped to tenant.
+    pub async fn list_mail_links_by_message(
+        &self,
+        message_id: MailMessageId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<MailLink>> {
+        let rows = sqlx::query_as!(
+            MailLink,
+            r#"
+            SELECT
+                id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at
+            FROM mail_links
+            WHERE message_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at
+            "#,
+            message_id,
+            tenant_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn list_mail_messages(
         &self,
         tenant_id: Uuid,
@@ -333,6 +428,56 @@ impl MetadataStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    /// Find a Mail link by ID, scoped to tenant.
+    pub async fn find_mail_link_by_id(
+        &self,
+        link_id: MailLinkId,
+        tenant_id: Uuid,
+    ) -> Result<Option<MailLink>> {
+        let row = sqlx::query_as!(
+            MailLink,
+            r#"
+            SELECT
+                id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at
+            FROM mail_links
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+            link_id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Find an active Mail link for a given message and target, scoped to tenant.
+    pub async fn find_active_mail_link(
+        &self,
+        message_id: MailMessageId,
+        target_type: impl Into<String>,
+        target_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Option<MailLink>> {
+        let target_type = target_type.into();
+        let row = sqlx::query_as!(
+            MailLink,
+            r#"
+            SELECT
+                id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at
+            FROM mail_links
+            WHERE message_id = $1 AND target_type = $2 AND target_id = $3
+              AND tenant_id = $4 AND deleted_at IS NULL
+            "#,
+            message_id,
+            target_type,
+            target_id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {

@@ -263,6 +263,8 @@ async fn init_services(
         Arc::clone(&object_store),
         Arc::clone(&file_service),
         Arc::clone(&folder_service),
+        Arc::clone(&permission_resolver),
+        Arc::clone(&event_store),
     ));
 
     // Shared content indexer used both by the AI service and by the note

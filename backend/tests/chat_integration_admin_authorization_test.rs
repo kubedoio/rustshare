@@ -222,12 +222,6 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         metadata_store.clone(),
         object_store.clone(),
     ));
-    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
-        metadata_store.clone(),
-        object_store.clone(),
-        file_service.clone(),
-        folder_service.clone(),
-    ));
 
     let chat_integration_service = Arc::new(ChatIntegrationService::new(
         metadata_store.clone(),
@@ -238,6 +232,15 @@ async fn setup_app_state(pool: PgPool) -> AppState {
     ));
 
     let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
+
+    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
+        metadata_store.clone(),
+        object_store.clone(),
+        file_service.clone(),
+        folder_service.clone(),
+        permission_resolver.clone(),
+        event_store.clone(),
+    ));
 
     AppState {
         db_pool: pool,

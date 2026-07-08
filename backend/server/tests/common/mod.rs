@@ -190,12 +190,6 @@ pub async fn setup_test_server() -> (AppState, String) {
         metadata_store.clone(),
         object_store.clone(),
     ));
-    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
-        metadata_store.clone(),
-        object_store.clone(),
-        file_service.clone(),
-        folder_service.clone(),
-    ));
 
     let chat_integration_service = Arc::new(rustshare_core::services::ChatIntegrationService::new(
         metadata_store.clone(),
@@ -206,6 +200,15 @@ pub async fn setup_test_server() -> (AppState, String) {
     ));
 
     let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
+
+    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
+        metadata_store.clone(),
+        object_store.clone(),
+        file_service.clone(),
+        folder_service.clone(),
+        permission_resolver.clone(),
+        event_store.clone(),
+    ));
 
     let prometheus_handle = rustshare_server::metrics::init_metrics();
 

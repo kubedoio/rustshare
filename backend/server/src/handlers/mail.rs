@@ -4,7 +4,8 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use rustshare_core::domain::LinkTargetType;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser};
@@ -202,4 +203,157 @@ pub async fn get_mail_message(
         .await?;
 
     Ok(Json(MailMessageResponse::from(msg)))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreateMailLinkRequest {
+    pub target_type: String,
+    #[schema(value_type = Uuid)]
+    pub target_id: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailLinkResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub message_id: Uuid,
+    pub target_type: String,
+    #[schema(value_type = Uuid)]
+    pub target_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub created_by: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailLinkListResponse {
+    pub links: Vec<MailLinkResponse>,
+}
+
+fn parse_target_type(target_type: &str) -> Result<LinkTargetType, AppError> {
+    target_type.parse().map_err(|_| {
+        AppError::bad_request(format!(
+            "Invalid target_type: {target_type}. Expected one of: note, kanban_card, kanban_board, meeting, file, folder, mail_message"
+        ))
+    })
+}
+
+fn link_to_response(link: rustshare_core::domain::MailLink) -> MailLinkResponse {
+    MailLinkResponse {
+        id: link.id,
+        message_id: link.message_id,
+        target_type: link.target_type,
+        target_id: link.target_id,
+        created_by: link.created_by,
+        created_at: link.created_at,
+    }
+}
+
+/// Link a mail message to another RustShare object.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/messages/{id}/links",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail message ID")),
+    request_body = CreateMailLinkRequest,
+    responses(
+        (status = 200, description = "Link created", body = MailLinkResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn create_mail_link(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(message_id): Path<Uuid>,
+    Json(req): Json<CreateMailLinkRequest>,
+) -> Result<Json<MailLinkResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let target_type = parse_target_type(&req.target_type)?;
+    let link = state
+        .mail_service
+        .link_message(
+            auth.tenant_id,
+            auth.user_id,
+            message_id,
+            target_type,
+            req.target_id,
+        )
+        .await?;
+
+    Ok(Json(link_to_response(link)))
+}
+
+/// Remove a link between a mail message and another RustShare object.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/messages/{id}/links/{link_id}",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail message ID"),
+        ("link_id" = Uuid, Path, description = "Link ID"),
+    ),
+    responses(
+        (status = 200, description = "Link removed", body = serde_json::Value),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn delete_mail_link(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((message_id, link_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    // Validate the link belongs to the message in the URL. We load the link
+    // including soft-deleted rows so that retrying a DELETE after the first
+    // request succeeded remains idempotent (returns 200 instead of 404).
+    let link = state
+        .mail_service
+        .find_mail_link_by_id(auth.tenant_id, auth.user_id, link_id)
+        .await?;
+    if link.message_id != message_id {
+        return Err(AppError::not_found("link"));
+    }
+
+    state
+        .mail_service
+        .unlink_message(auth.tenant_id, auth.user_id, link_id)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// List active links for a mail message.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/links",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail message ID")),
+    responses(
+        (status = 200, description = "Mail links", body = MailLinkListResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_links(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<MailLinkListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let links = state
+        .mail_service
+        .list_message_links(auth.tenant_id, auth.user_id, message_id)
+        .await?;
+
+    Ok(Json(MailLinkListResponse {
+        links: links.into_iter().map(link_to_response).collect(),
+    }))
 }
