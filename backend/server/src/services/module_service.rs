@@ -21,7 +21,7 @@ fn default_modules() -> Vec<(
     &'static str,
     &'static str,
     &'static str,
-    &'static str,
+    Option<&'static str>,
     &'static str,
     bool,
     serde_json::Value,
@@ -33,7 +33,7 @@ fn default_modules() -> Vec<(
             "Write OKF-compatible, file-backed notes for durable company memory.",
             "/Workspace/Notes",
             "okf-note",
-            "template_default_okf_note",
+            Some("template_default_okf_note"),
             "sticky-note",
             true,
             json!({
@@ -51,7 +51,7 @@ fn default_modules() -> Vec<(
             "Record simple meeting notes, decisions, and follow-up items.",
             "/Workspace/Meetings",
             "meetings",
-            "template_default_meeting",
+            Some("template_default_meeting"),
             "calendar-days",
             false,
             json!({
@@ -66,7 +66,7 @@ fn default_modules() -> Vec<(
             "Capture simple daily updates, blockers, and follow-up items.",
             "/Workspace/Standups",
             "standups",
-            "template_default_standup",
+            Some("template_default_standup"),
             "clipboard-list",
             false,
             json!({
@@ -81,7 +81,7 @@ fn default_modules() -> Vec<(
             "Organize lightweight work boards in your workspace.",
             "/Workspace/Kanban",
             "kanban",
-            "template_default_kanban",
+            Some("template_default_kanban"),
             "columns",
             false,
             json!({
@@ -96,7 +96,7 @@ fn default_modules() -> Vec<(
             "Record important decisions with context and rationale.",
             "/Workspace/Decisions",
             "decisions",
-            "template_default_decision",
+            Some("template_default_decision"),
             "git-branch",
             false,
             json!({
@@ -111,7 +111,7 @@ fn default_modules() -> Vec<(
             "Capture sketches, flows, and early ideas as visual workspace boards.",
             "/Workspace/Brainstorming",
             "brainstorming",
-            "template_blank_brainstorm",
+            Some("template_blank_brainstorm"),
             "lightbulb",
             false,
             json!({
@@ -126,13 +126,34 @@ fn default_modules() -> Vec<(
             "Manage items shared from your workspace.",
             "/Workspace/Shares",
             "shares",
-            "template_default_share",
+            Some("template_default_share"),
             "share-2",
             false,
             json!({
                 "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
                 "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Recent shares.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New share", "action": "generic-create" } },
                 "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
+            }),
+        ),
+        (
+            "mail",
+            "Mail",
+            "Import, archive, and reference email inside RustShare workspaces.",
+            "/Workspace/Mail",
+            "mail-list",
+            None,
+            "file-text",
+            false,
+            json!({
+                "sidebar": {
+                    "enabled": true,
+                    "icon": "file-text",
+                    "order": 60
+                },
+                "dashboard": {
+                    "enabled": true,
+                    "primaryAction": { "label": "Import mail", "action": "generic-create" }
+                }
             }),
         ),
     ]
@@ -298,7 +319,7 @@ impl ModuleService {
                     enabled,
                     root_path: root_path.to_string(),
                     renderer: renderer.to_string(),
-                    default_template: Some(default_template.to_string()),
+                    default_template: default_template.map(str::to_string),
                     icon: icon.to_string(),
                     schema_version: "1.0".to_string(),
                     permissions: json!({
@@ -1584,12 +1605,13 @@ fn default_primary_action(module_key: &str, default_template: Option<&str>) -> s
         "standups" => "New standup",
         "decisions" => "New decision",
         "shares" => "New share",
+        "mail" => "Import mail",
         _ => "New note",
     };
 
     json!({
         "label": label,
-        "action": if module_key == "shares" { "generic-create" } else { "create-from-template" },
+        "action": if matches!(module_key, "shares" | "mail") { "generic-create" } else { "create-from-template" },
         "template": default_template
     })
 }
@@ -1789,7 +1811,7 @@ mod tests {
         );
         assert_eq!(*root_path, "/Workspace/Notes");
         assert_eq!(*renderer, "okf-note");
-        assert_eq!(*default_template, "template_default_okf_note");
+        assert_eq!(*default_template, Some("template_default_okf_note"));
         assert_eq!(*icon, "sticky-note");
         assert!(*enabled);
 
@@ -1818,11 +1840,47 @@ mod tests {
                 key
             );
             assert_ne!(
-                *default_template, "template_default_okf_note",
+                *default_template,
+                Some("template_default_okf_note"),
                 "module {} should not use the notes default template",
                 key
             );
         }
+    }
+
+    #[test]
+    fn mail_default_module_uses_registered_template_and_icon() {
+        let defaults = default_modules();
+        let mail = defaults
+            .iter()
+            .find(|(key, _, _, _, _, _, _, _, _)| *key == "mail")
+            .expect("mail module must exist");
+        let (_, _, _, _, renderer, default_template, icon, enabled, ui_config) = mail;
+
+        assert_eq!(*renderer, "mail-list");
+        assert!(default_template.is_none());
+        assert_eq!(*icon, "file-text");
+        assert!(validate_module_icon(icon).is_ok());
+        assert!(!enabled);
+
+        let sidebar_icon = ui_config
+            .get("sidebar")
+            .and_then(|sidebar| sidebar.get("icon"))
+            .and_then(|icon| icon.as_str())
+            .expect("mail sidebar icon");
+        assert_eq!(sidebar_icon, "file-text");
+
+        let primary_action = ui_config
+            .get("dashboard")
+            .and_then(|dashboard| dashboard.get("primaryAction"))
+            .expect("mail primary action");
+        assert_eq!(
+            primary_action
+                .get("action")
+                .and_then(|value| value.as_str()),
+            Some("generic-create")
+        );
+        assert!(primary_action.get("template").is_none());
     }
 
     #[test]

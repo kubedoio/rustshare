@@ -2,6 +2,7 @@ mod device_token;
 mod file;
 mod file_version;
 mod folder;
+mod mail_message;
 mod module;
 mod notification;
 mod oidc_login_state;
@@ -21,6 +22,9 @@ pub use device_token::{DevicePairRequest, DeviceToken};
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
+pub use mail_message::{
+    MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility,
+};
 pub use module::{AiIndexingPolicy, AuditPolicy, Module, ModulePermissions};
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use oidc_login_state::OidcLoginState;
@@ -62,3 +66,9 @@ pub type ShareId = Uuid;
 pub type VersionId = Uuid;
 /// Unique identifier for a vault.
 pub type VaultId = Uuid;
+/// Unique identifier for a mail message.
+pub type MailMessageId = Uuid;
+/// Unique identifier for a mail message part.
+pub type MailMessagePartId = Uuid;
+/// Unique identifier for a mail attachment.
+pub type MailAttachmentId = Uuid;

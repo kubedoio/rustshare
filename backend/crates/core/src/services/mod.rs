@@ -2,6 +2,7 @@ mod ai;
 mod ai_service;
 mod chat_integration;
 mod email_service;
+pub mod eml_parser;
 mod errors;
 mod file_service;
 mod folder_ancestry;
@@ -36,6 +37,7 @@ pub use chat_integration::{
     UnfurlResponse, WebhookDispatcher,
 };
 pub use email_service::{EmailError, EmailService};
+pub use eml_parser::{EmlParseError, EmlParser, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,

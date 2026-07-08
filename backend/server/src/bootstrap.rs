@@ -59,6 +59,7 @@ struct Services {
     user_repository: Arc<UserRepository>,
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
+    mail_service: Arc<crate::services::mail_service::MailService>,
 }
 
 fn init_tracing(log_format: &str) {
@@ -256,6 +257,13 @@ async fn init_services(
         },
         async { Arc::new(NotificationService::new(notification_repository)) },
     );
+
+    let mail_service = Arc::new(crate::services::mail_service::MailService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        Arc::clone(&file_service),
+        Arc::clone(&folder_service),
+    ));
 
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both
@@ -462,6 +470,7 @@ async fn init_services(
         user_repository,
         vault_sync_service,
         chat_integration_service,
+        mail_service,
     })
 }
 
@@ -690,6 +699,7 @@ pub async fn init_app() -> Result<AppState> {
         collab_rooms: Arc::new(CollabRooms::new()),
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
+        mail_service: services.mail_service,
         shutdown_tx,
         prometheus_handle,
     };

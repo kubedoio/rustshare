@@ -259,6 +259,24 @@ pub fn module_routes() -> Router<AppState> {
         )
 }
 
+pub fn mail_routes() -> Router<AppState> {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::{get, post};
+    Router::new()
+        .route(
+            "/api/v1/mail/messages",
+            get(crate::handlers::mail::list_mail_messages),
+        )
+        .route(
+            "/api/v1/mail/messages/{id}",
+            get(crate::handlers::mail::get_mail_message),
+        )
+        .route(
+            "/api/v1/mail/upload",
+            post(crate::handlers::mail::upload_mail).layer(DefaultBodyLimit::disable()),
+        )
+}
+
 pub fn kanban_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

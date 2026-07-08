@@ -17,6 +17,7 @@ pub mod groups;
 pub mod health;
 pub mod invites;
 pub mod kanban;
+pub mod mail;
 pub mod meetings;
 pub mod modules;
 pub mod notes;
@@ -652,6 +653,20 @@ impl From<VaultSyncError> for AppError {
             }
             VaultSyncError::Database(ref msg) | VaultSyncError::Storage(ref msg) => {
                 tracing::error!("Vault sync internal error: {}", msg);
+                AppError::Internal("Internal server error".to_string())
+            }
+        }
+    }
+}
+
+impl From<crate::services::mail_service::MailError> for AppError {
+    fn from(err: crate::services::mail_service::MailError) -> Self {
+        use crate::services::mail_service::MailError;
+        match err {
+            MailError::NotFound(_id) => AppError::NotFound(err.to_string()),
+            MailError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            MailError::InvalidSource(_) => AppError::BadRequest(err.to_string()),
+            MailError::Storage(_) | MailError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
         }
