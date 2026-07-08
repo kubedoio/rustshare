@@ -994,12 +994,11 @@ impl MailService {
             }
         };
 
-        let uids = job.selected_uids.clone().unwrap_or_default();
         let mut processed = 0i32;
         let mut failed = 0i32;
         let mut last_error: Option<String> = None;
 
-        for uid in uids {
+        for &uid in job.selected_uids.as_deref().unwrap_or(&[]) {
             let uid_u32 = u32::try_from(uid)
                 .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
             match session
@@ -1092,13 +1091,9 @@ impl MailService {
         account: &MailAccount,
         password: &str,
     ) -> Result<ImapSession, MailError> {
-        if !(1..=65535).contains(&account.port) {
-            return Err(MailError::InvalidSource(format!(
-                "Invalid IMAP port: {}",
-                account.port
-            )));
-        }
-        let port = account.port as u16;
+        let port = u16::try_from(account.port).map_err(|_| {
+            MailError::InvalidSource(format!("Invalid IMAP port: {}", account.port))
+        })?;
         let tls_mode = account
             .tls_mode
             .parse::<MailTlsMode>()

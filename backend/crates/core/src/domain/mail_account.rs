@@ -15,19 +15,13 @@ pub enum MailTlsMode {
     None,
 }
 
-impl From<MailTlsMode> for String {
-    fn from(mode: MailTlsMode) -> Self {
-        match mode {
-            MailTlsMode::Tls => "tls".to_string(),
-            MailTlsMode::StartTls => "starttls".to_string(),
-            MailTlsMode::None => "none".to_string(),
-        }
-    }
-}
-
 impl std::fmt::Display for MailTlsMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", String::from(*self))
+        match self {
+            MailTlsMode::Tls => f.write_str("tls"),
+            MailTlsMode::StartTls => f.write_str("starttls"),
+            MailTlsMode::None => f.write_str("none"),
+        }
     }
 }
 
@@ -67,21 +61,6 @@ impl From<MailImportJobStatus> for String {
     }
 }
 
-impl std::str::FromStr for MailImportJobStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "pending" => Ok(MailImportJobStatus::Pending),
-            "running" => Ok(MailImportJobStatus::Running),
-            "completed" => Ok(MailImportJobStatus::Completed),
-            "failed" => Ok(MailImportJobStatus::Failed),
-            "cancelled" => Ok(MailImportJobStatus::Cancelled),
-            _ => Err(format!("Invalid import job status: {s}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct MailAccount {
     #[schema(value_type = Uuid)]
@@ -114,7 +93,7 @@ impl MailAccount {
         port: i32,
         username: String,
         password_enc: String,
-        tls_mode: impl Into<String>,
+        tls_mode: MailTlsMode,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -126,7 +105,7 @@ impl MailAccount {
             port,
             username,
             password_enc,
-            tls_mode: tls_mode.into(),
+            tls_mode: tls_mode.to_string(),
             is_enabled: true,
             last_error: None,
             last_connected_at: None,

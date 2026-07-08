@@ -6,7 +6,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{LinkTargetType, MailTlsMode};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
@@ -48,8 +47,7 @@ pub struct CreateMailAccountRequest {
     pub username: String,
     #[validate(length(min = 1, max = 512))]
     pub password: String,
-    #[validate(length(min = 1, max = 20))]
-    pub tls_mode: String,
+    pub tls_mode: MailTlsMode,
 }
 
 #[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
@@ -64,8 +62,7 @@ pub struct UpdateMailAccountRequest {
     pub username: Option<String>,
     #[validate(length(min = 1, max = 512))]
     pub password: Option<String>,
-    #[validate(length(min = 1, max = 20))]
-    pub tls_mode: Option<String>,
+    pub tls_mode: Option<MailTlsMode>,
     pub is_enabled: Option<bool>,
 }
 
@@ -540,14 +537,6 @@ fn job_to_response(job: rustshare_core::domain::MailImportJob) -> MailImportJobR
     }
 }
 
-fn parse_tls_mode(tls_mode: &str) -> Result<MailTlsMode, AppError> {
-    MailTlsMode::from_str(tls_mode).map_err(|_| {
-        AppError::bad_request(format!(
-            "Invalid tls_mode: {tls_mode}. Expected one of: tls, starttls, none"
-        ))
-    })
-}
-
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListMailMessagesQuery {
     #[serde(default)]
@@ -577,7 +566,6 @@ pub async fn create_mail_account(
     auth: AuthenticatedUser,
     ValidatedJson(req): ValidatedJson<CreateMailAccountRequest>,
 ) -> Result<(StatusCode, Json<MailAccountResponse>), AppError> {
-    let tls_mode = parse_tls_mode(&req.tls_mode)?;
     let account = state
         .mail_service
         .create_account(
@@ -588,7 +576,7 @@ pub async fn create_mail_account(
             req.port,
             req.username,
             req.password,
-            tls_mode,
+            req.tls_mode,
         )
         .await?;
 
@@ -664,8 +652,6 @@ pub async fn update_mail_account(
     Path(account_id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateMailAccountRequest>,
 ) -> Result<Json<MailAccountResponse>, AppError> {
-    let tls_mode = req.tls_mode.as_deref().map(parse_tls_mode).transpose()?;
-
     let account = state
         .mail_service
         .update_account(
@@ -677,7 +663,7 @@ pub async fn update_mail_account(
             req.port,
             req.username,
             req.password,
-            tls_mode,
+            req.tls_mode,
             req.is_enabled,
         )
         .await?;
