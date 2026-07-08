@@ -762,7 +762,7 @@ impl MailService {
         let result = self.connect_and_login(&account, &password).await;
         match result {
             Ok(mut session) => {
-                let _ = session.list_folders().await;
+                session.list_folders().await.map_err(imap_to_mail_error)?;
                 let _ = session.logout().await;
                 account.last_connected_at = Some(Utc::now());
                 account.last_error = None;
@@ -778,7 +778,7 @@ impl MailService {
                     .update_mail_account(&account)
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
-                Err(MailError::Imap(e.to_string()))
+                Err(e)
             }
         }
     }
@@ -797,10 +797,7 @@ impl MailService {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
-        let mut session = self
-            .connect_and_login(&account, &password)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let mut session = self.connect_and_login(&account, &password).await?;
         let folders = session.list_folders().await.map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
         Ok(folders)
@@ -818,10 +815,7 @@ impl MailService {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
-        let mut session = self
-            .connect_and_login(&account, &password)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let mut session = self.connect_and_login(&account, &password).await?;
         let summaries = session
             .fetch_message_summaries(folder, limit)
             .await
@@ -843,6 +837,11 @@ impl MailService {
         folder_name: String,
         selected_uids: Vec<i64>,
     ) -> Result<MailImportJob, MailError> {
+        if selected_uids.is_empty() {
+            return Err(MailError::InvalidSource(
+                "No message UIDs selected for import".to_string(),
+            ));
+        }
         // Ensure the account exists and belongs to the caller.
         self.get_account(tenant_id, owner_id, account_id).await?;
         let job = MailImportJob::new(tenant_id, owner_id, account_id, folder_name, selected_uids);
@@ -887,6 +886,13 @@ impl MailService {
 
     /// Process an IMAP import job by fetching each selected UID and importing it.
     pub async fn process_import_job(&self, job: &MailImportJob) -> Result<(), MailError> {
+        if !matches!(job.status.as_str(), "pending" | "running") {
+            return Err(MailError::InvalidSource(format!(
+                "Import job {} has status {} and cannot be re-processed",
+                job.id, job.status
+            )));
+        }
+
         let account = self
             .metadata_store
             .get_mail_account(job.account_id, job.owner_id)
@@ -909,10 +915,16 @@ impl MailService {
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
-        let mut session = self
-            .connect_and_login(&account, &password)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let mut session = match self.connect_and_login(&account, &password).await {
+            Ok(session) => session,
+            Err(e) => {
+                self.metadata_store
+                    .mark_mail_import_job_failed(job.id, &format!("connection failed: {e}"))
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                return Err(e);
+            }
+        };
 
         let uids = job.selected_uids.clone().unwrap_or_default();
         let mut processed = 0i32;
@@ -920,8 +932,10 @@ impl MailService {
         let mut last_error: Option<String> = None;
 
         for uid in uids {
+            let uid_u32 = u32::try_from(uid)
+                .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
             match session
-                .fetch_rfc822(&job.folder_name, uid as u32)
+                .fetch_rfc822(&job.folder_name, uid_u32)
                 .await
                 .map_err(imap_to_mail_error)
             {
@@ -985,13 +999,20 @@ impl MailService {
         &self,
         account: &MailAccount,
         password: &str,
-    ) -> Result<ImapSession, ImapError> {
+    ) -> Result<ImapSession, MailError> {
+        let port = u16::try_from(account.port).map_err(|_| {
+            MailError::InvalidSource(format!("Invalid IMAP port: {}", account.port))
+        })?;
         let tls_mode = account
             .tls_mode
             .parse::<MailTlsMode>()
-            .map_err(|e| ImapError::Tls(e.to_string()))?;
-        let client = ImapClient::connect(&account.host, account.port as u16, tls_mode).await?;
-        ImapSession::login(client, &account.username, password).await
+            .map_err(|e| MailError::Imap(e.to_string()))?;
+        let client = ImapClient::connect(&account.host, port, tls_mode)
+            .await
+            .map_err(|e| MailError::Imap(e.to_string()))?;
+        ImapSession::login(client, &account.username, password)
+            .await
+            .map_err(|e| MailError::Imap(e.to_string()))
     }
 
     /// Ensure the canonical `/Workspace/Mail` folder exists.

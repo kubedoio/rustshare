@@ -668,7 +668,7 @@ impl From<crate::services::mail_service::MailError> for AppError {
             }
             MailError::PermissionDenied => AppError::Forbidden(err.to_string()),
             MailError::InvalidSource(_) => AppError::BadRequest(err.to_string()),
-            MailError::Imap(_) => AppError::BadGateway(err.to_string()),
+            MailError::Imap(_) => AppError::BadGateway("IMAP server error".to_string()),
             MailError::Storage(_) | MailError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
