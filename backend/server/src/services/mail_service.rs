@@ -133,11 +133,6 @@ impl MailService {
         msg.visibility = MailVisibility::Private.into();
         msg.folder_id = Some(message_folder.id);
 
-        self.metadata_store
-            .create_mail_message(&msg)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
-
         let mut part_index = 0i32;
 
         if let Some(text) = &parsed.body_text {
@@ -201,6 +196,14 @@ impl MailService {
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
         }
+
+        // Insert the visible mail row only after all dependent blobs, file
+        // artifacts, and metadata rows have been persisted successfully. This
+        // prevents list/get from exposing partially imported messages.
+        self.metadata_store
+            .create_mail_message(&msg)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
 
         Ok(msg)
     }
@@ -428,13 +431,19 @@ fn safe_attachment_artifact_filename(filename: &str, idx: usize) -> String {
         .trim_matches(|ch| ch == '.' || ch == ' ')
         .to_string();
 
-    let filename = if sanitized.is_empty() {
+    // FileService rejects reserved metadata filenames such as
+    // `index.editor.json`; treat them like empty/unsafe names.
+    let filename = if sanitized.is_empty() || is_reserved_file_name(&sanitized) {
         format!("attachment-{idx}")
     } else {
         sanitized
     };
 
     truncate_filename(&filename, MAX_MAIL_ARTIFACT_NAME_LEN)
+}
+
+fn is_reserved_file_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("index.editor.json")
 }
 
 fn truncate_filename(filename: &str, max_chars: usize) -> String {
@@ -653,6 +662,23 @@ mod tests {
 
         assert!(sanitized.chars().count() <= MAX_MAIL_ARTIFACT_NAME_LEN);
         assert!(sanitized.ends_with(".pdf"));
+    }
+
+    #[test]
+    fn safe_attachment_artifact_filename_rewrites_reserved_names() {
+        assert_eq!(
+            safe_attachment_artifact_filename("index.editor.json", 7),
+            "attachment-7"
+        );
+        assert_eq!(
+            safe_attachment_artifact_filename("Index.Editor.JSON", 2),
+            "attachment-2"
+        );
+        // Similar but non-reserved names are preserved.
+        assert_eq!(
+            safe_attachment_artifact_filename("index.editor.json.backup", 0),
+            "index.editor.json.backup"
+        );
     }
 
     #[tokio::test]
