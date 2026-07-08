@@ -1,4 +1,4 @@
-use rustshare_core::domain::{MailAccount, MailImportJob, MailImportJobStatus, MailTlsMode};
+use rustshare_core::domain::{MailAccount, MailImportJob, MailTlsMode};
 use uuid::Uuid;
 
 #[test]

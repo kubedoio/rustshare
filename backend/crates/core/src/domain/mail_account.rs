@@ -93,6 +93,7 @@ pub struct MailAccount {
     pub host: String,
     pub port: i32,
     pub username: String,
+    #[serde(skip_serializing)]
     pub password_enc: String,
     pub tls_mode: String,
     pub is_enabled: bool,
@@ -104,6 +105,7 @@ pub struct MailAccount {
 }
 
 impl MailAccount {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tenant_id: Uuid,
         owner_id: UserId,
