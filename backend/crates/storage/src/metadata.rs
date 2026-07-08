@@ -311,17 +311,22 @@ impl MetadataStore {
     }
 
     /// Persist a new Mail link inside an existing transaction.
+    ///
+    /// Returns `true` if a new row was inserted, or `false` if an active link
+    /// for the same message/target already exists (unique conflict).
     pub async fn create_mail_link_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         link: &MailLink,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             INSERT INTO mail_links (
                 id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (message_id, target_type, target_id) WHERE deleted_at IS NULL
+            DO NOTHING
             "#,
             link.id,
             link.tenant_id,
@@ -334,15 +339,18 @@ impl MetadataStore {
         )
         .execute(&mut **tx)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Persist a new Mail link.
-    pub async fn create_mail_link(&self, link: &MailLink) -> Result<()> {
+    ///
+    /// Returns `true` if a new row was inserted, or `false` if an active link
+    /// for the same message/target already exists.
+    pub async fn create_mail_link(&self, link: &MailLink) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
-        self.create_mail_link_in_tx(&mut tx, link).await?;
+        let inserted = self.create_mail_link_in_tx(&mut tx, link).await?;
         tx.commit().await?;
-        Ok(())
+        Ok(inserted)
     }
 
     /// Soft-delete a Mail link inside an existing transaction and return true if a row was updated.

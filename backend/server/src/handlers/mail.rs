@@ -310,12 +310,14 @@ pub async fn delete_mail_link(
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
 
-    // Validate the link belongs to the message in the URL.
-    let links = state
+    // Validate the link belongs to the message in the URL. We load the link
+    // including soft-deleted rows so that retrying a DELETE after the first
+    // request succeeded remains idempotent (returns 200 instead of 404).
+    let link = state
         .mail_service
-        .list_message_links(auth.tenant_id, auth.user_id, message_id)
+        .find_mail_link_by_id(auth.tenant_id, auth.user_id, link_id)
         .await?;
-    if !links.iter().any(|link| link.id == link_id) {
+    if link.message_id != message_id {
         return Err(AppError::not_found("link"));
     }
 

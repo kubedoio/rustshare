@@ -191,6 +191,8 @@ impl EventStore {
             EventType::StandupModified,
             EventType::KanbanModified,
             EventType::NoteModified,
+            EventType::MailLinked,
+            EventType::MailUnlinked,
         ]
         .into_iter()
         .map(|et| serde_json::to_string(&et).unwrap())
@@ -356,6 +358,8 @@ mod tests {
             EventType::StandupModified,
             EventType::KanbanModified,
             EventType::NoteModified,
+            EventType::MailLinked,
+            EventType::MailUnlinked,
         ];
 
         for et in event_types {

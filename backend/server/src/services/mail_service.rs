@@ -353,6 +353,8 @@ impl MailService {
         let link = MailLink::new(tenant_id, message_id, caller, target_type, target_id);
 
         // 5. Persist the link and emit a MailLinked audit event atomically.
+        //    ON CONFLICT handles races where another request created the same
+        //    active link between the pre-check above and this insert.
         let mut tx = self
             .metadata_store
             .pool()
@@ -360,10 +362,30 @@ impl MailService {
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
-        self.metadata_store
+        let inserted = self
+            .metadata_store
             .create_mail_link_in_tx(&mut tx, &link)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if !inserted {
+            // A concurrent request won the race. Fetch the existing active link
+            // and return it without emitting a duplicate event.
+            let existing = self
+                .metadata_store
+                .find_active_mail_link(message_id, target_type.as_str(), target_id, tenant_id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+                .ok_or_else(|| {
+                    MailError::Database(
+                        "concurrent mail link disappeared after conflict".to_string(),
+                    )
+                })?;
+            tx.commit()
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            return Ok(existing);
+        }
 
         let payload = MailLinkedPayload {
             message_id: link.message_id,
@@ -459,6 +481,30 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Load a mail link by id, including soft-deleted rows.
+    ///
+    /// Caller must be able to read the source mail. This is used by the DELETE
+    /// handler to validate URL ownership for retries on already-deleted links.
+    pub async fn find_mail_link_by_id(
+        &self,
+        tenant_id: Uuid,
+        caller: UserId,
+        link_id: Uuid,
+    ) -> Result<MailLink, MailError> {
+        let link = self
+            .metadata_store
+            .find_mail_link_by_id(link_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(link_id))?;
+
+        // Verify caller can read the source mail; this also enforces tenant
+        // scoping because get_message checks owner_id.
+        self.get_message(tenant_id, caller, link.message_id).await?;
+
+        Ok(link)
     }
 
     /// List active links for a mail message.
