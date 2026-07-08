@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE id = $1\n                ",
+  "query": "\n            WITH target AS (\n                SELECT j.id\n                FROM mail_import_jobs j\n                JOIN mail_accounts a ON a.id = j.account_id\n                WHERE j.status = 'pending'\n                  AND j.deleted_at IS NULL\n                  AND a.deleted_at IS NULL\n                  AND a.is_enabled = true\n                ORDER BY j.created_at ASC\n                FOR UPDATE OF j SKIP LOCKED\n                LIMIT 1\n            ),\n            updated AS (\n                UPDATE mail_import_jobs\n                SET status = 'running', started_at = NOW(), updated_at = NOW()\n                FROM target\n                WHERE mail_import_jobs.id = target.id\n                RETURNING mail_import_jobs.*\n            )\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                selected_uids AS \"selected_uids: _\",\n                status, total_messages, processed_messages, failed_messages,\n                last_error, started_at, completed_at, deleted_at, created_at, updated_at\n            FROM updated\n            ",
   "describe": {
     "columns": [
       {
@@ -90,9 +90,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Uuid"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -114,5 +112,5 @@
       false
     ]
   },
-  "hash": "8518e3389050e91f512b12a0cb3b7138fe35565592dd9519766204e9989d1e2a"
+  "hash": "f595ae5a3aaa830a15734a66c3ee06b611d01e3d961f9fd6485c94651a7502a7"
 }

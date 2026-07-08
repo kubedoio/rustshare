@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET status = 'cancelled', updated_at = NOW()\n            WHERE account_id = $1\n              AND owner_id = $2\n              AND status = 'pending'\n              AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7921cecd15d1b5d8e876401a389081573c502e1d9573868ac6b259524025b2e1"
+}

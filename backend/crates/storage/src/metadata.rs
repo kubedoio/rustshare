@@ -594,11 +594,31 @@ impl MetadataStore {
     }
 
     /// Soft-delete a mail account and return whether a row was updated.
+    ///
+    /// Any pending import jobs belonging to the account are cancelled as part
+    /// of the same transaction.
     pub async fn soft_delete_mail_account(
         &self,
         id: MailAccountId,
         owner_id: UserId,
     ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'cancelled', updated_at = NOW()
+            WHERE account_id = $1
+              AND owner_id = $2
+              AND status = 'pending'
+              AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&mut *tx)
+        .await?;
+
         let result = sqlx::query!(
             r#"
             UPDATE mail_accounts
@@ -608,8 +628,10 @@ impl MetadataStore {
             id,
             owner_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -722,61 +744,45 @@ impl MetadataStore {
     }
 
     /// Claim the oldest pending mail import job for processing.
+    ///
+    /// Only claims jobs whose associated mail account is enabled and has not
+    /// been soft-deleted. The SELECT, UPDATE, and RETURN are performed in a
+    /// single CTE statement to keep the operation atomic and reduce round-trips.
     pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
-        let mut tx = self.pool.begin().await?;
-
         let job = sqlx::query_as!(
             MailImportJob,
             r#"
+            WITH target AS (
+                SELECT j.id
+                FROM mail_import_jobs j
+                JOIN mail_accounts a ON a.id = j.account_id
+                WHERE j.status = 'pending'
+                  AND j.deleted_at IS NULL
+                  AND a.deleted_at IS NULL
+                  AND a.is_enabled = true
+                ORDER BY j.created_at ASC
+                FOR UPDATE OF j SKIP LOCKED
+                LIMIT 1
+            ),
+            updated AS (
+                UPDATE mail_import_jobs
+                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                FROM target
+                WHERE mail_import_jobs.id = target.id
+                RETURNING mail_import_jobs.*
+            )
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
-            FROM mail_import_jobs
-            WHERE status = 'pending' AND deleted_at IS NULL
-            ORDER BY created_at ASC
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1
+            FROM updated
             "#,
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(job) = job {
-            sqlx::query!(
-                r#"
-                UPDATE mail_import_jobs
-                SET status = 'running', started_at = NOW(), updated_at = NOW()
-                WHERE id = $1
-                "#,
-                job.id
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            let updated = sqlx::query_as!(
-                MailImportJob,
-                r#"
-                SELECT
-                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
-                    selected_uids AS "selected_uids: _",
-                    status, total_messages, processed_messages, failed_messages,
-                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
-                FROM mail_import_jobs
-                WHERE id = $1
-                "#,
-                job.id
-            )
-            .fetch_one(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-            Ok(Some(updated))
-        } else {
-            tx.commit().await?;
-            Ok(None)
-        }
+        Ok(job)
     }
 
     /// Update the progress counters for a mail import job.
@@ -795,7 +801,7 @@ impl MetadataStore {
                 failed_messages = $3,
                 last_error = $4,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
             id,
             processed,
@@ -813,7 +819,7 @@ impl MetadataStore {
             r#"
             UPDATE mail_import_jobs
             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
             id
         )
@@ -832,7 +838,7 @@ impl MetadataStore {
             r#"
             UPDATE mail_import_jobs
             SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
             id,
             error
