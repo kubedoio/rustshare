@@ -240,6 +240,8 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         folder_service.clone(),
         permission_resolver.clone(),
         event_store.clone(),
+        broadcaster.clone(),
+        Arc::new(secret_key.clone()),
     ));
 
     AppState {
