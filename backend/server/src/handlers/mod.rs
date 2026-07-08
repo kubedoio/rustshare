@@ -663,9 +663,12 @@ impl From<crate::services::mail_service::MailError> for AppError {
     fn from(err: crate::services::mail_service::MailError) -> Self {
         use crate::services::mail_service::MailError;
         match err {
-            MailError::NotFound(_id) => AppError::NotFound(err.to_string()),
+            MailError::NotFound(_) | MailError::AccountNotFound(_) | MailError::JobNotFound(_) => {
+                AppError::NotFound(err.to_string())
+            }
             MailError::PermissionDenied => AppError::Forbidden(err.to_string()),
             MailError::InvalidSource(_) => AppError::BadRequest(err.to_string()),
+            MailError::Imap(_) => AppError::BadGateway(err.to_string()),
             MailError::Storage(_) | MailError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }

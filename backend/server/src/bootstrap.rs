@@ -60,6 +60,7 @@ struct Services {
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
     mail_service: Arc<crate::services::mail_service::MailService>,
+    secret_key: Arc<SecretEncryptionKey>,
 }
 
 fn init_tracing(log_format: &str) {
@@ -217,6 +218,7 @@ async fn init_services(
     file_repository: Arc<FileRepository>,
     folder_repository: Arc<FolderRepository>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    secret_key: Arc<SecretEncryptionKey>,
     config: &AppConfig,
 ) -> Result<Services> {
     let vault_sync_service = Arc::new(VaultSyncService::new(
@@ -265,6 +267,7 @@ async fn init_services(
         Arc::clone(&folder_service),
         Arc::clone(&permission_resolver),
         Arc::clone(&event_store),
+        Arc::clone(&secret_key),
     ));
 
     // Shared content indexer used both by the AI service and by the note
@@ -473,6 +476,7 @@ async fn init_services(
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        secret_key,
     })
 }
 
@@ -512,6 +516,17 @@ pub async fn init_app() -> Result<AppState> {
         permission_resolver,
     ) = init_repositories(db_pool.clone()).await?;
 
+    let encryption_key = std::env::var("RUSTSHARE_SECRET_ENCRYPTION_KEY").unwrap_or_default();
+    if encryption_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
+        return Err(anyhow::anyhow!(
+            "RUSTSHARE_SECRET_ENCRYPTION_KEY is using a known weak default value. Generate a strong key with: openssl rand -base64 32"
+        ));
+    }
+    let secret_key = Arc::new(
+        SecretEncryptionKey::from_env()
+            .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?,
+    );
+
     let services = init_services(
         db_pool.clone(),
         Arc::clone(&metadata_store),
@@ -525,6 +540,7 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&file_repository),
         Arc::clone(&folder_repository),
         Arc::clone(&permission_resolver),
+        Arc::clone(&secret_key),
         &config,
     )
     .await?;
@@ -640,16 +656,7 @@ pub async fn init_app() -> Result<AppState> {
         .map_err(|e| anyhow::anyhow!("Failed to seed default templates: {}", e))?;
     info!("Default modules and templates seeded");
 
-    let encryption_key = std::env::var("RUSTSHARE_SECRET_ENCRYPTION_KEY").unwrap_or_default();
-    if encryption_key == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
-        return Err(anyhow::anyhow!(
-            "RUSTSHARE_SECRET_ENCRYPTION_KEY is using a known weak default value. Generate a strong key with: openssl rand -base64 32"
-        ));
-    }
-    let secret_key = SecretEncryptionKey::from_env()
-        .map_err(|e| anyhow::anyhow!("Secret encryption key error: {}", e))?;
-
-    if seed_oidc_config_from_env(&db_pool, &secret_key).await? {
+    if seed_oidc_config_from_env(&db_pool, &services.secret_key).await? {
         info!("Seeded initial OIDC config from environment bootstrap values");
     }
 
@@ -684,7 +691,7 @@ pub async fn init_app() -> Result<AppState> {
         ai_service: services.ai_service,
         upload_service: Some(services.upload_service),
         rate_limit_config,
-        secret_key,
+        secret_key: (*services.secret_key).clone(),
         oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,

@@ -161,12 +161,14 @@ impl TestContext {
 
     /// Create a new MailService instance
     pub fn mail_service(&self) -> rustshare_server::services::mail_service::MailService {
+        use rustshare_crypto::SecretEncryptionKey;
         use rustshare_server::services::mail_service::MailService;
         let file_service = Arc::new(self.file_service());
         let folder_service = Arc::new(self.folder_service());
         let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
             PermissionResolverRepository::new(self.pool.clone()),
         )));
+        let secret_key = Arc::new(SecretEncryptionKey::from_bytes([0x42; 32]));
         MailService::new(
             self.metadata_store.clone(),
             self.object_store.clone(),
@@ -174,6 +176,7 @@ impl TestContext {
             folder_service,
             permission_resolver,
             self.event_store.clone(),
+            secret_key,
         )
     }
 

@@ -813,6 +813,21 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Mark a mail import job as running and record its start time.
+    pub async fn mark_mail_import_job_running(&self, id: MailImportJobId) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'running', started_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Mark a mail import job as completed.
     pub async fn mark_mail_import_job_completed(&self, id: MailImportJobId) -> Result<()> {
         sqlx::query!(

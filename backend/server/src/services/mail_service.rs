@@ -3,18 +3,22 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rustshare_core::domain::{
-    Folder, LinkTargetType, MailAttachment, MailLink, MailMessage, MailMessagePart, MailSourceMode,
+    Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
+    MailImportJobId, MailLink, MailMessage, MailMessagePart, MailSourceMode, MailTlsMode,
     MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
     AggregateType, Event, EventType, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
-use rustshare_core::services::{FileService, FolderService, PermissionResolver};
+use rustshare_core::services::{FileService, FolderService, ObjectStoreOps, PermissionResolver};
+use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use super::imap_client::{ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder};
 
 const MAX_MAIL_ARTIFACT_NAME_LEN: usize = 200;
 const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
@@ -27,6 +31,10 @@ const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
 pub enum MailError {
     #[error("Mail message not found: {0}")]
     NotFound(uuid::Uuid),
+    #[error("Mail account not found: {0}")]
+    AccountNotFound(Uuid),
+    #[error("Import job not found: {0}")]
+    JobNotFound(Uuid),
     #[error("Permission denied")]
     PermissionDenied,
     #[error("Invalid mail source: {0}")]
@@ -35,6 +43,8 @@ pub enum MailError {
     Storage(String),
     #[error("Database error: {0}")]
     Database(String),
+    #[error("IMAP error: {0}")]
+    Imap(String),
 }
 
 // ============================================================================
@@ -50,6 +60,7 @@ pub struct MailService {
     folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     event_store: Arc<EventStore>,
+    secret_key: Arc<SecretEncryptionKey>,
 }
 
 impl MailService {
@@ -62,6 +73,7 @@ impl MailService {
         folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
         permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
         event_store: Arc<EventStore>,
+        secret_key: Arc<SecretEncryptionKey>,
     ) -> Self {
         Self {
             metadata_store,
@@ -70,6 +82,7 @@ impl MailService {
             folder_service,
             permission_resolver,
             event_store,
+            secret_key,
         }
     }
 
@@ -89,8 +102,31 @@ impl MailService {
         imported_by: Uuid,
         raw_source: Vec<u8>,
     ) -> Result<MailMessage, MailError> {
+        self.import_raw_source(
+            tenant_id,
+            owner_id,
+            imported_by,
+            MailSourceMode::EmlUpload,
+            None,
+            None,
+            raw_source,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn import_raw_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        imported_by: Uuid,
+        source_mode: MailSourceMode,
+        source_folder: Option<&str>,
+        source_uid: Option<i64>,
+        raw_source: Vec<u8>,
+    ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
-            return Err(MailError::InvalidSource("Empty .eml source".to_string()));
+            return Err(MailError::InvalidSource("Empty mail source".to_string()));
         }
 
         let parsed =
@@ -125,7 +161,9 @@ impl MailService {
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
-        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, MailSourceMode::EmlUpload);
+        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, source_mode);
+        msg.source_folder = source_folder.map(|s| s.to_string());
+        msg.source_uid = source_uid;
         msg.blob_key = Some(source_key.clone());
         msg.blob_sha256 = Some(source_hash);
         msg.size_bytes = Some(source_size);
@@ -582,6 +620,380 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
+    // ============================================================================
+    // Mail accounts
+    // ============================================================================
+
+    #[allow(clippy::too_many_arguments)]
+    /// Create a new IMAP mail account with an encrypted password.
+    pub async fn create_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        name: String,
+        host: String,
+        port: i32,
+        username: String,
+        password: String,
+        tls_mode: MailTlsMode,
+    ) -> Result<MailAccount, MailError> {
+        let password_enc = encrypt_secret(&password, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
+        let account = MailAccount::new(
+            tenant_id,
+            owner_id,
+            name,
+            host,
+            port,
+            username,
+            password_enc,
+            tls_mode,
+        );
+        self.metadata_store
+            .create_mail_account(&account)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        Ok(account)
+    }
+
+    /// List active mail accounts for a user.
+    pub async fn list_accounts(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<MailAccount>, MailError> {
+        self.metadata_store
+            .list_mail_accounts_by_owner(tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Get a single active mail account if owned by the user.
+    pub async fn get_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<MailAccount, MailError> {
+        let account = self
+            .metadata_store
+            .get_mail_account(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::AccountNotFound(account_id))?;
+        if account.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(account)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// Update a mail account's connection details and enabled state.
+    pub async fn update_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        name: Option<String>,
+        host: Option<String>,
+        port: Option<i32>,
+        username: Option<String>,
+        password: Option<String>,
+        tls_mode: Option<MailTlsMode>,
+        is_enabled: Option<bool>,
+    ) -> Result<MailAccount, MailError> {
+        let mut account = self.get_account(tenant_id, owner_id, account_id).await?;
+        if let Some(name) = name {
+            account.name = name;
+        }
+        if let Some(host) = host {
+            account.host = host;
+        }
+        if let Some(port) = port {
+            account.port = port;
+        }
+        if let Some(username) = username {
+            account.username = username;
+        }
+        if let Some(password) = password {
+            account.password_enc = encrypt_secret(&password, &self.secret_key)
+                .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
+        }
+        if let Some(tls_mode) = tls_mode {
+            account.tls_mode = tls_mode.to_string();
+        }
+        if let Some(is_enabled) = is_enabled {
+            account.is_enabled = is_enabled;
+        }
+        self.metadata_store
+            .update_mail_account(&account)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        Ok(account)
+    }
+
+    /// Soft-delete a mail account and cancel its pending import jobs.
+    pub async fn delete_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<(), MailError> {
+        // Ensure the account exists and belongs to the caller.
+        self.get_account(tenant_id, owner_id, account_id).await?;
+        self.metadata_store
+            .soft_delete_mail_account(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Test an account's IMAP connection and update its connection metadata.
+    pub async fn test_account_connection(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<(), MailError> {
+        let mut account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+
+        let result = self.connect_and_login(&account, &password).await;
+        match result {
+            Ok(mut session) => {
+                let _ = session.list_folders().await;
+                let _ = session.logout().await;
+                account.last_connected_at = Some(Utc::now());
+                account.last_error = None;
+                self.metadata_store
+                    .update_mail_account(&account)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                Ok(())
+            }
+            Err(e) => {
+                account.last_error = Some(e.to_string());
+                self.metadata_store
+                    .update_mail_account(&account)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                Err(MailError::Imap(e.to_string()))
+            }
+        }
+    }
+
+    // ============================================================================
+    // IMAP browsing
+    // ============================================================================
+
+    /// List folders available on the account's IMAP server.
+    pub async fn list_imap_folders(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailFolder>, MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self
+            .connect_and_login(&account, &password)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let folders = session.list_folders().await.map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(folders)
+    }
+
+    /// List message summaries in an IMAP folder.
+    pub async fn list_imap_messages(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        limit: usize,
+    ) -> Result<Vec<ImapMessageSummary>, MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self
+            .connect_and_login(&account, &password)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let summaries = session
+            .fetch_message_summaries(folder, limit)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(summaries)
+    }
+
+    // ============================================================================
+    // Import jobs
+    // ============================================================================
+
+    /// Create a job to import selected UIDs from an IMAP folder.
+    pub async fn create_imap_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: String,
+        selected_uids: Vec<i64>,
+    ) -> Result<MailImportJob, MailError> {
+        // Ensure the account exists and belongs to the caller.
+        self.get_account(tenant_id, owner_id, account_id).await?;
+        let job = MailImportJob::new(tenant_id, owner_id, account_id, folder_name, selected_uids);
+        self.metadata_store
+            .create_mail_import_job(&job)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        Ok(job)
+    }
+
+    /// Get a single import job if owned by the user.
+    pub async fn get_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        job_id: MailImportJobId,
+    ) -> Result<MailImportJob, MailError> {
+        let job = self
+            .metadata_store
+            .get_mail_import_job(job_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::JobNotFound(job_id))?;
+        if job.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(job)
+    }
+
+    /// List active import jobs for a user, optionally filtered by account.
+    pub async fn list_import_jobs(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: Option<MailAccountId>,
+    ) -> Result<Vec<MailImportJob>, MailError> {
+        self.metadata_store
+            .list_mail_import_jobs_by_owner(tenant_id, owner_id, account_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Process an IMAP import job by fetching each selected UID and importing it.
+    pub async fn process_import_job(&self, job: &MailImportJob) -> Result<(), MailError> {
+        let account = self
+            .metadata_store
+            .get_mail_account(job.account_id, job.owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::AccountNotFound(job.account_id))?;
+
+        if account.deleted_at.is_some() || !account.is_enabled {
+            return Err(MailError::AccountNotFound(job.account_id));
+        }
+        if account.tenant_id != job.tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+
+        self.metadata_store
+            .mark_mail_import_job_running(job.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let mut session = self
+            .connect_and_login(&account, &password)
+            .await
+            .map_err(imap_to_mail_error)?;
+
+        let uids = job.selected_uids.clone().unwrap_or_default();
+        let mut processed = 0i32;
+        let mut failed = 0i32;
+        let mut last_error: Option<String> = None;
+
+        for uid in uids {
+            match session
+                .fetch_rfc822(&job.folder_name, uid as u32)
+                .await
+                .map_err(imap_to_mail_error)
+            {
+                Ok(raw_source) => {
+                    match self
+                        .import_raw_source(
+                            job.tenant_id,
+                            job.owner_id,
+                            job.owner_id,
+                            MailSourceMode::ImapSelected,
+                            Some(&job.folder_name),
+                            Some(uid),
+                            raw_source,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            processed += 1;
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            last_error = Some(format!("uid {uid}: {e}"));
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    last_error = Some(format!("uid {uid}: {e}"));
+                }
+            }
+            self.metadata_store
+                .update_mail_import_job_progress(job.id, processed, failed, last_error.as_deref())
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+
+        let _ = session.logout().await;
+
+        if failed > 0 {
+            let error = last_error.unwrap_or_else(|| format!("{failed} message(s) failed"));
+            self.metadata_store
+                .mark_mail_import_job_failed(job.id, &error)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            Err(MailError::Imap(error))
+        } else {
+            self.metadata_store
+                .mark_mail_import_job_completed(job.id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            Ok(())
+        }
+    }
+
+    // ============================================================================
+    // Helpers
+    // ============================================================================
+
+    /// Connect to the IMAP server and log in using the account credentials.
+    async fn connect_and_login(
+        &self,
+        account: &MailAccount,
+        password: &str,
+    ) -> Result<ImapSession, ImapError> {
+        let tls_mode = account
+            .tls_mode
+            .parse::<MailTlsMode>()
+            .map_err(|e| ImapError::Tls(e.to_string()))?;
+        let client = ImapClient::connect(&account.host, account.port as u16, tls_mode).await?;
+        ImapSession::login(client, &account.username, password).await
+    }
+
     /// Ensure the canonical `/Workspace/Mail` folder exists.
     ///
     /// Legacy module root policy: new writes are always directed to the
@@ -647,6 +1059,10 @@ impl MailService {
             .await
             .map_err(|e| MailError::Storage(e.to_string()))
     }
+}
+
+fn imap_to_mail_error(err: ImapError) -> MailError {
+    MailError::Imap(err.to_string())
 }
 
 fn addresses_to_json(
@@ -1027,6 +1443,7 @@ mod tests {
             permission_resolver.clone(),
         ));
 
+        let secret_key = Arc::new(SecretEncryptionKey::from_bytes([0x42; 32]));
         let mail_service = MailService::new(
             metadata_store.clone(),
             object_store.clone(),
@@ -1034,6 +1451,7 @@ mod tests {
             folder_service,
             permission_resolver,
             event_store.clone(),
+            secret_key,
         );
 
         let tenant_id = Uuid::new_v4();
@@ -1290,6 +1708,7 @@ mod link_tests {
             .await
             .expect("failed to create target folder");
 
+        let secret_key = Arc::new(SecretEncryptionKey::from_bytes([0x42; 32]));
         let mail_service = MailService::new(
             metadata_store.clone(),
             object_store,
@@ -1297,6 +1716,7 @@ mod link_tests {
             folder_service,
             permission_resolver,
             event_store,
+            secret_key,
         );
 
         let mut message = MailMessage::new(tenant_id, user.id, user.id, MailSourceMode::EmlUpload);
