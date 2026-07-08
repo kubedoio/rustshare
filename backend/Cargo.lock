@@ -3805,6 +3805,7 @@ dependencies = [
  "image",
  "lettre",
  "libc",
+ "mailparse",
  "md5",
  "metrics",
  "metrics-exporter-prometheus",

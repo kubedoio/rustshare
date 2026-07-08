@@ -1,13 +1,17 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use async_imap::types::{Fetch, Name};
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
+use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Underlying transport for an IMAP session.
 ///
@@ -115,17 +119,38 @@ impl ImapClient {
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
         match tls_mode {
             MailTlsMode::Tls => {
-                let tcp_stream = TcpStream::connect((host, port)).await?;
+                let tcp_stream =
+                    tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect((host, port)))
+                        .await
+                        .map_err(|_| {
+                            ImapError::ConnectionFailed("operation timed out".to_string())
+                        })??;
+
                 let connector = build_tls_connector()?;
                 let server_name = host
                     .to_string()
                     .try_into()
                     .map_err(|e| ImapError::Tls(format!("invalid server name: {e}")))?;
-                let tls_stream = connector.connect(server_name, tcp_stream).await?;
+                let tls_stream = tokio::time::timeout(
+                    DEFAULT_TIMEOUT,
+                    connector.connect(server_name, tcp_stream),
+                )
+                .await
+                .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))??;
                 Ok(async_imap::Client::new(ImapStream::Tls(tls_stream)))
             }
             MailTlsMode::None => {
-                let tcp_stream = TcpStream::connect((host, port)).await?;
+                tracing::warn!(
+                    "IMAP connection to {}:{} will transmit credentials in plaintext",
+                    host,
+                    port
+                );
+                let tcp_stream =
+                    tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect((host, port)))
+                        .await
+                        .map_err(|_| {
+                            ImapError::ConnectionFailed("operation timed out".to_string())
+                        })??;
                 Ok(async_imap::Client::new(ImapStream::Plain(tcp_stream)))
             }
             MailTlsMode::StartTls => Err(ImapError::Tls(
@@ -141,20 +166,24 @@ impl ImapSession {
         username: &str,
         password: &str,
     ) -> Result<Self, ImapError> {
-        let session = client
-            .login(username, password)
+        let session = tokio::time::timeout(DEFAULT_TIMEOUT, client.login(username, password))
             .await
+            .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))?
             .map_err(|(err, _client)| ImapError::AuthenticationFailed(err.to_string()))?;
         Ok(Self { session })
     }
 
     pub async fn list_folders(&mut self) -> Result<Vec<MailFolder>, ImapError> {
-        let names = self
-            .session
-            .list(None, Some("*"))
-            .await?
-            .try_collect::<Vec<Name>>()
-            .await?;
+        let names = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            self.session
+                .list(None, Some("*"))
+                .await?
+                .try_collect::<Vec<Name>>()
+                .await
+        })
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+
         Ok(names
             .into_iter()
             .map(|name| MailFolder {
@@ -165,7 +194,9 @@ impl ImapSession {
     }
 
     pub async fn select_folder(&mut self, folder: &str) -> Result<(), ImapError> {
-        self.session.select(folder).await?;
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.select(folder))
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         Ok(())
     }
 
@@ -176,7 +207,9 @@ impl ImapSession {
     ) -> Result<Vec<ImapMessageSummary>, ImapError> {
         self.select_folder(folder).await?;
 
-        let uids = self.session.uid_search("ALL").await?;
+        let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search("ALL"))
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         let mut limited: Vec<u32> = uids.into_iter().take(limit).collect();
         limited.sort_unstable();
         if limited.is_empty() {
@@ -189,12 +222,15 @@ impl ImapSession {
             .collect::<Vec<_>>()
             .join(",");
 
-        let fetches = self
-            .session
-            .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE)")
-            .await?
-            .try_collect::<Vec<Fetch>>()
-            .await?;
+        let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            self.session
+                .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE)")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
 
         Ok(fetches.into_iter().filter_map(summary_from_fetch).collect())
     }
@@ -202,12 +238,15 @@ impl ImapSession {
     pub async fn fetch_rfc822(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>, ImapError> {
         self.select_folder(folder).await?;
 
-        let fetches = self
-            .session
-            .uid_fetch(uid.to_string(), "RFC822")
-            .await?
-            .try_collect::<Vec<Fetch>>()
-            .await?;
+        let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            self.session
+                .uid_fetch(uid.to_string(), "RFC822")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
 
         let fetch = fetches
             .into_iter()
@@ -221,7 +260,9 @@ impl ImapSession {
     }
 
     pub async fn logout(mut self) -> Result<(), ImapError> {
-        self.session.logout().await?;
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.logout())
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         Ok(())
     }
 }
@@ -236,8 +277,31 @@ fn build_tls_connector() -> Result<tokio_rustls::TlsConnector, ImapError> {
     Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }
 
-fn parse_imap_text(bytes: impl AsRef<[u8]>) -> Option<String> {
-    Some(String::from_utf8_lossy(bytes.as_ref()).to_string())
+fn decode_header_text(key: &str, raw: &[u8]) -> Option<String> {
+    let raw_str = String::from_utf8_lossy(raw);
+    let header_line = format!("{}: {}\r\n", key, raw_str);
+    let bytes = header_line.as_bytes();
+    let (header, _idx) = parse_header(bytes).ok()?;
+    Some(header.get_value())
+}
+
+fn parse_address(raw: &[u8]) -> Option<(Option<String>, String)> {
+    let raw_str = String::from_utf8_lossy(raw);
+    let header_line = format!("From: {}\r\n", raw_str);
+    let bytes = header_line.as_bytes();
+    let (header, _idx) = parse_header(bytes).ok()?;
+    let addrs = addrparse_header(&header).ok()?;
+    addrs.iter().next().and_then(mail_addr_to_address)
+}
+
+fn mail_addr_to_address(addr: &MailAddr) -> Option<(Option<String>, String)> {
+    match addr {
+        MailAddr::Single(info) => Some((info.display_name.clone(), info.addr.clone())),
+        MailAddr::Group(group) => group
+            .addrs
+            .first()
+            .map(|info| (info.display_name.clone(), info.addr.clone())),
+    }
 }
 
 fn parse_imap_date(value: &str) -> Option<DateTime<Utc>> {
@@ -252,27 +316,24 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
     let uid = fetch.uid?;
     let envelope = fetch.envelope()?;
 
-    let subject = envelope.subject.as_ref().and_then(parse_imap_text);
+    let subject = envelope
+        .subject
+        .as_ref()
+        .and_then(|b| decode_header_text("Subject", b));
 
-    let (from_address, from_name) = envelope
+    let (from_name, from_address) = envelope
         .from
         .as_ref()
         .and_then(|addrs| addrs.first())
-        .map(|addr| {
-            let address = addr
-                .mailbox
-                .as_ref()
-                .and_then(parse_imap_text)
-                .map(|m| format_address(&m, addr.host.as_deref()));
-            let name = addr.name.as_ref().and_then(parse_imap_text);
-            (address, name)
+        .and_then(|addr| {
+            parse_address(&address_to_bytes(addr)).map(|(name, address)| (name, Some(address)))
         })
         .unwrap_or((None, None));
 
     let sent_at = envelope
         .date
         .as_ref()
-        .and_then(parse_imap_text)
+        .and_then(|b| decode_header_text("Date", b))
         .and_then(|d| parse_imap_date(&d));
 
     let size_bytes = i64::from(fetch.size.unwrap_or(0));
@@ -287,9 +348,92 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
     })
 }
 
-fn format_address(mailbox: &str, host: Option<&[u8]>) -> String {
-    match host {
-        Some(h) => format!("{}@{}", mailbox, String::from_utf8_lossy(h)),
-        None => mailbox.to_string(),
+fn address_to_bytes(addr: &async_imap::imap_proto::types::Address<'_>) -> Vec<u8> {
+    let name = addr.name.as_deref().map(String::from_utf8_lossy);
+    let mailbox = addr
+        .mailbox
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+    let host = addr
+        .host
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+
+    if mailbox.is_empty() {
+        return Vec::new();
+    }
+
+    let email = if host.is_empty() {
+        mailbox.to_string()
+    } else {
+        format!("{}@{}", mailbox, host)
+    };
+
+    match name {
+        Some(n) if !n.is_empty() => format!("{} <{}>", n, email).into_bytes(),
+        _ => format!("<{}>", email).into_bytes(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_plain_ascii_subject() {
+        let raw = b"Hello, world!";
+        assert_eq!(
+            decode_header_text("Subject", raw),
+            Some("Hello, world!".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_rfc2047_subject() {
+        // Base64-encoded UTF-8 for "Привет" (Russian for "Hi").
+        let raw = b"=?UTF-8?B?0J/RgNC40LLQtdGC?=";
+        assert_eq!(
+            decode_header_text("Subject", raw),
+            Some("Привет".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_address_with_display_name() {
+        let raw = b"\"John Doe\" <john@example.com>";
+        let (name, address) = parse_address(raw).unwrap();
+        assert_eq!(name, Some("John Doe".to_string()));
+        assert_eq!(address, "john@example.com");
+    }
+
+    #[test]
+    fn parse_address_with_encoded_display_name() {
+        // Base64-encoded UTF-8 for "Привет".
+        let raw = b"=?UTF-8?B?0J/RgNC40LLQtdGC?= <test@example.com>";
+        let (name, address) = parse_address(raw).unwrap();
+        assert_eq!(name, Some("Привет".to_string()));
+        assert_eq!(address, "test@example.com");
+    }
+
+    #[test]
+    fn parse_address_without_display_name() {
+        let raw = b"jane@example.com";
+        let (name, address) = parse_address(raw).unwrap();
+        assert_eq!(name, None);
+        assert_eq!(address, "jane@example.com");
+    }
+
+    #[test]
+    fn parse_rfc2822_date() {
+        let parsed = parse_imap_date("Mon, 15 Aug 2022 10:30:00 +0000").unwrap();
+        assert_eq!(parsed.timestamp(), 1_660_559_400);
+    }
+
+    #[test]
+    fn parse_fallback_date_format() {
+        let parsed = parse_imap_date("15 Aug 2022 10:30:00 +0000").unwrap();
+        assert_eq!(parsed.timestamp(), 1_660_559_400);
     }
 }
