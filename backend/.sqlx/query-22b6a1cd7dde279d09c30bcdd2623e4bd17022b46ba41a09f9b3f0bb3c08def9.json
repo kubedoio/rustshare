@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n                ORDER BY created_at DESC\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "source_mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "folder_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "selected_uids: _",
+        "type_info": "Int8Array"
+      },
+      {
+        "ordinal": 7,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_messages",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "processed_messages",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "failed_messages",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "22b6a1cd7dde279d09c30bcdd2623e4bd17022b46ba41a09f9b3f0bb3c08def9"
+}

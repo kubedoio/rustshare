@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO mail_import_jobs (\n                id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                selected_uids, status, total_messages, processed_messages, failed_messages,\n                last_error, started_at, completed_at, deleted_at, created_at, updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Int8Array",
+        "Varchar",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f8dea8bf24dfe3a4612fe472af60f07bf7bee089b6bab0cbb28f91de191018f1"
+}

@@ -6,9 +6,10 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, MailAttachment, MailLink, MailLinkId, MailMessage, MailMessageId,
-    MailMessagePart, OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState,
-    ReplicationTarget, Share, SharePermissions, User, UserSession, Vault, VaultDevice, VaultFile,
+    File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
+    MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
+    OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget,
+    Share, SharePermissions, User, UserId, UserSession, Vault, VaultDevice, VaultFile,
     VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
@@ -478,6 +479,367 @@ impl MetadataStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// Create a new mail account.
+    pub async fn create_mail_account(&self, account: &MailAccount) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_accounts (
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            "#,
+            account.id,
+            account.tenant_id,
+            account.owner_id,
+            account.name,
+            account.host,
+            account.port,
+            account.username,
+            account.password_enc,
+            account.tls_mode,
+            account.is_enabled,
+            account.last_error.as_deref(),
+            account.last_connected_at,
+            account.deleted_at,
+            account.created_at,
+            account.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find a mail account by ID, scoped to the owning user.
+    pub async fn get_mail_account(
+        &self,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<Option<MailAccount>> {
+        let row = sqlx::query_as!(
+            MailAccount,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            FROM mail_accounts
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List active mail accounts for a user, ordered by creation time (newest first).
+    pub async fn list_mail_accounts_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<MailAccount>> {
+        let rows = sqlx::query_as!(
+            MailAccount,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            FROM mail_accounts
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Update a mail account's connection details and enabled state.
+    pub async fn update_mail_account(&self, account: &MailAccount) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_accounts
+            SET
+                name = $3,
+                host = $4,
+                port = $5,
+                username = $6,
+                password_enc = $7,
+                tls_mode = $8,
+                is_enabled = $9,
+                updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            account.id,
+            account.owner_id,
+            account.name,
+            account.host,
+            account.port,
+            account.username,
+            account.password_enc,
+            account.tls_mode,
+            account.is_enabled,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a mail account and return whether a row was updated.
+    pub async fn soft_delete_mail_account(
+        &self,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_accounts
+            SET deleted_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Create a new mail import job.
+    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_import_jobs (
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids, status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            "#,
+            job.id,
+            job.tenant_id,
+            job.owner_id,
+            job.account_id,
+            job.source_mode,
+            job.folder_name,
+            job.selected_uids.as_deref(),
+            job.status,
+            job.total_messages,
+            job.processed_messages,
+            job.failed_messages,
+            job.last_error.as_deref(),
+            job.started_at,
+            job.completed_at,
+            job.deleted_at,
+            job.created_at,
+            job.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find a mail import job by ID, scoped to the owning user.
+    pub async fn get_mail_import_job(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<Option<MailImportJob>> {
+        let row = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List active mail import jobs for a user, optionally filtered by account.
+    pub async fn list_mail_import_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: Option<MailAccountId>,
+    ) -> Result<Vec<MailImportJob>> {
+        if let Some(account_id) = account_id {
+            let rows = sqlx::query_as!(
+                MailImportJob,
+                r#"
+                SELECT
+                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                    selected_uids AS "selected_uids: _",
+                    status, total_messages, processed_messages, failed_messages,
+                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                FROM mail_import_jobs
+                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                "#,
+                tenant_id,
+                owner_id,
+                account_id
+            )
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_as!(
+                MailImportJob,
+                r#"
+                SELECT
+                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                    selected_uids AS "selected_uids: _",
+                    status, total_messages, processed_messages, failed_messages,
+                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                FROM mail_import_jobs
+                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                "#,
+                tenant_id,
+                owner_id
+            )
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(rows)
+        }
+    }
+
+    /// Claim the oldest pending mail import job for processing.
+    pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
+        let mut tx = self.pool.begin().await?;
+
+        let job = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE status = 'pending' AND deleted_at IS NULL
+            ORDER BY created_at ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(job) = job {
+            sqlx::query!(
+                r#"
+                UPDATE mail_import_jobs
+                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                WHERE id = $1
+                "#,
+                job.id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            let updated = sqlx::query_as!(
+                MailImportJob,
+                r#"
+                SELECT
+                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                    selected_uids AS "selected_uids: _",
+                    status, total_messages, processed_messages, failed_messages,
+                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                FROM mail_import_jobs
+                WHERE id = $1
+                "#,
+                job.id
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(Some(updated))
+        } else {
+            tx.commit().await?;
+            Ok(None)
+        }
+    }
+
+    /// Update the progress counters for a mail import job.
+    pub async fn update_mail_import_job_progress(
+        &self,
+        id: MailImportJobId,
+        processed: i32,
+        failed: i32,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET
+                processed_messages = $2,
+                failed_messages = $3,
+                last_error = $4,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+            id,
+            processed,
+            failed,
+            last_error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Mark a mail import job as completed.
+    pub async fn mark_mail_import_job_completed(&self, id: MailImportJobId) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Mark a mail import job as failed.
+    pub async fn mark_mail_import_job_failed(
+        &self,
+        id: MailImportJobId,
+        error: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1
+            "#,
+            id,
+            error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
