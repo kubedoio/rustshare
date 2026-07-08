@@ -361,6 +361,57 @@ describe('VaultFileEditor', () => {
 		});
 	});
 
+	it('resets loaded content when switching vaults with the same selected path', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Vault 1',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 9
+			})
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Vault 2',
+				server_rev: 5,
+				content_type: 'text/markdown',
+				size: 9
+			});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			server_rev: 6,
+			updated_at: '2026-07-07T00:00:00Z'
+		});
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		const { rerender } = render(VaultFileEditor, {
+			props: { vaultId: 'v1', policy: 'web_editing_enabled', file }
+		});
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Vault 1'));
+		await fireEvent.input(textarea, { target: { value: '# Edited vault 1' } });
+
+		await rerender({ vaultId: 'v2', policy: 'web_editing_enabled', file });
+
+		const vault2Textarea = await waitFor(() => screen.getByDisplayValue('# Vault 2'));
+		expect(screen.queryByDisplayValue('# Edited vault 1')).toBeNull();
+
+		await fireEvent.input(vault2Textarea, { target: { value: '# Edited vault 2' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		await waitFor(() => {
+			expect(vaultsApi.saveVaultFileContent).toHaveBeenCalledWith('v2', 'note.md', {
+				content: '# Edited vault 2',
+				expected_revision: 5
+			});
+		});
+	});
+
 	it('ignores stale content responses from a previously selected file', async () => {
 		let resolveFirst: (value: Awaited<ReturnType<typeof vaultsApi.getVaultFileContent>>) => void;
 		let resolveSecond: (value: Awaited<ReturnType<typeof vaultsApi.getVaultFileContent>>) => void;

@@ -431,6 +431,13 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             .get(&storage_key)
             .await
             .map_err(|e| VaultSyncError::Storage(e.to_string()))?;
+        let size = bytes.len() as i64;
+        if size > Self::MAX_WEBUI_EDIT_SIZE {
+            return Err(VaultSyncError::NotEditable(format!(
+                "file exceeds WebUI edit size limit: {size} > {}",
+                Self::MAX_WEBUI_EDIT_SIZE
+            )));
+        }
 
         let content = String::from_utf8(bytes.to_vec())
             .map_err(|_| VaultSyncError::NotEditable("file is not valid UTF-8".to_string()))?;
@@ -440,7 +447,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             content,
             server_rev: file.server_rev,
             content_type: file.content_type,
-            size: file.size.unwrap_or(0),
+            size,
         })
     }
 
@@ -3009,6 +3016,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored, content);
+    }
+
+    #[tokio::test]
+    async fn test_get_file_content_for_webui_rejects_oversized_blob_with_missing_size() {
+        let (store, object_store, service) = setup();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
+
+        upload_test_file(
+            &service,
+            vault.id,
+            "notes/large.md",
+            Some("text/markdown".to_string()),
+            Bytes::from_static(b"small"),
+            tenant_id,
+            owner_id,
+        )
+        .await;
+
+        let oversized = Bytes::from(vec![
+            b'x';
+            (VaultSyncService::<MockVaultStore, MockObjectStore>::MAX_WEBUI_EDIT_SIZE + 1)
+                as usize
+        ]);
+        let sha256 = upload_file_sha256(&oversized);
+        object_store
+            .put(&format!("blobs/{sha256}"), oversized.clone())
+            .await
+            .unwrap();
+        {
+            let mut files = store.files.lock().await;
+            let file = files
+                .get_mut(&(vault.id, "notes/large.md".to_string()))
+                .expect("uploaded file");
+            file.sha256 = Some(sha256);
+            file.size = None;
+        }
+
+        let err = service
+            .get_file_content_for_webui(vault.id, "notes/large.md", tenant_id, owner_id)
+            .await
+            .unwrap_err();
+        match err {
+            VaultSyncError::NotEditable(msg) => {
+                assert!(msg.contains("file exceeds"));
+                assert!(msg.contains(&oversized.len().to_string()));
+                assert!(msg.contains(
+                    &VaultSyncService::<MockVaultStore, MockObjectStore>::MAX_WEBUI_EDIT_SIZE
+                        .to_string()
+                ));
+            }
+            _ => panic!("Expected NotEditable, got {:?}", err),
+        }
     }
 
     #[tokio::test]

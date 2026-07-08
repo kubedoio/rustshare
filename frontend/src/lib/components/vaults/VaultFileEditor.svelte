@@ -24,6 +24,7 @@
 	let successTimeout = $state<ReturnType<typeof setTimeout> | null>(null);
 	let loadedContent = $state<string | null>(null);
 	let loadedPath = $state<string | null>(null);
+	let loadedVaultId = $state<string | null>(null);
 	let dirty = $derived(file !== null && localContent !== (loadedContent ?? ''));
 	let hasConflict = $derived(
 		editBaseRev !== null && currentServerRev !== null && editBaseRev !== currentServerRev
@@ -41,12 +42,13 @@
 	// previous file's content/revision against a newly selected path.
 	$effect(() => {
 		const selectedPath = file?.path ?? null;
-		if (selectedPath !== loadedPath) {
+		if (selectedPath !== loadedPath || vaultId !== loadedVaultId) {
 			localContent = '';
 			loadedContent = null;
 			editBaseRev = null;
 			currentServerRev = null;
 			loadedPath = selectedPath;
+			loadedVaultId = vaultId;
 			saveError = null;
 			saveSuccess = false;
 		}
@@ -59,7 +61,13 @@
 	// after a successful save.
 	$effect(() => {
 		const data = $contentQuery.data;
-		if (data && file && data.path === file.path && file.path === loadedPath) {
+		if (
+			data &&
+			file &&
+			data.path === file.path &&
+			file.path === loadedPath &&
+			vaultId === loadedVaultId
+		) {
 			const isNewerOrSame = currentServerRev === null || data.server_rev >= currentServerRev;
 			if ((editBaseRev === null || !dirty) && isNewerOrSame) {
 				localContent = data.content;
