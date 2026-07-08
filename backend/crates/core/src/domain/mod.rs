@@ -2,6 +2,7 @@ mod device_token;
 mod file;
 mod file_version;
 mod folder;
+mod mail_link;
 mod mail_message;
 mod module;
 mod notification;
@@ -22,6 +23,7 @@ pub use device_token::{DevicePairRequest, DeviceToken};
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
+pub use mail_link::{LinkTargetType, MailLink, MailLinkId};
 pub use mail_message::{
     MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility,
 };

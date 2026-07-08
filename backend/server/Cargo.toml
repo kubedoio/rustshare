@@ -186,6 +186,10 @@ path = "tests/e2e_sample.rs"
 name = "mail_import_test"
 path = "../tests/mail_import_test.rs"
 
+[[test]]
+name = "mail_linking_test"
+path = "../tests/mail_linking_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }

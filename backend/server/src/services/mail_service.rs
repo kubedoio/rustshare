@@ -3,10 +3,14 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rustshare_core::domain::{
-    Folder, MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility, UserId,
+    Folder, LinkTargetType, MailAttachment, MailLink, MailMessage, MailMessagePart, MailSourceMode,
+    MailVisibility, SharePermissions, UserId,
+};
+use rustshare_core::events::{
+    AggregateType, Event, EventType, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
-use rustshare_core::services::{FileService, FolderService};
+use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
@@ -44,6 +48,8 @@ pub struct MailService {
     file_service:
         Arc<FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>>,
     folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
+    permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    event_store: Arc<EventStore>,
 }
 
 impl MailService {
@@ -54,12 +60,16 @@ impl MailService {
             FileService<EventStore, MetadataStore, ObjectStore, PermissionResolverRepository>,
         >,
         folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
+        permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+        event_store: Arc<EventStore>,
     ) -> Self {
         Self {
             metadata_store,
             object_store,
             file_service,
             folder_service,
+            permission_resolver,
+            event_store,
         }
     }
 
@@ -261,6 +271,235 @@ impl MailService {
             .await
             .map_err(|e| MailError::Database(e.to_string()))?
             .ok_or(MailError::NotFound(message_id))
+    }
+
+    /// Verify the caller can read the link target.
+    async fn require_target_read(
+        &self,
+        tenant_id: Uuid,
+        caller: UserId,
+        target_type: &LinkTargetType,
+        target_id: Uuid,
+    ) -> Result<(), MailError> {
+        match target_type {
+            LinkTargetType::File | LinkTargetType::Note => {
+                let permitted = self
+                    .permission_resolver
+                    .check_file_permission(caller, tenant_id, target_id, SharePermissions::View)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if permitted {
+                    Ok(())
+                } else {
+                    Err(MailError::PermissionDenied)
+                }
+            }
+            LinkTargetType::Folder
+            | LinkTargetType::KanbanCard
+            | LinkTargetType::KanbanBoard
+            | LinkTargetType::Meeting => {
+                let permitted = self
+                    .permission_resolver
+                    .check_folder_permission(caller, tenant_id, target_id, SharePermissions::View)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if permitted {
+                    Ok(())
+                } else {
+                    Err(MailError::PermissionDenied)
+                }
+            }
+            LinkTargetType::MailMessage => self
+                .get_message(tenant_id, caller, target_id)
+                .await
+                .map(|_| ())
+                .map_err(|err| match err {
+                    MailError::NotFound(_) => MailError::PermissionDenied,
+                    other => other,
+                }),
+        }
+    }
+
+    /// Link a mail message to another RustShare object.
+    ///
+    /// Caller must be able to read both the mail message and the target object.
+    /// If an active link already exists, it is returned idempotently.
+    pub async fn link_message(
+        &self,
+        tenant_id: Uuid,
+        caller: UserId,
+        message_id: Uuid,
+        target_type: LinkTargetType,
+        target_id: Uuid,
+    ) -> Result<MailLink, MailError> {
+        // 1. Verify caller can read the source mail.
+        self.get_message(tenant_id, caller, message_id).await?;
+
+        // 2. Verify caller can read the link target.
+        self.require_target_read(tenant_id, caller, &target_type, target_id)
+            .await?;
+
+        // 3. Return existing active link if present.
+        if let Some(existing) = self
+            .metadata_store
+            .find_active_mail_link(message_id, target_type.as_str(), target_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+        {
+            return Ok(existing);
+        }
+
+        // 4. Build the new link.
+        let link = MailLink::new(tenant_id, message_id, caller, target_type, target_id);
+
+        // 5. Persist the link and emit a MailLinked audit event atomically.
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        self.metadata_store
+            .create_mail_link_in_tx(&mut tx, &link)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let payload = MailLinkedPayload {
+            message_id: link.message_id,
+            link_id: link.id,
+            target_type: link.target_type.clone(),
+            target_id: link.target_id,
+        };
+        let event = Event::new(
+            EventType::MailLinked,
+            link.message_id,
+            AggregateType::MailMessage,
+            serde_json::to_value(payload).map_err(|e| MailError::Database(e.to_string()))?,
+            caller,
+        );
+        self.event_store
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(link)
+    }
+
+    /// Remove a link between a mail message and another RustShare object.
+    ///
+    /// The link is soft-deleted and a `MailUnlinked` audit event is emitted only
+    /// when the link was still active. Repeated calls after the link has already
+    /// been soft-deleted are idempotent and do not emit additional events.
+    pub async fn unlink_message(
+        &self,
+        tenant_id: Uuid,
+        caller: UserId,
+        link_id: Uuid,
+    ) -> Result<(), MailError> {
+        // 1. Load the link.
+        let link = self
+            .metadata_store
+            .find_mail_link_by_id(link_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(link_id))?;
+
+        // 2. Verify caller can read the source mail.
+        self.get_message(tenant_id, caller, link.message_id).await?;
+
+        // 3. Verify caller can read the link target.
+        let target_type = link
+            .target_type
+            .parse::<LinkTargetType>()
+            .map_err(MailError::Database)?;
+        self.require_target_read(tenant_id, caller, &target_type, link.target_id)
+            .await?;
+
+        // 4. Soft-delete the link and emit a MailUnlinked audit event atomically.
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let updated = self
+            .metadata_store
+            .soft_delete_mail_link_in_tx(&mut tx, link_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if updated {
+            let payload = MailUnlinkedPayload {
+                message_id: link.message_id,
+                link_id: link.id,
+                target_type: link.target_type.clone(),
+                target_id: link.target_id,
+            };
+            let event = Event::new(
+                EventType::MailUnlinked,
+                link.message_id,
+                AggregateType::MailMessage,
+                serde_json::to_value(payload).map_err(|e| MailError::Database(e.to_string()))?,
+                caller,
+            );
+            self.event_store
+                .append_in_tx(&mut tx, &event)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// List active links for a mail message.
+    ///
+    /// Caller must be able to read the source mail. Links to targets the caller
+    /// cannot read are silently omitted so the existence of inaccessible targets
+    /// is not leaked.
+    pub async fn list_message_links(
+        &self,
+        tenant_id: Uuid,
+        caller: UserId,
+        message_id: Uuid,
+    ) -> Result<Vec<MailLink>, MailError> {
+        // 1. Verify caller can read the source mail.
+        self.get_message(tenant_id, caller, message_id).await?;
+
+        // 2. Load active links.
+        let links = self
+            .metadata_store
+            .list_mail_links_by_message(message_id, tenant_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        // 3. Filter out targets the caller cannot read.
+        let mut visible = Vec::with_capacity(links.len());
+        for link in links {
+            let target_type = link
+                .target_type
+                .parse::<LinkTargetType>()
+                .map_err(MailError::Database)?;
+            match self
+                .require_target_read(tenant_id, caller, &target_type, link.target_id)
+                .await
+            {
+                Ok(()) => visible.push(link),
+                Err(MailError::PermissionDenied) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(visible)
     }
 
     /// List imported mail messages for a user.
@@ -739,7 +978,7 @@ mod tests {
             event_store.clone(),
             metadata_store.clone(),
             broadcaster.clone(),
-            permission_resolver,
+            permission_resolver.clone(),
         ));
 
         let mail_service = MailService::new(
@@ -747,6 +986,8 @@ mod tests {
             object_store.clone(),
             file_service,
             folder_service,
+            permission_resolver,
+            event_store.clone(),
         );
 
         let tenant_id = Uuid::new_v4();
@@ -829,5 +1070,331 @@ mod tests {
             .bind(tenant_id)
             .execute(&pool)
             .await;
+    }
+}
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+    use rustshare_core::domain::User;
+    use rustshare_core::events::EventBroadcaster;
+    use rustshare_core::services::{FileService, FolderService, PermissionResolver};
+    use rustshare_infrastructure::repositories::PermissionResolverRepository;
+
+    #[test]
+    fn link_target_type_parses_known_strings() {
+        assert_eq!(
+            "note".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::Note
+        );
+        assert_eq!(
+            "kanban_card".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::KanbanCard
+        );
+        assert_eq!(
+            "kanban_board".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::KanbanBoard
+        );
+        assert_eq!(
+            "meeting".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::Meeting
+        );
+        assert_eq!(
+            "file".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::File
+        );
+        assert_eq!(
+            "folder".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::Folder
+        );
+        assert_eq!(
+            "mail_message".parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::MailMessage
+        );
+    }
+
+    #[test]
+    fn link_target_type_rejects_unknown_strings() {
+        assert!("unknown".parse::<LinkTargetType>().is_err());
+        assert!("".parse::<LinkTargetType>().is_err());
+    }
+
+    #[test]
+    fn mail_message_default_visibility_is_private() {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let imported_by = Uuid::new_v4();
+        let msg = MailMessage::new(tenant_id, owner_id, imported_by, MailSourceMode::EmlUpload);
+        assert_eq!(msg.visibility, "private");
+    }
+
+    #[test]
+    fn link_message_round_trips_target_type_string() {
+        let tenant_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+        let created_by = Uuid::new_v4();
+        let target_id = Uuid::new_v4();
+        let link = MailLink::new(
+            tenant_id,
+            message_id,
+            created_by,
+            LinkTargetType::Note,
+            target_id,
+        );
+        assert_eq!(link.target_type, "note");
+        assert_eq!(
+            link.target_type.parse::<LinkTargetType>().unwrap(),
+            LinkTargetType::Note
+        );
+    }
+
+    async fn setup_link_test() -> (
+        sqlx::PgPool,
+        MailService,
+        Arc<MetadataStore>,
+        Uuid,
+        User,
+        MailMessage,
+        Folder,
+    ) {
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for database tests");
+        let pool = sqlx::postgres::PgPool::connect(&database_url)
+            .await
+            .expect("failed to connect to database");
+
+        sqlx::migrate!("../migrations")
+            .run(&pool)
+            .await
+            .expect("failed to run database migrations");
+
+        let metadata_store = Arc::new(MetadataStore::new(pool.clone()));
+        let event_store = Arc::new(EventStore::new(pool.clone()));
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(pool.clone()),
+        )));
+
+        let s3_endpoint = std::env::var("S3_ENDPOINT")
+            .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+            .unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let s3_region = std::env::var("S3_REGION")
+            .or_else(|_| std::env::var("RUSTFS_REGION"))
+            .unwrap_or_else(|_| "us-east-1".to_string());
+        let s3_bucket = std::env::var("S3_BUCKET")
+            .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+            .unwrap_or_else(|_| "rustshare".to_string());
+
+        let object_store = Arc::new(
+            ObjectStore::new_with_options(
+                s3_endpoint,
+                s3_region,
+                s3_bucket,
+                rustshare_storage::ObjectStoreOptions {
+                    auto_create_bucket: true,
+                },
+            )
+            .await
+            .expect("failed to create object store"),
+        );
+
+        let file_service = Arc::new(FileService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            object_store.clone(),
+            broadcaster.clone(),
+            permission_resolver.clone(),
+        ));
+        let folder_service = Arc::new(FolderService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            broadcaster.clone(),
+            permission_resolver.clone(),
+        ));
+
+        let tenant_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO tenants (id, name, created_at, updated_at)
+            VALUES ($1, $2, NOW(), NOW())
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(format!("Mail Link Test Tenant {}", tenant_id))
+        .execute(&pool)
+        .await
+        .expect("failed to create test tenant");
+
+        let user = User::new(
+            format!("mail_link_user_{}", Uuid::new_v4()),
+            "Mail Link Test User".to_string(),
+            "test_password_hash".to_string(),
+            format!("mail_link_{}@test.local", Uuid::new_v4()),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        metadata_store
+            .create_user(&user)
+            .await
+            .expect("failed to create test user");
+
+        let target_folder = folder_service
+            .create_folder("Link Target Folder".to_string(), None, user.id, tenant_id)
+            .await
+            .expect("failed to create target folder");
+
+        let mail_service = MailService::new(
+            metadata_store.clone(),
+            object_store,
+            file_service,
+            folder_service,
+            permission_resolver,
+            event_store,
+        );
+
+        let mut message = MailMessage::new(tenant_id, user.id, user.id, MailSourceMode::EmlUpload);
+        message.subject = Some("Link Test".to_string());
+        metadata_store
+            .create_mail_message(&message)
+            .await
+            .expect("failed to create mail message");
+
+        (
+            pool,
+            mail_service,
+            metadata_store,
+            tenant_id,
+            user,
+            message,
+            target_folder,
+        )
+    }
+
+    async fn cleanup_link_test(
+        pool: &sqlx::PgPool,
+        tenant_id: Uuid,
+        user_id: Uuid,
+        message_id: Uuid,
+    ) {
+        let _ = sqlx::query("DELETE FROM mail_links WHERE message_id = $1")
+            .bind(message_id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM events WHERE aggregate_id = $1")
+            .bind(message_id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM mail_messages WHERE id = $1")
+            .bind(message_id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(pool)
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+    async fn link_and_unlink_message_happy_path() {
+        let (pool, mail_service, metadata_store, tenant_id, user, message, target_folder) =
+            setup_link_test().await;
+
+        let link = mail_service
+            .link_message(
+                tenant_id,
+                user.id,
+                message.id,
+                LinkTargetType::Folder,
+                target_folder.id,
+            )
+            .await
+            .expect("link_message should succeed");
+        assert_eq!(link.message_id, message.id);
+        assert_eq!(link.target_type, "folder");
+        assert_eq!(link.target_id, target_folder.id);
+        assert_eq!(link.created_by, user.id);
+        assert_eq!(link.tenant_id, tenant_id);
+
+        let links = mail_service
+            .list_message_links(tenant_id, user.id, message.id)
+            .await
+            .expect("list_message_links should succeed");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, link.id);
+
+        mail_service
+            .unlink_message(tenant_id, user.id, link.id)
+            .await
+            .expect("unlink_message should succeed");
+
+        let links_after_unlink = mail_service
+            .list_message_links(tenant_id, user.id, message.id)
+            .await
+            .expect("list_message_links should succeed after unlink");
+        assert!(links_after_unlink.is_empty());
+
+        let deleted_link = metadata_store
+            .find_mail_link_by_id(link.id, tenant_id)
+            .await
+            .expect("find_mail_link_by_id should not fail")
+            .expect("link row should still exist");
+        assert!(
+            deleted_link.deleted_at.is_some(),
+            "link should be soft-deleted"
+        );
+
+        // Idempotent: unlinking an already-soft-deleted link must succeed.
+        mail_service
+            .unlink_message(tenant_id, user.id, link.id)
+            .await
+            .expect("repeated unlink_message should succeed");
+
+        cleanup_link_test(&pool, tenant_id, user.id, message.id).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+    async fn unlink_already_deleted_link_is_idempotent() {
+        let (pool, mail_service, metadata_store, tenant_id, user, message, target_folder) =
+            setup_link_test().await;
+
+        let link = mail_service
+            .link_message(
+                tenant_id,
+                user.id,
+                message.id,
+                LinkTargetType::Folder,
+                target_folder.id,
+            )
+            .await
+            .expect("link_message should succeed");
+
+        mail_service
+            .unlink_message(tenant_id, user.id, link.id)
+            .await
+            .expect("first unlink_message should succeed");
+        mail_service
+            .unlink_message(tenant_id, user.id, link.id)
+            .await
+            .expect("second unlink_message should succeed");
+
+        let row = metadata_store
+            .find_mail_link_by_id(link.id, tenant_id)
+            .await
+            .expect("find_mail_link_by_id should not fail")
+            .expect("link row should still exist");
+        assert!(row.deleted_at.is_some(), "link should remain soft-deleted");
+
+        cleanup_link_test(&pool, tenant_id, user.id, message.id).await;
     }
 }

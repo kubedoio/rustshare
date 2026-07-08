@@ -142,12 +142,12 @@ fn default_modules() -> Vec<(
             "/Workspace/Mail",
             "mail-list",
             None,
-            "file-text",
+            "mail",
             false,
             json!({
                 "sidebar": {
                     "enabled": true,
-                    "icon": "file-text",
+                    "icon": "mail",
                     "order": 60
                 },
                 "dashboard": {
@@ -1859,7 +1859,7 @@ mod tests {
 
         assert_eq!(*renderer, "mail-list");
         assert!(default_template.is_none());
-        assert_eq!(*icon, "file-text");
+        assert_eq!(*icon, "mail");
         assert!(validate_module_icon(icon).is_ok());
         assert!(!enabled);
 
@@ -1868,7 +1868,7 @@ mod tests {
             .and_then(|sidebar| sidebar.get("icon"))
             .and_then(|icon| icon.as_str())
             .expect("mail sidebar icon");
-        assert_eq!(sidebar_icon, "file-text");
+        assert_eq!(sidebar_icon, "mail");
 
         let primary_action = ui_config
             .get("dashboard")

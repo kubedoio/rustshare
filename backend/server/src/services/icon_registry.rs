@@ -14,6 +14,7 @@ pub const APPROVED_ICON_KEYS: &[&str] = &[
     "settings",
     "lightbulb",
     "activity",
+    "mail",
 ];
 
 pub fn is_approved_icon_key(icon: &str) -> bool {
