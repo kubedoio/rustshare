@@ -176,6 +176,7 @@ impl TestContext {
             folder_service,
             permission_resolver,
             self.event_store.clone(),
+            self.broadcaster.clone(),
             secret_key,
         )
     }
