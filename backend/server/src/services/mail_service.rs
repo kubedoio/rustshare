@@ -12,7 +12,7 @@ use rustshare_core::events::{
     MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
-use rustshare_core::services::{FileService, FolderService, ObjectStoreOps, PermissionResolver};
+use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
