@@ -46,7 +46,7 @@
       {
         "ordinal": 8,
         "name": "content_disposition",
-        "type_info": "Text"
+        "type_info": "Varchar"
       },
       {
         "ordinal": 9,

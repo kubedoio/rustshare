@@ -133,6 +133,15 @@ impl MailService {
         msg.visibility = MailVisibility::Private.into();
         msg.folder_id = Some(message_folder.id);
 
+        // Insert the mail row before parts/attachments because they reference
+        // it through foreign-key constraints. A future transaction wrap can
+        // hide partially imported messages; for now, failing after this point
+        // leaves the message row visible, which is acceptable for Phase 1.
+        self.metadata_store
+            .create_mail_message(&msg)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
         let mut part_index = 0i32;
 
         if let Some(text) = &parsed.body_text {
@@ -196,14 +205,6 @@ impl MailService {
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
         }
-
-        // Insert the visible mail row only after all dependent blobs, file
-        // artifacts, and metadata rows have been persisted successfully. This
-        // prevents list/get from exposing partially imported messages.
-        self.metadata_store
-            .create_mail_message(&msg)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
 
         Ok(msg)
     }
