@@ -222,6 +222,12 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         metadata_store.clone(),
         object_store.clone(),
     ));
+    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
+        metadata_store.clone(),
+        object_store.clone(),
+        file_service.clone(),
+        folder_service.clone(),
+    ));
 
     let chat_integration_service = Arc::new(ChatIntegrationService::new(
         metadata_store.clone(),
@@ -264,6 +270,7 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         brainstorming_service,
         vault_sync_service,
         chat_integration_service,
+        mail_service,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

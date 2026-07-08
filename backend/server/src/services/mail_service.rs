@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -147,6 +148,8 @@ impl MailService {
                 .await?;
         }
 
+        let mut artifact_name_counts = HashMap::new();
+        let mut artifact_names = HashSet::new();
         for (idx, att) in parsed.attachments.into_iter().enumerate() {
             let hash = hex::encode(Sha256::digest(&att.data));
             let key = format!("blobs/{hash}");
@@ -158,11 +161,13 @@ impl MailService {
                 .map_err(|e| MailError::Storage(e.to_string()))?;
 
             let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
+            let artifact_filename =
+                unique_artifact_filename(&filename, &mut artifact_name_counts, &mut artifact_names);
             let file = self
                 .file_service
                 .upload_file(
                     owner_id,
-                    filename.clone(),
+                    artifact_filename,
                     Some(message_folder.id),
                     bytes,
                     att.mime_type.clone(),
@@ -372,6 +377,28 @@ fn addresses_to_json(
     )
 }
 
+fn unique_artifact_filename(
+    filename: &str,
+    counts: &mut HashMap<String, usize>,
+    used: &mut HashSet<String>,
+) -> String {
+    let count = counts.entry(filename.to_string()).or_insert(0);
+    loop {
+        *count += 1;
+        let candidate = if *count == 1 {
+            filename.to_string()
+        } else {
+            match filename.rsplit_once('.') {
+                Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{}.{ext}", *count),
+                _ => format!("{filename}-{}", *count),
+            }
+        };
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +478,65 @@ mod tests {
         assert_eq!(
             att.content_disposition,
             Some("attachment; filename=\"note.txt\"".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_name_only_mime_part_as_attachment() {
+        let raw = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Name attachment\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"boundary123\"\r\n\r\n--boundary123\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached file.\r\n\r\n--boundary123\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\ncGRmIGNvbnRlbnQ=\r\n\r\n--boundary123--\r\n";
+        let parsed = EmlParser::parse(raw.as_slice()).expect("parse .eml with name attachment");
+
+        assert_eq!(parsed.attachments.len(), 1);
+        let att = &parsed.attachments[0];
+        assert_eq!(att.filename, Some("report.pdf".to_string()));
+        assert_eq!(att.mime_type, "application/pdf");
+        assert_eq!(att.data, b"pdf content");
+        assert_eq!(att.content_disposition, None);
+    }
+
+    #[test]
+    fn unique_artifact_filename_suffixes_duplicate_names() {
+        let mut counts = HashMap::new();
+        let mut used = HashSet::new();
+
+        assert_eq!(
+            unique_artifact_filename("report.pdf", &mut counts, &mut used),
+            "report.pdf"
+        );
+        assert_eq!(
+            unique_artifact_filename("report.pdf", &mut counts, &mut used),
+            "report-2.pdf"
+        );
+        assert_eq!(
+            unique_artifact_filename("report.pdf", &mut counts, &mut used),
+            "report-3.pdf"
+        );
+        assert_eq!(
+            unique_artifact_filename("README", &mut counts, &mut used),
+            "README"
+        );
+        assert_eq!(
+            unique_artifact_filename("README", &mut counts, &mut used),
+            "README-2"
+        );
+    }
+
+    #[test]
+    fn unique_artifact_filename_skips_generated_collisions() {
+        let mut counts = HashMap::new();
+        let mut used = HashSet::new();
+
+        assert_eq!(
+            unique_artifact_filename("report-2.pdf", &mut counts, &mut used),
+            "report-2.pdf"
+        );
+        assert_eq!(
+            unique_artifact_filename("report.pdf", &mut counts, &mut used),
+            "report.pdf"
+        );
+        assert_eq!(
+            unique_artifact_filename("report.pdf", &mut counts, &mut used),
+            "report-3.pdf"
         );
     }
 

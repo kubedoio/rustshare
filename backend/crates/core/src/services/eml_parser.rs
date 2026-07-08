@@ -175,8 +175,9 @@ fn process_leaf_part(
     attachments: &mut Vec<ParsedAttachment>,
 ) -> Result<(), EmlParseError> {
     let cd = part.get_content_disposition();
-    let is_attachment =
-        cd.disposition == DispositionType::Attachment || cd.params.contains_key("filename");
+    let is_attachment = cd.disposition == DispositionType::Attachment
+        || cd.params.contains_key("filename")
+        || part.ctype.params.contains_key("name");
 
     if is_attachment {
         let filename = cd

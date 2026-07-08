@@ -60,7 +60,7 @@ CREATE TABLE mail_attachments (
     mime_type VARCHAR(255),
     size_bytes BIGINT,
     part_index INTEGER,
-    content_disposition VARCHAR(50),
+    content_disposition TEXT,
     blob_key TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
