@@ -114,13 +114,21 @@ describe('VaultFileEditor', () => {
 	});
 
 	it('shows conflict message when save fails with 409', async () => {
-		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
-			path: 'note.md',
-			content: '# Hello',
-			server_rev: 1,
-			content_type: 'text/markdown',
-			size: 7
-		});
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Hello',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 7
+			})
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Changed elsewhere',
+				server_rev: 2,
+				content_type: 'text/markdown',
+				size: 19
+			});
 		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({ status: 409 });
 
 		const file: VaultManifestEntry = {
@@ -143,6 +151,45 @@ describe('VaultFileEditor', () => {
 					'This file was changed elsewhere. Copy your changes, reload, and try again.'
 				)
 			).toBeTruthy();
+		});
+	});
+
+	it('marks the editor stale when save fails with a 409 current revision', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Hello',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 7
+			})
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Changed elsewhere',
+				server_rev: 2,
+				content_type: 'text/markdown',
+				size: 19
+			});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({
+			status: 409,
+			current_rev: 2
+		});
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# Conflict' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText('stale')).toBeTruthy();
+			expect(screen.getByRole<HTMLButtonElement>('button', { name: /save/i }).disabled).toBe(true);
 		});
 	});
 
@@ -173,6 +220,43 @@ describe('VaultFileEditor', () => {
 		await waitFor(() => {
 			expect(screen.getByText('You do not have permission to edit this file.')).toBeTruthy();
 		});
+	});
+
+	it('replaces clean cached content when a newer refetch arrives', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent')
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Cached',
+				server_rev: 1,
+				content_type: 'text/markdown',
+				size: 8
+			})
+			.mockResolvedValueOnce({
+				path: 'note.md',
+				content: '# Fresh',
+				server_rev: 2,
+				content_type: 'text/markdown',
+				size: 7
+			});
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('# Cached')).toBeTruthy();
+		});
+
+		queryClient.invalidateQueries({ queryKey: ['vault-file-content', 'v1', 'note.md'] });
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('# Fresh')).toBeTruthy();
+		});
+		expect(screen.queryByDisplayValue('# Cached')).toBeNull();
 	});
 
 	it('preserves dirty editor content when the query refetches a newer revision', async () => {

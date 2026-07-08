@@ -60,16 +60,17 @@
 	$effect(() => {
 		const data = $contentQuery.data;
 		if (data && file && data.path === file.path && file.path === loadedPath) {
-			if (editBaseRev === null) {
+			const isNewerOrSame = currentServerRev === null || data.server_rev >= currentServerRev;
+			if ((editBaseRev === null || !dirty) && isNewerOrSame) {
 				localContent = data.content;
 				loadedContent = data.content;
 				editBaseRev = data.server_rev;
 				currentServerRev = data.server_rev;
+				saveError = null;
 			} else {
 				currentServerRev =
 					currentServerRev === null ? data.server_rev : Math.max(currentServerRev, data.server_rev);
 			}
-			saveError = null;
 			saveSuccess = false;
 		}
 	});
@@ -89,12 +90,26 @@
 			loadedContent = localContent;
 			saveSuccess = true;
 			saveError = null;
+			queryClient.setQueryData(['vault-file-content', vaultId, data.path], {
+				path: data.path,
+				content: localContent,
+				server_rev: data.server_rev,
+				content_type: $contentQuery.data?.content_type ?? 'text/markdown',
+				size: new Blob([localContent]).size
+			});
 			queryClient.invalidateQueries({ queryKey: ['vault-manifest', vaultId] });
 			if (successTimeout) clearTimeout(successTimeout);
 			successTimeout = setTimeout(() => (saveSuccess = false), 3000);
 		},
-		onError: (err: { status?: number; message?: string }) => {
+		onError: (err: { status?: number; message?: string; current_rev?: number }) => {
 			if (err.status === 409) {
+				if (typeof err.current_rev === 'number') {
+					currentServerRev =
+						currentServerRev === null
+							? err.current_rev
+							: Math.max(currentServerRev, err.current_rev);
+				}
+				queryClient.invalidateQueries({ queryKey: ['vault-file-content', vaultId, file?.path] });
 				saveError = 'This file was changed elsewhere. Copy your changes, reload, and try again.';
 			} else if (err.status === 403) {
 				saveError = 'You do not have permission to edit this file.';
