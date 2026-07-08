@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use uuid::Uuid;
 
-use crate::handlers::{AppError, AuthenticatedUser};
+use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
 use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
@@ -36,23 +36,35 @@ async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), A
     Ok(())
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateMailAccountRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
+    #[validate(length(min = 1, max = 255))]
     pub host: String,
+    #[validate(range(min = 1, max = 65535))]
     pub port: i32,
+    #[validate(length(min = 1, max = 512))]
     pub username: String,
+    #[validate(length(min = 1, max = 512))]
     pub password: String,
+    #[validate(length(min = 1, max = 20))]
     pub tls_mode: String,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct UpdateMailAccountRequest {
+    #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
+    #[validate(length(min = 1, max = 255))]
     pub host: Option<String>,
+    #[validate(range(min = 1, max = 65535))]
     pub port: Option<i32>,
+    #[validate(length(min = 1, max = 512))]
     pub username: Option<String>,
+    #[validate(length(min = 1, max = 512))]
     pub password: Option<String>,
+    #[validate(length(min = 1, max = 20))]
     pub tls_mode: Option<String>,
     pub is_enabled: Option<bool>,
 }
@@ -70,6 +82,11 @@ pub struct MailAccountResponse {
     pub last_connected_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailAccountListResponse {
+    pub accounts: Vec<MailAccountResponse>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -93,9 +110,37 @@ pub struct MailMessageSummaryResponse {
     pub size_bytes: i64,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailMessageSummaryListResponse {
+    pub messages: Vec<MailMessageSummaryResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailTestConnectionResponse {
+    pub ok: bool,
+}
+
+fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError> {
+    if uids.is_empty() {
+        return Err(validator::ValidationError::new("empty_uids"));
+    }
+    if uids.len() > 1000 {
+        return Err(validator::ValidationError::new("too_many_uids"));
+    }
+    if uids.iter().any(|&uid| uid <= 0) {
+        return Err(validator::ValidationError::new("invalid_uid"));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateMailImportJobRequest {
+    #[validate(length(min = 1, max = 512))]
     pub folder_name: String,
+    #[validate(custom(
+        function = "validate_selected_uids",
+        message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be positive"
+    ))]
     pub selected_uids: Vec<i64>,
 }
 
@@ -505,6 +550,7 @@ fn parse_tls_mode(tls_mode: &str) -> Result<MailTlsMode, AppError> {
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListMailMessagesQuery {
+    #[serde(default)]
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
@@ -529,7 +575,7 @@ fn default_message_limit() -> i64 {
 pub async fn create_mail_account(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Json(req): Json<CreateMailAccountRequest>,
+    ValidatedJson(req): ValidatedJson<CreateMailAccountRequest>,
 ) -> Result<(StatusCode, Json<MailAccountResponse>), AppError> {
     let tls_mode = parse_tls_mode(&req.tls_mode)?;
     let account = state
@@ -555,22 +601,22 @@ pub async fn create_mail_account(
     path = "/api/v1/mail/accounts",
     tag = "Mail",
     responses(
-        (status = 200, description = "Mail accounts", body = serde_json::Value),
+        (status = 200, description = "Mail accounts", body = MailAccountListResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn list_mail_accounts(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<MailAccountListResponse>, AppError> {
     let accounts = state
         .mail_service
         .list_accounts(auth.tenant_id, auth.user_id)
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "accounts": accounts.into_iter().map(account_to_response).collect::<Vec<_>>(),
-    })))
+    Ok(Json(MailAccountListResponse {
+        accounts: accounts.into_iter().map(account_to_response).collect(),
+    }))
 }
 
 /// Get a single mail account by ID.
@@ -616,7 +662,7 @@ pub async fn update_mail_account(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
-    Json(req): Json<UpdateMailAccountRequest>,
+    ValidatedJson(req): ValidatedJson<UpdateMailAccountRequest>,
 ) -> Result<Json<MailAccountResponse>, AppError> {
     let tls_mode = req.tls_mode.as_deref().map(parse_tls_mode).transpose()?;
 
@@ -671,7 +717,7 @@ pub async fn delete_mail_account(
     tag = "Mail",
     params(("id" = Uuid, Path, description = "Mail account ID")),
     responses(
-        (status = 200, description = "Connection successful", body = serde_json::Value),
+        (status = 200, description = "Connection successful", body = MailTestConnectionResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
     ),
@@ -680,13 +726,13 @@ pub async fn test_mail_account(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<MailTestConnectionResponse>, AppError> {
     state
         .mail_service
         .test_account_connection(auth.tenant_id, auth.user_id, account_id)
         .await?;
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(MailTestConnectionResponse { ok: true }))
 }
 
 /// List folders available on a mail account's IMAP server.
@@ -726,7 +772,7 @@ pub async fn list_mail_account_folders(
         ListMailMessagesQuery,
     ),
     responses(
-        (status = 200, description = "Message summaries", body = serde_json::Value),
+        (status = 200, description = "Message summaries", body = MailMessageSummaryListResponse),
         (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
@@ -737,7 +783,15 @@ pub async fn list_mail_account_messages(
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
     Query(query): Query<ListMailMessagesQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
+    if query.folder.trim().is_empty() {
+        return Err(AppError::bad_request("Missing folder query parameter"));
+    }
+    if query.folder.len() > 512 {
+        return Err(AppError::bad_request(
+            "Folder name must be at most 512 characters",
+        ));
+    }
     if query.limit <= 0 || query.limit > 1000 {
         return Err(AppError::bad_request("limit must be between 1 and 1000"));
     }
@@ -753,9 +807,9 @@ pub async fn list_mail_account_messages(
         )
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "messages": messages.into_iter().map(summary_to_response).collect::<Vec<_>>(),
-    })))
+    Ok(Json(MailMessageSummaryListResponse {
+        messages: messages.into_iter().map(summary_to_response).collect(),
+    }))
 }
 
 /// Create a job to import selected messages from an IMAP folder.
@@ -776,7 +830,7 @@ pub async fn create_mail_import_job(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
-    Json(req): Json<CreateMailImportJobRequest>,
+    ValidatedJson(req): ValidatedJson<CreateMailImportJobRequest>,
 ) -> Result<(StatusCode, Json<MailImportJobResponse>), AppError> {
     let job = state
         .mail_service
