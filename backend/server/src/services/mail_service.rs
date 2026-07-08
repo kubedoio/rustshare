@@ -149,7 +149,7 @@ impl MailService {
         }
 
         let mut artifact_name_counts = HashMap::new();
-        let mut artifact_names = HashSet::new();
+        let mut artifact_names = HashSet::from(["source.eml".to_string()]);
         for (idx, att) in parsed.attachments.into_iter().enumerate() {
             let hash = hex::encode(Sha256::digest(&att.data));
             let key = format!("blobs/{hash}");
@@ -252,13 +252,16 @@ impl MailService {
             .ok_or(MailError::NotFound(message_id))
     }
 
-    /// Placeholder: list imported mail messages for a user.
+    /// List imported mail messages for a user.
     pub async fn list_messages(
         &self,
-        _tenant_id: Uuid,
-        _owner_id: Uuid,
-    ) -> anyhow::Result<Vec<MailMessage>> {
-        Ok(vec![])
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<MailMessage>, MailError> {
+        self.metadata_store
+            .list_mail_messages(tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
     }
 
     /// Placeholder: list parts for a message.
@@ -553,6 +556,17 @@ mod tests {
         assert_eq!(
             unique_artifact_filename("report.pdf", &mut counts, &mut used),
             "report-3.pdf"
+        );
+    }
+
+    #[test]
+    fn unique_artifact_filename_reserves_source_artifact() {
+        let mut counts = HashMap::new();
+        let mut used = HashSet::from(["source.eml".to_string()]);
+
+        assert_eq!(
+            unique_artifact_filename("source.eml", &mut counts, &mut used),
+            "source-2.eml"
         );
     }
 

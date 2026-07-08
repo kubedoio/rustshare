@@ -309,6 +309,32 @@ impl MetadataStore {
         Ok(row)
     }
 
+    pub async fn list_mail_messages(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<MailMessage>> {
+        let rows = sqlx::query_as!(
+            MailMessage,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY imported_at DESC, created_at DESC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
         value.parse().map_err(|error: String| {
             anyhow::anyhow!("invalid replication state `{value}`: {error}")

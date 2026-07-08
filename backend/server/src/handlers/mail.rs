@@ -10,6 +10,8 @@ use uuid::Uuid;
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::state::AppState;
 
+const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailUploadResponse {
     pub id: Uuid,
@@ -54,12 +56,9 @@ pub async fn upload_mail(
         let field_name = field.name().unwrap_or("").to_string();
         if field_name == "file" {
             file_temp = Some(
-                super::stream_multipart_field_to_temp_file(
-                    &mut field,
-                    super::max_upload_size_bytes(),
-                )
-                .await?
-                .0,
+                super::stream_multipart_field_to_temp_file(&mut field, MAX_MAIL_UPLOAD_SIZE_BYTES)
+                    .await?
+                    .0,
             );
         }
     }
@@ -95,15 +94,23 @@ pub async fn upload_mail(
     path = "/api/v1/mail/messages",
     tag = "Mail",
     responses(
-        (status = 200, description = "Mail messages", body = serde_json::Value),
+        (status = 200, description = "Mail messages", body = ListMailMessagesResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn list_mail_messages(
-    State(_state): State<AppState>,
-    _auth: AuthenticatedUser,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::OK, Json(serde_json::json!({ "messages": [] })))
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<ListMailMessagesResponse>, AppError> {
+    let messages = state
+        .mail_service
+        .list_messages(auth.tenant_id, auth.user_id)
+        .await?
+        .into_iter()
+        .map(MailMessageResponse::from)
+        .collect();
+
+    Ok(Json(ListMailMessagesResponse { messages }))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -119,6 +126,29 @@ pub struct MailMessageResponse {
     pub imported_at: DateTime<Utc>,
     pub size_bytes: i64,
     pub has_attachments: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListMailMessagesResponse {
+    pub messages: Vec<MailMessageResponse>,
+}
+
+impl From<rustshare_core::domain::MailMessage> for MailMessageResponse {
+    fn from(msg: rustshare_core::domain::MailMessage) -> Self {
+        Self {
+            id: msg.id,
+            subject: msg.subject,
+            from_address: msg.from_address,
+            from_name: msg.from_name,
+            to_addresses: msg.to_addresses,
+            cc_addresses: msg.cc_addresses,
+            bcc_addresses: msg.bcc_addresses,
+            sent_at: msg.sent_at,
+            imported_at: msg.imported_at,
+            size_bytes: msg.size_bytes.unwrap_or(0),
+            has_attachments: msg.has_attachments,
+        }
+    }
 }
 
 /// Get a single imported mail message by ID.
@@ -143,17 +173,5 @@ pub async fn get_mail_message(
         .get_message(auth.tenant_id, auth.user_id, message_id)
         .await?;
 
-    Ok(Json(MailMessageResponse {
-        id: msg.id,
-        subject: msg.subject,
-        from_address: msg.from_address,
-        from_name: msg.from_name,
-        to_addresses: msg.to_addresses,
-        cc_addresses: msg.cc_addresses,
-        bcc_addresses: msg.bcc_addresses,
-        sent_at: msg.sent_at,
-        imported_at: msg.imported_at,
-        size_bytes: msg.size_bytes.unwrap_or(0),
-        has_attachments: msg.has_attachments,
-    }))
+    Ok(Json(MailMessageResponse::from(msg)))
 }

@@ -392,6 +392,7 @@ use utoipa::OpenApi;
         crate::handlers::meetings::UpdateMeetingRequest,
         crate::handlers::ErrorResponse,
         crate::handlers::PaginationQuery,
+        crate::handlers::mail::ListMailMessagesResponse,
         crate::handlers::mail::MailMessageResponse,
         crate::handlers::mail::MailUploadResponse,
         crate::handlers::modules::EnabledModulesResponse,
