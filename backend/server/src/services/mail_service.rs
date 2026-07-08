@@ -482,6 +482,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_attachment_preserves_long_content_disposition() {
+        let raw = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Long attachment header\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"boundary123\"\r\n\r\n--boundary123\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached file.\r\n\r\n--boundary123\r\nContent-Type: application/pdf; name=\"quarterly-report-2026-final.pdf\"\r\nContent-Disposition: attachment; filename=\"quarterly-report-2026-final.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\ncGRmIGNvbnRlbnQ=\r\n\r\n--boundary123--\r\n";
+        let parsed = EmlParser::parse(raw.as_slice()).expect("parse .eml with long disposition");
+
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(
+            parsed.attachments[0].content_disposition,
+            Some("attachment; filename=\"quarterly-report-2026-final.pdf\"".to_string())
+        );
+        assert!(parsed.attachments[0]
+            .content_disposition
+            .as_ref()
+            .is_some_and(|value| value.len() > 50));
+    }
+
+    #[test]
     fn parse_name_only_mime_part_as_attachment() {
         let raw = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Name attachment\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"boundary123\"\r\n\r\n--boundary123\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSee attached file.\r\n\r\n--boundary123\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\ncGRmIGNvbnRlbnQ=\r\n\r\n--boundary123--\r\n";
         let parsed = EmlParser::parse(raw.as_slice()).expect("parse .eml with name attachment");
