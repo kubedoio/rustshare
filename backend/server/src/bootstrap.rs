@@ -545,6 +545,8 @@ pub async fn init_app() -> Result<AppState> {
     )
     .await?;
 
+    let mail_service = Arc::clone(&services.mail_service);
+
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
     info!("Rate limiting initialized");
 
@@ -580,6 +582,13 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&metadata_store),
         retention_config,
         shutdown_tx.subscribe(),
+    );
+
+    crate::mail_import_worker::spawn_mail_import_worker(
+        Arc::clone(&mail_service),
+        Arc::clone(&metadata_store),
+        shutdown_tx.subscribe(),
+        crate::mail_import_worker::MailImportWorkerConfig::default(),
     );
 
     if !metadata_store.has_users().await? {
