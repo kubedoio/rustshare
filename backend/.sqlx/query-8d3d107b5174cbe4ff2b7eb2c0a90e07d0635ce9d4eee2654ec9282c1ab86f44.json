@@ -13,7 +13,7 @@
         "Varchar",
         "Int8",
         "Int4",
-        "Varchar",
+        "Text",
         "Text",
         "Timestamptz"
       ]
