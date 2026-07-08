@@ -8,7 +8,8 @@ use rustshare_core::domain::{
     MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
-    AggregateType, Event, EventType, MailLinkedPayload, MailUnlinkedPayload,
+    AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
+    MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
 use rustshare_core::services::{FileService, FolderService, ObjectStoreOps, PermissionResolver};
@@ -60,10 +61,12 @@ pub struct MailService {
     folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     event_store: Arc<EventStore>,
+    broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
     secret_key: Arc<SecretEncryptionKey>,
 }
 
 impl MailService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
@@ -73,6 +76,7 @@ impl MailService {
         folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
         permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
         event_store: Arc<EventStore>,
+        broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
         secret_key: Arc<SecretEncryptionKey>,
     ) -> Self {
         Self {
@@ -82,6 +86,7 @@ impl MailService {
             folder_service,
             permission_resolver,
             event_store,
+            broadcaster,
             secret_key,
         }
     }
@@ -653,6 +658,27 @@ impl MailService {
             .create_mail_account(&account)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+
+        self.event_store
+            .append(
+                &Event::new(
+                    EventType::MailAccountCreated,
+                    account.id,
+                    AggregateType::MailAccount,
+                    serde_json::to_value(MailAccountCreatedPayload {
+                        account_id: account.id,
+                        host: account.host.clone(),
+                        username: account.username.clone(),
+                        owner_id: account.owner_id,
+                    })
+                    .map_err(|e| MailError::Database(e.to_string()))?,
+                    account.owner_id,
+                ),
+                &self.broadcaster,
+            )
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
         Ok(account)
     }
 
@@ -745,6 +771,25 @@ impl MailService {
             .soft_delete_mail_account(account_id, owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+
+        self.event_store
+            .append(
+                &Event::new(
+                    EventType::MailAccountDeleted,
+                    account_id,
+                    AggregateType::MailAccount,
+                    serde_json::to_value(MailAccountDeletedPayload {
+                        account_id,
+                        owner_id,
+                    })
+                    .map_err(|e| MailError::Database(e.to_string()))?,
+                    owner_id,
+                ),
+                &self.broadcaster,
+            )
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -952,7 +997,27 @@ impl MailService {
                         )
                         .await
                     {
-                        Ok(_) => {
+                        Ok(msg) => {
+                            self.event_store
+                                .append(
+                                    &Event::new(
+                                        EventType::MailImported,
+                                        msg.id,
+                                        AggregateType::MailMessage,
+                                        serde_json::to_value(MailImportedPayload {
+                                            message_id: msg.id,
+                                            account_id: job.account_id,
+                                            folder_name: job.folder_name.clone(),
+                                            source_uid: uid,
+                                            owner_id: job.owner_id,
+                                        })
+                                        .map_err(|e| MailError::Database(e.to_string()))?,
+                                        job.owner_id,
+                                    ),
+                                    &self.broadcaster,
+                                )
+                                .await
+                                .map_err(|e| MailError::Database(e.to_string()))?;
                             processed += 1;
                         }
                         Err(e) => {
@@ -1476,6 +1541,7 @@ mod tests {
             folder_service,
             permission_resolver,
             event_store.clone(),
+            broadcaster.clone(),
             secret_key,
         );
 
@@ -1741,6 +1807,7 @@ mod link_tests {
             folder_service,
             permission_resolver,
             event_store,
+            broadcaster,
             secret_key,
         );
 

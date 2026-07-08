@@ -267,6 +267,7 @@ async fn init_services(
         Arc::clone(&folder_service),
         Arc::clone(&permission_resolver),
         Arc::clone(&event_store),
+        Arc::clone(&broadcaster),
         Arc::clone(&secret_key),
     ));
 

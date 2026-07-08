@@ -391,6 +391,8 @@ pub async fn list_activity(
                     .await
                     .map(|msg| msg.is_some())
                     .unwrap_or(false),
+                AggregateType::MailAccount => false,
+                AggregateType::MailImportJob => false,
             };
             (event, can_access)
         }
@@ -505,6 +507,8 @@ fn aggregate_type_to_resource_type(
             AggregateType::Share => "share",
             AggregateType::User => "user",
             AggregateType::MailMessage => "mail_message",
+            AggregateType::MailAccount => "mail_account",
+            AggregateType::MailImportJob => "mail_import_job",
         },
     }
 }
