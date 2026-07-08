@@ -654,28 +654,38 @@ impl MailService {
             password_enc,
             tls_mode,
         );
-        self.metadata_store
-            .create_mail_account(&account)
+
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
+        self.metadata_store
+            .create_mail_account_in_tx(&mut tx, &account)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let event = Event::new(
+            EventType::MailAccountCreated,
+            account.id,
+            AggregateType::MailAccount,
+            serde_json::to_value(MailAccountCreatedPayload {
+                account_id: account.id,
+                host: account.host.clone(),
+                username: account.username.clone(),
+                owner_id: account.owner_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            account.owner_id,
+        );
         self.event_store
-            .append(
-                &Event::new(
-                    EventType::MailAccountCreated,
-                    account.id,
-                    AggregateType::MailAccount,
-                    serde_json::to_value(MailAccountCreatedPayload {
-                        account_id: account.id,
-                        host: account.host.clone(),
-                        username: account.username.clone(),
-                        owner_id: account.owner_id,
-                    })
-                    .map_err(|e| MailError::Database(e.to_string()))?,
-                    account.owner_id,
-                ),
-                &self.broadcaster,
-            )
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        tx.commit()
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
@@ -767,26 +777,39 @@ impl MailService {
     ) -> Result<(), MailError> {
         // Ensure the account exists and belongs to the caller.
         self.get_account(tenant_id, owner_id, account_id).await?;
-        self.metadata_store
-            .soft_delete_mail_account(account_id, owner_id)
+
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
-        self.event_store
-            .append(
-                &Event::new(
-                    EventType::MailAccountDeleted,
+        let updated = self
+            .metadata_store
+            .soft_delete_mail_account_in_tx(&mut tx, account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if updated {
+            let event = Event::new(
+                EventType::MailAccountDeleted,
+                account_id,
+                AggregateType::MailAccount,
+                serde_json::to_value(MailAccountDeletedPayload {
                     account_id,
-                    AggregateType::MailAccount,
-                    serde_json::to_value(MailAccountDeletedPayload {
-                        account_id,
-                        owner_id,
-                    })
-                    .map_err(|e| MailError::Database(e.to_string()))?,
                     owner_id,
-                ),
-                &self.broadcaster,
-            )
+                })
+                .map_err(|e| MailError::Database(e.to_string()))?,
+                owner_id,
+            );
+            self.event_store
+                .append_in_tx(&mut tx, &event)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+
+        tx.commit()
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
@@ -998,26 +1021,30 @@ impl MailService {
                         .await
                     {
                         Ok(msg) => {
-                            self.event_store
-                                .append(
-                                    &Event::new(
-                                        EventType::MailImported,
-                                        msg.id,
-                                        AggregateType::MailMessage,
-                                        serde_json::to_value(MailImportedPayload {
-                                            message_id: msg.id,
-                                            account_id: job.account_id,
-                                            folder_name: job.folder_name.clone(),
-                                            source_uid: uid,
-                                            owner_id: job.owner_id,
-                                        })
-                                        .map_err(|e| MailError::Database(e.to_string()))?,
-                                        job.owner_id,
-                                    ),
-                                    &self.broadcaster,
-                                )
-                                .await
-                                .map_err(|e| MailError::Database(e.to_string()))?;
+                            let event = Event::new(
+                                EventType::MailImported,
+                                msg.id,
+                                AggregateType::MailMessage,
+                                serde_json::to_value(MailImportedPayload {
+                                    message_id: msg.id,
+                                    account_id: job.account_id,
+                                    folder_name: job.folder_name.clone(),
+                                    source_uid: uid,
+                                    owner_id: job.owner_id,
+                                })
+                                .map_err(|e| MailError::Database(e.to_string()))?,
+                                job.owner_id,
+                            );
+                            if let Err(e) = self.event_store.append(&event, &self.broadcaster).await
+                            {
+                                tracing::warn!(
+                                    message_id = %msg.id,
+                                    job_id = %job.id,
+                                    source_uid = uid,
+                                    error = %e,
+                                    "failed to append MailImported event; continuing"
+                                );
+                            }
                             processed += 1;
                         }
                         Err(e) => {

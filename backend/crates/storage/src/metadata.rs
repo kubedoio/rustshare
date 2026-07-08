@@ -482,8 +482,12 @@ impl MetadataStore {
         Ok(row)
     }
 
-    /// Create a new mail account.
-    pub async fn create_mail_account(&self, account: &MailAccount) -> Result<()> {
+    /// Create a new mail account inside an existing transaction.
+    pub async fn create_mail_account_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        account: &MailAccount,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO mail_accounts (
@@ -509,8 +513,16 @@ impl MetadataStore {
             account.created_at,
             account.updated_at,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
+        Ok(())
+    }
+
+    /// Create a new mail account.
+    pub async fn create_mail_account(&self, account: &MailAccount) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_mail_account_in_tx(&mut tx, account).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -594,17 +606,17 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Soft-delete a mail account and return whether a row was updated.
+    /// Soft-delete a mail account inside an existing transaction and return
+    /// whether a row was updated.
     ///
     /// Any pending import jobs belonging to the account are cancelled as part
     /// of the same transaction.
-    pub async fn soft_delete_mail_account(
+    pub async fn soft_delete_mail_account_in_tx(
         &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         id: MailAccountId,
         owner_id: UserId,
     ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
-
         sqlx::query!(
             r#"
             UPDATE mail_import_jobs
@@ -617,7 +629,7 @@ impl MetadataStore {
             id,
             owner_id
         )
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         let result = sqlx::query!(
@@ -629,11 +641,27 @@ impl MetadataStore {
             id,
             owner_id
         )
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-        tx.commit().await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Soft-delete a mail account and return whether a row was updated.
+    ///
+    /// Any pending import jobs belonging to the account are cancelled as part
+    /// of the same transaction.
+    pub async fn soft_delete_mail_account(
+        &self,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let updated = self
+            .soft_delete_mail_account_in_tx(&mut tx, id, owner_id)
+            .await?;
+        tx.commit().await?;
+        Ok(updated)
     }
 
     /// Create a new mail import job.
