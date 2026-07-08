@@ -1000,9 +1000,13 @@ impl MailService {
         account: &MailAccount,
         password: &str,
     ) -> Result<ImapSession, MailError> {
-        let port = u16::try_from(account.port).map_err(|_| {
-            MailError::InvalidSource(format!("Invalid IMAP port: {}", account.port))
-        })?;
+        if !(1..=65535).contains(&account.port) {
+            return Err(MailError::InvalidSource(format!(
+                "Invalid IMAP port: {}",
+                account.port
+            )));
+        }
+        let port = account.port as u16;
         let tls_mode = account
             .tls_mode
             .parse::<MailTlsMode>()
