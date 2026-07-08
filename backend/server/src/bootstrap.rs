@@ -584,12 +584,16 @@ pub async fn init_app() -> Result<AppState> {
         shutdown_tx.subscribe(),
     );
 
-    crate::mail_import_worker::spawn_mail_import_worker(
-        Arc::clone(&mail_service),
-        Arc::clone(&metadata_store),
-        shutdown_tx.subscribe(),
-        crate::mail_import_worker::MailImportWorkerConfig::default(),
-    );
+    if config.mail_import_worker_enabled {
+        crate::mail_import_worker::spawn_mail_import_worker(
+            Arc::clone(&mail_service),
+            Arc::clone(&metadata_store),
+            shutdown_tx.subscribe(),
+            crate::mail_import_worker::MailImportWorkerConfig::from_config(&config),
+        );
+    } else {
+        info!("Mail import worker disabled");
+    }
 
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;

@@ -17,6 +17,7 @@ use serde_json;
 use sqlx::PgPool;
 #[cfg(test)]
 use sqlx::Row;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Business-level errors for vault file operations.
@@ -826,6 +827,27 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Reset mail import jobs stuck in the `running` state back to `pending`.
+    pub async fn reset_stale_running_mail_import_jobs(
+        &self,
+        stale_threshold: Duration,
+    ) -> Result<u64> {
+        let seconds = stale_threshold.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
+            WHERE status = 'running'
+              AND deleted_at IS NULL
+              AND started_at < NOW() - interval '1 second' * $1
+            "#,
+            seconds,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     /// Mark a mail import job as completed.
