@@ -8,9 +8,31 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser};
+use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
 const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
+const MAIL_MODULE_KEY: &str = "mail";
+
+async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
+    let module = state
+        .module_service
+        .get_module(MAIL_MODULE_KEY, tenant_id)
+        .await;
+    let module = match module {
+        Ok(module) => module,
+        Err(ModuleError::NotFound(_)) => {
+            return Err(AppError::forbidden("Mail module is disabled"));
+        }
+        Err(err) => return Err(AppError::internal(err.to_string())),
+    };
+
+    if !module.enabled {
+        return Err(AppError::forbidden("Mail module is disabled"));
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailUploadResponse {
@@ -47,6 +69,8 @@ pub async fn upload_mail(
     auth: AuthenticatedUser,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<MailUploadResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
     let mut file_temp: Option<tempfile::NamedTempFile> = None;
 
     while let Some(mut field) = multipart.next_field().await.map_err(|e| {
@@ -102,6 +126,8 @@ pub async fn list_mail_messages(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<ListMailMessagesResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
     let messages = state
         .mail_service
         .list_messages(auth.tenant_id, auth.user_id)
@@ -168,6 +194,8 @@ pub async fn get_mail_message(
     auth: AuthenticatedUser,
     Path(message_id): Path<Uuid>,
 ) -> Result<Json<MailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
     let msg = state
         .mail_service
         .get_message(auth.tenant_id, auth.user_id, message_id)
