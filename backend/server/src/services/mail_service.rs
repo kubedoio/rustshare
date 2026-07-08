@@ -12,6 +12,9 @@ use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+const MAX_MAIL_ARTIFACT_NAME_LEN: usize = 200;
+const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
+
 // ============================================================================
 // Errors
 // ============================================================================
@@ -161,8 +164,12 @@ impl MailService {
                 .map_err(|e| MailError::Storage(e.to_string()))?;
 
             let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
-            let artifact_filename =
-                unique_artifact_filename(&filename, &mut artifact_name_counts, &mut artifact_names);
+            let safe_filename = safe_attachment_artifact_filename(&filename, idx);
+            let artifact_filename = unique_artifact_filename(
+                &safe_filename,
+                &mut artifact_name_counts,
+                &mut artifact_names,
+            );
             let file = self
                 .file_service
                 .upload_file(
@@ -343,19 +350,8 @@ impl MailService {
         tenant_id: Uuid,
         subject: Option<&str>,
     ) -> Result<Folder, MailError> {
-        let base_name = subject
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(slug::slugify)
-            .unwrap_or_else(|| "message".to_string());
-
         let short_uuid = &Uuid::new_v4().to_string()[..8];
-        let folder_name = format!(
-            "{}-{}-{}",
-            Utc::now().format("%Y-%m-%d"),
-            base_name,
-            short_uuid
-        );
+        let folder_name = mail_message_folder_name(subject, short_uuid);
 
         self.folder_service
             .create_folder(folder_name, Some(mail_root_id), owner_id, tenant_id)
@@ -380,6 +376,22 @@ fn addresses_to_json(
     )
 }
 
+fn mail_message_folder_name(subject: Option<&str>, short_uuid: &str) -> String {
+    let base_name = subject
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(slug::slugify)
+        .map(|slug| truncate_chars(&slug, MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN))
+        .unwrap_or_else(|| "message".to_string());
+
+    format!(
+        "{}-{}-{}",
+        Utc::now().format("%Y-%m-%d"),
+        base_name,
+        short_uuid
+    )
+}
+
 fn unique_artifact_filename(
     filename: &str,
     counts: &mut HashMap<String, usize>,
@@ -400,6 +412,48 @@ fn unique_artifact_filename(
             return candidate;
         }
     }
+}
+
+fn safe_attachment_artifact_filename(filename: &str, idx: usize) -> String {
+    let sanitized = filename
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | '\0' => '-',
+            ch if ch.is_control() => '-',
+            ch => ch,
+        })
+        .collect::<String>()
+        .replace("..", ".")
+        .trim_matches(|ch| ch == '.' || ch == ' ')
+        .to_string();
+
+    let filename = if sanitized.is_empty() {
+        format!("attachment-{idx}")
+    } else {
+        sanitized
+    };
+
+    truncate_filename(&filename, MAX_MAIL_ARTIFACT_NAME_LEN)
+}
+
+fn truncate_filename(filename: &str, max_chars: usize) -> String {
+    if filename.chars().count() <= max_chars {
+        return filename.to_string();
+    }
+
+    match filename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.chars().count() < max_chars => {
+            let ext_len = ext.chars().count();
+            let stem_len = max_chars - ext_len - 1;
+            format!("{}.{}", truncate_chars(stem, stem_len), ext)
+        }
+        _ => truncate_chars(filename, max_chars),
+    }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 #[cfg(test)]
@@ -568,6 +622,37 @@ mod tests {
             unique_artifact_filename("source.eml", &mut counts, &mut used),
             "source-2.eml"
         );
+    }
+
+    #[test]
+    fn mail_message_folder_name_truncates_long_subject_slug() {
+        let subject = "Quarterly update ".repeat(30);
+        let folder_name = mail_message_folder_name(Some(&subject), "12345678");
+
+        assert!(folder_name.chars().count() <= 220);
+        assert!(folder_name.ends_with("-12345678"));
+    }
+
+    #[test]
+    fn safe_attachment_artifact_filename_removes_invalid_path_parts() {
+        assert_eq!(
+            safe_attachment_artifact_filename("../nested\\secret.txt", 0),
+            "-nested-secret.txt"
+        );
+        assert_eq!(safe_attachment_artifact_filename("...", 3), "attachment-3");
+        assert_eq!(
+            safe_attachment_artifact_filename("report\0final.pdf", 0),
+            "report-final.pdf"
+        );
+    }
+
+    #[test]
+    fn safe_attachment_artifact_filename_truncates_long_names() {
+        let filename = format!("{}.pdf", "a".repeat(300));
+        let sanitized = safe_attachment_artifact_filename(&filename, 0);
+
+        assert!(sanitized.chars().count() <= MAX_MAIL_ARTIFACT_NAME_LEN);
+        assert!(sanitized.ends_with(".pdf"));
     }
 
     #[tokio::test]
