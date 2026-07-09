@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_mode, source_folder, source_uid,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE owner_id = $1\n              AND source_mode = $2\n              AND source_folder = $3\n              AND source_uid = $4\n              AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -20,126 +20,131 @@
       },
       {
         "ordinal": 3,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
         "name": "source_mode",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "source_folder",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "source_uid",
         "type_info": "Int8"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "message_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "in_reply_to",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "references",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "subject",
         "type_info": "Text"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "from_address",
         "type_info": "Text"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "from_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "to_addresses",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "cc_addresses",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "bcc_addresses",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "sent_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "imported_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "imported_by",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "visibility",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 19,
+        "ordinal": 20,
         "name": "folder_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 20,
+        "ordinal": 21,
         "name": "object_key",
         "type_info": "Text"
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "blob_key",
         "type_info": "Text"
       },
       {
-        "ordinal": 22,
+        "ordinal": 23,
         "name": "blob_sha256",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "size_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "has_attachments",
         "type_info": "Bool"
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -147,15 +152,14 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Text",
-        "Text",
-        "Int8"
+        "Uuid"
       ]
     },
     "nullable": [
       false,
       false,
       false,
+      true,
       false,
       true,
       true,
@@ -183,5 +187,5 @@
       false
     ]
   },
-  "hash": "a6182a91b85a5402086808232965143455f5b81787f29496c3c913170e87ffc5"
+  "hash": "222e963c7d56af45fcba8b284ab0695cd302d5bf051db3d68b34bc4ca9d4f38e"
 }

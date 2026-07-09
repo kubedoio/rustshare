@@ -4,7 +4,7 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{FolderId, MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
+use super::{FolderId, MailAccountId, MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +61,8 @@ pub struct MailMessage {
     pub tenant_id: Uuid,
     #[schema(value_type = Uuid)]
     pub owner_id: UserId,
+    #[schema(value_type = Option<Uuid>)]
+    pub account_id: Option<MailAccountId>,
     pub source_mode: String,
     pub source_folder: Option<String>,
     pub source_uid: Option<i64>,
@@ -103,6 +105,7 @@ impl MailMessage {
             id: Uuid::new_v4(),
             tenant_id,
             owner_id,
+            account_id: None,
             source_mode: source_mode.into(),
             source_folder: None,
             source_uid: None,

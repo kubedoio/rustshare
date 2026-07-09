@@ -111,6 +111,7 @@ impl MailService {
             tenant_id,
             owner_id,
             imported_by,
+            None,
             MailSourceMode::EmlUpload,
             None,
             None,
@@ -125,6 +126,7 @@ impl MailService {
         tenant_id: Uuid,
         owner_id: Uuid,
         imported_by: Uuid,
+        account_id: Option<MailAccountId>,
         source_mode: MailSourceMode,
         source_folder: Option<&str>,
         source_uid: Option<i64>,
@@ -167,6 +169,7 @@ impl MailService {
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
         let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, source_mode);
+        msg.account_id = account_id;
         msg.source_folder = source_folder.map(|s| s.to_string());
         msg.source_uid = source_uid;
         msg.blob_key = Some(source_key.clone());
@@ -1011,6 +1014,7 @@ impl MailService {
                 .metadata_store
                 .find_mail_message_by_source(
                     job.owner_id,
+                    job.account_id,
                     MailSourceMode::ImapSelected.as_str(),
                     &job.folder_name,
                     uid,
@@ -1043,6 +1047,7 @@ impl MailService {
                             job.tenant_id,
                             job.owner_id,
                             job.owner_id,
+                            Some(job.account_id),
                             MailSourceMode::ImapSelected,
                             Some(&job.folder_name),
                             Some(uid),

@@ -160,23 +160,24 @@ impl MetadataStore {
         sqlx::query!(
             r#"
             INSERT INTO mail_messages (
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6,
-                $7, $8, $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18,
-                $19, $20, $21, $22, $23, $24, $25,
-                $26, $27, $28
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19,
+                $20, $21, $22, $23, $24, $25, $26,
+                $27, $28, $29
             )
             "#,
             msg.id,
             msg.tenant_id,
             msg.owner_id,
+            msg.account_id,
             msg.source_mode,
             msg.source_folder,
             msg.source_uid,
@@ -296,7 +297,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
@@ -312,10 +313,11 @@ impl MetadataStore {
         Ok(row)
     }
 
-    /// Find an existing mail message imported from the same IMAP source.
+    /// Find an existing mail message imported from the same IMAP account/folder.
     pub async fn find_mail_message_by_source(
         &self,
         owner_id: UserId,
+        account_id: MailAccountId,
         source_mode: &str,
         source_folder: &str,
         source_uid: i64,
@@ -324,19 +326,21 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE owner_id = $1
-              AND source_mode = $2
-              AND source_folder = $3
-              AND source_uid = $4
+              AND account_id = $2
+              AND source_mode = $3
+              AND source_folder = $4
+              AND source_uid = $5
               AND deleted_at IS NULL
             "#,
             owner_id,
+            account_id,
             source_mode,
             source_folder,
             source_uid
@@ -449,7 +453,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,

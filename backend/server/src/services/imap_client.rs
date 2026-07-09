@@ -12,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_MAIL_BODY_SIZE_BYTES: usize = 25 * 1024 * 1024;
 
 /// Underlying transport for an IMAP session.
 ///
@@ -75,6 +76,8 @@ pub enum ImapError {
     AuthenticationFailed(String),
     #[error("IMAP command failed: {0}")]
     CommandFailed(String),
+    #[error("IMAP message {uid} size {size} bytes exceeds maximum allowed {max} bytes")]
+    MessageTooLarge { uid: u32, size: usize, max: usize },
 }
 
 impl From<std::io::Error> for ImapError {
@@ -237,6 +240,31 @@ impl ImapSession {
 
     pub async fn fetch_rfc822(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>, ImapError> {
         self.select_folder(folder).await?;
+
+        // Fetch the advertised size first so we reject oversized messages
+        // before transferring the full body across the wire.
+        let size_fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            self.session
+                .uid_fetch(uid.to_string(), "RFC822.SIZE")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+
+        let size_fetch = size_fetches
+            .into_iter()
+            .next()
+            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} not found")))?;
+        let size = size_fetch.size.unwrap_or(0) as usize;
+        if size > MAX_MAIL_BODY_SIZE_BYTES {
+            return Err(ImapError::MessageTooLarge {
+                uid,
+                size,
+                max: MAX_MAIL_BODY_SIZE_BYTES,
+            });
+        }
 
         let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
             self.session
