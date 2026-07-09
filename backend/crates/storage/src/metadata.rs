@@ -291,6 +291,23 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Hard-delete a mail message row. Intended for cleaning up a partially
+    /// imported message when artifact creation fails after the row was inserted
+    /// for deduplication.
+    pub async fn delete_mail_message(&self, id: uuid::Uuid, owner_id: Uuid) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM mail_messages
+            WHERE id = $1 AND owner_id = $2
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn create_mail_message_part(&self, part: &MailMessagePart) -> Result<()> {
         sqlx::query!(
             r#"
@@ -1032,39 +1049,45 @@ impl MetadataStore {
         Ok(result.rows_affected())
     }
 
-    /// Mark a mail import job as completed.
-    pub async fn mark_mail_import_job_completed(&self, id: MailImportJobId) -> Result<()> {
-        sqlx::query!(
+    /// Mark a running mail import job as completed.
+    ///
+    /// Returns `true` if the job was in the `running` state and updated,
+    /// `false` if it was already in a terminal state (e.g. cancelled).
+    pub async fn mark_mail_import_job_completed(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
             "#,
             id
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a mail import job as failed.
+    /// Mark a running mail import job as failed.
+    ///
+    /// Returns `true` if the job was in the `running` state and updated,
+    /// `false` if it was already in a terminal state (e.g. cancelled).
     pub async fn mark_mail_import_job_failed(
         &self,
         id: MailImportJobId,
         error: &str,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
             SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
             "#,
             id,
             error
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {

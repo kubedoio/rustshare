@@ -210,92 +210,114 @@ impl MailService {
         }
 
         // Create the mail artifact folder and source file only after we won the
-        // unique-source insert race.
-        let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
-        let message_folder = self
-            .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
-            .await?;
-        self.metadata_store
-            .update_mail_message_folder_id(msg.id, message_folder.id)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
-        msg.folder_id = Some(message_folder.id);
-
-        let _source_file = self
-            .file_service
-            .upload_file(
-                owner_id,
-                "source.eml".to_string(),
-                Some(message_folder.id),
-                bytes::Bytes::from(raw_source),
-                "message/rfc822".to_string(),
-                tenant_id,
-            )
-            .await
-            .map_err(|e| MailError::Storage(e.to_string()))?;
-
-        let mut part_index = 0i32;
-
-        if let Some(text) = &parsed.body_text {
-            part_index = self
-                .persist_body_part(tenant_id, msg.id, part_index, "text/plain", text)
+        // unique-source insert race. If any later step fails, remove the row so
+        // a retry does not treat the UID as already imported while artifacts are
+        // missing.
+        let artifact_result: Result<(), MailError> = async {
+            let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
+            let message_folder = self
+                .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
                 .await?;
-        }
-
-        if let Some(html) = &parsed.body_html {
-            self.persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
-                .await?;
-        }
-
-        let mut artifact_name_counts = HashMap::new();
-        let mut artifact_names = HashSet::from(["source.eml".to_string()]);
-        for (idx, att) in parsed.attachments.into_iter().enumerate() {
-            let hash = hex::encode(Sha256::digest(&att.data));
-            let key = format!("blobs/{hash}");
-            let bytes = bytes::Bytes::from(att.data);
-
-            self.object_store
-                .put(&key, bytes.clone())
+            self.metadata_store
+                .update_mail_message_folder_id(msg.id, message_folder.id)
                 .await
-                .map_err(|e| MailError::Storage(e.to_string()))?;
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            msg.folder_id = Some(message_folder.id);
 
-            let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
-            let safe_filename = safe_attachment_artifact_filename(&filename, idx);
-            let artifact_filename = unique_artifact_filename(
-                &safe_filename,
-                &mut artifact_name_counts,
-                &mut artifact_names,
-            );
-            let file = self
+            let _source_file = self
                 .file_service
                 .upload_file(
                     owner_id,
-                    artifact_filename,
+                    "source.eml".to_string(),
                     Some(message_folder.id),
-                    bytes,
-                    att.mime_type.clone(),
+                    bytes::Bytes::from(raw_source),
+                    "message/rfc822".to_string(),
                     tenant_id,
                 )
                 .await
                 .map_err(|e| MailError::Storage(e.to_string()))?;
 
-            let attachment = MailAttachment {
-                id: Uuid::new_v4(),
-                tenant_id,
-                message_id: msg.id,
-                file_id: Some(file.id),
-                filename,
-                mime_type: Some(att.mime_type),
-                size_bytes: Some(att.size_bytes as i64),
-                part_index: None,
-                content_disposition: att.content_disposition,
-                blob_key: Some(key),
-                created_at: Utc::now(),
-            };
-            self.metadata_store
-                .create_mail_attachment(&attachment)
+            let mut part_index = 0i32;
+
+            if let Some(text) = &parsed.body_text {
+                part_index = self
+                    .persist_body_part(tenant_id, msg.id, part_index, "text/plain", text)
+                    .await?;
+            }
+
+            if let Some(html) = &parsed.body_html {
+                self.persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
+                    .await?;
+            }
+
+            let mut artifact_name_counts = HashMap::new();
+            let mut artifact_names = HashSet::from(["source.eml".to_string()]);
+            for (idx, att) in parsed.attachments.into_iter().enumerate() {
+                let hash = hex::encode(Sha256::digest(&att.data));
+                let key = format!("blobs/{hash}");
+                let bytes = bytes::Bytes::from(att.data);
+
+                self.object_store
+                    .put(&key, bytes.clone())
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?;
+
+                let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
+                let safe_filename = safe_attachment_artifact_filename(&filename, idx);
+                let artifact_filename = unique_artifact_filename(
+                    &safe_filename,
+                    &mut artifact_name_counts,
+                    &mut artifact_names,
+                );
+                let file = self
+                    .file_service
+                    .upload_file(
+                        owner_id,
+                        artifact_filename,
+                        Some(message_folder.id),
+                        bytes,
+                        att.mime_type.clone(),
+                        tenant_id,
+                    )
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?;
+
+                let attachment = MailAttachment {
+                    id: Uuid::new_v4(),
+                    tenant_id,
+                    message_id: msg.id,
+                    file_id: Some(file.id),
+                    filename,
+                    mime_type: Some(att.mime_type),
+                    size_bytes: Some(att.size_bytes as i64),
+                    part_index: None,
+                    content_disposition: att.content_disposition,
+                    blob_key: Some(key),
+                    created_at: Utc::now(),
+                };
+                self.metadata_store
+                    .create_mail_attachment(&attachment)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+            }
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = artifact_result {
+            if let Err(cleanup_err) = self
+                .metadata_store
+                .delete_mail_message(msg.id, owner_id)
                 .await
-                .map_err(|e| MailError::Database(e.to_string()))?;
+            {
+                tracing::error!(
+                    message_id = %msg.id,
+                    error = %cleanup_err,
+                    "Failed to clean up partial mail message row after artifact error"
+                );
+            }
+            return Err(e);
         }
 
         Ok(msg)
@@ -1028,19 +1050,27 @@ impl MailService {
         {
             Some(a) => a,
             None => {
-                self.metadata_store
+                let marked = self
+                    .metadata_store
                     .mark_mail_import_job_failed(job.id, "account not found")
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
                 return Err(MailError::AccountNotFound(job.account_id));
             }
         };
 
         if account.deleted_at.is_some() || !account.is_enabled {
-            self.metadata_store
+            let marked = self
+                .metadata_store
                 .mark_mail_import_job_failed(job.id, "account disabled or deleted")
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
+            if !marked {
+                return Ok(());
+            }
             return Err(MailError::AccountNotFound(job.account_id));
         }
         if account.tenant_id != job.tenant_id {
@@ -1058,10 +1088,14 @@ impl MailService {
         let mut session = match self.connect_and_login(&account, &password).await {
             Ok(session) => session,
             Err(e) => {
-                self.metadata_store
+                let marked = self
+                    .metadata_store
                     .mark_mail_import_job_failed(job.id, &format!("connection failed: {e}"))
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
                 return Err(e);
             }
         };
@@ -1070,10 +1104,14 @@ impl MailService {
             Ok(uidvalidity) => uidvalidity.map(i64::from),
             Err(e) => {
                 let err = imap_to_mail_error(e);
-                self.metadata_store
+                let marked = self
+                    .metadata_store
                     .mark_mail_import_job_failed(job.id, &format!("folder selection failed: {err}"))
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
                 return Err(err);
             }
         };
@@ -1201,13 +1239,19 @@ impl MailService {
 
         if failed > 0 {
             let error = last_error.unwrap_or_else(|| format!("{failed} message(s) failed"));
-            self.metadata_store
+            let marked = self
+                .metadata_store
                 .mark_mail_import_job_failed(job.id, &error)
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
-            Err(MailError::Imap(error))
+            if marked {
+                Err(MailError::Imap(error))
+            } else {
+                Ok(())
+            }
         } else {
-            self.metadata_store
+            let _ = self
+                .metadata_store
                 .mark_mail_import_job_completed(job.id)
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
