@@ -232,7 +232,7 @@ impl MetadataStore {
                 $28, $29, $30
             )
             ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)
-            WHERE deleted_at IS NULL
+            WHERE deleted_at IS NULL AND source_mode IN ('imap_selected', 'imap_archive')
             DO NOTHING
             "#,
             msg.id,

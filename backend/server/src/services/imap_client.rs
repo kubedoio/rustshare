@@ -295,10 +295,17 @@ impl ImapSession {
             .next()
             .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} not found")))?;
 
-        fetch
+        let body = fetch
             .body()
-            .map(|bytes| bytes.to_vec())
-            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} has no body")))
+            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} has no body")))?;
+        if body.len() > MAX_MAIL_BODY_SIZE_BYTES {
+            return Err(ImapError::MessageTooLarge {
+                uid,
+                size: body.len(),
+                max: MAX_MAIL_BODY_SIZE_BYTES,
+            });
+        }
+        Ok(body.to_vec())
     }
 
     pub async fn logout(mut self) -> Result<(), ImapError> {
