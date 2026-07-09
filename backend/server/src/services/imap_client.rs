@@ -121,23 +121,26 @@ impl ImapClient {
         port: u16,
         tls_mode: MailTlsMode,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
-        // Reject internal/private destinations before opening any socket.
-        if let Err(e) = resolve_public_socket_addrs(host, port).await {
-            return Err(ImapError::ConnectionFailed(format!(
-                "IMAP host failed SSRF validation: {e}"
-            )));
-        }
+        // Reject internal/private destinations and pin the resolved address so
+        // a second DNS lookup cannot rebind to an internal address.
+        let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
+            ImapError::ConnectionFailed(format!("IMAP host failed SSRF validation: {e}"))
+        })?;
+        let addr = addrs
+            .into_iter()
+            .next()
+            .ok_or_else(|| ImapError::ConnectionFailed("no addresses for IMAP host".to_string()))?;
 
         match tls_mode {
             MailTlsMode::Tls => {
-                let tcp_stream =
-                    tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect((host, port)))
-                        .await
-                        .map_err(|_| {
-                            ImapError::ConnectionFailed("operation timed out".to_string())
-                        })??;
+                let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
+                    .await
+                    .map_err(|_| {
+                        ImapError::ConnectionFailed("operation timed out".to_string())
+                    })??;
 
                 let connector = build_tls_connector()?;
+                // Keep the original hostname for TLS certificate verification.
                 let server_name = host
                     .to_string()
                     .try_into()
@@ -156,12 +159,11 @@ impl ImapClient {
                     host,
                     port
                 );
-                let tcp_stream =
-                    tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect((host, port)))
-                        .await
-                        .map_err(|_| {
-                            ImapError::ConnectionFailed("operation timed out".to_string())
-                        })??;
+                let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
+                    .await
+                    .map_err(|_| {
+                        ImapError::ConnectionFailed("operation timed out".to_string())
+                    })??;
                 Ok(async_imap::Client::new(ImapStream::Plain(tcp_stream)))
             }
             MailTlsMode::StartTls => Err(ImapError::Tls(

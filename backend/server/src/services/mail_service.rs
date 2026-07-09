@@ -1018,11 +1018,17 @@ impl MailService {
             }
         };
 
-        let source_uidvalidity = session
-            .select_folder(&job.folder_name)
-            .await
-            .map_err(imap_to_mail_error)?
-            .map(i64::from);
+        let source_uidvalidity = match session.select_folder(&job.folder_name).await {
+            Ok(uidvalidity) => uidvalidity.map(i64::from),
+            Err(e) => {
+                let err = imap_to_mail_error(e);
+                self.metadata_store
+                    .mark_mail_import_job_failed(job.id, &format!("folder selection failed: {err}"))
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                return Err(err);
+            }
+        };
 
         let mut processed = 0i32;
         let mut failed = 0i32;
