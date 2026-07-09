@@ -271,6 +271,26 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Update the folder_id of an existing mail message.
+    pub async fn update_mail_message_folder_id(
+        &self,
+        id: uuid::Uuid,
+        folder_id: uuid::Uuid,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_messages
+            SET folder_id = $2, updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+            folder_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn create_mail_message_part(&self, part: &MailMessagePart) -> Result<()> {
         sqlx::query!(
             r#"
@@ -717,8 +737,8 @@ impl MetadataStore {
     /// Soft-delete a mail account inside an existing transaction and return
     /// whether a row was updated.
     ///
-    /// Any pending import jobs belonging to the account are cancelled as part
-    /// of the same transaction.
+    /// Any pending or running import jobs belonging to the account are
+    /// cancelled as part of the same transaction.
     pub async fn soft_delete_mail_account_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
@@ -731,7 +751,7 @@ impl MetadataStore {
             SET status = 'cancelled', updated_at = NOW()
             WHERE account_id = $1
               AND owner_id = $2
-              AND status = 'pending'
+              AND status IN ('pending', 'running')
               AND deleted_at IS NULL
             "#,
             id,
@@ -757,8 +777,8 @@ impl MetadataStore {
 
     /// Soft-delete a mail account and return whether a row was updated.
     ///
-    /// Any pending import jobs belonging to the account are cancelled as part
-    /// of the same transaction.
+    /// Any pending or running import jobs belonging to the account are
+    /// cancelled as part of the same transaction.
     pub async fn soft_delete_mail_account(
         &self,
         id: MailAccountId,
@@ -820,6 +840,26 @@ impl MetadataStore {
                 selected_uids AS "selected_uids: _",
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Return the current status string of a mail import job, if it exists.
+    pub async fn get_mail_import_job_status(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query_scalar!(
+            r#"
+            SELECT status
             FROM mail_import_jobs
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,

@@ -147,28 +147,10 @@ impl MailService {
         let source_key = format!("blobs/{source_hash}");
         let source_size = raw_source.len() as i64;
 
-        // Persist the raw source blob first (content-addressed).
+        // Persist the raw source blob first (content-addressed and safe to write
+        // even if another worker wins the race).
         self.object_store
             .put(&source_key, bytes::Bytes::copy_from_slice(&raw_source))
-            .await
-            .map_err(|e| MailError::Storage(e.to_string()))?;
-
-        // Create the mail artifact folder and store the source as a File.
-        let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
-        let message_folder = self
-            .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
-            .await?;
-
-        let _source_file = self
-            .file_service
-            .upload_file(
-                owner_id,
-                "source.eml".to_string(),
-                Some(message_folder.id),
-                bytes::Bytes::from(raw_source),
-                "message/rfc822".to_string(),
-                tenant_id,
-            )
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
@@ -192,10 +174,9 @@ impl MailService {
         msg.sent_at = parsed.sent_at;
         msg.has_attachments = !parsed.attachments.is_empty();
         msg.visibility = MailVisibility::Private.into();
-        msg.folder_id = Some(message_folder.id);
 
-        // Insert the mail row before creating files/parts so a concurrent
-        // import of the same source UID is detected before we write artifacts.
+        // Insert the mail row before creating any visible artifacts so a
+        // concurrent import of the same source UID is detected first.
         let inserted = self
             .metadata_store
             .create_mail_message_if_not_exists(&msg)
@@ -227,6 +208,31 @@ impl MailService {
                 "mail message source conflict but existing row not found".to_string(),
             ));
         }
+
+        // Create the mail artifact folder and source file only after we won the
+        // unique-source insert race.
+        let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
+        let message_folder = self
+            .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
+            .await?;
+        self.metadata_store
+            .update_mail_message_folder_id(msg.id, message_folder.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        msg.folder_id = Some(message_folder.id);
+
+        let _source_file = self
+            .file_service
+            .upload_file(
+                owner_id,
+                "source.eml".to_string(),
+                Some(message_folder.id),
+                bytes::Bytes::from(raw_source),
+                "message/rfc822".to_string(),
+                tenant_id,
+            )
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
 
         let mut part_index = 0i32;
 
@@ -1077,6 +1083,24 @@ impl MailService {
         let mut last_error: Option<String> = None;
 
         for &uid in job.selected_uids.as_deref().unwrap_or(&[]) {
+            // Stop early if the job was cancelled (e.g. because the account was
+            // deleted while this worker was running).
+            if let Some(status) = self
+                .metadata_store
+                .get_mail_import_job_status(job.id, job.owner_id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+            {
+                if status != "running" {
+                    tracing::info!(
+                        job_id = %job.id,
+                        status = %status,
+                        "Stopping import job because status is no longer running"
+                    );
+                    return Ok(());
+                }
+            }
+
             let uid_u32 = u32::try_from(uid)
                 .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
 
