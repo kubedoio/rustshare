@@ -1,9 +1,7 @@
 //! Integration test for the `.eml` import flow.
 
 use std::path::Path;
-use std::sync::Arc;
 
-use rustshare_server::services::mail_service::MailService;
 use sha2::{Digest, Sha256};
 
 mod contracts;
@@ -20,17 +18,7 @@ async fn import_eml_creates_message_and_persists_source_blob() {
         .join("../crates/core/tests/fixtures/eml/simple_plain.eml");
     let raw_source = std::fs::read(&fixture_path).expect("failed to read simple_plain.eml fixture");
 
-    let file_service = Arc::new(ctx.file_service());
-    let folder_service = Arc::new(ctx.folder_service());
-
-    let mail_service = MailService::new(
-        Arc::clone(&ctx.metadata_store),
-        Arc::clone(&ctx.object_store),
-        file_service,
-        folder_service,
-        Arc::clone(&ctx.permission_resolver()),
-        Arc::clone(&ctx.event_store),
-    );
+    let mail_service = ctx.mail_service();
 
     let message = mail_service
         .import_eml(tenant_id, user.id, user.id, raw_source.clone())
@@ -123,17 +111,7 @@ async fn import_eml_promotes_attachments_to_file_artifacts() {
     let raw_source =
         std::fs::read(&fixture_path).expect("failed to read with_attachment.eml fixture");
 
-    let file_service = Arc::new(ctx.file_service());
-    let folder_service = Arc::new(ctx.folder_service());
-
-    let mail_service = MailService::new(
-        Arc::clone(&ctx.metadata_store),
-        Arc::clone(&ctx.object_store),
-        file_service,
-        folder_service,
-        Arc::clone(&ctx.permission_resolver()),
-        Arc::clone(&ctx.event_store),
-    );
+    let mail_service = ctx.mail_service();
 
     let message = mail_service
         .import_eml(tenant_id, user.id, user.id, raw_source.clone())
