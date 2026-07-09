@@ -124,7 +124,7 @@ fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError
     if uids.len() > 1000 {
         return Err(validator::ValidationError::new("too_many_uids"));
     }
-    if uids.iter().any(|&uid| uid <= 0) {
+    if uids.iter().any(|&uid| uid <= 0 || uid > u32::MAX as i64) {
         return Err(validator::ValidationError::new("invalid_uid"));
     }
     Ok(())
@@ -136,7 +136,7 @@ pub struct CreateMailImportJobRequest {
     pub folder_name: String,
     #[validate(custom(
         function = "validate_selected_uids",
-        message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be positive"
+        message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be in 1..=u32::MAX"
     ))]
     pub selected_uids: Vec<i64>,
 }
@@ -566,6 +566,7 @@ pub async fn create_mail_account(
     auth: AuthenticatedUser,
     ValidatedJson(req): ValidatedJson<CreateMailAccountRequest>,
 ) -> Result<(StatusCode, Json<MailAccountResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let account = state
         .mail_service
         .create_account(
@@ -597,6 +598,7 @@ pub async fn list_mail_accounts(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
 ) -> Result<Json<MailAccountListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let accounts = state
         .mail_service
         .list_accounts(auth.tenant_id, auth.user_id)
@@ -624,6 +626,7 @@ pub async fn get_mail_account(
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
 ) -> Result<Json<MailAccountResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let account = state
         .mail_service
         .get_account(auth.tenant_id, auth.user_id, account_id)
@@ -652,6 +655,7 @@ pub async fn update_mail_account(
     Path(account_id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateMailAccountRequest>,
 ) -> Result<Json<MailAccountResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let account = state
         .mail_service
         .update_account(
@@ -688,6 +692,7 @@ pub async fn delete_mail_account(
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     state
         .mail_service
         .delete_account(auth.tenant_id, auth.user_id, account_id)
@@ -713,6 +718,7 @@ pub async fn test_mail_account(
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
 ) -> Result<Json<MailTestConnectionResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     state
         .mail_service
         .test_account_connection(auth.tenant_id, auth.user_id, account_id)
@@ -738,6 +744,7 @@ pub async fn list_mail_account_folders(
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
 ) -> Result<Json<MailFolderListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let folders = state
         .mail_service
         .list_imap_folders(auth.tenant_id, auth.user_id, account_id)
@@ -770,6 +777,7 @@ pub async fn list_mail_account_messages(
     Path(account_id): Path<Uuid>,
     Query(query): Query<ListMailMessagesQuery>,
 ) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     if query.folder.trim().is_empty() {
         return Err(AppError::bad_request("Missing folder query parameter"));
     }
@@ -818,6 +826,7 @@ pub async fn create_mail_import_job(
     Path(account_id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<CreateMailImportJobRequest>,
 ) -> Result<(StatusCode, Json<MailImportJobResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let job = state
         .mail_service
         .create_imap_import_job(
@@ -849,6 +858,7 @@ pub async fn get_mail_import_job(
     auth: AuthenticatedUser,
     Path(job_id): Path<Uuid>,
 ) -> Result<Json<MailImportJobResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
     let job = state
         .mail_service
         .get_import_job(auth.tenant_id, auth.user_id, job_id)

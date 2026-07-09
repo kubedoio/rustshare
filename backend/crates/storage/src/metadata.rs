@@ -575,7 +575,8 @@ impl MetadataStore {
         Ok(rows)
     }
 
-    /// Update a mail account's connection details and enabled state.
+    /// Update a mail account's connection details, enabled state, and
+    /// connection status fields.
     pub async fn update_mail_account(&self, account: &MailAccount) -> Result<()> {
         sqlx::query!(
             r#"
@@ -588,6 +589,8 @@ impl MetadataStore {
                 password_enc = $7,
                 tls_mode = $8,
                 is_enabled = $9,
+                last_error = $10,
+                last_connected_at = $11,
                 updated_at = NOW()
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
@@ -600,6 +603,8 @@ impl MetadataStore {
             account.password_enc,
             account.tls_mode,
             account.is_enabled,
+            account.last_error,
+            account.last_connected_at,
         )
         .execute(&self.pool)
         .await?;
@@ -858,6 +863,9 @@ impl MetadataStore {
     }
 
     /// Reset mail import jobs stuck in the `running` state back to `pending`.
+    ///
+    /// Uses `updated_at` as a heartbeat: [`update_mail_import_job_progress`]
+    /// refreshes it after each UID, so a live worker is not reset.
     pub async fn reset_stale_running_mail_import_jobs(
         &self,
         stale_threshold: Duration,
@@ -869,7 +877,7 @@ impl MetadataStore {
             SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
             WHERE status = 'running'
               AND deleted_at IS NULL
-              AND started_at < NOW() - interval '1 second' * $1
+              AND updated_at < NOW() - interval '1 second' * $1
             "#,
             seconds,
         )
