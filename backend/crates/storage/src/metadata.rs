@@ -907,6 +907,7 @@ impl MetadataStore {
     pub async fn reset_stale_running_mail_import_jobs(
         &self,
         stale_threshold: Duration,
+        exclude_ids: &[MailImportJobId],
     ) -> Result<u64> {
         let seconds = stale_threshold.as_secs_f64();
         let result = sqlx::query!(
@@ -916,8 +917,10 @@ impl MetadataStore {
             WHERE status = 'running'
               AND deleted_at IS NULL
               AND updated_at < NOW() - interval '1 second' * $1
+              AND id != ALL($2)
             "#,
             seconds,
+            exclude_ids as &[MailImportJobId],
         )
         .execute(&self.pool)
         .await?;

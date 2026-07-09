@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rustshare_core::domain::MailImportJobId;
 use rustshare_storage::MetadataStore;
 use tokio::sync::broadcast;
 
@@ -30,11 +32,16 @@ pub fn spawn_mail_import_worker(
 ) {
     tokio::spawn(async move {
         let mut join_set = tokio::task::JoinSet::new();
-        let mut in_flight: usize = 0;
+        let mut in_flight_ids: HashSet<MailImportJobId> = HashSet::new();
 
         loop {
+            // Do not reset jobs that this worker is actively processing;
+            // their updated_at is refreshed after each UID by process_import_job.
             match metadata_store
-                .reset_stale_running_mail_import_jobs(config.stale_threshold)
+                .reset_stale_running_mail_import_jobs(
+                    config.stale_threshold,
+                    &in_flight_ids.iter().copied().collect::<Vec<_>>(),
+                )
                 .await
             {
                 Ok(count) => {
@@ -47,7 +54,7 @@ pub fn spawn_mail_import_worker(
                 }
             }
 
-            while in_flight < config.max_concurrent_jobs {
+            while in_flight_ids.len() < config.max_concurrent_jobs {
                 let job = match metadata_store.claim_next_pending_mail_import_job().await {
                     Ok(Some(j)) => j,
                     Ok(None) => break,
@@ -57,13 +64,14 @@ pub fn spawn_mail_import_worker(
                     }
                 };
 
-                in_flight += 1;
+                in_flight_ids.insert(job.id);
                 let service = Arc::clone(&mail_service);
                 join_set.spawn(async move {
                     tracing::info!("Processing mail import job {}", job.id);
                     if let Err(e) = service.process_import_job(&job).await {
                         tracing::error!("Mail import job {} failed: {e}", job.id);
                     }
+                    job.id
                 });
             }
 
@@ -74,16 +82,24 @@ pub fn spawn_mail_import_worker(
                 }
                 _ = tokio::time::sleep(config.poll_interval) => {}
                 res = join_set.join_next(), if !join_set.is_empty() => {
-                    in_flight = in_flight.saturating_sub(1);
-                    if let Some(Err(e)) = res {
-                        tracing::error!("Mail import task panicked or was aborted: {e}");
+                    match res {
+                        Some(Ok(job_id)) => {
+                            in_flight_ids.remove(&job_id);
+                        }
+                        Some(Err(e)) => {
+                            tracing::error!("Mail import task panicked or was aborted: {e}");
+                        }
+                        None => {}
                     }
                 }
             }
         }
 
         if !join_set.is_empty() {
-            tracing::info!("Waiting for {in_flight} mail import tasks to finish");
+            tracing::info!(
+                "Waiting for {} mail import tasks to finish",
+                in_flight_ids.len()
+            );
             let shutdown_timeout = Duration::from_secs(30);
             let _ = tokio::time::timeout(shutdown_timeout, async {
                 while let Some(res) = join_set.join_next().await {

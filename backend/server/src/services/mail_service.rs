@@ -40,6 +40,8 @@ pub enum MailError {
     PermissionDenied,
     #[error("Invalid mail source: {0}")]
     InvalidSource(String),
+    #[error("Mail account name already exists: {0}")]
+    DuplicateAccountName(String),
     #[error("Storage error: {0}")]
     Storage(String),
     #[error("Database error: {0}")]
@@ -668,7 +670,7 @@ impl MailService {
         self.metadata_store
             .create_mail_account_in_tx(&mut tx, &account)
             .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
+            .map_err(|e| mail_account_db_error(&account.name, e))?;
 
         let event = Event::new(
             EventType::MailAccountCreated,
@@ -767,7 +769,7 @@ impl MailService {
         self.metadata_store
             .update_mail_account(&account)
             .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
+            .map_err(|e| mail_account_db_error(&account.name, e))?;
         Ok(account)
     }
 
@@ -967,14 +969,27 @@ impl MailService {
             )));
         }
 
-        let account = self
+        let account = match self
             .metadata_store
             .get_mail_account(job.account_id, job.owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?
-            .ok_or(MailError::AccountNotFound(job.account_id))?;
+        {
+            Some(a) => a,
+            None => {
+                self.metadata_store
+                    .mark_mail_import_job_failed(job.id, "account not found")
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                return Err(MailError::AccountNotFound(job.account_id));
+            }
+        };
 
         if account.deleted_at.is_some() || !account.is_enabled {
+            self.metadata_store
+                .mark_mail_import_job_failed(job.id, "account disabled or deleted")
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
             return Err(MailError::AccountNotFound(job.account_id));
         }
         if account.tenant_id != job.tenant_id {
@@ -1211,6 +1226,17 @@ impl MailService {
 
 fn imap_to_mail_error(err: ImapError) -> MailError {
     MailError::Imap(err.to_string())
+}
+
+fn mail_account_db_error(name: &str, err: anyhow::Error) -> MailError {
+    if err
+        .downcast_ref::<sqlx::Error>()
+        .is_some_and(|e| matches!(e, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505")))
+    {
+        MailError::DuplicateAccountName(name.to_string())
+    } else {
+        MailError::Database(err.to_string())
+    }
 }
 
 fn addresses_to_json(
