@@ -312,6 +312,40 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Find an existing mail message imported from the same IMAP source.
+    pub async fn find_mail_message_by_source(
+        &self,
+        owner_id: UserId,
+        source_mode: &str,
+        source_folder: &str,
+        source_uid: i64,
+    ) -> Result<Option<MailMessage>> {
+        let row = sqlx::query_as!(
+            MailMessage,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE owner_id = $1
+              AND source_mode = $2
+              AND source_folder = $3
+              AND source_uid = $4
+              AND deleted_at IS NULL
+            "#,
+            owner_id,
+            source_mode,
+            source_folder,
+            source_uid
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Persist a new Mail link inside an existing transaction.
     ///
     /// Returns `true` if a new row was inserted, or `false` if an active link

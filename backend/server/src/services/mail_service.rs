@@ -910,8 +910,11 @@ impl MailService {
                 "No message UIDs selected for import".to_string(),
             ));
         }
-        // Ensure the account exists and belongs to the caller.
-        self.get_account(tenant_id, owner_id, account_id).await?;
+        // Ensure the account exists, belongs to the caller, and is enabled.
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        if account.deleted_at.is_some() || !account.is_enabled {
+            return Err(MailError::AccountNotFound(account_id));
+        }
         let job = MailImportJob::new(tenant_id, owner_id, account_id, folder_name, selected_uids);
         self.metadata_store
             .create_mail_import_job(&job)
@@ -1001,6 +1004,34 @@ impl MailService {
         for &uid in job.selected_uids.as_deref().unwrap_or(&[]) {
             let uid_u32 = u32::try_from(uid)
                 .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
+
+            // Skip UIDs already imported for this account/folder so retries are
+            // idempotent after a worker crash or stale-heartbeat reset.
+            if self
+                .metadata_store
+                .find_mail_message_by_source(
+                    job.owner_id,
+                    MailSourceMode::ImapSelected.as_str(),
+                    &job.folder_name,
+                    uid,
+                )
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+                .is_some()
+            {
+                processed += 1;
+                self.metadata_store
+                    .update_mail_import_job_progress(
+                        job.id,
+                        processed,
+                        failed,
+                        last_error.as_deref(),
+                    )
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                continue;
+            }
+
             match session
                 .fetch_rfc822(&job.folder_name, uid_u32)
                 .await

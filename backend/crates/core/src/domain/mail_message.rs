@@ -16,14 +16,20 @@ pub enum MailSourceMode {
     InboundAddress,
 }
 
+impl MailSourceMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MailSourceMode::EmlUpload => "eml_upload",
+            MailSourceMode::ImapSelected => "imap_selected",
+            MailSourceMode::ImapArchive => "imap_archive",
+            MailSourceMode::InboundAddress => "inbound_address",
+        }
+    }
+}
+
 impl From<MailSourceMode> for String {
     fn from(mode: MailSourceMode) -> Self {
-        match mode {
-            MailSourceMode::EmlUpload => "eml_upload".to_string(),
-            MailSourceMode::ImapSelected => "imap_selected".to_string(),
-            MailSourceMode::ImapArchive => "imap_archive".to_string(),
-            MailSourceMode::InboundAddress => "inbound_address".to_string(),
-        }
+        mode.as_str().to_string()
     }
 }
 
