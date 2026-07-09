@@ -213,8 +213,11 @@ impl ImapSession {
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search("ALL"))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-        let mut limited: Vec<u32> = uids.into_iter().take(limit).collect();
-        limited.sort_unstable();
+        // Sort newest-first (highest UID) so the limit returns a stable,
+        // deterministic slice instead of an arbitrary HashSet subset.
+        let mut all_uids: Vec<u32> = uids.into_iter().collect();
+        all_uids.sort_unstable_by(|a, b| b.cmp(a));
+        let limited: Vec<u32> = all_uids.into_iter().take(limit).collect();
         if limited.is_empty() {
             return Ok(Vec::new());
         }
@@ -266,9 +269,10 @@ impl ImapSession {
             });
         }
 
+        // Use BODY.PEEK[] so the import does not set the remote \Seen flag.
         let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
             self.session
-                .uid_fetch(uid.to_string(), "RFC822")
+                .uid_fetch(uid.to_string(), "BODY.PEEK[]")
                 .await?
                 .try_collect::<Vec<Fetch>>()
                 .await
