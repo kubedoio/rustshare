@@ -11,6 +11,7 @@ use super::{MailAccountId, MailImportJobId, UserId};
 pub enum MailTlsMode {
     #[default]
     Tls,
+    #[serde(rename = "starttls", alias = "start_tls")]
     StartTls,
     None,
 }
