@@ -13,12 +13,21 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
     let tenant_id = ctx.tenant_id;
     let user = ctx.create_test_user("imapuser").await;
 
-    // 2. Skip if no IMAP test server is configured.
+    // 2. Skip if no IMAP test server is configured or reachable.
     let imap_host = std::env::var("IMAP_TEST_HOST").unwrap_or_else(|_| "localhost".to_string());
     let imap_port: i32 = std::env::var("IMAP_TEST_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3143);
+    if tokio::net::TcpStream::connect((imap_host.as_str(), imap_port as u16))
+        .await
+        .is_err()
+    {
+        eprintln!("Skipping imap_selected_import test: no IMAP server at {imap_host}:{imap_port}");
+        cleanup_user(&ctx.pool, user.id).await;
+        cleanup_tenant(&ctx.pool, tenant_id).await;
+        return;
+    }
     let imap_username =
         std::env::var("IMAP_TEST_USERNAME").unwrap_or_else(|_| "user@localhost".to_string());
     let imap_password =
