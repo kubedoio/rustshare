@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
+use rustshare_core::validation::resolve_public_socket_addrs;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
@@ -120,6 +121,13 @@ impl ImapClient {
         port: u16,
         tls_mode: MailTlsMode,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
+        // Reject internal/private destinations before opening any socket.
+        if let Err(e) = resolve_public_socket_addrs(host, port).await {
+            return Err(ImapError::ConnectionFailed(format!(
+                "IMAP host failed SSRF validation: {e}"
+            )));
+        }
+
         match tls_mode {
             MailTlsMode::Tls => {
                 let tcp_stream =
@@ -196,11 +204,11 @@ impl ImapSession {
             .collect())
     }
 
-    pub async fn select_folder(&mut self, folder: &str) -> Result<(), ImapError> {
-        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.select(folder))
+    pub async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError> {
+        let mailbox = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.select(folder))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-        Ok(())
+        Ok(mailbox.uid_validity)
     }
 
     pub async fn fetch_message_summaries(
@@ -208,7 +216,7 @@ impl ImapSession {
         folder: &str,
         limit: usize,
     ) -> Result<Vec<ImapMessageSummary>, ImapError> {
-        self.select_folder(folder).await?;
+        let _ = self.select_folder(folder).await?;
 
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search("ALL"))
             .await
@@ -242,7 +250,7 @@ impl ImapSession {
     }
 
     pub async fn fetch_rfc822(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>, ImapError> {
-        self.select_folder(folder).await?;
+        let _ = self.select_folder(folder).await?;
 
         // Fetch the advertised size first so we reject oversized messages
         // before transferring the full body across the wire.

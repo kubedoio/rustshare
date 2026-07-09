@@ -66,6 +66,7 @@ pub struct MailMessage {
     pub source_mode: String,
     pub source_folder: Option<String>,
     pub source_uid: Option<i64>,
+    pub source_uidvalidity: Option<i64>,
     pub message_id: Option<String>,
     pub in_reply_to: Option<String>,
     #[sqlx(rename = "reference_ids")]
@@ -109,6 +110,7 @@ impl MailMessage {
             source_mode: source_mode.into(),
             source_folder: None,
             source_uid: None,
+            source_uidvalidity: None,
             message_id: None,
             in_reply_to: None,
             references: None,

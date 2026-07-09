@@ -160,18 +160,18 @@ impl MetadataStore {
         sqlx::query!(
             r#"
             INSERT INTO mail_messages (
-                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12, $13,
-                $14, $15, $16, $17, $18, $19,
-                $20, $21, $22, $23, $24, $25, $26,
-                $27, $28, $29
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27,
+                $28, $29, $30
             )
             "#,
             msg.id,
@@ -181,6 +181,7 @@ impl MetadataStore {
             msg.source_mode,
             msg.source_folder,
             msg.source_uid,
+            msg.source_uidvalidity,
             msg.message_id,
             msg.in_reply_to,
             msg.references.as_deref(),
@@ -297,7 +298,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
@@ -313,7 +314,7 @@ impl MetadataStore {
         Ok(row)
     }
 
-    /// Find an existing mail message imported from the same IMAP account/folder.
+    /// Find an existing mail message imported from the same IMAP account/folder/UIDVALIDITY.
     pub async fn find_mail_message_by_source(
         &self,
         owner_id: UserId,
@@ -321,12 +322,13 @@ impl MetadataStore {
         source_mode: &str,
         source_folder: &str,
         source_uid: i64,
+        source_uidvalidity: Option<i64>,
     ) -> Result<Option<MailMessage>> {
         let row = sqlx::query_as!(
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
@@ -337,13 +339,15 @@ impl MetadataStore {
               AND source_mode = $3
               AND source_folder = $4
               AND source_uid = $5
+              AND source_uidvalidity IS NOT DISTINCT FROM $6
               AND deleted_at IS NULL
             "#,
             owner_id,
             account_id,
             source_mode,
             source_folder,
-            source_uid
+            source_uid,
+            source_uidvalidity
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -453,7 +457,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,

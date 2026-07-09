@@ -117,6 +117,7 @@ impl MailService {
             MailSourceMode::EmlUpload,
             None,
             None,
+            None,
             raw_source,
         )
         .await
@@ -132,6 +133,7 @@ impl MailService {
         source_mode: MailSourceMode,
         source_folder: Option<&str>,
         source_uid: Option<i64>,
+        source_uidvalidity: Option<i64>,
         raw_source: Vec<u8>,
     ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
@@ -174,6 +176,7 @@ impl MailService {
         msg.account_id = account_id;
         msg.source_folder = source_folder.map(|s| s.to_string());
         msg.source_uid = source_uid;
+        msg.source_uidvalidity = source_uidvalidity;
         msg.blob_key = Some(source_key.clone());
         msg.blob_sha256 = Some(source_hash);
         msg.size_bytes = Some(source_size);
@@ -1015,6 +1018,12 @@ impl MailService {
             }
         };
 
+        let source_uidvalidity = session
+            .select_folder(&job.folder_name)
+            .await
+            .map_err(imap_to_mail_error)?
+            .map(i64::from);
+
         let mut processed = 0i32;
         let mut failed = 0i32;
         let mut last_error: Option<String> = None;
@@ -1023,7 +1032,7 @@ impl MailService {
             let uid_u32 = u32::try_from(uid)
                 .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
 
-            // Skip UIDs already imported for this account/folder so retries are
+            // Skip UIDs already imported for this account/folder/uidvalidity so retries are
             // idempotent after a worker crash or stale-heartbeat reset.
             if self
                 .metadata_store
@@ -1033,6 +1042,7 @@ impl MailService {
                     MailSourceMode::ImapSelected.as_str(),
                     &job.folder_name,
                     uid,
+                    source_uidvalidity,
                 )
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?
@@ -1066,6 +1076,7 @@ impl MailService {
                             MailSourceMode::ImapSelected,
                             Some(&job.folder_name),
                             Some(uid),
+                            source_uidvalidity,
                             raw_source,
                         )
                         .await
@@ -1229,10 +1240,9 @@ fn imap_to_mail_error(err: ImapError) -> MailError {
 }
 
 fn mail_account_db_error(name: &str, err: anyhow::Error) -> MailError {
-    if err
-        .downcast_ref::<sqlx::Error>()
-        .is_some_and(|e| matches!(e, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505")))
-    {
+    if err.downcast_ref::<sqlx::Error>().is_some_and(
+        |e| matches!(e, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505")),
+    ) {
         MailError::DuplicateAccountName(name.to_string())
     } else {
         MailError::Database(err.to_string())
