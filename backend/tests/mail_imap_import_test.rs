@@ -45,7 +45,7 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
             imap_port,
             imap_username.clone(),
             imap_password,
-            MailTlsMode::None,
+            MailTlsMode::Tls,
         )
         .await
         .expect("create account should succeed");

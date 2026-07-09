@@ -194,14 +194,39 @@ impl MailService {
         msg.visibility = MailVisibility::Private.into();
         msg.folder_id = Some(message_folder.id);
 
-        // Insert the mail row before parts/attachments because they reference
-        // it through foreign-key constraints. A future transaction wrap can
-        // hide partially imported messages; for now, failing after this point
-        // leaves the message row visible, which is acceptable for Phase 1.
-        self.metadata_store
-            .create_mail_message(&msg)
+        // Insert the mail row before creating files/parts so a concurrent
+        // import of the same source UID is detected before we write artifacts.
+        let inserted = self
+            .metadata_store
+            .create_mail_message_if_not_exists(&msg)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+        if !inserted {
+            // Another worker imported this UID concurrently; fetch the existing
+            // message so the caller can treat it as already imported.
+            if let (Some(account_id), Some(uid), Some(folder)) =
+                (account_id, source_uid, source_folder)
+            {
+                if let Some(existing) = self
+                    .metadata_store
+                    .find_mail_message_by_source(
+                        owner_id,
+                        account_id,
+                        source_mode.as_str(),
+                        folder,
+                        uid,
+                        source_uidvalidity,
+                    )
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?
+                {
+                    return Ok(existing);
+                }
+            }
+            return Err(MailError::Database(
+                "mail message source conflict but existing row not found".to_string(),
+            ));
+        }
 
         let mut part_index = 0i32;
 
@@ -637,6 +662,19 @@ impl MailService {
     // Mail accounts
     // ============================================================================
 
+    /// Reject TLS modes that are not supported or allowed in this phase.
+    fn validate_tls_mode(tls_mode: MailTlsMode) -> Result<MailTlsMode, MailError> {
+        match tls_mode {
+            MailTlsMode::Tls => Ok(tls_mode),
+            MailTlsMode::StartTls => Err(MailError::InvalidSource(
+                "STARTTLS is not supported in this phase; use tls".to_string(),
+            )),
+            MailTlsMode::None => Err(MailError::InvalidSource(
+                "plaintext IMAP (tls_mode: none) is not allowed; use tls".to_string(),
+            )),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Create a new IMAP mail account with an encrypted password.
     pub async fn create_account(
@@ -650,6 +688,7 @@ impl MailService {
         password: String,
         tls_mode: MailTlsMode,
     ) -> Result<MailAccount, MailError> {
+        let tls_mode = Self::validate_tls_mode(tls_mode)?;
         let password_enc = encrypt_secret(&password, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
         let account = MailAccount::new(
@@ -764,7 +803,7 @@ impl MailService {
                 .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
         }
         if let Some(tls_mode) = tls_mode {
-            account.tls_mode = tls_mode.to_string();
+            account.tls_mode = Self::validate_tls_mode(tls_mode)?.to_string();
         }
         if let Some(is_enabled) = is_enabled {
             account.is_enabled = is_enabled;
@@ -918,6 +957,9 @@ impl MailService {
                 "No message UIDs selected for import".to_string(),
             ));
         }
+        let mut selected_uids = selected_uids;
+        selected_uids.sort_unstable();
+        selected_uids.dedup();
         // Ensure the account exists, belongs to the caller, and is enabled.
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         if account.deleted_at.is_some() || !account.is_enabled {

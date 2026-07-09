@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use rustshare_core::domain::MailImportJobId;
 use rustshare_storage::MetadataStore;
 use tokio::sync::broadcast;
@@ -64,14 +66,28 @@ pub fn spawn_mail_import_worker(
                     }
                 };
 
-                in_flight_ids.insert(job.id);
+                let job_id = job.id;
+                in_flight_ids.insert(job_id);
                 let service = Arc::clone(&mail_service);
                 join_set.spawn(async move {
-                    tracing::info!("Processing mail import job {}", job.id);
-                    if let Err(e) = service.process_import_job(&job).await {
-                        tracing::error!("Mail import job {} failed: {e}", job.id);
+                    // Catch panics inside the task so the job_id is always returned
+                    // and the in-flight set is cleaned up.
+                    let result = AssertUnwindSafe(async move {
+                        tracing::info!("Processing mail import job {}", job.id);
+                        if let Err(e) = service.process_import_job(&job).await {
+                            tracing::error!("Mail import job {} failed: {e}", job.id);
+                        }
+                        job.id
+                    })
+                    .catch_unwind()
+                    .await;
+                    match result {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::error!("Mail import task {job_id} panicked: {e:?}");
+                            job_id
+                        }
                     }
-                    job.id
                 });
             }
 

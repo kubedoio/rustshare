@@ -210,6 +210,67 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Insert a mail message if one does not already exist for the same source.
+    ///
+    /// Returns `true` if a new row was inserted, `false` if the unique source
+    /// key already existed.
+    pub async fn create_mail_message_if_not_exists(&self, msg: &MailMessage) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO mail_messages (
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27,
+                $28, $29, $30
+            )
+            ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)
+            WHERE deleted_at IS NULL
+            DO NOTHING
+            "#,
+            msg.id,
+            msg.tenant_id,
+            msg.owner_id,
+            msg.account_id,
+            msg.source_mode,
+            msg.source_folder,
+            msg.source_uid,
+            msg.source_uidvalidity,
+            msg.message_id,
+            msg.in_reply_to,
+            msg.references.as_deref(),
+            msg.subject,
+            msg.from_address,
+            msg.from_name,
+            msg.to_addresses,
+            msg.cc_addresses,
+            msg.bcc_addresses,
+            msg.sent_at,
+            msg.imported_at,
+            msg.imported_by,
+            msg.visibility,
+            msg.folder_id,
+            msg.object_key,
+            msg.blob_key,
+            msg.blob_sha256,
+            msg.size_bytes,
+            msg.has_attachments,
+            msg.deleted_at,
+            msg.created_at,
+            msg.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn create_mail_message_part(&self, part: &MailMessagePart) -> Result<()> {
         sqlx::query!(
             r#"
