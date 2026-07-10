@@ -1289,6 +1289,25 @@ impl MailService {
                 .map_err(imap_to_mail_error)
             {
                 Ok(raw_source) => {
+                    // Re-check cancellation after the fetch; the account (and job)
+                    // may have been deleted while the message body was downloading.
+                    if let Some(status) = self
+                        .metadata_store
+                        .get_mail_import_job_status(job.id, job.owner_id)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?
+                    {
+                        if status != "running" {
+                            tracing::info!(
+                                job_id = %job.id,
+                                uid = %uid,
+                                status = %status,
+                                "Stopping import because job is no longer running after fetch"
+                            );
+                            return Ok(());
+                        }
+                    }
+
                     match self
                         .import_raw_source(
                             job.tenant_id,
