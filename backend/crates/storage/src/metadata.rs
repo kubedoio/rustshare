@@ -815,10 +815,11 @@ impl MetadataStore {
             r#"
             INSERT INTO mail_import_jobs (
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
-                selected_uids, status, total_messages, processed_messages, failed_messages,
-                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                selected_uids, source_uidvalidity, status, total_messages, processed_messages,
+                failed_messages, last_error, started_at, completed_at, deleted_at, created_at,
+                updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             "#,
             job.id,
             job.tenant_id,
@@ -827,6 +828,7 @@ impl MetadataStore {
             job.source_mode,
             job.folder_name,
             job.selected_uids.as_deref(),
+            job.source_uidvalidity,
             job.status,
             job.total_messages,
             job.processed_messages,
@@ -855,6 +857,7 @@ impl MetadataStore {
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
+                source_uidvalidity,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM mail_import_jobs
@@ -902,6 +905,7 @@ impl MetadataStore {
                 SELECT
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
+                    source_uidvalidity,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
@@ -922,6 +926,7 @@ impl MetadataStore {
                 SELECT
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
+                    source_uidvalidity,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
@@ -972,6 +977,7 @@ impl MetadataStore {
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
+                source_uidvalidity,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM updated

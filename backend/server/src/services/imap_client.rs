@@ -244,8 +244,8 @@ impl ImapSession {
         &mut self,
         folder: &str,
         limit: usize,
-    ) -> Result<Vec<ImapMessageSummary>, ImapError> {
-        let _ = self.select_folder(folder).await?;
+    ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), ImapError> {
+        let uidvalidity = self.select_folder(folder).await?;
 
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search("ALL"))
             .await
@@ -256,7 +256,7 @@ impl ImapSession {
         all_uids.sort_unstable_by(|a, b| b.cmp(a));
         let limited: Vec<u32> = all_uids.into_iter().take(limit).collect();
         if limited.is_empty() {
-            return Ok(Vec::new());
+            return Ok((uidvalidity, Vec::new()));
         }
 
         let uid_set = limited
@@ -275,7 +275,10 @@ impl ImapSession {
         .await
         .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
 
-        Ok(fetches.into_iter().filter_map(summary_from_fetch).collect())
+        Ok((
+            uidvalidity,
+            fetches.into_iter().filter_map(summary_from_fetch).collect(),
+        ))
     }
 
     pub async fn fetch_rfc822(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>, ImapError> {

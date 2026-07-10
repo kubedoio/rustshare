@@ -109,6 +109,7 @@ pub struct MailMessageSummaryResponse {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailMessageSummaryListResponse {
+    pub uidvalidity: Option<i64>,
     pub messages: Vec<MailMessageSummaryResponse>,
 }
 
@@ -134,6 +135,10 @@ fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError
 pub struct CreateMailImportJobRequest {
     #[validate(length(min = 1, max = 512))]
     pub folder_name: String,
+    /// UIDVALIDITY value observed when the folder was listed. UIDs are only
+    /// stable within this value; if it changes, the selected UIDs may refer to
+    /// different messages.
+    pub source_uidvalidity: i64,
     #[validate(custom(
         function = "validate_selected_uids",
         message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be in 1..=u32::MAX"
@@ -790,7 +795,7 @@ pub async fn list_mail_account_messages(
         return Err(AppError::bad_request("limit must be between 1 and 1000"));
     }
 
-    let messages = state
+    let (uidvalidity, messages) = state
         .mail_service
         .list_imap_messages(
             auth.tenant_id,
@@ -802,6 +807,7 @@ pub async fn list_mail_account_messages(
         .await?;
 
     Ok(Json(MailMessageSummaryListResponse {
+        uidvalidity: uidvalidity.map(i64::from),
         messages: messages.into_iter().map(summary_to_response).collect(),
     }))
 }
@@ -834,6 +840,7 @@ pub async fn create_mail_import_job(
             auth.user_id,
             account_id,
             req.folder_name,
+            Some(req.source_uidvalidity),
             req.selected_uids,
         )
         .await?;

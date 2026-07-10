@@ -72,10 +72,11 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
     );
 
     // 5. List messages in INBOX.
-    let messages = mail_service
+    let (uidvalidity, messages) = mail_service
         .list_imap_messages(tenant_id, user.id, account.id, "INBOX", 10)
         .await
         .expect("list messages should succeed");
+    let uidvalidity = uidvalidity.expect("INBOX should report a UIDVALIDITY");
 
     // 6. Create an import job for the first message UID (if any).
     let uids: Vec<i64> = messages.iter().map(|m| m.uid as i64).collect();
@@ -91,6 +92,7 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
             user.id,
             account.id,
             "INBOX".to_string(),
+            Some(i64::from(uidvalidity)),
             uids.clone(),
         )
         .await

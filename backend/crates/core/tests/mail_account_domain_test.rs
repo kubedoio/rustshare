@@ -34,7 +34,9 @@ fn mail_import_job_defaults() {
         Uuid::new_v4(),
         "INBOX".to_string(),
         vec![1, 2, 3],
+        Some(42),
     );
     assert_eq!(job.status, "pending");
     assert_eq!(job.total_messages, 3);
+    assert_eq!(job.source_uidvalidity, Some(42));
 }

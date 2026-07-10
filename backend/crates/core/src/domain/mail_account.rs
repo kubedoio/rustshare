@@ -129,6 +129,7 @@ pub struct MailImportJob {
     pub source_mode: String,
     pub folder_name: String,
     pub selected_uids: Option<Vec<i64>>,
+    pub source_uidvalidity: Option<i64>,
     pub status: String,
     pub total_messages: i32,
     pub processed_messages: i32,
@@ -148,6 +149,7 @@ impl MailImportJob {
         account_id: MailAccountId,
         folder_name: String,
         selected_uids: Vec<i64>,
+        source_uidvalidity: Option<i64>,
     ) -> Self {
         let now = Utc::now();
         let total_messages = selected_uids.len() as i32;
@@ -159,6 +161,7 @@ impl MailImportJob {
             source_mode: "imap_selected".to_string(),
             folder_name,
             selected_uids: Some(selected_uids),
+            source_uidvalidity,
             status: MailImportJobStatus::Pending.into(),
             total_messages,
             processed_messages: 0,

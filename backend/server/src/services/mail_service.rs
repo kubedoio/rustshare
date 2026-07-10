@@ -946,7 +946,8 @@ impl MailService {
         Ok(folders)
     }
 
-    /// List message summaries in an IMAP folder.
+    /// List message summaries in an IMAP folder, along with the folder's
+    /// UIDVALIDITY so callers can submit stable UID selections.
     pub async fn list_imap_messages(
         &self,
         tenant_id: Uuid,
@@ -954,17 +955,17 @@ impl MailService {
         account_id: MailAccountId,
         folder: &str,
         limit: usize,
-    ) -> Result<Vec<ImapMessageSummary>, MailError> {
+    ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
-        let summaries = session
+        let result = session
             .fetch_message_summaries(folder, limit)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
-        Ok(summaries)
+        Ok(result)
     }
 
     // ============================================================================
@@ -978,6 +979,7 @@ impl MailService {
         owner_id: UserId,
         account_id: MailAccountId,
         folder_name: String,
+        source_uidvalidity: Option<i64>,
         selected_uids: Vec<i64>,
     ) -> Result<MailImportJob, MailError> {
         if selected_uids.is_empty() {
@@ -993,7 +995,14 @@ impl MailService {
         if account.deleted_at.is_some() || !account.is_enabled {
             return Err(MailError::AccountNotFound(account_id));
         }
-        let job = MailImportJob::new(tenant_id, owner_id, account_id, folder_name, selected_uids);
+        let job = MailImportJob::new(
+            tenant_id,
+            owner_id,
+            account_id,
+            folder_name,
+            selected_uids,
+            source_uidvalidity,
+        );
         self.metadata_store
             .create_mail_import_job(&job)
             .await
@@ -1077,8 +1086,22 @@ impl MailService {
             return Err(MailError::PermissionDenied);
         }
 
-        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
-            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let password =
+            match rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key) {
+                Ok(p) => p,
+                Err(e) => {
+                    let error = format!("failed to decrypt password: {e}");
+                    let marked = self
+                        .metadata_store
+                        .mark_mail_import_job_failed(job.id, &error)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    if marked {
+                        return Err(MailError::Storage(error));
+                    }
+                    return Ok(());
+                }
+            };
 
         let running = self
             .metadata_store
@@ -1123,6 +1146,22 @@ impl MailService {
                 return Err(err);
             }
         };
+
+        if source_uidvalidity != job.source_uidvalidity {
+            let error = format!(
+                "UIDVALIDITY changed from {:?} to {:?}; selected UIDs are stale",
+                job.source_uidvalidity, source_uidvalidity
+            );
+            let marked = self
+                .metadata_store
+                .mark_mail_import_job_failed(job.id, &error)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            if marked {
+                return Err(MailError::Imap(error));
+            }
+            return Ok(());
+        }
 
         let mut processed = 0i32;
         let mut failed = 0i32;
