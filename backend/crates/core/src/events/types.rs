@@ -17,6 +17,8 @@ pub enum AggregateType {
     Folder,
     Share,
     MailMessage,
+    MailAccount,
+    MailImportJob,
 }
 
 /// Event types in the system
@@ -69,6 +71,9 @@ pub enum EventType {
     // Mail events
     MailLinked,
     MailUnlinked,
+    MailAccountCreated,
+    MailAccountDeleted,
+    MailImported,
 }
 
 impl EventType {
@@ -106,6 +111,9 @@ impl EventType {
             EventType::NoteModified => "NoteModified",
             EventType::MailLinked => "MailLinked",
             EventType::MailUnlinked => "MailUnlinked",
+            EventType::MailAccountCreated => "MailAccountCreated",
+            EventType::MailAccountDeleted => "MailAccountDeleted",
+            EventType::MailImported => "MailImported",
         }
     }
 }
@@ -473,6 +481,36 @@ pub struct MailUnlinkedPayload {
     pub target_type: String,
     #[schema(value_type = Uuid)]
     pub target_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailAccountCreatedPayload {
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub host: String,
+    pub username: String,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailAccountDeletedPayload {
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailImportedPayload {
+    #[schema(value_type = Uuid)]
+    pub message_id: MailMessageId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub folder_name: String,
+    pub source_uid: i64,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
 }
 
 #[cfg(test)]

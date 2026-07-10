@@ -4,7 +4,7 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{FolderId, MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
+use super::{FolderId, MailAccountId, MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -16,14 +16,20 @@ pub enum MailSourceMode {
     InboundAddress,
 }
 
+impl MailSourceMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MailSourceMode::EmlUpload => "eml_upload",
+            MailSourceMode::ImapSelected => "imap_selected",
+            MailSourceMode::ImapArchive => "imap_archive",
+            MailSourceMode::InboundAddress => "inbound_address",
+        }
+    }
+}
+
 impl From<MailSourceMode> for String {
     fn from(mode: MailSourceMode) -> Self {
-        match mode {
-            MailSourceMode::EmlUpload => "eml_upload".to_string(),
-            MailSourceMode::ImapSelected => "imap_selected".to_string(),
-            MailSourceMode::ImapArchive => "imap_archive".to_string(),
-            MailSourceMode::InboundAddress => "inbound_address".to_string(),
-        }
+        mode.as_str().to_string()
     }
 }
 
@@ -55,9 +61,12 @@ pub struct MailMessage {
     pub tenant_id: Uuid,
     #[schema(value_type = Uuid)]
     pub owner_id: UserId,
+    #[schema(value_type = Option<Uuid>)]
+    pub account_id: Option<MailAccountId>,
     pub source_mode: String,
     pub source_folder: Option<String>,
     pub source_uid: Option<i64>,
+    pub source_uidvalidity: Option<i64>,
     pub message_id: Option<String>,
     pub in_reply_to: Option<String>,
     #[sqlx(rename = "reference_ids")]
@@ -97,9 +106,11 @@ impl MailMessage {
             id: Uuid::new_v4(),
             tenant_id,
             owner_id,
+            account_id: None,
             source_mode: source_mode.into(),
             source_folder: None,
             source_uid: None,
+            source_uidvalidity: None,
             message_id: None,
             in_reply_to: None,
             references: None,

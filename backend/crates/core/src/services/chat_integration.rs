@@ -6,7 +6,7 @@
 //! - Link unfurl requests with permission checking
 //! - Dispatching events to registered chat webhook URLs
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +22,7 @@ use rustshare_crypto::WebhookSigner;
 use crate::domain::{File, Folder, Share, SharePermissions, UserId};
 use crate::events::{AggregateType, Event, EventBroadcaster, EventType, ShareRevokedPayload};
 use crate::services::ShareError;
+use crate::validation::resolve_public_socket_addrs;
 
 /// Errors that can occur during chat integration operations.
 #[derive(Debug, Error)]
@@ -235,40 +236,6 @@ pub trait EventStoreOps: Send + Sync {
     async fn append(&self, event: &Event, broadcaster: &EventBroadcaster) -> anyhow::Result<()>;
 }
 
-/// Returns true if the IPv4 address is unspecified, loopback, private, link-local,
-/// multicast, or part of the CGNAT range (100.64.0.0/10).
-fn is_internal_ipv4(v4: &Ipv4Addr) -> bool {
-    let octets = v4.octets();
-    // CGNAT 100.64.0.0/10
-    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
-        return true;
-    }
-    v4.is_unspecified()
-        || v4.is_loopback()
-        || v4.is_private()
-        || v4.is_link_local()
-        || v4.is_multicast()
-}
-
-/// Returns true if the IP address is unspecified, loopback, private, link-local,
-/// multicast, unique-local, or an IPv4-mapped/compatible IPv6 address that
-/// resolves to an internal IPv4 address.
-fn is_internal_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_internal_ipv4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(mapped_v4) = v6.to_ipv4() {
-                return is_internal_ipv4(&mapped_v4);
-            }
-            v6.is_unspecified()
-                || v6.is_loopback()
-                || v6.is_unicast_link_local()
-                || v6.is_multicast()
-                || v6.is_unique_local()
-        }
-    }
-}
-
 /// Validate a chat webhook URL for SSRF safety.
 ///
 /// Rejects non-HTTPS URLs (unless `allow_http` is true) and any URL whose host
@@ -319,48 +286,14 @@ async fn checked_webhook_socket_addrs(
     let host = parsed
         .host_str()
         .ok_or(ChatIntegrationError::InvalidWebhookUrl)?;
-
-    if host.eq_ignore_ascii_case("localhost") {
-        return Err(ChatIntegrationError::InvalidWebhookUrl);
-    }
-
     let port = parsed.port_or_known_default().unwrap_or(80);
 
-    // Check IP literals first; these can bypass DNS-based defences.
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_internal_ip(&ip) {
-            return Err(ChatIntegrationError::InvalidWebhookUrl);
-        }
-        return Ok((host.to_string(), vec![SocketAddr::new(ip, port)]));
-    }
+    let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
+        warn!(url = %url, error = %e, "Rejected webhook URL after SSRF check");
+        ChatIntegrationError::InvalidWebhookUrl
+    })?;
 
-    // Resolve the hostname and verify none of the addresses are internal.
-    // Cap DNS lookup at 5 seconds to avoid hanging on slow/unresponsive resolvers.
-    let lookup = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::lookup_host((host, port)),
-    )
-    .await
-    .map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
-
-    match lookup {
-        Ok(addrs) => {
-            let addrs: Vec<SocketAddr> = addrs.collect();
-            if addrs.is_empty() {
-                return Err(ChatIntegrationError::InvalidWebhookUrl);
-            }
-            for addr in &addrs {
-                if is_internal_ip(&addr.ip()) {
-                    return Err(ChatIntegrationError::InvalidWebhookUrl);
-                }
-            }
-            Ok((host.to_string(), addrs))
-        }
-        Err(e) => {
-            warn!(url = %url, error = %e, "DNS lookup failed for webhook URL");
-            Err(ChatIntegrationError::InvalidWebhookUrl)
-        }
-    }
+    Ok((host.to_string(), addrs))
 }
 
 /// Trait for webhook dispatch operations.

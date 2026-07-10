@@ -222,6 +222,8 @@ async fn setup_test_env() -> AppState {
         folder_service.clone(),
         permission_resolver.clone(),
         event_store.clone(),
+        broadcaster.clone(),
+        Arc::new(secret_key.clone()),
     ));
 
     AppState {

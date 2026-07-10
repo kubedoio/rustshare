@@ -47,6 +47,26 @@ pub struct AppConfig {
     pub bootstrap_password_file: String,
     #[serde(default = "default_broadcast_capacity")]
     pub broadcast_capacity: usize,
+    #[serde(
+        default = "default_mail_import_worker_enabled",
+        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_ENABLED"
+    )]
+    pub mail_import_worker_enabled: bool,
+    #[serde(
+        default = "default_mail_import_worker_poll_secs",
+        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_POLL_SECS"
+    )]
+    pub mail_import_worker_poll_secs: u64,
+    #[serde(
+        default = "default_mail_import_worker_max_concurrent",
+        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_MAX_CONCURRENT"
+    )]
+    pub mail_import_worker_max_concurrent: usize,
+    #[serde(
+        default = "default_mail_import_worker_stale_secs",
+        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_STALE_SECS"
+    )]
+    pub mail_import_worker_stale_secs: i64,
 }
 
 fn default_jwt_issuer() -> String {
@@ -107,6 +127,22 @@ fn default_bootstrap_password_file() -> String {
 
 fn default_broadcast_capacity() -> usize {
     1000
+}
+
+fn default_mail_import_worker_enabled() -> bool {
+    true
+}
+
+fn default_mail_import_worker_poll_secs() -> u64 {
+    10
+}
+
+fn default_mail_import_worker_max_concurrent() -> usize {
+    2
+}
+
+fn default_mail_import_worker_stale_secs() -> i64 {
+    300
 }
 
 impl AppConfig {

@@ -284,6 +284,37 @@ pub fn mail_routes() -> Router<AppState> {
             "/api/v1/mail/upload",
             post(crate::handlers::mail::upload_mail).layer(DefaultBodyLimit::disable()),
         )
+        .route(
+            "/api/v1/mail/accounts",
+            get(crate::handlers::mail::list_mail_accounts)
+                .post(crate::handlers::mail::create_mail_account),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}",
+            get(crate::handlers::mail::get_mail_account)
+                .patch(crate::handlers::mail::update_mail_account)
+                .delete(crate::handlers::mail::delete_mail_account),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/test",
+            post(crate::handlers::mail::test_mail_account),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/folders",
+            get(crate::handlers::mail::list_mail_account_folders),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages",
+            get(crate::handlers::mail::list_mail_account_messages),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/import",
+            post(crate::handlers::mail::create_mail_import_job),
+        )
+        .route(
+            "/api/v1/mail/import-jobs/{id}",
+            get(crate::handlers::mail::get_mail_import_job),
+        )
 }
 
 pub fn kanban_routes() -> Router<AppState> {

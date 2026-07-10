@@ -5,6 +5,7 @@
 pub mod bootstrap;
 pub mod config;
 pub mod handlers;
+pub mod mail_import_worker;
 pub mod metrics;
 pub mod middleware;
 pub mod oidc;

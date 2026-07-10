@@ -1,14 +1,14 @@
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     Json,
 };
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::LinkTargetType;
+use rustshare_core::domain::{LinkTargetType, MailTlsMode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::handlers::{AppError, AuthenticatedUser};
+use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
 use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
@@ -33,6 +33,139 @@ async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), A
     }
 
     Ok(())
+}
+
+#[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct CreateMailAccountRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+    #[validate(length(min = 1, max = 255))]
+    pub host: String,
+    #[validate(range(min = 1, max = 65535))]
+    pub port: i32,
+    #[validate(length(min = 1, max = 512))]
+    pub username: String,
+    #[validate(length(min = 1, max = 512))]
+    pub password: String,
+    pub tls_mode: MailTlsMode,
+}
+
+#[derive(Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct UpdateMailAccountRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
+    #[validate(length(min = 1, max = 255))]
+    pub host: Option<String>,
+    #[validate(range(min = 1, max = 65535))]
+    pub port: Option<i32>,
+    #[validate(length(min = 1, max = 512))]
+    pub username: Option<String>,
+    #[validate(length(min = 1, max = 512))]
+    pub password: Option<String>,
+    pub tls_mode: Option<MailTlsMode>,
+    pub is_enabled: Option<bool>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailAccountResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    pub name: String,
+    pub host: String,
+    pub port: i32,
+    pub username: String,
+    pub tls_mode: String,
+    pub is_enabled: bool,
+    pub last_connected_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailAccountListResponse {
+    pub accounts: Vec<MailAccountResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailFolderListResponse {
+    pub folders: Vec<MailFolderResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailFolderResponse {
+    pub name: String,
+    pub delimiter: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailMessageSummaryResponse {
+    pub uid: u32,
+    pub subject: Option<String>,
+    pub from_address: Option<String>,
+    pub from_name: Option<String>,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub size_bytes: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailMessageSummaryListResponse {
+    pub uidvalidity: Option<i64>,
+    pub messages: Vec<MailMessageSummaryResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailTestConnectionResponse {
+    pub ok: bool,
+}
+
+fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError> {
+    if uids.is_empty() {
+        return Err(validator::ValidationError::new("empty_uids"));
+    }
+    if uids.len() > 1000 {
+        return Err(validator::ValidationError::new("too_many_uids"));
+    }
+    if uids.iter().any(|&uid| uid <= 0 || uid > u32::MAX as i64) {
+        return Err(validator::ValidationError::new("invalid_uid"));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct CreateMailImportJobRequest {
+    #[validate(length(min = 1, max = 512))]
+    pub folder_name: String,
+    /// UIDVALIDITY value observed when the folder was listed. UIDs are only
+    /// stable within this value; if it changes, the selected UIDs may refer to
+    /// different messages.
+    pub source_uidvalidity: i64,
+    #[validate(custom(
+        function = "validate_selected_uids",
+        message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be in 1..=u32::MAX"
+    ))]
+    pub selected_uids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailImportJobResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub account_id: Uuid,
+    pub folder_name: String,
+    pub status: String,
+    pub total_messages: i32,
+    pub processed_messages: i32,
+    pub failed_messages: i32,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailImportJobListResponse {
+    pub jobs: Vec<MailImportJobResponse>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -356,4 +489,387 @@ pub async fn list_mail_links(
     Ok(Json(MailLinkListResponse {
         links: links.into_iter().map(link_to_response).collect(),
     }))
+}
+
+fn account_to_response(account: rustshare_core::domain::MailAccount) -> MailAccountResponse {
+    MailAccountResponse {
+        id: account.id,
+        name: account.name,
+        host: account.host,
+        port: account.port,
+        username: account.username,
+        tls_mode: account.tls_mode,
+        is_enabled: account.is_enabled,
+        last_connected_at: account.last_connected_at,
+        last_error: account.last_error,
+        created_at: account.created_at,
+    }
+}
+
+fn folder_to_response(folder: crate::services::imap_client::MailFolder) -> MailFolderResponse {
+    MailFolderResponse {
+        name: folder.name,
+        delimiter: folder.delimiter,
+    }
+}
+
+fn summary_to_response(
+    summary: crate::services::imap_client::ImapMessageSummary,
+) -> MailMessageSummaryResponse {
+    MailMessageSummaryResponse {
+        uid: summary.uid,
+        subject: summary.subject,
+        from_address: summary.from_address,
+        from_name: summary.from_name,
+        sent_at: summary.sent_at,
+        size_bytes: summary.size_bytes,
+    }
+}
+
+fn job_to_response(job: rustshare_core::domain::MailImportJob) -> MailImportJobResponse {
+    MailImportJobResponse {
+        id: job.id,
+        account_id: job.account_id,
+        folder_name: job.folder_name,
+        status: job.status,
+        total_messages: job.total_messages,
+        processed_messages: job.processed_messages,
+        failed_messages: job.failed_messages,
+        last_error: job.last_error,
+        started_at: job.started_at,
+        completed_at: job.completed_at,
+        created_at: job.created_at,
+    }
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct ListMailMessagesQuery {
+    #[serde(default)]
+    folder: String,
+    #[serde(default = "default_message_limit")]
+    limit: i64,
+}
+
+fn default_message_limit() -> i64 {
+    100
+}
+
+/// Create a new IMAP mail account.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts",
+    tag = "Mail",
+    request_body = CreateMailAccountRequest,
+    responses(
+        (status = 201, description = "Account created", body = MailAccountResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn create_mail_account(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    ValidatedJson(req): ValidatedJson<CreateMailAccountRequest>,
+) -> Result<(StatusCode, Json<MailAccountResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let account = state
+        .mail_service
+        .create_account(
+            auth.tenant_id,
+            auth.user_id,
+            req.name,
+            req.host,
+            req.port,
+            req.username,
+            req.password,
+            req.tls_mode,
+        )
+        .await?;
+
+    Ok((StatusCode::CREATED, Json(account_to_response(account))))
+}
+
+/// List mail accounts for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Mail accounts", body = MailAccountListResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_accounts(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<MailAccountListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let accounts = state
+        .mail_service
+        .list_accounts(auth.tenant_id, auth.user_id)
+        .await?;
+
+    Ok(Json(MailAccountListResponse {
+        accounts: accounts.into_iter().map(account_to_response).collect(),
+    }))
+}
+
+/// Get a single mail account by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    responses(
+        (status = 200, description = "Mail account", body = MailAccountResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_mail_account(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<MailAccountResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let account = state
+        .mail_service
+        .get_account(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(Json(account_to_response(account)))
+}
+
+/// Update a mail account.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/mail/accounts/{id}",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    request_body = UpdateMailAccountRequest,
+    responses(
+        (status = 200, description = "Account updated", body = MailAccountResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn update_mail_account(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<UpdateMailAccountRequest>,
+) -> Result<Json<MailAccountResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let account = state
+        .mail_service
+        .update_account(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.name,
+            req.host,
+            req.port,
+            req.username,
+            req.password,
+            req.tls_mode,
+            req.is_enabled,
+        )
+        .await?;
+
+    Ok(Json(account_to_response(account)))
+}
+
+/// Delete a mail account.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/accounts/{id}",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    responses(
+        (status = 200, description = "Account deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn delete_mail_account(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    state
+        .mail_service
+        .delete_account(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Test a mail account's IMAP connection.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/test",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    responses(
+        (status = 200, description = "Connection successful", body = MailTestConnectionResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn test_mail_account(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<MailTestConnectionResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    state
+        .mail_service
+        .test_account_connection(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(Json(MailTestConnectionResponse { ok: true }))
+}
+
+/// List folders available on a mail account's IMAP server.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/folders",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    responses(
+        (status = 200, description = "Folder list", body = MailFolderListResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_account_folders(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<MailFolderListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let folders = state
+        .mail_service
+        .list_imap_folders(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(Json(MailFolderListResponse {
+        folders: folders.into_iter().map(folder_to_response).collect(),
+    }))
+}
+
+/// List message summaries in an IMAP folder.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/messages",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail account ID"),
+        ListMailMessagesQuery,
+    ),
+    responses(
+        (status = 200, description = "Message summaries", body = MailMessageSummaryListResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_account_messages(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Query(query): Query<ListMailMessagesQuery>,
+) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    if query.folder.trim().is_empty() {
+        return Err(AppError::bad_request("Missing folder query parameter"));
+    }
+    if query.folder.len() > 512 {
+        return Err(AppError::bad_request(
+            "Folder name must be at most 512 characters",
+        ));
+    }
+    if query.limit <= 0 || query.limit > 1000 {
+        return Err(AppError::bad_request("limit must be between 1 and 1000"));
+    }
+
+    let (uidvalidity, messages) = state
+        .mail_service
+        .list_imap_messages(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &query.folder,
+            query.limit as usize,
+        )
+        .await?;
+
+    Ok(Json(MailMessageSummaryListResponse {
+        uidvalidity: uidvalidity.map(i64::from),
+        messages: messages.into_iter().map(summary_to_response).collect(),
+    }))
+}
+
+/// Create a job to import selected messages from an IMAP folder.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/import",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID")),
+    request_body = CreateMailImportJobRequest,
+    responses(
+        (status = 202, description = "Import job created", body = MailImportJobResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn create_mail_import_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<CreateMailImportJobRequest>,
+) -> Result<(StatusCode, Json<MailImportJobResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .mail_service
+        .create_imap_import_job(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.folder_name,
+            Some(req.source_uidvalidity),
+            req.selected_uids,
+        )
+        .await?;
+
+    Ok((StatusCode::ACCEPTED, Json(job_to_response(job))))
+}
+
+/// Get a single mail import job by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/import-jobs/{id}",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Import job ID")),
+    responses(
+        (status = 200, description = "Import job", body = MailImportJobResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_mail_import_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<MailImportJobResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .mail_service
+        .get_import_job(auth.tenant_id, auth.user_id, job_id)
+        .await?;
+
+    Ok(Json(job_to_response(job)))
 }

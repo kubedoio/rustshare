@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO mail_messages (\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,\n                message_id, in_reply_to, reference_ids, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                deleted_at, created_at, updated_at\n            )\n            VALUES (\n                $1, $2, $3, $4, $5, $6, $7, $8,\n                $9, $10, $11, $12, $13, $14,\n                $15, $16, $17, $18, $19, $20,\n                $21, $22, $23, $24, $25, $26, $27,\n                $28, $29, $30\n            )\n            ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)\n            WHERE deleted_at IS NULL AND source_mode IN ('imap_selected', 'imap_archive')\n            DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "TextArray",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid",
+        "Varchar",
+        "Uuid",
+        "Text",
+        "Text",
+        "Varchar",
+        "Int8",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65938caa18f4f9626808abe7c65558fbbd8f719aafc5fc69544084269104729d"
+}

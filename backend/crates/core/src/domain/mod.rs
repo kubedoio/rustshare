@@ -18,6 +18,9 @@ mod user_module_preference;
 mod user_session;
 mod vault;
 
+pub mod mail_account;
+pub use mail_account::*;
+
 pub use device_token::{DevicePairRequest, DeviceToken};
 
 pub use file::File;
@@ -74,3 +77,7 @@ pub type MailMessageId = Uuid;
 pub type MailMessagePartId = Uuid;
 /// Unique identifier for a mail attachment.
 pub type MailAttachmentId = Uuid;
+/// Unique identifier for a mail account.
+pub type MailAccountId = Uuid;
+/// Unique identifier for a mail import job.
+pub type MailImportJobId = Uuid;

@@ -6,9 +6,10 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, MailAttachment, MailLink, MailLinkId, MailMessage, MailMessageId,
-    MailMessagePart, OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState,
-    ReplicationTarget, Share, SharePermissions, User, UserSession, Vault, VaultDevice, VaultFile,
+    File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
+    MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
+    OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget,
+    Share, SharePermissions, User, UserId, UserSession, Vault, VaultDevice, VaultFile,
     VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
@@ -16,6 +17,7 @@ use serde_json;
 use sqlx::PgPool;
 #[cfg(test)]
 use sqlx::Row;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Business-level errors for vault file operations.
@@ -158,26 +160,28 @@ impl MetadataStore {
         sqlx::query!(
             r#"
             INSERT INTO mail_messages (
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 deleted_at, created_at, updated_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6,
-                $7, $8, $9, $10, $11, $12,
-                $13, $14, $15, $16, $17, $18,
-                $19, $20, $21, $22, $23, $24, $25,
-                $26, $27, $28
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27,
+                $28, $29, $30
             )
             "#,
             msg.id,
             msg.tenant_id,
             msg.owner_id,
+            msg.account_id,
             msg.source_mode,
             msg.source_folder,
             msg.source_uid,
+            msg.source_uidvalidity,
             msg.message_id,
             msg.in_reply_to,
             msg.references.as_deref(),
@@ -204,6 +208,104 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Insert a mail message if one does not already exist for the same source.
+    ///
+    /// Returns `true` if a new row was inserted, `false` if the unique source
+    /// key already existed.
+    pub async fn create_mail_message_if_not_exists(&self, msg: &MailMessage) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO mail_messages (
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27,
+                $28, $29, $30
+            )
+            ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)
+            WHERE deleted_at IS NULL AND source_mode IN ('imap_selected', 'imap_archive')
+            DO NOTHING
+            "#,
+            msg.id,
+            msg.tenant_id,
+            msg.owner_id,
+            msg.account_id,
+            msg.source_mode,
+            msg.source_folder,
+            msg.source_uid,
+            msg.source_uidvalidity,
+            msg.message_id,
+            msg.in_reply_to,
+            msg.references.as_deref(),
+            msg.subject,
+            msg.from_address,
+            msg.from_name,
+            msg.to_addresses,
+            msg.cc_addresses,
+            msg.bcc_addresses,
+            msg.sent_at,
+            msg.imported_at,
+            msg.imported_by,
+            msg.visibility,
+            msg.folder_id,
+            msg.object_key,
+            msg.blob_key,
+            msg.blob_sha256,
+            msg.size_bytes,
+            msg.has_attachments,
+            msg.deleted_at,
+            msg.created_at,
+            msg.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update the folder_id of an existing mail message.
+    pub async fn update_mail_message_folder_id(
+        &self,
+        id: uuid::Uuid,
+        folder_id: uuid::Uuid,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_messages
+            SET folder_id = $2, updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+            folder_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Hard-delete a mail message row. Intended for cleaning up a partially
+    /// imported message when artifact creation fails after the row was inserted
+    /// for deduplication.
+    pub async fn delete_mail_message(&self, id: uuid::Uuid, owner_id: Uuid) -> Result<u64> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM mail_messages
+            WHERE id = $1 AND owner_id = $2
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     pub async fn create_mail_message_part(&self, part: &MailMessagePart) -> Result<()> {
@@ -294,7 +396,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
@@ -308,6 +410,81 @@ impl MetadataStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// Find an existing mail message imported from the same IMAP account/folder/UIDVALIDITY.
+    pub async fn find_mail_message_by_source(
+        &self,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        source_mode: &str,
+        source_folder: &str,
+        source_uid: i64,
+        source_uidvalidity: Option<i64>,
+    ) -> Result<Option<MailMessage>> {
+        let row = sqlx::query_as!(
+            MailMessage,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE owner_id = $1
+              AND account_id = $2
+              AND source_mode = $3
+              AND source_folder = $4
+              AND source_uid = $5
+              AND source_uidvalidity IS NOT DISTINCT FROM $6
+              AND deleted_at IS NULL
+            "#,
+            owner_id,
+            account_id,
+            source_mode,
+            source_folder,
+            source_uid,
+            source_uidvalidity
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Returns true if another running import job (not `exclude_job_id`) covers
+    /// the same owner/account/folder/UID. Used to avoid deleting a partial
+    /// `mail_messages` row that belongs to an active concurrent import.
+    pub async fn has_other_running_import_job_for_uid(
+        &self,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: &str,
+        uid: i64,
+        exclude_job_id: MailImportJobId,
+    ) -> Result<bool> {
+        let exists = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM mail_import_jobs
+                WHERE owner_id = $1
+                  AND account_id = $2
+                  AND folder_name = $3
+                  AND $4 = ANY(selected_uids)
+                  AND status = 'running'
+                  AND id != $5
+                  AND deleted_at IS NULL
+            ) AS "exists!"
+            "#,
+            owner_id,
+            account_id,
+            folder_name,
+            uid,
+            exclude_job_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
     }
 
     /// Persist a new Mail link inside an existing transaction.
@@ -413,7 +590,7 @@ impl MetadataStore {
             MailMessage,
             r#"
             SELECT
-                id, tenant_id, owner_id, source_mode, source_folder, source_uid,
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
@@ -478,6 +655,488 @@ impl MetadataStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// Create a new mail account inside an existing transaction.
+    pub async fn create_mail_account_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        account: &MailAccount,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_accounts (
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            "#,
+            account.id,
+            account.tenant_id,
+            account.owner_id,
+            account.name,
+            account.host,
+            account.port,
+            account.username,
+            account.password_enc,
+            account.tls_mode,
+            account.is_enabled,
+            account.last_error.as_deref(),
+            account.last_connected_at,
+            account.deleted_at,
+            account.created_at,
+            account.updated_at,
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// Create a new mail account.
+    pub async fn create_mail_account(&self, account: &MailAccount) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_mail_account_in_tx(&mut tx, account).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Find a mail account by ID, scoped to the owning user.
+    pub async fn get_mail_account(
+        &self,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<Option<MailAccount>> {
+        let row = sqlx::query_as!(
+            MailAccount,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            FROM mail_accounts
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List active mail accounts for a user, ordered by creation time (newest first).
+    pub async fn list_mail_accounts_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<MailAccount>> {
+        let rows = sqlx::query_as!(
+            MailAccount,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, name, host, port, username, password_enc,
+                tls_mode, is_enabled, last_error, last_connected_at, deleted_at,
+                created_at, updated_at
+            FROM mail_accounts
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Update a mail account's connection details, enabled state, and
+    /// connection status fields.
+    pub async fn update_mail_account(&self, account: &MailAccount) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_accounts
+            SET
+                name = $3,
+                host = $4,
+                port = $5,
+                username = $6,
+                password_enc = $7,
+                tls_mode = $8,
+                is_enabled = $9,
+                last_error = $10,
+                last_connected_at = $11,
+                updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            account.id,
+            account.owner_id,
+            account.name,
+            account.host,
+            account.port,
+            account.username,
+            account.password_enc,
+            account.tls_mode,
+            account.is_enabled,
+            account.last_error,
+            account.last_connected_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a mail account inside an existing transaction and return
+    /// whether a row was updated.
+    ///
+    /// Any pending or running import jobs belonging to the account are
+    /// cancelled as part of the same transaction.
+    pub async fn soft_delete_mail_account_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'cancelled', updated_at = NOW()
+            WHERE account_id = $1
+              AND owner_id = $2
+              AND status IN ('pending', 'running')
+              AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_accounts
+            SET deleted_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Soft-delete a mail account and return whether a row was updated.
+    ///
+    /// Any pending or running import jobs belonging to the account are
+    /// cancelled as part of the same transaction.
+    pub async fn soft_delete_mail_account(
+        &self,
+        id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let updated = self
+            .soft_delete_mail_account_in_tx(&mut tx, id, owner_id)
+            .await?;
+        tx.commit().await?;
+        Ok(updated)
+    }
+
+    /// Create a new mail import job.
+    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_import_jobs (
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids, source_uidvalidity, status, total_messages, processed_messages,
+                failed_messages, last_error, started_at, completed_at, deleted_at, created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            "#,
+            job.id,
+            job.tenant_id,
+            job.owner_id,
+            job.account_id,
+            job.source_mode,
+            job.folder_name,
+            job.selected_uids.as_deref(),
+            job.source_uidvalidity,
+            job.status,
+            job.total_messages,
+            job.processed_messages,
+            job.failed_messages,
+            job.last_error.as_deref(),
+            job.started_at,
+            job.completed_at,
+            job.deleted_at,
+            job.created_at,
+            job.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find a mail import job by ID, scoped to the owning user.
+    pub async fn get_mail_import_job(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<Option<MailImportJob>> {
+        let row = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                source_uidvalidity,
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Return the current status string of a mail import job, if it exists.
+    pub async fn get_mail_import_job_status(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query_scalar!(
+            r#"
+            SELECT status
+            FROM mail_import_jobs
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List active mail import jobs for a user, optionally filtered by account.
+    pub async fn list_mail_import_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: Option<MailAccountId>,
+    ) -> Result<Vec<MailImportJob>> {
+        if let Some(account_id) = account_id {
+            let rows = sqlx::query_as!(
+                MailImportJob,
+                r#"
+                SELECT
+                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                    selected_uids AS "selected_uids: _",
+                    source_uidvalidity,
+                    status, total_messages, processed_messages, failed_messages,
+                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                FROM mail_import_jobs
+                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                "#,
+                tenant_id,
+                owner_id,
+                account_id
+            )
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(rows)
+        } else {
+            let rows = sqlx::query_as!(
+                MailImportJob,
+                r#"
+                SELECT
+                    id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                    selected_uids AS "selected_uids: _",
+                    source_uidvalidity,
+                    status, total_messages, processed_messages, failed_messages,
+                    last_error, started_at, completed_at, deleted_at, created_at, updated_at
+                FROM mail_import_jobs
+                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                "#,
+                tenant_id,
+                owner_id
+            )
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(rows)
+        }
+    }
+
+    /// Atomically claim the oldest pending mail import job for processing.
+    ///
+    /// Only claims jobs whose associated mail account is enabled, whose tenant
+    /// has the mail module enabled, and whose job has not been soft-deleted.
+    /// The SELECT, UPDATE, and RETURN are performed in a single CTE statement
+    /// so the row transitions to `running` before the lock is released.
+    pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
+        let job = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            WITH target AS (
+                SELECT j.id
+                FROM mail_import_jobs j
+                JOIN mail_accounts a ON a.id = j.account_id
+                JOIN modules m ON m.tenant_id = j.tenant_id
+                WHERE j.status = 'pending'
+                  AND j.deleted_at IS NULL
+                  AND a.deleted_at IS NULL
+                  AND a.is_enabled = true
+                  AND m.module_key = 'mail'
+                  AND m.enabled = true
+                ORDER BY j.created_at ASC
+                FOR UPDATE OF j SKIP LOCKED
+                LIMIT 1
+            ),
+            updated AS (
+                UPDATE mail_import_jobs
+                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                FROM target
+                WHERE mail_import_jobs.id = target.id
+                RETURNING mail_import_jobs.*
+            )
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                source_uidvalidity,
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM updated
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    /// Update the progress counters for a mail import job.
+    pub async fn update_mail_import_job_progress(
+        &self,
+        id: MailImportJobId,
+        processed: i32,
+        failed: i32,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET
+                processed_messages = $2,
+                failed_messages = $3,
+                last_error = $4,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+            processed,
+            failed,
+            last_error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Mark a pending or already-running mail import job as running and record
+    /// its start time.
+    ///
+    /// Returns `true` if the job was in the `pending` or `running` state and
+    /// updated, `false` if it was already in a terminal state (e.g. cancelled).
+    pub async fn mark_mail_import_job_running(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'running', started_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status IN ('pending', 'running')
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Reset mail import jobs stuck in the `running` state back to `pending`.
+    ///
+    /// Uses `updated_at` as a heartbeat: [`update_mail_import_job_progress`]
+    /// refreshes it after each UID, so a live worker is not reset.
+    pub async fn reset_stale_running_mail_import_jobs(
+        &self,
+        stale_threshold: Duration,
+        exclude_ids: &[MailImportJobId],
+    ) -> Result<u64> {
+        let seconds = stale_threshold.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
+            WHERE status = 'running'
+              AND deleted_at IS NULL
+              AND updated_at < NOW() - interval '1 second' * $1
+              AND id != ALL($2)
+            "#,
+            seconds,
+            exclude_ids as &[MailImportJobId],
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Mark a running mail import job as completed.
+    ///
+    /// Returns `true` if the job was in the `running` state and updated,
+    /// `false` if it was already in a terminal state (e.g. cancelled).
+    pub async fn mark_mail_import_job_completed(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a running mail import job as failed.
+    ///
+    /// Returns `true` if the job was in the `running` state and updated,
+    /// `false` if it was already in a terminal state (e.g. cancelled).
+    pub async fn mark_mail_import_job_failed(
+        &self,
+        id: MailImportJobId,
+        error: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            "#,
+            id,
+            error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {

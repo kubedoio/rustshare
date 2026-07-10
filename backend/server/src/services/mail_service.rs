@@ -3,18 +3,23 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rustshare_core::domain::{
-    Folder, LinkTargetType, MailAttachment, MailLink, MailMessage, MailMessagePart, MailSourceMode,
+    Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
+    MailImportJobId, MailLink, MailMessage, MailMessagePart, MailSourceMode, MailTlsMode,
     MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
-    AggregateType, Event, EventType, MailLinkedPayload, MailUnlinkedPayload,
+    AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
+    MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
+use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use super::imap_client::{ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder};
 
 const MAX_MAIL_ARTIFACT_NAME_LEN: usize = 200;
 const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
@@ -27,14 +32,24 @@ const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
 pub enum MailError {
     #[error("Mail message not found: {0}")]
     NotFound(uuid::Uuid),
+    #[error("Mail account not found: {0}")]
+    AccountNotFound(Uuid),
+    #[error("Import job not found: {0}")]
+    JobNotFound(Uuid),
     #[error("Permission denied")]
     PermissionDenied,
     #[error("Invalid mail source: {0}")]
     InvalidSource(String),
+    #[error("Mail account name already exists: {0}")]
+    DuplicateAccountName(String),
     #[error("Storage error: {0}")]
     Storage(String),
     #[error("Database error: {0}")]
     Database(String),
+    #[error("IMAP error: {0}")]
+    Imap(String),
+    #[error("Import cancelled")]
+    Cancelled,
 }
 
 // ============================================================================
@@ -50,9 +65,12 @@ pub struct MailService {
     folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
     permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
     event_store: Arc<EventStore>,
+    broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
+    secret_key: Arc<SecretEncryptionKey>,
 }
 
 impl MailService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         metadata_store: Arc<MetadataStore>,
         object_store: Arc<ObjectStore>,
@@ -62,6 +80,8 @@ impl MailService {
         folder_service: Arc<FolderService<EventStore, MetadataStore, PermissionResolverRepository>>,
         permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
         event_store: Arc<EventStore>,
+        broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
+        secret_key: Arc<SecretEncryptionKey>,
     ) -> Self {
         Self {
             metadata_store,
@@ -70,6 +90,8 @@ impl MailService {
             folder_service,
             permission_resolver,
             event_store,
+            broadcaster,
+            secret_key,
         }
     }
 
@@ -89,8 +111,37 @@ impl MailService {
         imported_by: Uuid,
         raw_source: Vec<u8>,
     ) -> Result<MailMessage, MailError> {
+        self.import_raw_source(
+            tenant_id,
+            owner_id,
+            imported_by,
+            None,
+            MailSourceMode::EmlUpload,
+            None,
+            None,
+            None,
+            raw_source,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn import_raw_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        imported_by: Uuid,
+        account_id: Option<MailAccountId>,
+        source_mode: MailSourceMode,
+        source_folder: Option<&str>,
+        source_uid: Option<i64>,
+        source_uidvalidity: Option<i64>,
+        raw_source: Vec<u8>,
+        job_id: Option<Uuid>,
+    ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
-            return Err(MailError::InvalidSource("Empty .eml source".to_string()));
+            return Err(MailError::InvalidSource("Empty mail source".to_string()));
         }
 
         let parsed =
@@ -100,32 +151,18 @@ impl MailService {
         let source_key = format!("blobs/{source_hash}");
         let source_size = raw_source.len() as i64;
 
-        // Persist the raw source blob first (content-addressed).
+        // Persist the raw source blob first (content-addressed and safe to write
+        // even if another worker wins the race).
         self.object_store
             .put(&source_key, bytes::Bytes::copy_from_slice(&raw_source))
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
-        // Create the mail artifact folder and store the source as a File.
-        let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
-        let message_folder = self
-            .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
-            .await?;
-
-        let _source_file = self
-            .file_service
-            .upload_file(
-                owner_id,
-                "source.eml".to_string(),
-                Some(message_folder.id),
-                bytes::Bytes::from(raw_source),
-                "message/rfc822".to_string(),
-                tenant_id,
-            )
-            .await
-            .map_err(|e| MailError::Storage(e.to_string()))?;
-
-        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, MailSourceMode::EmlUpload);
+        let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, source_mode);
+        msg.account_id = account_id;
+        msg.source_folder = source_folder.map(|s| s.to_string());
+        msg.source_uid = source_uid;
+        msg.source_uidvalidity = source_uidvalidity;
         msg.blob_key = Some(source_key.clone());
         msg.blob_sha256 = Some(source_hash);
         msg.size_bytes = Some(source_size);
@@ -141,79 +178,197 @@ impl MailService {
         msg.sent_at = parsed.sent_at;
         msg.has_attachments = !parsed.attachments.is_empty();
         msg.visibility = MailVisibility::Private.into();
-        msg.folder_id = Some(message_folder.id);
 
-        // Insert the mail row before parts/attachments because they reference
-        // it through foreign-key constraints. A future transaction wrap can
-        // hide partially imported messages; for now, failing after this point
-        // leaves the message row visible, which is acceptable for Phase 1.
-        self.metadata_store
-            .create_mail_message(&msg)
+        // Insert the mail row before creating any visible artifacts so a
+        // concurrent import of the same source UID is detected first.
+        let inserted = self
+            .metadata_store
+            .create_mail_message_if_not_exists(&msg)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
-
-        let mut part_index = 0i32;
-
-        if let Some(text) = &parsed.body_text {
-            part_index = self
-                .persist_body_part(tenant_id, msg.id, part_index, "text/plain", text)
-                .await?;
+        if !inserted {
+            // Another worker imported this UID concurrently; fetch the existing
+            // message so the caller can treat it as already imported.
+            if let (Some(account_id), Some(uid), Some(folder)) =
+                (account_id, source_uid, source_folder)
+            {
+                if let Some(existing) = self
+                    .metadata_store
+                    .find_mail_message_by_source(
+                        owner_id,
+                        account_id,
+                        source_mode.as_str(),
+                        folder,
+                        uid,
+                        source_uidvalidity,
+                    )
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?
+                {
+                    // Only treat the existing row as imported if it is complete.
+                    // A concurrent worker may have inserted the deduplication row
+                    // but not yet finished persisting artifacts.
+                    if existing.folder_id.is_some() {
+                        return Ok(existing);
+                    }
+                    return Err(MailError::Database(
+                        "concurrent import of same UID still in progress".to_string(),
+                    ));
+                }
+            }
+            return Err(MailError::Database(
+                "mail message source conflict but existing row not found".to_string(),
+            ));
         }
 
-        if let Some(html) = &parsed.body_html {
-            self.persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
+        // Create the mail artifact folder and source file only after we won the
+        // unique-source insert race. If any later step fails, remove the row so
+        // a retry does not treat the UID as already imported while artifacts are
+        // missing.
+        // Create the mail artifact folder and source file only after we won the
+        // unique-source insert race. Keep the folder_id local until all artifacts
+        // are durable; only then mark the mail_messages row complete. If any step
+        // fails, remove the folder and the deduplication row so retries import
+        // the UID again.
+        let mut message_folder_id: Option<Uuid> = None;
+        let artifact_result: Result<(), MailError> = async {
+            let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
+            let message_folder = self
+                .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
                 .await?;
-        }
+            message_folder_id = Some(message_folder.id);
 
-        let mut artifact_name_counts = HashMap::new();
-        let mut artifact_names = HashSet::from(["source.eml".to_string()]);
-        for (idx, att) in parsed.attachments.into_iter().enumerate() {
-            let hash = hex::encode(Sha256::digest(&att.data));
-            let key = format!("blobs/{hash}");
-            let bytes = bytes::Bytes::from(att.data);
-
-            self.object_store
-                .put(&key, bytes.clone())
-                .await
-                .map_err(|e| MailError::Storage(e.to_string()))?;
-
-            let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
-            let safe_filename = safe_attachment_artifact_filename(&filename, idx);
-            let artifact_filename = unique_artifact_filename(
-                &safe_filename,
-                &mut artifact_name_counts,
-                &mut artifact_names,
-            );
-            let file = self
+            let _source_file = self
                 .file_service
                 .upload_file(
                     owner_id,
-                    artifact_filename,
+                    "source.eml".to_string(),
                     Some(message_folder.id),
-                    bytes,
-                    att.mime_type.clone(),
+                    bytes::Bytes::from(raw_source),
+                    "message/rfc822".to_string(),
                     tenant_id,
                 )
                 .await
                 .map_err(|e| MailError::Storage(e.to_string()))?;
 
-            let attachment = MailAttachment {
-                id: Uuid::new_v4(),
-                tenant_id,
-                message_id: msg.id,
-                file_id: Some(file.id),
-                filename,
-                mime_type: Some(att.mime_type),
-                size_bytes: Some(att.size_bytes as i64),
-                part_index: None,
-                content_disposition: att.content_disposition,
-                blob_key: Some(key),
-                created_at: Utc::now(),
-            };
+            let mut part_index = 0i32;
+
+            if let Some(text) = &parsed.body_text {
+                part_index = self
+                    .persist_body_part(tenant_id, msg.id, part_index, "text/plain", text)
+                    .await?;
+            }
+
+            if let Some(html) = &parsed.body_html {
+                self.persist_body_part(tenant_id, msg.id, part_index, "text/html", html)
+                    .await?;
+            }
+
+            let mut artifact_name_counts = HashMap::new();
+            let mut artifact_names = HashSet::from(["source.eml".to_string()]);
+            for (idx, att) in parsed.attachments.into_iter().enumerate() {
+                let hash = hex::encode(Sha256::digest(&att.data));
+                let key = format!("blobs/{hash}");
+                let bytes = bytes::Bytes::from(att.data);
+
+                self.object_store
+                    .put(&key, bytes.clone())
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?;
+
+                let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
+                let safe_filename = safe_attachment_artifact_filename(&filename, idx);
+                let artifact_filename = unique_artifact_filename(
+                    &safe_filename,
+                    &mut artifact_name_counts,
+                    &mut artifact_names,
+                );
+                let file = self
+                    .file_service
+                    .upload_file(
+                        owner_id,
+                        artifact_filename,
+                        Some(message_folder.id),
+                        bytes,
+                        att.mime_type.clone(),
+                        tenant_id,
+                    )
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?;
+
+                let attachment = MailAttachment {
+                    id: Uuid::new_v4(),
+                    tenant_id,
+                    message_id: msg.id,
+                    file_id: Some(file.id),
+                    filename,
+                    mime_type: Some(att.mime_type),
+                    size_bytes: Some(att.size_bytes as i64),
+                    part_index: None,
+                    content_disposition: att.content_disposition,
+                    blob_key: Some(key),
+                    created_at: Utc::now(),
+                };
+                self.metadata_store
+                    .create_mail_attachment(&attachment)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+            }
+
+            // If this import is tied to a job, re-check cancellation before
+            // finalizing the row so a cancelled job does not leave visible mail.
+            if let Some(jid) = job_id {
+                if let Some(status) = self
+                    .metadata_store
+                    .get_mail_import_job_status(jid, owner_id)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?
+                {
+                    if status != "running" {
+                        return Err(MailError::Cancelled);
+                    }
+                }
+            }
+
+            // Mark the row complete only after every artifact is durable.
+            msg.folder_id = Some(message_folder.id);
             self.metadata_store
-                .create_mail_attachment(&attachment)
+                .update_mail_message_folder_id(msg.id, message_folder.id)
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = artifact_result {
+            // Remove any visible artifacts (the message folder and its files)
+            // before deleting the deduplication row, so failed imports do not
+            // leave orphaned folders behind.
+            if let Some(folder_id) = message_folder_id {
+                if let Err(cleanup_err) =
+                    self.folder_service.delete_folder(folder_id, owner_id).await
+                {
+                    tracing::error!(
+                        message_id = %msg.id,
+                        folder_id = %folder_id,
+                        error = %cleanup_err,
+                        "Failed to clean up partial message folder after artifact error"
+                    );
+                }
+            }
+            if let Err(cleanup_err) = self
+                .metadata_store
+                .delete_mail_message(msg.id, owner_id)
+                .await
+            {
+                tracing::error!(
+                    message_id = %msg.id,
+                    error = %cleanup_err,
+                    "Failed to clean up partial mail message row after artifact error"
+                );
+            }
+            return Err(e);
         }
 
         Ok(msg)
@@ -582,6 +737,741 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
+    // ============================================================================
+    // Mail accounts
+    // ============================================================================
+
+    /// Reject TLS modes that are not supported or allowed in this phase.
+    fn validate_tls_mode(tls_mode: MailTlsMode) -> Result<MailTlsMode, MailError> {
+        match tls_mode {
+            MailTlsMode::Tls => Ok(tls_mode),
+            MailTlsMode::StartTls => Err(MailError::InvalidSource(
+                "STARTTLS is not supported in this phase; use tls".to_string(),
+            )),
+            MailTlsMode::None => Err(MailError::InvalidSource(
+                "plaintext IMAP (tls_mode: none) is not allowed; use tls".to_string(),
+            )),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// Create a new IMAP mail account with an encrypted password.
+    pub async fn create_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        name: String,
+        host: String,
+        port: i32,
+        username: String,
+        password: String,
+        tls_mode: MailTlsMode,
+    ) -> Result<MailAccount, MailError> {
+        let tls_mode = Self::validate_tls_mode(tls_mode)?;
+        let password_enc = encrypt_secret(&password, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
+        let account = MailAccount::new(
+            tenant_id,
+            owner_id,
+            name,
+            host,
+            port,
+            username,
+            password_enc,
+            tls_mode,
+        );
+
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        self.metadata_store
+            .create_mail_account_in_tx(&mut tx, &account)
+            .await
+            .map_err(|e| mail_account_db_error(&account.name, e))?;
+
+        let event = Event::new(
+            EventType::MailAccountCreated,
+            account.id,
+            AggregateType::MailAccount,
+            serde_json::to_value(MailAccountCreatedPayload {
+                account_id: account.id,
+                host: account.host.clone(),
+                username: account.username.clone(),
+                owner_id: account.owner_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            account.owner_id,
+        );
+        self.event_store
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(account)
+    }
+
+    /// List active mail accounts for a user.
+    pub async fn list_accounts(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<MailAccount>, MailError> {
+        self.metadata_store
+            .list_mail_accounts_by_owner(tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Get a single active mail account if owned by the user.
+    pub async fn get_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<MailAccount, MailError> {
+        let account = self
+            .metadata_store
+            .get_mail_account(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::AccountNotFound(account_id))?;
+        if account.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(account)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// Update a mail account's connection details and enabled state.
+    pub async fn update_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        name: Option<String>,
+        host: Option<String>,
+        port: Option<i32>,
+        username: Option<String>,
+        password: Option<String>,
+        tls_mode: Option<MailTlsMode>,
+        is_enabled: Option<bool>,
+    ) -> Result<MailAccount, MailError> {
+        let mut account = self.get_account(tenant_id, owner_id, account_id).await?;
+        if let Some(name) = name {
+            account.name = name;
+        }
+        if let Some(host) = host {
+            account.host = host;
+        }
+        if let Some(port) = port {
+            account.port = port;
+        }
+        if let Some(username) = username {
+            account.username = username;
+        }
+        if let Some(password) = password {
+            account.password_enc = encrypt_secret(&password, &self.secret_key)
+                .map_err(|e| MailError::Storage(format!("failed to encrypt password: {e}")))?;
+        }
+        if let Some(tls_mode) = tls_mode {
+            account.tls_mode = Self::validate_tls_mode(tls_mode)?.to_string();
+        }
+        if let Some(is_enabled) = is_enabled {
+            account.is_enabled = is_enabled;
+        }
+        self.metadata_store
+            .update_mail_account(&account)
+            .await
+            .map_err(|e| mail_account_db_error(&account.name, e))?;
+        Ok(account)
+    }
+
+    /// Soft-delete a mail account and cancel its pending import jobs.
+    pub async fn delete_account(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<(), MailError> {
+        // Ensure the account exists and belongs to the caller.
+        self.get_account(tenant_id, owner_id, account_id).await?;
+
+        let mut tx = self
+            .metadata_store
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let updated = self
+            .metadata_store
+            .soft_delete_mail_account_in_tx(&mut tx, account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if updated {
+            let event = Event::new(
+                EventType::MailAccountDeleted,
+                account_id,
+                AggregateType::MailAccount,
+                serde_json::to_value(MailAccountDeletedPayload {
+                    account_id,
+                    owner_id,
+                })
+                .map_err(|e| MailError::Database(e.to_string()))?,
+                owner_id,
+            );
+            self.event_store
+                .append_in_tx(&mut tx, &event)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Test an account's IMAP connection and update its connection metadata.
+    pub async fn test_account_connection(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<(), MailError> {
+        let mut account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+
+        let result = self.connect_and_login(&account, &password).await;
+        match result {
+            Ok(mut session) => {
+                session.list_folders().await.map_err(imap_to_mail_error)?;
+                let _ = session.logout().await;
+                account.last_connected_at = Some(Utc::now());
+                account.last_error = None;
+                self.metadata_store
+                    .update_mail_account(&account)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                Ok(())
+            }
+            Err(e) => {
+                account.last_error = Some(e.to_string());
+                self.metadata_store
+                    .update_mail_account(&account)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                Err(e)
+            }
+        }
+    }
+
+    // ============================================================================
+    // IMAP browsing
+    // ============================================================================
+
+    /// List folders available on the account's IMAP server.
+    pub async fn list_imap_folders(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailFolder>, MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let folders = session.list_folders().await.map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(folders)
+    }
+
+    /// List message summaries in an IMAP folder, along with the folder's
+    /// UIDVALIDITY so callers can submit stable UID selections.
+    pub async fn list_imap_messages(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        limit: usize,
+    ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let result = session
+            .fetch_message_summaries(folder, limit)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(result)
+    }
+
+    // ============================================================================
+    // Import jobs
+    // ============================================================================
+
+    /// Create a job to import selected UIDs from an IMAP folder.
+    pub async fn create_imap_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: String,
+        source_uidvalidity: Option<i64>,
+        selected_uids: Vec<i64>,
+    ) -> Result<MailImportJob, MailError> {
+        if selected_uids.is_empty() {
+            return Err(MailError::InvalidSource(
+                "No message UIDs selected for import".to_string(),
+            ));
+        }
+        let mut selected_uids = selected_uids;
+        selected_uids.sort_unstable();
+        selected_uids.dedup();
+        // Ensure the account exists, belongs to the caller, and is enabled.
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        if account.deleted_at.is_some() || !account.is_enabled {
+            return Err(MailError::AccountNotFound(account_id));
+        }
+        let job = MailImportJob::new(
+            tenant_id,
+            owner_id,
+            account_id,
+            folder_name,
+            selected_uids,
+            source_uidvalidity,
+        );
+        self.metadata_store
+            .create_mail_import_job(&job)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        Ok(job)
+    }
+
+    /// Get a single import job if owned by the user.
+    pub async fn get_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        job_id: MailImportJobId,
+    ) -> Result<MailImportJob, MailError> {
+        let job = self
+            .metadata_store
+            .get_mail_import_job(job_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::JobNotFound(job_id))?;
+        if job.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(job)
+    }
+
+    /// List active import jobs for a user, optionally filtered by account.
+    pub async fn list_import_jobs(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: Option<MailAccountId>,
+    ) -> Result<Vec<MailImportJob>, MailError> {
+        self.metadata_store
+            .list_mail_import_jobs_by_owner(tenant_id, owner_id, account_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Process an IMAP import job by fetching each selected UID and importing it.
+    pub async fn process_import_job(&self, job: &MailImportJob) -> Result<(), MailError> {
+        if !matches!(job.status.as_str(), "pending" | "running") {
+            return Err(MailError::InvalidSource(format!(
+                "Import job {} has status {} and cannot be re-processed",
+                job.id, job.status
+            )));
+        }
+
+        let account = match self
+            .metadata_store
+            .get_mail_account(job.account_id, job.owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+        {
+            Some(a) => a,
+            None => {
+                let marked = self
+                    .metadata_store
+                    .mark_mail_import_job_failed(job.id, "account not found")
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
+                return Err(MailError::AccountNotFound(job.account_id));
+            }
+        };
+
+        if account.deleted_at.is_some() || !account.is_enabled {
+            let marked = self
+                .metadata_store
+                .mark_mail_import_job_failed(job.id, "account disabled or deleted")
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            if !marked {
+                return Ok(());
+            }
+            return Err(MailError::AccountNotFound(job.account_id));
+        }
+        if account.tenant_id != job.tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+
+        let password =
+            match rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key) {
+                Ok(p) => p,
+                Err(e) => {
+                    let error = format!("failed to decrypt password: {e}");
+                    let marked = self
+                        .metadata_store
+                        .mark_mail_import_job_failed(job.id, &error)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    if marked {
+                        return Err(MailError::Storage(error));
+                    }
+                    return Ok(());
+                }
+            };
+
+        let running = self
+            .metadata_store
+            .mark_mail_import_job_running(job.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        if !running {
+            tracing::info!(
+                job_id = %job.id,
+                "Stopping import job because it is no longer pending or running"
+            );
+            return Ok(());
+        }
+
+        let mut session = match self.connect_and_login(&account, &password).await {
+            Ok(session) => session,
+            Err(e) => {
+                let marked = self
+                    .metadata_store
+                    .mark_mail_import_job_failed(job.id, &format!("connection failed: {e}"))
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        };
+
+        let source_uidvalidity = match session.select_folder(&job.folder_name).await {
+            Ok(uidvalidity) => uidvalidity.map(i64::from),
+            Err(e) => {
+                let err = imap_to_mail_error(e);
+                let marked = self
+                    .metadata_store
+                    .mark_mail_import_job_failed(job.id, &format!("folder selection failed: {err}"))
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if !marked {
+                    return Ok(());
+                }
+                return Err(err);
+            }
+        };
+
+        if source_uidvalidity != job.source_uidvalidity {
+            let error = format!(
+                "UIDVALIDITY changed from {:?} to {:?}; selected UIDs are stale",
+                job.source_uidvalidity, source_uidvalidity
+            );
+            let marked = self
+                .metadata_store
+                .mark_mail_import_job_failed(job.id, &error)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            if marked {
+                return Err(MailError::Imap(error));
+            }
+            return Ok(());
+        }
+
+        let mut processed = 0i32;
+        let mut failed = 0i32;
+        let mut skipped_inflight = 0i32;
+        let mut last_error: Option<String> = None;
+
+        for &uid in job.selected_uids.as_deref().unwrap_or(&[]) {
+            // Stop early if the job was cancelled (e.g. because the account was
+            // deleted while this worker was running).
+            if let Some(status) = self
+                .metadata_store
+                .get_mail_import_job_status(job.id, job.owner_id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+            {
+                if status != "running" {
+                    tracing::info!(
+                        job_id = %job.id,
+                        status = %status,
+                        "Stopping import job because status is no longer running"
+                    );
+                    return Ok(());
+                }
+            }
+
+            let uid_u32 = u32::try_from(uid)
+                .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
+
+            // Skip UIDs already imported for this account/folder/uidvalidity so retries are
+            // idempotent after a worker crash or stale-heartbeat reset. A row without a
+            // folder_id is a partial import (worker died after dedup insert but before
+            // artifacts were created). Only reclaim it when no other running job is
+            // actively importing the same UID, so we do not corrupt an in-flight import.
+            if let Some(existing) = self
+                .metadata_store
+                .find_mail_message_by_source(
+                    job.owner_id,
+                    job.account_id,
+                    MailSourceMode::ImapSelected.as_str(),
+                    &job.folder_name,
+                    uid,
+                    source_uidvalidity,
+                )
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+            {
+                if existing.folder_id.is_some() {
+                    processed += 1;
+                    self.metadata_store
+                        .update_mail_import_job_progress(
+                            job.id,
+                            processed,
+                            failed,
+                            last_error.as_deref(),
+                        )
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    continue;
+                }
+
+                let in_flight = self
+                    .metadata_store
+                    .has_other_running_import_job_for_uid(
+                        job.owner_id,
+                        job.account_id,
+                        &job.folder_name,
+                        uid,
+                        job.id,
+                    )
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if in_flight {
+                    tracing::info!(
+                        job_id = %job.id,
+                        message_id = %existing.id,
+                        uid = %uid,
+                        "Partial mail row belongs to another running job; deferring"
+                    );
+                    // Don't count this UID as processed: the other job may still
+                    // fail and delete the partial row. Leave the current job
+                    // non-terminal so the stale-job reset will retry it.
+                    skipped_inflight += 1;
+                    continue;
+                }
+
+                tracing::info!(
+                    job_id = %job.id,
+                    message_id = %existing.id,
+                    uid = %uid,
+                    "Deleting abandoned partial mail_message row and re-importing"
+                );
+                self.metadata_store
+                    .delete_mail_message(existing.id, job.owner_id)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+            }
+
+            match session
+                .fetch_rfc822(&job.folder_name, uid_u32, source_uidvalidity)
+                .await
+                .map_err(imap_to_mail_error)
+            {
+                Ok(raw_source) => {
+                    // Re-check cancellation after the fetch; the account (and job)
+                    // may have been deleted while the message body was downloading.
+                    if let Some(status) = self
+                        .metadata_store
+                        .get_mail_import_job_status(job.id, job.owner_id)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?
+                    {
+                        if status != "running" {
+                            tracing::info!(
+                                job_id = %job.id,
+                                uid = %uid,
+                                status = %status,
+                                "Stopping import because job is no longer running after fetch"
+                            );
+                            return Ok(());
+                        }
+                    }
+
+                    match self
+                        .import_raw_source(
+                            job.tenant_id,
+                            job.owner_id,
+                            job.owner_id,
+                            Some(job.account_id),
+                            MailSourceMode::ImapSelected,
+                            Some(&job.folder_name),
+                            Some(uid),
+                            source_uidvalidity,
+                            raw_source,
+                            Some(job.id),
+                        )
+                        .await
+                    {
+                        Ok(msg) => {
+                            let event = Event::new(
+                                EventType::MailImported,
+                                msg.id,
+                                AggregateType::MailMessage,
+                                serde_json::to_value(MailImportedPayload {
+                                    message_id: msg.id,
+                                    account_id: job.account_id,
+                                    folder_name: job.folder_name.clone(),
+                                    source_uid: uid,
+                                    owner_id: job.owner_id,
+                                })
+                                .map_err(|e| MailError::Database(e.to_string()))?,
+                                job.owner_id,
+                            );
+                            if let Err(e) = self.event_store.append(&event, &self.broadcaster).await
+                            {
+                                tracing::error!(
+                                    message_id = %msg.id,
+                                    job_id = %job.id,
+                                    source_uid = uid,
+                                    error = %e,
+                                    "failed to append MailImported event"
+                                );
+                                failed += 1;
+                                last_error = Some(format!(
+                                    "uid {uid}: failed to append MailImported event: {e}"
+                                ));
+                            } else {
+                                processed += 1;
+                            }
+                        }
+                        Err(MailError::Cancelled) => {
+                            tracing::info!(
+                                job_id = %job.id,
+                                uid = %uid,
+                                "Stopping import because job was cancelled during import"
+                            );
+                            self.metadata_store
+                                .update_mail_import_job_progress(
+                                    job.id,
+                                    processed,
+                                    failed,
+                                    last_error.as_deref(),
+                                )
+                                .await
+                                .map_err(|e| MailError::Database(e.to_string()))?;
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            last_error = Some(format!("uid {uid}: {e}"));
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    last_error = Some(format!("uid {uid}: {e}"));
+                }
+            }
+            self.metadata_store
+                .update_mail_import_job_progress(job.id, processed, failed, last_error.as_deref())
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+
+        let _ = session.logout().await;
+
+        if failed > 0 {
+            let error = last_error.unwrap_or_else(|| format!("{failed} message(s) failed"));
+            let marked = self
+                .metadata_store
+                .mark_mail_import_job_failed(job.id, &error)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            if marked {
+                Err(MailError::Imap(error))
+            } else {
+                Ok(())
+            }
+        } else if skipped_inflight > 0 {
+            tracing::info!(
+                job_id = %job.id,
+                skipped = %skipped_inflight,
+                "Import job has UIDs in-flight in other jobs; leaving non-terminal for retry"
+            );
+            Ok(())
+        } else {
+            let _ = self
+                .metadata_store
+                .mark_mail_import_job_completed(job.id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            Ok(())
+        }
+    }
+
+    // ============================================================================
+    // Helpers
+    // ============================================================================
+
+    /// Connect to the IMAP server and log in using the account credentials.
+    async fn connect_and_login(
+        &self,
+        account: &MailAccount,
+        password: &str,
+    ) -> Result<ImapSession, MailError> {
+        let port = u16::try_from(account.port).map_err(|_| {
+            MailError::InvalidSource(format!("Invalid IMAP port: {}", account.port))
+        })?;
+        let tls_mode = account
+            .tls_mode
+            .parse::<MailTlsMode>()
+            .map_err(|e| MailError::Imap(e.to_string()))?;
+        let client = ImapClient::connect(&account.host, port, tls_mode)
+            .await
+            .map_err(|e| MailError::Imap(e.to_string()))?;
+        ImapSession::login(client, &account.username, password)
+            .await
+            .map_err(|e| MailError::Imap(e.to_string()))
+    }
+
     /// Ensure the canonical `/Workspace/Mail` folder exists.
     ///
     /// Legacy module root policy: new writes are always directed to the
@@ -646,6 +1536,20 @@ impl MailService {
             .create_folder(folder_name, Some(mail_root_id), owner_id, tenant_id)
             .await
             .map_err(|e| MailError::Storage(e.to_string()))
+    }
+}
+
+fn imap_to_mail_error(err: ImapError) -> MailError {
+    MailError::Imap(err.to_string())
+}
+
+fn mail_account_db_error(name: &str, err: anyhow::Error) -> MailError {
+    if err.downcast_ref::<sqlx::Error>().is_some_and(
+        |e| matches!(e, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505")),
+    ) {
+        MailError::DuplicateAccountName(name.to_string())
+    } else {
+        MailError::Database(err.to_string())
     }
 }
 
@@ -1027,6 +1931,7 @@ mod tests {
             permission_resolver.clone(),
         ));
 
+        let secret_key = Arc::new(SecretEncryptionKey::from_bytes([0x42; 32]));
         let mail_service = MailService::new(
             metadata_store.clone(),
             object_store.clone(),
@@ -1034,6 +1939,8 @@ mod tests {
             folder_service,
             permission_resolver,
             event_store.clone(),
+            broadcaster.clone(),
+            secret_key,
         );
 
         let tenant_id = Uuid::new_v4();
@@ -1290,6 +2197,7 @@ mod link_tests {
             .await
             .expect("failed to create target folder");
 
+        let secret_key = Arc::new(SecretEncryptionKey::from_bytes([0x42; 32]));
         let mail_service = MailService::new(
             metadata_store.clone(),
             object_store,
@@ -1297,6 +2205,8 @@ mod link_tests {
             folder_service,
             permission_resolver,
             event_store,
+            broadcaster,
+            secret_key,
         );
 
         let mut message = MailMessage::new(tenant_id, user.id, user.id, MailSourceMode::EmlUpload);

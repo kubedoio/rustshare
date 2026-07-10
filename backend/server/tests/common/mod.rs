@@ -208,6 +208,8 @@ pub async fn setup_test_server() -> (AppState, String) {
         folder_service.clone(),
         permission_resolver.clone(),
         event_store.clone(),
+        broadcaster.clone(),
+        Arc::new(secret_key.clone()),
     ));
 
     let prometheus_handle = rustshare_server::metrics::init_metrics();

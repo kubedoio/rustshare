@@ -55,6 +55,10 @@ thiserror = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 mime_guess = "2.0"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+mailparse = "0.15"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
 slug = "0.1.6"
 regex = "1.12"
 serde_yaml = "0.9"
@@ -189,6 +193,10 @@ path = "../tests/mail_import_test.rs"
 [[test]]
 name = "mail_linking_test"
 path = "../tests/mail_linking_test.rs"
+
+[[test]]
+name = "mail_imap_import_test"
+path = "../tests/mail_imap_import_test.rs"
 
 [dev-dependencies]
 tokio-tungstenite = "0.29"
