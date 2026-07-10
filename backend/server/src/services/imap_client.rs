@@ -362,15 +362,15 @@ impl ImapSession {
             .await?
             .ok_or_else(|| ImapError::CommandFailed("Missing UIDVALIDITY".to_string()))?;
 
-        let mut criteria = Vec::new();
-        criteria.push("ALL".to_string());
-        if let Some(since) = since {
-            criteria.push(format!("SINCE {}", since.format("%d-%b-%Y")));
+        if let (Some(since), Some(before)) = (since, before) {
+            if since >= before {
+                return Err(ImapError::CommandFailed(
+                    "archive_since must be before archive_before".to_string(),
+                ));
+            }
         }
-        if let Some(before) = before {
-            criteria.push(format!("BEFORE {}", before.format("%d-%b-%Y")));
-        }
-        let query = criteria.join(" ");
+
+        let query = build_archive_search_query(since, before);
 
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(query))
             .await
@@ -388,6 +388,20 @@ impl ImapSession {
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         Ok(())
     }
+}
+
+fn build_archive_search_query(
+    since: Option<DateTime<Utc>>,
+    before: Option<DateTime<Utc>>,
+) -> String {
+    let mut criteria = vec!["ALL".to_string()];
+    if let Some(since) = since {
+        criteria.push(format!("SINCE {}", since.format("%d-%b-%Y")));
+    }
+    if let Some(before) = before {
+        criteria.push(format!("BEFORE {}", before.format("%d-%b-%Y")));
+    }
+    criteria.join(" ")
 }
 
 fn build_tls_connector() -> Result<tokio_rustls::TlsConnector, ImapError> {
@@ -503,6 +517,7 @@ fn address_to_bytes(addr: &async_imap::imap_proto::types::Address<'_>) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn decode_plain_ascii_subject() {
@@ -558,5 +573,33 @@ mod tests {
     fn parse_fallback_date_format() {
         let parsed = parse_imap_date("15 Aug 2022 10:30:00 +0000").unwrap();
         assert_eq!(parsed.timestamp(), 1_660_559_400);
+    }
+
+    #[test]
+    fn build_archive_search_query_open_range() {
+        let query = build_archive_search_query(None, None);
+        assert_eq!(query, "ALL");
+    }
+
+    #[test]
+    fn build_archive_search_query_since_only() {
+        let since = Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap();
+        let query = build_archive_search_query(Some(since), None);
+        assert_eq!(query, "ALL SINCE 15-Jan-2024");
+    }
+
+    #[test]
+    fn build_archive_search_query_before_only() {
+        let before = Utc.with_ymd_and_hms(2024, 6, 30, 23, 59, 59).unwrap();
+        let query = build_archive_search_query(None, Some(before));
+        assert_eq!(query, "ALL BEFORE 30-Jun-2024");
+    }
+
+    #[test]
+    fn build_archive_search_query_both_bounds() {
+        let since = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let before = Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap();
+        let query = build_archive_search_query(Some(since), Some(before));
+        assert_eq!(query, "ALL SINCE 01-Jan-2024 BEFORE 31-Dec-2024");
     }
 }
