@@ -1078,6 +1078,28 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Update the total number of messages an IMAP archive job expects to
+    /// process, based on the UID list fetched from the server.
+    pub async fn update_mail_archive_job_total(
+        &self,
+        id: MailImportJobId,
+        total_messages: i32,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET total_messages = $1,
+                updated_at = NOW()
+            WHERE id = $2 AND deleted_at IS NULL
+            "#,
+            total_messages,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Update the progress counters and UID watermark for an IMAP archive job.
     pub async fn update_mail_archive_job_progress(
         &self,
