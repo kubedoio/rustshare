@@ -372,10 +372,9 @@ impl ImapSession {
         }
         let query = criteria.join(" ");
 
-        let uids = self
-            .session
-            .uid_search(query)
+        let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(query))
             .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
             .map_err(|e| ImapError::CommandFailed(format!("UID SEARCH failed: {e}")))?;
 
         let mut uids: Vec<u32> = uids.into_iter().collect();
