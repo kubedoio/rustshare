@@ -42,6 +42,8 @@ pub enum MailError {
     PermissionDenied,
     #[error("Invalid mail source: {0}")]
     InvalidSource(String),
+    #[error("Invalid job state: {0}")]
+    JobInvalidState(String),
     #[error("Mail account name already exists: {0}")]
     DuplicateAccountName(String),
     #[error("Storage error: {0}")]
@@ -1609,7 +1611,7 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?;
 
         if !updated {
-            return Err(MailError::InvalidSource(
+            return Err(MailError::JobInvalidState(
                 "Job cannot be cancelled in its current state".to_string(),
             ));
         }
