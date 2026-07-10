@@ -121,16 +121,44 @@ impl ImapClient {
         port: u16,
         tls_mode: MailTlsMode,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
-        // Reject internal/private destinations and pin the resolved address so
+        // Reject internal/private destinations and pin the resolved addresses so
         // a second DNS lookup cannot rebind to an internal address.
         let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
             ImapError::ConnectionFailed(format!("IMAP host failed SSRF validation: {e}"))
         })?;
-        let addr = addrs
-            .into_iter()
-            .next()
-            .ok_or_else(|| ImapError::ConnectionFailed("no addresses for IMAP host".to_string()))?;
+        if addrs.is_empty() {
+            return Err(ImapError::ConnectionFailed(
+                "no addresses for IMAP host".to_string(),
+            ));
+        }
 
+        let mut last_error = None;
+        for addr in addrs {
+            match Self::connect_addr(host, port, addr, tls_mode).await {
+                Ok(client) => return Ok(client),
+                Err(e) => {
+                    tracing::warn!(
+                        host = %host,
+                        port = %port,
+                        addr = %addr,
+                        error = %e,
+                        "IMAP connection attempt failed"
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ImapError::ConnectionFailed("no addresses for IMAP host".to_string())
+        }))
+    }
+
+    async fn connect_addr(
+        host: &str,
+        _port: u16,
+        addr: std::net::SocketAddr,
+        tls_mode: MailTlsMode,
+    ) -> Result<async_imap::Client<ImapStream>, ImapError> {
         match tls_mode {
             MailTlsMode::Tls => {
                 let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
@@ -155,9 +183,8 @@ impl ImapClient {
             }
             MailTlsMode::None => {
                 tracing::warn!(
-                    "IMAP connection to {}:{} will transmit credentials in plaintext",
-                    host,
-                    port
+                    "IMAP connection to {} will transmit credentials in plaintext",
+                    addr
                 );
                 let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
                     .await

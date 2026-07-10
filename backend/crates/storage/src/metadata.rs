@@ -939,9 +939,10 @@ impl MetadataStore {
 
     /// Claim the oldest pending mail import job for processing.
     ///
-    /// Only claims jobs whose associated mail account is enabled and has not
-    /// been soft-deleted. The SELECT, UPDATE, and RETURN are performed in a
-    /// single CTE statement to keep the operation atomic and reduce round-trips.
+    /// Only claims jobs whose associated mail account is enabled, whose tenant
+    /// has the mail module enabled, and whose job has not been soft-deleted.
+    /// The SELECT, UPDATE, and RETURN are performed in a single CTE statement
+    /// to keep the operation atomic and reduce round-trips.
     pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
         let job = sqlx::query_as!(
             MailImportJob,
@@ -950,10 +951,13 @@ impl MetadataStore {
                 SELECT j.id
                 FROM mail_import_jobs j
                 JOIN mail_accounts a ON a.id = j.account_id
+                JOIN modules m ON m.tenant_id = j.tenant_id
                 WHERE j.status = 'pending'
                   AND j.deleted_at IS NULL
                   AND a.deleted_at IS NULL
                   AND a.is_enabled = true
+                  AND m.module_key = 'mail'
+                  AND m.enabled = true
                 ORDER BY j.created_at ASC
                 FOR UPDATE OF j SKIP LOCKED
                 LIMIT 1
@@ -1007,19 +1011,22 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Mark a mail import job as running and record its start time.
-    pub async fn mark_mail_import_job_running(&self, id: MailImportJobId) -> Result<()> {
-        sqlx::query!(
+    /// Mark a pending mail import job as running and record its start time.
+    ///
+    /// Returns `true` if the job was in the `pending` state and updated,
+    /// `false` if it was already in a terminal or running state.
+    pub async fn mark_mail_import_job_running(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
             SET status = 'running', started_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'pending'
             "#,
             id
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Reset mail import jobs stuck in the `running` state back to `pending`.

@@ -1080,10 +1080,18 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
 
-        self.metadata_store
+        let running = self
+            .metadata_store
             .mark_mail_import_job_running(job.id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+        if !running {
+            tracing::info!(
+                job_id = %job.id,
+                "Stopping import job because it is no longer pending"
+            );
+            return Ok(());
+        }
 
         let mut session = match self.connect_and_login(&account, &password).await {
             Ok(session) => session,
