@@ -1016,8 +1016,11 @@ impl MetadataStore {
                   AND m.module_key = 'mail'
                   AND m.enabled = true
                   AND (
-                      j.retry_count < j.max_retries
-                      AND j.updated_at <= now() - (interval '1 second' * (2 ^ GREATEST(j.retry_count, 0)))
+                      j.source_mode != 'imap_archive'
+                      OR (
+                          j.retry_count < j.max_retries
+                          AND j.updated_at <= NOW() - (interval '1 second' * (2 ^ GREATEST(j.retry_count, 0)))
+                      )
                   )
                 ORDER BY j.created_at ASC
                 FOR UPDATE OF j SKIP LOCKED
@@ -1137,20 +1140,28 @@ impl MetadataStore {
     /// Returns the number of rows soft-deleted.
     pub async fn apply_archive_retention(
         &self,
-        _job_id: MailImportJobId,
         owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: &str,
         retention_days: i32,
     ) -> Result<u64> {
+        if retention_days <= 0 {
+            return Err(anyhow::anyhow!("retention_days must be positive"));
+        }
         let rows = sqlx::query!(
             r#"
             UPDATE mail_messages
-            SET deleted_at = now(), updated_at = now()
+            SET deleted_at = NOW(), updated_at = NOW()
             WHERE owner_id = $1
+              AND account_id = $2
+              AND source_folder = $3
               AND source_mode = 'imap_archive'
-              AND imported_at < now() - (interval '1 day' * $2)
+              AND imported_at < NOW() - (interval '1 day' * $4)
               AND deleted_at IS NULL
             "#,
             owner_id,
+            account_id,
+            folder_name,
             retention_days as f64
         )
         .execute(&self.pool)
@@ -1235,8 +1246,11 @@ impl MetadataStore {
         let result = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
-            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            SET status = 'failed',
+                last_error = $2,
+                retry_count = retry_count + 1,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status IN ('running', 'pending')
             "#,
             id,
             error
