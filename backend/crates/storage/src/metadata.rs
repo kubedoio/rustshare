@@ -1015,6 +1015,10 @@ impl MetadataStore {
                   AND a.is_enabled = true
                   AND m.module_key = 'mail'
                   AND m.enabled = true
+                  AND (
+                      j.retry_count < j.max_retries
+                      AND j.updated_at <= now() - (interval '1 second' * (2 ^ GREATEST(j.retry_count, 0)))
+                  )
                 ORDER BY j.created_at ASC
                 FOR UPDATE OF j SKIP LOCKED
                 LIMIT 1
@@ -1069,6 +1073,90 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Update the progress counters and UID watermark for an IMAP archive job.
+    pub async fn update_mail_archive_job_progress(
+        &self,
+        id: MailImportJobId,
+        processed: i32,
+        failed: i32,
+        last_uid_validity: Option<i64>,
+        last_imported_uid: Option<i64>,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET processed_messages = $1,
+                failed_messages = $2,
+                last_uid_validity = $3,
+                last_imported_uid = $4,
+                last_error = $5,
+                updated_at = now()
+            WHERE id = $6 AND deleted_at IS NULL
+            "#,
+            processed,
+            failed,
+            last_uid_validity,
+            last_imported_uid,
+            last_error,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a mail import job, but only if it is an `imap_archive` job.
+    ///
+    /// Returns `true` if a row was updated.
+    pub async fn soft_delete_mail_archive_job(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let rows = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET deleted_at = now(), updated_at = now()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND source_mode = 'imap_archive'
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(rows > 0)
+    }
+
+    /// Soft-delete archived mail messages that exceed the configured retention period.
+    ///
+    /// Returns the number of rows soft-deleted.
+    pub async fn apply_archive_retention(
+        &self,
+        _job_id: MailImportJobId,
+        owner_id: UserId,
+        retention_days: i32,
+    ) -> Result<u64> {
+        let rows = sqlx::query!(
+            r#"
+            UPDATE mail_messages
+            SET deleted_at = now(), updated_at = now()
+            WHERE owner_id = $1
+              AND source_mode = 'imap_archive'
+              AND imported_at < now() - (interval '1 day' * $2)
+              AND deleted_at IS NULL
+            "#,
+            owner_id,
+            retention_days as f64
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(rows)
     }
 
     /// Mark a pending or already-running mail import job as running and record

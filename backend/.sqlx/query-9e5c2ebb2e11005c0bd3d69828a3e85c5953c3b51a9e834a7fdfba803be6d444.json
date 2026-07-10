@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_messages\n            SET deleted_at = now(), updated_at = now()\n            WHERE owner_id = $1\n              AND source_mode = 'imap_archive'\n              AND imported_at < now() - (interval '1 day' * $2)\n              AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e5c2ebb2e11005c0bd3d69828a3e85c5953c3b51a9e834a7fdfba803be6d444"
+}
