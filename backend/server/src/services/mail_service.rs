@@ -1088,7 +1088,7 @@ impl MailService {
         if !running {
             tracing::info!(
                 job_id = %job.id,
-                "Stopping import job because it is no longer pending"
+                "Stopping import job because it is no longer pending or running"
             );
             return Ok(());
         }
