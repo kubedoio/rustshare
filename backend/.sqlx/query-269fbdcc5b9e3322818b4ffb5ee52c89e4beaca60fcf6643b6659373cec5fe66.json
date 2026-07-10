@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    source_uidvalidity,\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n                ORDER BY created_at DESC\n                ",
+  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    source_uidvalidity,\n                    archive_since, archive_before, last_uid_validity, last_imported_uid,\n                    retention_days, retry_count, max_retries,\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3 AND deleted_at IS NULL\n                ORDER BY created_at DESC\n                ",
   "describe": {
     "columns": [
       {
@@ -45,57 +45,93 @@
       },
       {
         "ordinal": 8,
+        "name": "archive_since",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "archive_before",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_uid_validity",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "last_imported_uid",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "retention_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "retry_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "max_retries",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
         "name": "status",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 9,
+        "ordinal": 16,
         "name": "total_messages",
         "type_info": "Int4"
       },
       {
-        "ordinal": 10,
+        "ordinal": 17,
         "name": "processed_messages",
         "type_info": "Int4"
       },
       {
-        "ordinal": 11,
+        "ordinal": 18,
         "name": "failed_messages",
         "type_info": "Int4"
       },
       {
-        "ordinal": 12,
+        "ordinal": 19,
         "name": "last_error",
         "type_info": "Text"
       },
       {
-        "ordinal": 13,
+        "ordinal": 20,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 21,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 22,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 16,
+        "ordinal": 23,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 17,
+        "ordinal": 24,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid",
         "Uuid"
       ]
@@ -109,6 +145,13 @@
       false,
       true,
       true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
       false,
       false,
       false,
@@ -121,5 +164,5 @@
       false
     ]
   },
-  "hash": "eaa1eb0faf19cdf0e2f18a1604b5497ed4022e46581d2ff8a8cbcff86b703cfc"
+  "hash": "269fbdcc5b9e3322818b4ffb5ee52c89e4beaca60fcf6643b6659373cec5fe66"
 }

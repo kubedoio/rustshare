@@ -850,11 +850,15 @@ impl MetadataStore {
             r#"
             INSERT INTO mail_import_jobs (
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
-                selected_uids, source_uidvalidity, status, total_messages, processed_messages,
-                failed_messages, last_error, started_at, completed_at, deleted_at, created_at,
-                updated_at
+                selected_uids, source_uidvalidity, archive_since, archive_before,
+                last_uid_validity, last_imported_uid, retention_days, retry_count, max_retries,
+                status, total_messages, processed_messages, failed_messages, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+            )
             "#,
             job.id,
             job.tenant_id,
@@ -864,6 +868,13 @@ impl MetadataStore {
             job.folder_name,
             job.selected_uids.as_deref(),
             job.source_uidvalidity,
+            job.archive_since,
+            job.archive_before,
+            job.last_uid_validity,
+            job.last_imported_uid,
+            job.retention_days,
+            job.retry_count,
+            job.max_retries,
             job.status,
             job.total_messages,
             job.processed_messages,
@@ -893,6 +904,8 @@ impl MetadataStore {
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
                 source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM mail_import_jobs
@@ -941,6 +954,8 @@ impl MetadataStore {
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
                     source_uidvalidity,
+                    archive_since, archive_before, last_uid_validity, last_imported_uid,
+                    retention_days, retry_count, max_retries,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
@@ -962,6 +977,8 @@ impl MetadataStore {
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
                     source_uidvalidity,
+                    archive_since, archive_before, last_uid_validity, last_imported_uid,
+                    retention_days, retry_count, max_retries,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
@@ -1013,6 +1030,8 @@ impl MetadataStore {
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
                 source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM updated
