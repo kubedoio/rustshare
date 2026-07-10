@@ -213,18 +213,18 @@ impl MailService {
         // unique-source insert race. If any later step fails, remove the row so
         // a retry does not treat the UID as already imported while artifacts are
         // missing.
+        // Create the mail artifact folder and source file only after we won the
+        // unique-source insert race. Keep the folder_id local until all artifacts
+        // are durable; only then mark the mail_messages row complete. If any step
+        // fails, remove the folder and the deduplication row so retries import
+        // the UID again.
+        let mut message_folder_id: Option<Uuid> = None;
         let artifact_result: Result<(), MailError> = async {
             let mail_root = self.ensure_mail_root_folder(owner_id, tenant_id).await?;
             let message_folder = self
                 .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
                 .await?;
-            // Track the folder immediately so a later failure can clean it up
-            // even if updating the message row fails.
-            msg.folder_id = Some(message_folder.id);
-            self.metadata_store
-                .update_mail_message_folder_id(msg.id, message_folder.id)
-                .await
-                .map_err(|e| MailError::Database(e.to_string()))?;
+            message_folder_id = Some(message_folder.id);
 
             let _source_file = self
                 .file_service
@@ -303,6 +303,13 @@ impl MailService {
                     .map_err(|e| MailError::Database(e.to_string()))?;
             }
 
+            // Mark the row complete only after every artifact is durable.
+            msg.folder_id = Some(message_folder.id);
+            self.metadata_store
+                .update_mail_message_folder_id(msg.id, message_folder.id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+
             Ok(())
         }
         .await;
@@ -311,7 +318,7 @@ impl MailService {
             // Remove any visible artifacts (the message folder and its files)
             // before deleting the deduplication row, so failed imports do not
             // leave orphaned folders behind.
-            if let Some(folder_id) = msg.folder_id {
+            if let Some(folder_id) = message_folder_id {
                 if let Err(cleanup_err) =
                     self.folder_service.delete_folder(folder_id, owner_id).await
                 {
