@@ -1207,8 +1207,10 @@ impl MailService {
                 .map_err(|_| MailError::InvalidSource(format!("Invalid IMAP UID: {uid}")))?;
 
             // Skip UIDs already imported for this account/folder/uidvalidity so retries are
-            // idempotent after a worker crash or stale-heartbeat reset.
-            if self
+            // idempotent after a worker crash or stale-heartbeat reset. A row without a
+            // folder_id is a partial import (worker died after dedup insert but before
+            // artifacts were created); delete it and re-import.
+            if let Some(existing) = self
                 .metadata_store
                 .find_mail_message_by_source(
                     job.owner_id,
@@ -1220,19 +1222,31 @@ impl MailService {
                 )
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?
-                .is_some()
             {
-                processed += 1;
+                if existing.folder_id.is_some() {
+                    processed += 1;
+                    self.metadata_store
+                        .update_mail_import_job_progress(
+                            job.id,
+                            processed,
+                            failed,
+                            last_error.as_deref(),
+                        )
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    continue;
+                }
+
+                tracing::info!(
+                    job_id = %job.id,
+                    message_id = %existing.id,
+                    uid = %uid,
+                    "Deleting partial mail_message row and re-importing"
+                );
                 self.metadata_store
-                    .update_mail_import_job_progress(
-                        job.id,
-                        processed,
-                        failed,
-                        last_error.as_deref(),
-                    )
+                    .delete_mail_message(existing.id, job.owner_id)
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
-                continue;
             }
 
             match session
