@@ -164,14 +164,14 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27,
-                $28, $29, $30
+                $21, $22, $23, $24, $25, $26, $27, $28,
+                $29, $30, $31
             )
             "#,
             msg.id,
