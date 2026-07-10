@@ -48,6 +48,8 @@ pub enum MailError {
     Database(String),
     #[error("IMAP error: {0}")]
     Imap(String),
+    #[error("Import cancelled")]
+    Cancelled,
 }
 
 // ============================================================================
@@ -119,6 +121,7 @@ impl MailService {
             None,
             None,
             raw_source,
+            None,
         )
         .await
     }
@@ -135,6 +138,7 @@ impl MailService {
         source_uid: Option<i64>,
         source_uidvalidity: Option<i64>,
         raw_source: Vec<u8>,
+        job_id: Option<Uuid>,
     ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
             return Err(MailError::InvalidSource("Empty mail source".to_string()));
@@ -201,7 +205,15 @@ impl MailService {
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?
                 {
-                    return Ok(existing);
+                    // Only treat the existing row as imported if it is complete.
+                    // A concurrent worker may have inserted the deduplication row
+                    // but not yet finished persisting artifacts.
+                    if existing.folder_id.is_some() {
+                        return Ok(existing);
+                    }
+                    return Err(MailError::Database(
+                        "concurrent import of same UID still in progress".to_string(),
+                    ));
                 }
             }
             return Err(MailError::Database(
@@ -301,6 +313,21 @@ impl MailService {
                     .create_mail_attachment(&attachment)
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
+            }
+
+            // If this import is tied to a job, re-check cancellation before
+            // finalizing the row so a cancelled job does not leave visible mail.
+            if let Some(jid) = job_id {
+                if let Some(status) = self
+                    .metadata_store
+                    .get_mail_import_job_status(jid, owner_id)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?
+                {
+                    if status != "running" {
+                        return Err(MailError::Cancelled);
+                    }
+                }
             }
 
             // Mark the row complete only after every artifact is durable.
@@ -1319,6 +1346,7 @@ impl MailService {
                             Some(uid),
                             source_uidvalidity,
                             raw_source,
+                            Some(job.id),
                         )
                         .await
                     {
@@ -1339,15 +1367,37 @@ impl MailService {
                             );
                             if let Err(e) = self.event_store.append(&event, &self.broadcaster).await
                             {
-                                tracing::warn!(
+                                tracing::error!(
                                     message_id = %msg.id,
                                     job_id = %job.id,
                                     source_uid = uid,
                                     error = %e,
-                                    "failed to append MailImported event; continuing"
+                                    "failed to append MailImported event"
                                 );
+                                failed += 1;
+                                last_error = Some(format!(
+                                    "uid {uid}: failed to append MailImported event: {e}"
+                                ));
+                            } else {
+                                processed += 1;
                             }
-                            processed += 1;
+                        }
+                        Err(MailError::Cancelled) => {
+                            tracing::info!(
+                                job_id = %job.id,
+                                uid = %uid,
+                                "Stopping import because job was cancelled during import"
+                            );
+                            self.metadata_store
+                                .update_mail_import_job_progress(
+                                    job.id,
+                                    processed,
+                                    failed,
+                                    last_error.as_deref(),
+                                )
+                                .await
+                                .map_err(|e| MailError::Database(e.to_string()))?;
+                            return Ok(());
                         }
                         Err(e) => {
                             failed += 1;

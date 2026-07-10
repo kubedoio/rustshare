@@ -673,6 +673,7 @@ impl From<crate::services::mail_service::MailError> for AppError {
             MailError::Storage(_) | MailError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
+            MailError::Cancelled => AppError::BadRequest(err.to_string()),
         }
     }
 }
