@@ -452,6 +452,41 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Returns true if another running import job (not `exclude_job_id`) covers
+    /// the same owner/account/folder/UID. Used to avoid deleting a partial
+    /// `mail_messages` row that belongs to an active concurrent import.
+    pub async fn has_other_running_import_job_for_uid(
+        &self,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: &str,
+        uid: i64,
+        exclude_job_id: MailImportJobId,
+    ) -> Result<bool> {
+        let exists = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM mail_import_jobs
+                WHERE owner_id = $1
+                  AND account_id = $2
+                  AND folder_name = $3
+                  AND $4 = ANY(selected_uids)
+                  AND status = 'running'
+                  AND id != $5
+                  AND deleted_at IS NULL
+            ) AS "exists!"
+            "#,
+            owner_id,
+            account_id,
+            folder_name,
+            uid,
+            exclude_job_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
     /// Persist a new Mail link inside an existing transaction.
     ///
     /// Returns `true` if a new row was inserted, or `false` if an active link

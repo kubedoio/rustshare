@@ -1216,7 +1216,8 @@ impl MailService {
             // Skip UIDs already imported for this account/folder/uidvalidity so retries are
             // idempotent after a worker crash or stale-heartbeat reset. A row without a
             // folder_id is a partial import (worker died after dedup insert but before
-            // artifacts were created); delete it and re-import.
+            // artifacts were created). Only reclaim it when no other running job is
+            // actively importing the same UID, so we do not corrupt an in-flight import.
             if let Some(existing) = self
                 .metadata_store
                 .find_mail_message_by_source(
@@ -1244,11 +1245,42 @@ impl MailService {
                     continue;
                 }
 
+                let in_flight = self
+                    .metadata_store
+                    .has_other_running_import_job_for_uid(
+                        job.owner_id,
+                        job.account_id,
+                        &job.folder_name,
+                        uid,
+                        job.id,
+                    )
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if in_flight {
+                    tracing::info!(
+                        job_id = %job.id,
+                        message_id = %existing.id,
+                        uid = %uid,
+                        "Partial mail row belongs to another running job; skipping"
+                    );
+                    processed += 1;
+                    self.metadata_store
+                        .update_mail_import_job_progress(
+                            job.id,
+                            processed,
+                            failed,
+                            last_error.as_deref(),
+                        )
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    continue;
+                }
+
                 tracing::info!(
                     job_id = %job.id,
                     message_id = %existing.id,
                     uid = %uid,
-                    "Deleting partial mail_message row and re-importing"
+                    "Deleting abandoned partial mail_message row and re-importing"
                 );
                 self.metadata_store
                     .delete_mail_message(existing.id, job.owner_id)
