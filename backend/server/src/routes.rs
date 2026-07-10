@@ -261,7 +261,7 @@ pub fn module_routes() -> Router<AppState> {
 
 pub fn mail_routes() -> Router<AppState> {
     use axum::extract::DefaultBodyLimit;
-    use axum::routing::{delete, get, post};
+    use axum::routing::{delete, get, patch, post};
     Router::new()
         .route(
             "/api/v1/mail/messages",
@@ -314,6 +314,20 @@ pub fn mail_routes() -> Router<AppState> {
         .route(
             "/api/v1/mail/import-jobs/{id}",
             get(crate::handlers::mail::get_mail_import_job),
+        )
+        .route(
+            "/api/v1/mail/accounts/{account_id}/archive-jobs",
+            get(crate::handlers::mail::list_mail_archive_jobs)
+                .post(crate::handlers::mail::create_mail_archive_job),
+        )
+        .route(
+            "/api/v1/mail/archive-jobs/{job_id}",
+            get(crate::handlers::mail::get_mail_archive_job)
+                .delete(crate::handlers::mail::delete_mail_archive_job),
+        )
+        .route(
+            "/api/v1/mail/archive-jobs/{job_id}/cancel",
+            patch(crate::handlers::mail::cancel_mail_archive_job),
         )
 }
 
