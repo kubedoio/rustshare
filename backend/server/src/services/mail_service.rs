@@ -1454,6 +1454,10 @@ impl MailService {
     // ============================================================================
 
     /// Create a recurring IMAP archive job for a folder and optional date range.
+    ///
+    /// `max_retries` is the maximum total number of attempts for the job,
+    /// including the initial attempt. For example, a value of `3` allows one
+    /// initial run plus up to two retries.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_archive_job(
         &self,
@@ -1490,6 +1494,11 @@ impl MailService {
         }
 
         let max_retries = max_retries.unwrap_or(3).max(0);
+        if max_retries < 1 {
+            return Err(MailError::InvalidSource(
+                "max_retries must be at least 1".to_string(),
+            ));
+        }
         let job = MailImportJob::new_archive(
             tenant_id,
             owner_id,
@@ -1930,6 +1939,9 @@ impl MailService {
                         }
                     }
                     Err(MailError::Cancelled) => {
+                        // The row status is expected to already be `cancelled`
+                        // because `cancel_archive_job` updates it before the
+                        // import path observes the cancellation.
                         return Ok(());
                     }
                     Err(e) => {

@@ -204,6 +204,10 @@ impl MailImportJob {
         }
     }
 
+    /// Create a new IMAP archive import job.
+    ///
+    /// `max_retries` is the maximum total number of attempts, including the
+    /// initial attempt. Callers must ensure it is at least 1.
     #[allow(clippy::too_many_arguments)]
     pub fn new_archive(
         tenant_id: Uuid,

@@ -1354,10 +1354,12 @@ impl MetadataStore {
 
     /// Mark a running IMAP archive job as failed, with retry/backoff semantics.
     ///
-    /// If the job has not exhausted `max_retries`, it is returned to the
-    /// `pending` state with `started_at` cleared so it can be claimed again
-    /// after the backoff delay. Once retries are exhausted, the job moves to
-    /// `failed` and `completed_at` is recorded.
+    /// `max_retries` is interpreted as the maximum total number of attempts,
+    /// including the initial attempt. This method transitions the job to
+    /// `failed` once `retry_count + 1 >= max_retries`; otherwise it returns the
+    /// job to `pending` with `started_at` cleared so it can be claimed again
+    /// after the backoff delay. Once retries are exhausted, `completed_at` is
+    /// recorded.
     ///
     /// Returns the new job status if the job was in the `running` state and
     /// updated.
