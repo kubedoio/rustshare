@@ -218,11 +218,13 @@ impl MailService {
             let message_folder = self
                 .create_message_folder(mail_root.id, owner_id, tenant_id, parsed.subject.as_deref())
                 .await?;
+            // Track the folder immediately so a later failure can clean it up
+            // even if updating the message row fails.
+            msg.folder_id = Some(message_folder.id);
             self.metadata_store
                 .update_mail_message_folder_id(msg.id, message_folder.id)
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
-            msg.folder_id = Some(message_folder.id);
 
             let _source_file = self
                 .file_service
@@ -306,6 +308,21 @@ impl MailService {
         .await;
 
         if let Err(e) = artifact_result {
+            // Remove any visible artifacts (the message folder and its files)
+            // before deleting the deduplication row, so failed imports do not
+            // leave orphaned folders behind.
+            if let Some(folder_id) = msg.folder_id {
+                if let Err(cleanup_err) =
+                    self.folder_service.delete_folder(folder_id, owner_id).await
+                {
+                    tracing::error!(
+                        message_id = %msg.id,
+                        folder_id = %folder_id,
+                        error = %cleanup_err,
+                        "Failed to clean up partial message folder after artifact error"
+                    );
+                }
+            }
             if let Err(cleanup_err) = self
                 .metadata_store
                 .delete_mail_message(msg.id, owner_id)
@@ -1219,7 +1236,7 @@ impl MailService {
             }
 
             match session
-                .fetch_rfc822(&job.folder_name, uid_u32)
+                .fetch_rfc822(&job.folder_name, uid_u32, source_uidvalidity)
                 .await
                 .map_err(imap_to_mail_error)
             {

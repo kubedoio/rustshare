@@ -281,8 +281,21 @@ impl ImapSession {
         ))
     }
 
-    pub async fn fetch_rfc822(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>, ImapError> {
-        let _ = self.select_folder(folder).await?;
+    pub async fn fetch_rfc822(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError> {
+        let uidvalidity = self.select_folder(folder).await?;
+        if uidvalidity.map(i64::from) != expected_uidvalidity {
+            return Err(ImapError::CommandFailed(format!(
+                "UIDVALIDITY changed from {:?} to {:?}; selected UID {} is stale",
+                expected_uidvalidity,
+                uidvalidity.map(i64::from),
+                uid
+            )));
+        }
 
         // Fetch the advertised size first so we reject oversized messages
         // before transferring the full body across the wire.
