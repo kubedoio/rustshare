@@ -1170,6 +1170,31 @@ impl MetadataStore {
         Ok(rows)
     }
 
+    /// Atomically update a mail import job's status, but only if its current
+    /// status is one of `allowed_from`.
+    ///
+    /// Returns `true` if a row was updated.
+    pub async fn update_mail_import_job_status(
+        &self,
+        id: MailImportJobId,
+        status: &str,
+        allowed_from: &[&str],
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = $2, updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = ANY($3)
+            "#,
+            id,
+            status,
+            allowed_from as &[&str],
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Mark a pending or already-running mail import job as running and record
     /// its start time.
     ///

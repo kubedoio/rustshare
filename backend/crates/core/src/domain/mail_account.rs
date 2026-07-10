@@ -62,6 +62,21 @@ impl From<MailImportJobStatus> for String {
     }
 }
 
+impl std::str::FromStr for MailImportJobStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(MailImportJobStatus::Pending),
+            "running" => Ok(MailImportJobStatus::Running),
+            "completed" => Ok(MailImportJobStatus::Completed),
+            "failed" => Ok(MailImportJobStatus::Failed),
+            "cancelled" => Ok(MailImportJobStatus::Cancelled),
+            _ => Err(format!("Invalid mail import job status: {s}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct MailAccount {
     #[schema(value_type = Uuid)]

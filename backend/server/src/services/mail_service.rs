@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
-    MailImportJobId, MailLink, MailMessage, MailMessagePart, MailSourceMode, MailTlsMode,
-    MailVisibility, SharePermissions, UserId,
+    MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSourceMode,
+    MailTlsMode, MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
     AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
-    MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
+    MailArchiveJobCancelledPayload, MailArchiveJobCompletedPayload, MailArchiveJobCreatedPayload,
+    MailArchiveJobDeletedPayload, MailArchiveJobStartedPayload, MailImportedPayload,
+    MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
@@ -1445,6 +1447,513 @@ impl MailService {
                 .map_err(|e| MailError::Database(e.to_string()))?;
             Ok(())
         }
+    }
+
+    // ============================================================================
+    // Archive jobs
+    // ============================================================================
+
+    /// Create a recurring IMAP archive job for a folder and optional date range.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_archive_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: String,
+        archive_since: Option<DateTime<Utc>>,
+        archive_before: Option<DateTime<Utc>>,
+        retention_days: Option<i32>,
+        max_retries: Option<i32>,
+    ) -> Result<MailImportJob, MailError> {
+        let account = self
+            .metadata_store
+            .get_mail_account(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::AccountNotFound(account_id))?;
+
+        if account.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+
+        if let (Some(since), Some(before)) = (archive_since, archive_before) {
+            if since >= before {
+                return Err(MailError::InvalidSource(
+                    "archive_since must be before archive_before".to_string(),
+                ));
+            }
+        }
+
+        let max_retries = max_retries.unwrap_or(3).max(0);
+        let job = MailImportJob::new_archive(
+            tenant_id,
+            owner_id,
+            account_id,
+            folder_name,
+            archive_since,
+            archive_before,
+            retention_days,
+            max_retries,
+        );
+
+        self.metadata_store
+            .create_mail_import_job(&job)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let event = Event::new(
+            EventType::MailArchiveJobCreated,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobCreatedPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+                folder_name: job.folder_name.clone(),
+                owner_id: job.owner_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(job)
+    }
+
+    /// List active archive jobs for a user, filtered by account.
+    pub async fn list_archive_jobs(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailImportJob>, MailError> {
+        let account = self
+            .metadata_store
+            .get_mail_account(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::AccountNotFound(account_id))?;
+
+        if account.tenant_id != tenant_id {
+            return Err(MailError::PermissionDenied);
+        }
+
+        let jobs = self
+            .metadata_store
+            .list_mail_import_jobs_by_owner(tenant_id, owner_id, Some(account_id))
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(jobs
+            .into_iter()
+            .filter(|j| j.source_mode == "imap_archive")
+            .collect())
+    }
+
+    /// Get a single archive job if owned by the user.
+    pub async fn get_archive_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        job_id: MailImportJobId,
+    ) -> Result<MailImportJob, MailError> {
+        let job = self
+            .metadata_store
+            .get_mail_import_job(job_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::JobNotFound(job_id))?;
+
+        if job.tenant_id != tenant_id || job.source_mode != "imap_archive" {
+            return Err(MailError::JobNotFound(job_id));
+        }
+
+        Ok(job)
+    }
+
+    /// Cancel a pending or running archive job.
+    pub async fn cancel_archive_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        job_id: MailImportJobId,
+    ) -> Result<MailImportJob, MailError> {
+        let job = self.get_archive_job(tenant_id, owner_id, job_id).await?;
+
+        let updated = self
+            .metadata_store
+            .update_mail_import_job_status(job_id, "cancelled", &["pending", "running"])
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if !updated {
+            return Err(MailError::InvalidSource(
+                "Job cannot be cancelled in its current state".to_string(),
+            ));
+        }
+
+        let event = Event::new(
+            EventType::MailArchiveJobCancelled,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobCancelledPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        self.get_archive_job(tenant_id, owner_id, job_id).await
+    }
+
+    /// Soft-delete an archive job.
+    pub async fn delete_archive_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        job_id: MailImportJobId,
+    ) -> Result<(), MailError> {
+        let job = self.get_archive_job(tenant_id, owner_id, job_id).await?;
+
+        let deleted = self
+            .metadata_store
+            .soft_delete_mail_archive_job(job_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if !deleted {
+            return Err(MailError::JobNotFound(job_id));
+        }
+
+        let event = Event::new(
+            EventType::MailArchiveJobDeleted,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobDeletedPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Process an IMAP archive job by fetching messages in the date range and
+    /// importing each one.
+    pub async fn process_archive_job(&self, job: &MailImportJob) -> Result<(), MailError> {
+        // Only run pending/running jobs.
+        if !matches!(
+            job.status.parse::<MailImportJobStatus>().ok(),
+            Some(MailImportJobStatus::Pending) | Some(MailImportJobStatus::Running)
+        ) {
+            return Ok(());
+        }
+
+        // Load account.
+        let account = match self
+            .metadata_store
+            .get_mail_account(job.account_id, job.owner_id)
+            .await
+        {
+            Ok(Some(a))
+                if a.tenant_id == job.tenant_id && a.deleted_at.is_none() && a.is_enabled =>
+            {
+                a
+            }
+            Ok(Some(_)) => {
+                self.metadata_store
+                    .mark_archive_job_failed_with_retry(job.id, "Account unavailable")
+                    .await
+                    .ok();
+                return Ok(());
+            }
+            Ok(None) => {
+                self.metadata_store
+                    .mark_archive_job_failed_with_retry(job.id, "Account not found")
+                    .await
+                    .ok();
+                return Ok(());
+            }
+            Err(e) => {
+                self.metadata_store
+                    .mark_archive_job_failed_with_retry(job.id, &format!("Database error: {e}"))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        };
+
+        // Decrypt password.
+        let password =
+            match rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.metadata_store
+                        .mark_archive_job_failed_with_retry(
+                            job.id,
+                            &format!("Decryption error: {e}"),
+                        )
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+
+        // Mark running.
+        if !self
+            .metadata_store
+            .mark_mail_import_job_running(job.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+        {
+            return Ok(());
+        }
+
+        // Emit started event.
+        let event = Event::new(
+            EventType::MailArchiveJobStarted,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobStartedPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            job.owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .ok();
+
+        // Connect.
+        let mut session = match self.connect_and_login(&account, &password).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.metadata_store
+                    .mark_archive_job_failed_with_retry(job.id, &e.to_string())
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        };
+
+        // Fetch UID range.
+        let (uid_validity, uids) = match session
+            .fetch_uids_by_date_range(&job.folder_name, job.archive_since, job.archive_before)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.metadata_store
+                    .mark_archive_job_failed_with_retry(job.id, &e.to_string())
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        };
+
+        let uid_validity = uid_validity.map(i64::from);
+
+        // Reset last_imported_uid if UIDVALIDITY changed.
+        let last_imported_uid = if job.last_uid_validity != uid_validity {
+            None
+        } else {
+            job.last_imported_uid
+        };
+
+        let mut processed = 0i32;
+        let mut failed = 0i32;
+        let mut last_uid: Option<i64> = last_imported_uid;
+
+        // Update progress watermark before the loop.
+        self.metadata_store
+            .update_mail_archive_job_progress(
+                job.id,
+                processed,
+                failed,
+                uid_validity,
+                last_imported_uid,
+                None,
+            )
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        for uid in uids {
+            let uid_i64 = i64::from(uid);
+
+            // Skip already imported UIDs.
+            if let Some(last) = last_imported_uid {
+                if uid_i64 <= last {
+                    continue;
+                }
+            }
+
+            // Check cancellation.
+            if let Ok(Some(status)) = self
+                .metadata_store
+                .get_mail_import_job_status(job.id, job.owner_id)
+                .await
+            {
+                if status == "cancelled" {
+                    break;
+                }
+            }
+
+            // Fetch raw message.
+            let raw = match session
+                .fetch_rfc822(&job.folder_name, uid, uid_validity)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    failed += 1;
+                    self.metadata_store
+                        .update_mail_archive_job_progress(
+                            job.id,
+                            processed,
+                            failed,
+                            uid_validity,
+                            last_uid,
+                            Some(&e.to_string()),
+                        )
+                        .await
+                        .ok();
+                    continue;
+                }
+            };
+
+            // Import via existing path.
+            match self
+                .import_raw_source(
+                    job.tenant_id,
+                    job.owner_id,
+                    job.owner_id,
+                    Some(job.account_id),
+                    MailSourceMode::ImapArchive,
+                    Some(&job.folder_name),
+                    Some(uid_i64),
+                    uid_validity,
+                    raw,
+                    Some(job.id),
+                )
+                .await
+            {
+                Ok(msg) => {
+                    processed += 1;
+                    last_uid = Some(uid_i64);
+                    let event = Event::new(
+                        EventType::MailImported,
+                        msg.id,
+                        AggregateType::MailMessage,
+                        serde_json::to_value(MailImportedPayload {
+                            message_id: msg.id,
+                            account_id: job.account_id,
+                            folder_name: job.folder_name.clone(),
+                            source_uid: uid_i64,
+                            owner_id: job.owner_id,
+                        })
+                        .map_err(|e| MailError::Database(e.to_string()))?,
+                        job.owner_id,
+                    );
+                    self.event_store
+                        .append(&event, &self.broadcaster)
+                        .await
+                        .ok();
+                }
+                Err(e) => {
+                    failed += 1;
+                    self.metadata_store
+                        .update_mail_archive_job_progress(
+                            job.id,
+                            processed,
+                            failed,
+                            uid_validity,
+                            last_uid,
+                            Some(&e.to_string()),
+                        )
+                        .await
+                        .ok();
+                }
+            }
+
+            // Update progress periodically.
+            self.metadata_store
+                .update_mail_archive_job_progress(
+                    job.id,
+                    processed,
+                    failed,
+                    uid_validity,
+                    last_uid,
+                    None,
+                )
+                .await
+                .ok();
+        }
+
+        // Apply retention.
+        if let Some(retention_days) = job.retention_days {
+            if retention_days > 0 {
+                self.metadata_store
+                    .apply_archive_retention(
+                        job.owner_id,
+                        job.account_id,
+                        &job.folder_name,
+                        retention_days,
+                    )
+                    .await
+                    .ok();
+            }
+        }
+
+        // Mark completed if not cancelled.
+        if let Ok(Some(status)) = self
+            .metadata_store
+            .get_mail_import_job_status(job.id, job.owner_id)
+            .await
+        {
+            if status == "cancelled" {
+                return Ok(());
+            }
+        }
+
+        self.metadata_store
+            .mark_mail_import_job_completed(job.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let event = Event::new(
+            EventType::MailArchiveJobCompleted,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobCompletedPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+                processed_messages: processed,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            job.owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .ok();
+
+        Ok(())
     }
 
     // ============================================================================
