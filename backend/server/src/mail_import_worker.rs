@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use rustshare_core::domain::MailImportJobId;
+use rustshare_core::domain::{MailImportJobId, MailSourceMode};
 use rustshare_storage::MetadataStore;
 use tokio::sync::broadcast;
 
@@ -38,7 +38,7 @@ pub fn spawn_mail_import_worker(
 
         loop {
             // Do not reset jobs that this worker is actively processing;
-            // their updated_at is refreshed after each UID by process_import_job.
+            // their updated_at is refreshed after each UID by the active job processor.
             match metadata_store
                 .reset_stale_running_mail_import_jobs(
                     config.stale_threshold,
@@ -74,7 +74,12 @@ pub fn spawn_mail_import_worker(
                     // and the in-flight set is cleaned up.
                     let result = AssertUnwindSafe(async move {
                         tracing::info!("Processing mail import job {}", job.id);
-                        if let Err(e) = service.process_import_job(&job).await {
+                        let result = if job.source_mode == MailSourceMode::ImapArchive.as_str() {
+                            service.process_archive_job(&job).await
+                        } else {
+                            service.process_import_job(&job).await
+                        };
+                        if let Err(e) = result {
                             tracing::error!("Mail import job {} failed: {e}", job.id);
                         }
                         job.id
