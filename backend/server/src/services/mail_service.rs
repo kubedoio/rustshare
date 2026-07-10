@@ -10,8 +10,8 @@ use rustshare_core::domain::{
 use rustshare_core::events::{
     AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
     MailArchiveJobCancelledPayload, MailArchiveJobCompletedPayload, MailArchiveJobCreatedPayload,
-    MailArchiveJobDeletedPayload, MailArchiveJobStartedPayload, MailImportedPayload,
-    MailLinkedPayload, MailUnlinkedPayload,
+    MailArchiveJobDeletedPayload, MailArchiveJobFailedPayload, MailArchiveJobStartedPayload,
+    MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::eml_parser::EmlParser;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
@@ -1556,14 +1556,11 @@ impl MailService {
 
         let jobs = self
             .metadata_store
-            .list_mail_import_jobs_by_owner(tenant_id, owner_id, Some(account_id))
+            .list_mail_archive_jobs_by_owner(tenant_id, owner_id, account_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 
-        Ok(jobs
-            .into_iter()
-            .filter(|j| j.source_mode == "imap_archive")
-            .collect())
+        Ok(jobs)
     }
 
     /// Get a single archive job if owned by the user.
@@ -1665,6 +1662,37 @@ impl MailService {
         Ok(())
     }
 
+    /// Record a failed archive job attempt with retry semantics and emit a
+    /// `MailArchiveJobFailed` domain event when retries are exhausted.
+    async fn emit_archive_job_failed_event(&self, job: &MailImportJob, error: &str) {
+        match self
+            .metadata_store
+            .mark_archive_job_failed_with_retry(job.id, error)
+            .await
+        {
+            Ok(Some(status)) if status == "failed" => {
+                if let Ok(payload) = serde_json::to_value(MailArchiveJobFailedPayload {
+                    job_id: job.id,
+                    account_id: job.account_id,
+                    error: error.to_string(),
+                }) {
+                    let event = Event::new(
+                        EventType::MailArchiveJobFailed,
+                        job.id,
+                        AggregateType::MailImportJob,
+                        payload,
+                        job.owner_id,
+                    );
+                    self.event_store
+                        .append(&event, &self.broadcaster)
+                        .await
+                        .ok();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Process an IMAP archive job by fetching messages in the date range and
     /// importing each one.
     pub async fn process_archive_job(&self, job: &MailImportJob) -> Result<(), MailError> {
@@ -1716,24 +1744,18 @@ impl MailService {
                 a
             }
             Ok(Some(_)) => {
-                self.metadata_store
-                    .mark_archive_job_failed_with_retry(job.id, "Account unavailable")
-                    .await
-                    .ok();
+                self.emit_archive_job_failed_event(job, "Account unavailable")
+                    .await;
                 return Ok(());
             }
             Ok(None) => {
-                self.metadata_store
-                    .mark_archive_job_failed_with_retry(job.id, "Account not found")
-                    .await
-                    .ok();
+                self.emit_archive_job_failed_event(job, "Account not found")
+                    .await;
                 return Ok(());
             }
             Err(e) => {
-                self.metadata_store
-                    .mark_archive_job_failed_with_retry(job.id, &format!("Database error: {e}"))
-                    .await
-                    .ok();
+                self.emit_archive_job_failed_event(job, &format!("Database error: {e}"))
+                    .await;
                 return Ok(());
             }
         };
@@ -1743,13 +1765,8 @@ impl MailService {
             match rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key) {
                 Ok(p) => p,
                 Err(e) => {
-                    self.metadata_store
-                        .mark_archive_job_failed_with_retry(
-                            job.id,
-                            &format!("Decryption error: {e}"),
-                        )
-                        .await
-                        .ok();
+                    self.emit_archive_job_failed_event(job, &format!("Decryption error: {e}"))
+                        .await;
                     return Ok(());
                 }
             };
@@ -1758,10 +1775,8 @@ impl MailService {
         let mut session = match self.connect_and_login(&account, &password).await {
             Ok(s) => s,
             Err(e) => {
-                self.metadata_store
-                    .mark_archive_job_failed_with_retry(job.id, &e.to_string())
-                    .await
-                    .ok();
+                self.emit_archive_job_failed_event(job, &e.to_string())
+                    .await;
                 return Ok(());
             }
         };
@@ -1778,10 +1793,8 @@ impl MailService {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    self.metadata_store
-                        .mark_archive_job_failed_with_retry(job.id, &e.to_string())
-                        .await
-                        .ok();
+                    self.emit_archive_job_failed_event(job, &e.to_string())
+                        .await;
                     return Ok(());
                 }
             };
@@ -1976,13 +1989,11 @@ impl MailService {
             }
 
             if failed > 0 {
-                self.metadata_store
-                    .mark_archive_job_failed_with_retry(
-                        job.id,
-                        &format!("{failed} messages failed to import"),
-                    )
-                    .await
-                    .ok();
+                self.emit_archive_job_failed_event(
+                    job,
+                    &format!("{failed} messages failed to import"),
+                )
+                .await;
                 return Ok(());
             }
 

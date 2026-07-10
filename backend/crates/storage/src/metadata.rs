@@ -1006,6 +1006,39 @@ impl MetadataStore {
         }
     }
 
+    /// List active IMAP archive jobs for a user, filtered by account.
+    pub async fn list_mail_archive_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailImportJob>> {
+        let rows = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+              AND source_mode = 'imap_archive'
+              AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+            tenant_id,
+            owner_id,
+            account_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Atomically claim the oldest pending mail import job for processing.
     ///
     /// Only claims jobs whose associated mail account is enabled, whose tenant
@@ -1326,39 +1359,40 @@ impl MetadataStore {
     /// after the backoff delay. Once retries are exhausted, the job moves to
     /// `failed` and `completed_at` is recorded.
     ///
-    /// Returns `true` if the job was in the `running` state and updated.
+    /// Returns the new job status if the job was in the `running` state and
+    /// updated.
     pub async fn mark_archive_job_failed_with_retry(
         &self,
         id: MailImportJobId,
         error: &str,
-    ) -> Result<bool> {
-        let rows = sqlx::query!(
+    ) -> Result<Option<String>> {
+        let row = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
             SET status = CASE
-                    WHEN retry_count < max_retries THEN 'pending'
-                    ELSE 'failed'
+                    WHEN retry_count + 1 >= max_retries THEN 'failed'
+                    ELSE 'pending'
                  END,
                 last_error = $2,
                 retry_count = retry_count + 1,
                 started_at = CASE
-                    WHEN retry_count < max_retries THEN NULL
-                    ELSE started_at
+                    WHEN retry_count + 1 >= max_retries THEN started_at
+                    ELSE NULL
                  END,
                 completed_at = CASE
-                    WHEN retry_count < max_retries THEN NULL
-                    ELSE NOW()
+                    WHEN retry_count + 1 >= max_retries THEN NOW()
+                    ELSE NULL
                  END,
                 updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL AND source_mode = 'imap_archive' AND status = 'running'
+            RETURNING status
             "#,
             id,
             error
         )
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
-        Ok(rows > 0)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.status))
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
