@@ -1189,6 +1189,7 @@ impl MailService {
 
         let mut processed = 0i32;
         let mut failed = 0i32;
+        let mut skipped_inflight = 0i32;
         let mut last_error: Option<String> = None;
 
         for &uid in job.selected_uids.as_deref().unwrap_or(&[]) {
@@ -1261,18 +1262,12 @@ impl MailService {
                         job_id = %job.id,
                         message_id = %existing.id,
                         uid = %uid,
-                        "Partial mail row belongs to another running job; skipping"
+                        "Partial mail row belongs to another running job; deferring"
                     );
-                    processed += 1;
-                    self.metadata_store
-                        .update_mail_import_job_progress(
-                            job.id,
-                            processed,
-                            failed,
-                            last_error.as_deref(),
-                        )
-                        .await
-                        .map_err(|e| MailError::Database(e.to_string()))?;
+                    // Don't count this UID as processed: the other job may still
+                    // fail and delete the partial row. Leave the current job
+                    // non-terminal so the stale-job reset will retry it.
+                    skipped_inflight += 1;
                     continue;
                 }
 
@@ -1366,6 +1361,13 @@ impl MailService {
             } else {
                 Ok(())
             }
+        } else if skipped_inflight > 0 {
+            tracing::info!(
+                job_id = %job.id,
+                skipped = %skipped_inflight,
+                "Import job has UIDs in-flight in other jobs; leaving non-terminal for retry"
+            );
+            Ok(())
         } else {
             let _ = self
                 .metadata_store
