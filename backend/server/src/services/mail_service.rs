@@ -1505,6 +1505,13 @@ impl MailService {
                 "max_retries must be at least 1".to_string(),
             ));
         }
+        if let Some(retention_days) = retention_days {
+            if retention_days <= 0 {
+                return Err(MailError::InvalidSource(
+                    "retention_days must be positive".to_string(),
+                ));
+            }
+        }
         let job = MailImportJob::new_archive(
             tenant_id,
             owner_id,
@@ -1865,6 +1872,42 @@ impl MailService {
                 {
                     if status == "cancelled" {
                         break;
+                    }
+                }
+
+                // Skip UIDs that were already imported by this archive job.
+                match self
+                    .metadata_store
+                    .find_mail_message_by_source(
+                        job.owner_id,
+                        job.account_id,
+                        "imap_archive",
+                        &job.folder_name,
+                        uid_i64,
+                        uid_validity,
+                    )
+                    .await
+                {
+                    Ok(Some(_)) => {
+                        processed += 1;
+                        last_uid = Some(uid_i64);
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        failed += 1;
+                        self.metadata_store
+                            .update_mail_archive_job_progress(
+                                job.id,
+                                processed,
+                                failed,
+                                uid_validity,
+                                last_uid,
+                                Some(&format!("Deduplication lookup failed: {e}")),
+                            )
+                            .await
+                            .ok();
+                        continue;
                     }
                 }
 
