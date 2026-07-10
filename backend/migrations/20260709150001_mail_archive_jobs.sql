@@ -10,5 +10,5 @@ ALTER TABLE mail_import_jobs
 CREATE INDEX idx_mail_import_jobs_source_mode ON mail_import_jobs(source_mode) WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_mail_messages_archive_retention
-    ON mail_messages(owner_id, account_id, imported_at)
+    ON mail_messages(owner_id, account_id, source_folder, imported_at)
     WHERE source_mode = 'imap_archive' AND deleted_at IS NULL;

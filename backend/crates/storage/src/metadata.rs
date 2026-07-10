@@ -1096,7 +1096,7 @@ impl MetadataStore {
                 last_uid_validity = $3,
                 last_imported_uid = $4,
                 last_error = $5,
-                updated_at = now()
+                updated_at = NOW()
             WHERE id = $6 AND deleted_at IS NULL
             "#,
             processed,
@@ -1122,7 +1122,7 @@ impl MetadataStore {
         let rows = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
-            SET deleted_at = now(), updated_at = now()
+            SET deleted_at = NOW(), updated_at = NOW()
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
               AND source_mode = 'imap_archive'
             "#,
@@ -1248,9 +1248,9 @@ impl MetadataStore {
             UPDATE mail_import_jobs
             SET status = 'failed',
                 last_error = $2,
-                retry_count = retry_count + 1,
+                completed_at = NOW(),
                 updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL AND status IN ('running', 'pending')
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
             "#,
             id,
             error
@@ -1258,6 +1258,48 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a running IMAP archive job as failed, with retry/backoff semantics.
+    ///
+    /// If the job has not exhausted `max_retries`, it is returned to the
+    /// `pending` state with `started_at` cleared so it can be claimed again
+    /// after the backoff delay. Once retries are exhausted, the job moves to
+    /// `failed` and `completed_at` is recorded.
+    ///
+    /// Returns `true` if the job was in the `running` state and updated.
+    pub async fn mark_archive_job_failed_with_retry(
+        &self,
+        id: MailImportJobId,
+        error: &str,
+    ) -> Result<bool> {
+        let rows = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = CASE
+                    WHEN retry_count < max_retries THEN 'pending'
+                    ELSE 'failed'
+                 END,
+                last_error = $2,
+                retry_count = retry_count + 1,
+                started_at = CASE
+                    WHEN retry_count < max_retries THEN NULL
+                    ELSE started_at
+                 END,
+                completed_at = CASE
+                    WHEN retry_count < max_retries THEN NULL
+                    ELSE NOW()
+                 END,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND source_mode = 'imap_archive' AND status = 'running'
+            "#,
+            id,
+            error
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(rows > 0)
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {
