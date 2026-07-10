@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions as \"permissions: SharePermissions\", password_hash, expires_at, upload_only, access_count, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE id = $1 AND (recipient_user_id = $2 OR created_by = $2)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "file_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "folder_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "share_token",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "recipient_user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "recipient_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "permissions: SharePermissions",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "upload_only",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "access_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "revoked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b01ede39064c764f2505d2abdab719c8888b6540274e1a3e6dc7b77c85c30f0a"
+}

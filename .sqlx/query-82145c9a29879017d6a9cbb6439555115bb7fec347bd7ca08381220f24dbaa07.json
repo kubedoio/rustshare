@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT login_protection_enabled, max_login_attempts, login_block_duration_minutes\n            FROM security_config\n            WHERE id = 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "login_protection_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "max_login_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "login_block_duration_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "82145c9a29879017d6a9cbb6439555115bb7fec347bd7ca08381220f24dbaa07"
+}

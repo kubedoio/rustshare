@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT COUNT(*) as count\n                FROM notifications\n                WHERE user_id = $1 AND tenant_id = $2 AND read = FALSE\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a38d66e391cb9832fa97cca2a56da8203af635899af0db63d4ef563f8fe167ee"
+}

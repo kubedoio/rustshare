@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()\n            WHERE status = 'running'\n              AND deleted_at IS NULL\n              AND updated_at < NOW() - interval '1 second' * $1\n              AND id != ALL($2)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b683a436087b8d82bda8f9c9e2b75ae33c976a3624c5eaf75623a130eb6fdcc6"
+}

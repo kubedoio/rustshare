@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT \n            f.id, f.name, f.path, f.parent_folder_id, f.owner_id, \n            f.created_at, f.updated_at, f.tenant_id,\n            EXISTS (\n                SELECT 1 FROM shares \n                WHERE folder_id = f.id \n                AND revoked_at IS NULL\n            ) as is_shared,\n            (\n                SELECT COUNT(*) FROM shares\n                WHERE folder_id = f.id\n                AND revoked_at IS NULL\n            ) as share_count,\n            (\n                SELECT MIN(expires_at) FROM shares\n                WHERE folder_id = f.id\n                AND revoked_at IS NULL\n            ) as share_expires_at,\n            (\n                SELECT fi.id\n                FROM files fi\n                WHERE fi.parent_folder_id = f.id AND fi.name = 'note.md' AND fi.deleted_at IS NULL\n                LIMIT 1\n            ) as note_bundle_file_id\n        FROM folders f\n        WHERE f.id = $1 AND f.owner_id = $2 AND f.tenant_id = $3 AND f.deleted_at IS NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_folder_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 8,
+        "name": "is_shared",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "share_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "share_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "note_bundle_file_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "36d7bdd2dc7f8e8cb172b195a72db98aa4219eac3ab857321a52cb60c200391d"
+}

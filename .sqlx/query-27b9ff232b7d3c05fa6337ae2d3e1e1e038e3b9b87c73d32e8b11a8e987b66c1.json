@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, tenant_id, message_id, target_type, target_id, created_by, created_at, deleted_at\n            FROM mail_links\n            WHERE id = $1 AND tenant_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "message_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "target_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "27b9ff232b7d3c05fa6337ae2d3e1e1e038e3b9b87c73d32e8b11a8e987b66c1"
+}

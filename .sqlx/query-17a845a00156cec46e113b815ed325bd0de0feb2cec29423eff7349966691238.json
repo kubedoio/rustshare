@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO replication_jobs (\n                id,\n                file_id,\n                file_version_id,\n                storage_key,\n                status,\n                attempt_count,\n                next_attempt_at,\n                last_attempt_at,\n                leased_at,\n                lease_token,\n                last_error,\n                created_at,\n                updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17a845a00156cec46e113b815ed325bd0de0feb2cec29423eff7349966691238"
+}

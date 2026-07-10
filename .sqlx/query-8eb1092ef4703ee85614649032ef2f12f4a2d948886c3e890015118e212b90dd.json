@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET total_messages = $1,\n                updated_at = NOW()\n            WHERE id = $2 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8eb1092ef4703ee85614649032ef2f12f4a2d948886c3e890015118e212b90dd"
+}

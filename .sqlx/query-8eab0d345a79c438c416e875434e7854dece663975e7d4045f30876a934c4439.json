@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET status = 'running', started_at = NOW(), updated_at = NOW()\n            WHERE id = $1 AND deleted_at IS NULL AND status IN ('pending', 'running')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8eab0d345a79c438c416e875434e7854dece663975e7d4045f30876a934c4439"
+}

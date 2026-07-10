@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            user_id,\n            approved_at IS NOT NULL as is_approved,\n            expires_at < NOW() as is_expired\n        FROM device_pair_requests\n        WHERE device_code = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "is_approved",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "is_expired",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "5e43a9df92dd7e1c9cb784d740243aea61255ac3e8ecef2b3ce64a072c4a0a70"
+}

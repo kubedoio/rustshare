@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM admin_actions WHERE performed_at < NOW() - INTERVAL '1 day' * $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ad7ca55f5e5b734f6f9e9cdf83cd5fe87c1abac1f96d7c53c4472136edca1669"
+}
