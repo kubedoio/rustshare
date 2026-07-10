@@ -351,6 +351,38 @@ impl ImapSession {
         Ok(body.to_vec())
     }
 
+    pub async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<DateTime<Utc>>,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
+        let uid_validity = self
+            .select_folder(folder)
+            .await?
+            .ok_or_else(|| ImapError::CommandFailed("Missing UIDVALIDITY".to_string()))?;
+
+        let mut criteria = Vec::new();
+        criteria.push("ALL".to_string());
+        if let Some(since) = since {
+            criteria.push(format!("SINCE {}", since.format("%d-%b-%Y")));
+        }
+        if let Some(before) = before {
+            criteria.push(format!("BEFORE {}", before.format("%d-%b-%Y")));
+        }
+        let query = criteria.join(" ");
+
+        let uids = self
+            .session
+            .uid_search(query)
+            .await
+            .map_err(|e| ImapError::CommandFailed(format!("UID SEARCH failed: {e}")))?;
+
+        let mut uids: Vec<u32> = uids.into_iter().collect();
+        uids.sort_unstable();
+        Ok((Some(uid_validity), uids))
+    }
+
     pub async fn logout(mut self) -> Result<(), ImapError> {
         tokio::time::timeout(DEFAULT_TIMEOUT, self.session.logout())
             .await
