@@ -14,7 +14,18 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
     let user = ctx.create_test_user("imapuser").await;
 
     // 2. Skip if no IMAP test server is configured or reachable.
-    let imap_host = std::env::var("IMAP_TEST_HOST").unwrap_or_else(|_| "localhost".to_string());
+    //    The IMAP client rejects internal/loopback hosts for SSRF protection,
+    //    so the test server must be a public or non-internal address.
+    let imap_host = std::env::var("IMAP_TEST_HOST").unwrap_or_default();
+    if imap_host.is_empty()
+        || imap_host.eq_ignore_ascii_case("localhost")
+        || imap_host.starts_with("127.")
+    {
+        eprintln!("Skipping imap_selected_import test: IMAP_TEST_HOST must be set to a public/non-internal IMAP server");
+        cleanup_user(&ctx.pool, user.id).await;
+        cleanup_tenant(&ctx.pool, tenant_id).await;
+        return;
+    }
     let imap_port: i32 = std::env::var("IMAP_TEST_PORT")
         .ok()
         .and_then(|p| p.parse().ok())

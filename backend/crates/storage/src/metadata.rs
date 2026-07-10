@@ -937,44 +937,33 @@ impl MetadataStore {
         }
     }
 
-    /// Claim the oldest pending mail import job for processing.
+    /// Select and lock the oldest pending mail import job for processing.
     ///
-    /// Only claims jobs whose associated mail account is enabled, whose tenant
+    /// Only returns jobs whose associated mail account is enabled, whose tenant
     /// has the mail module enabled, and whose job has not been soft-deleted.
-    /// The SELECT, UPDATE, and RETURN are performed in a single CTE statement
-    /// to keep the operation atomic and reduce round-trips.
+    /// The caller is responsible for transitioning the job to `running`
+    /// (e.g. via `mark_mail_import_job_running`) before doing work.
     pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
         let job = sqlx::query_as!(
             MailImportJob,
             r#"
-            WITH target AS (
-                SELECT j.id
-                FROM mail_import_jobs j
-                JOIN mail_accounts a ON a.id = j.account_id
-                JOIN modules m ON m.tenant_id = j.tenant_id
-                WHERE j.status = 'pending'
-                  AND j.deleted_at IS NULL
-                  AND a.deleted_at IS NULL
-                  AND a.is_enabled = true
-                  AND m.module_key = 'mail'
-                  AND m.enabled = true
-                ORDER BY j.created_at ASC
-                FOR UPDATE OF j SKIP LOCKED
-                LIMIT 1
-            ),
-            updated AS (
-                UPDATE mail_import_jobs
-                SET status = 'running', started_at = NOW(), updated_at = NOW()
-                FROM target
-                WHERE mail_import_jobs.id = target.id
-                RETURNING mail_import_jobs.*
-            )
             SELECT
-                id, tenant_id, owner_id, account_id, source_mode, folder_name,
-                selected_uids AS "selected_uids: _",
-                status, total_messages, processed_messages, failed_messages,
-                last_error, started_at, completed_at, deleted_at, created_at, updated_at
-            FROM updated
+                j.id, j.tenant_id, j.owner_id, j.account_id, j.source_mode, j.folder_name,
+                j.selected_uids AS "selected_uids: _",
+                j.status, j.total_messages, j.processed_messages, j.failed_messages,
+                j.last_error, j.started_at, j.completed_at, j.deleted_at, j.created_at, j.updated_at
+            FROM mail_import_jobs j
+            JOIN mail_accounts a ON a.id = j.account_id
+            JOIN modules m ON m.tenant_id = j.tenant_id
+            WHERE j.status = 'pending'
+              AND j.deleted_at IS NULL
+              AND a.deleted_at IS NULL
+              AND a.is_enabled = true
+              AND m.module_key = 'mail'
+              AND m.enabled = true
+            ORDER BY j.created_at ASC
+            FOR UPDATE OF j SKIP LOCKED
+            LIMIT 1
             "#,
         )
         .fetch_optional(&self.pool)
