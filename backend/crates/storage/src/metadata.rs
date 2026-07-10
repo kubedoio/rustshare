@@ -844,8 +844,12 @@ impl MetadataStore {
         Ok(updated)
     }
 
-    /// Create a new mail import job.
-    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+    /// Create a new mail import job inside an existing transaction.
+    pub async fn create_mail_import_job_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        job: &MailImportJob,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO mail_import_jobs (
@@ -886,8 +890,16 @@ impl MetadataStore {
             job.created_at,
             job.updated_at,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
+        Ok(())
+    }
+
+    /// Create a new mail import job.
+    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_mail_import_job_in_tx(&mut tx, job).await?;
+        tx.commit().await?;
         Ok(())
     }
 

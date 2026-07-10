@@ -1501,11 +1501,6 @@ impl MailService {
             max_retries,
         );
 
-        self.metadata_store
-            .create_mail_import_job(&job)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
-
         let event = Event::new(
             EventType::MailArchiveJobCreated,
             job.id,
@@ -1519,10 +1514,24 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?,
             owner_id,
         );
-        self.event_store
-            .append(&event, &self.broadcaster)
+
+        let mut tx = self
+            .event_store
+            .begin_transaction()
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+        self.event_store
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        self.metadata_store
+            .create_mail_import_job_in_tx(&mut tx, &job)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        self.broadcaster.publish(event);
 
         Ok(job)
     }
@@ -1667,6 +1676,34 @@ impl MailService {
             return Ok(());
         }
 
+        // Mark running first so that any subsequent failure can be recorded
+        // with retry/backoff semantics.
+        if !self
+            .metadata_store
+            .mark_mail_import_job_running(job.id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+        {
+            return Ok(());
+        }
+
+        // Emit started event.
+        let event = Event::new(
+            EventType::MailArchiveJobStarted,
+            job.id,
+            AggregateType::MailImportJob,
+            serde_json::to_value(MailArchiveJobStartedPayload {
+                job_id: job.id,
+                account_id: job.account_id,
+            })
+            .map_err(|e| MailError::Database(e.to_string()))?,
+            job.owner_id,
+        );
+        self.event_store
+            .append(&event, &self.broadcaster)
+            .await
+            .ok();
+
         // Load account.
         let account = match self
             .metadata_store
@@ -1716,33 +1753,6 @@ impl MailService {
                     return Ok(());
                 }
             };
-
-        // Mark running.
-        if !self
-            .metadata_store
-            .mark_mail_import_job_running(job.id)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?
-        {
-            return Ok(());
-        }
-
-        // Emit started event.
-        let event = Event::new(
-            EventType::MailArchiveJobStarted,
-            job.id,
-            AggregateType::MailImportJob,
-            serde_json::to_value(MailArchiveJobStartedPayload {
-                job_id: job.id,
-                account_id: job.account_id,
-            })
-            .map_err(|e| MailError::Database(e.to_string()))?,
-            job.owner_id,
-        );
-        self.event_store
-            .append(&event, &self.broadcaster)
-            .await
-            .ok();
 
         // Connect.
         let mut session = match self.connect_and_login(&account, &password).await {
@@ -1870,8 +1880,6 @@ impl MailService {
                     .await
                 {
                     Ok(msg) => {
-                        processed += 1;
-                        last_uid = Some(uid_i64);
                         let event = Event::new(
                             EventType::MailImported,
                             msg.id,
@@ -1886,10 +1894,27 @@ impl MailService {
                             .map_err(|e| MailError::Database(e.to_string()))?,
                             job.owner_id,
                         );
-                        self.event_store
-                            .append(&event, &self.broadcaster)
-                            .await
-                            .ok();
+                        match self.event_store.append(&event, &self.broadcaster).await {
+                            Ok(()) => {
+                                processed += 1;
+                                last_uid = Some(uid_i64);
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                let err = format!("Failed to append MailImported event: {e}");
+                                self.metadata_store
+                                    .update_mail_archive_job_progress(
+                                        job.id,
+                                        processed,
+                                        failed,
+                                        uid_validity,
+                                        last_uid,
+                                        Some(&err),
+                                    )
+                                    .await
+                                    .ok();
+                            }
+                        }
                     }
                     Err(MailError::Cancelled) => {
                         return Ok(());
