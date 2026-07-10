@@ -1066,7 +1066,10 @@ impl MetadataStore {
                       j.source_mode != 'imap_archive'
                       OR (
                           j.retry_count < j.max_retries
-                          AND j.updated_at <= NOW() - (interval '1 second' * POWER(2, GREATEST(j.retry_count, 0)))
+                          AND (
+                              j.retry_count = 0
+                              OR j.updated_at <= NOW() - (interval '1 second' * POWER(2, j.retry_count))
+                          )
                       )
                   )
                 ORDER BY j.created_at ASC
