@@ -201,6 +201,7 @@ impl MetadataStore {
             msg.blob_sha256,
             msg.size_bytes,
             msg.has_attachments,
+            msg.archive_job_id,
             msg.deleted_at,
             msg.created_at,
             msg.updated_at,
@@ -222,14 +223,14 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27,
-                $28, $29, $30
+                $21, $22, $23, $24, $25, $26, $27, $28,
+                $29, $30, $31
             )
             ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)
             WHERE deleted_at IS NULL AND source_mode IN ('imap_selected', 'imap_archive')
@@ -262,6 +263,7 @@ impl MetadataStore {
             msg.blob_sha256,
             msg.size_bytes,
             msg.has_attachments,
+            msg.archive_job_id,
             msg.deleted_at,
             msg.created_at,
             msg.updated_at,
@@ -400,7 +402,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
@@ -430,7 +432,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE owner_id = $1
               AND account_id = $2
@@ -594,7 +596,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
             ORDER BY imported_at DESC, created_at DESC
@@ -1064,7 +1066,7 @@ impl MetadataStore {
                       j.source_mode != 'imap_archive'
                       OR (
                           j.retry_count < j.max_retries
-                          AND j.updated_at <= NOW() - (interval '1 second' * (2 ^ GREATEST(j.retry_count, 0)))
+                          AND j.updated_at <= NOW() - (interval '1 second' * POWER(2, GREATEST(j.retry_count, 0)))
                       )
                   )
                 ORDER BY j.created_at ASC
@@ -1210,6 +1212,7 @@ impl MetadataStore {
         owner_id: UserId,
         account_id: MailAccountId,
         folder_name: &str,
+        archive_job_id: MailImportJobId,
         retention_days: i32,
     ) -> Result<u64> {
         if retention_days <= 0 {
@@ -1222,13 +1225,15 @@ impl MetadataStore {
             WHERE owner_id = $1
               AND account_id = $2
               AND source_folder = $3
+              AND archive_job_id = $4
               AND source_mode = 'imap_archive'
-              AND imported_at < NOW() - (interval '1 day' * $4)
+              AND imported_at < NOW() - (interval '1 day' * $5)
               AND deleted_at IS NULL
             "#,
             owner_id,
             account_id,
             folder_name,
+            archive_job_id,
             retention_days as f64
         )
         .execute(&self.pool)

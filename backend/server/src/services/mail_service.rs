@@ -126,6 +126,7 @@ impl MailService {
             None,
             raw_source,
             None,
+            None,
         )
         .await
     }
@@ -143,6 +144,7 @@ impl MailService {
         source_uidvalidity: Option<i64>,
         raw_source: Vec<u8>,
         job_id: Option<Uuid>,
+        archive_job_id: Option<MailImportJobId>,
     ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
             return Err(MailError::InvalidSource("Empty mail source".to_string()));
@@ -181,6 +183,7 @@ impl MailService {
         msg.bcc_addresses = addresses_to_json(&parsed.bcc);
         msg.sent_at = parsed.sent_at;
         msg.has_attachments = !parsed.attachments.is_empty();
+        msg.archive_job_id = archive_job_id;
         msg.visibility = MailVisibility::Private.into();
 
         // Insert the mail row before creating any visible artifacts so a
@@ -1351,6 +1354,7 @@ impl MailService {
                             source_uidvalidity,
                             raw_source,
                             Some(job.id),
+                            None,
                         )
                         .await
                     {
@@ -1900,6 +1904,7 @@ impl MailService {
                         uid_validity,
                         raw,
                         Some(job.id),
+                        Some(job.id),
                     )
                     .await
                 {
@@ -1984,6 +1989,7 @@ impl MailService {
                             job.owner_id,
                             job.account_id,
                             &job.folder_name,
+                            job.id,
                             retention_days,
                         )
                         .await

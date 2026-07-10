@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE owner_id = $1\n              AND account_id = $2\n              AND source_mode = $3\n              AND source_folder = $4\n              AND source_uid = $5\n              AND source_uidvalidity IS NOT DISTINCT FROM $6\n              AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                archive_job_id, deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE owner_id = $1\n              AND account_id = $2\n              AND source_mode = $3\n              AND source_folder = $4\n              AND source_uid = $5\n              AND source_uidvalidity IS NOT DISTINCT FROM $6\n              AND deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -140,16 +140,21 @@
       },
       {
         "ordinal": 27,
+        "name": "archive_job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 28,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -193,9 +198,10 @@
       true,
       false,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "06c354c6ba9c1b4f8be2c4b92e3fb5ce1844e655857eff85d39fd2537a7d935f"
+  "hash": "f58aade18291f28dcf5e74489c4dbb3f41acbae13c37cb9af8c844ed967d0976"
 }
