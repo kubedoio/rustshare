@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, Utc};
 use rustshare_core::domain::MailTlsMode;
 use rustshare_server::services::imap_client::{ImapArchiveSession, ImapError};
 use uuid::Uuid;
@@ -456,7 +456,12 @@ async fn archive_job_retention_soft_deletes_old_messages() {
     .expect("archive import should set folder_id");
 
     // Re-run the job with the same UID; the message is deduplicated, but the
-    // retention pass still applies.
+    // retention pass still applies. Retention is only executed while the job
+    // is in the `running` state, so mark it running first.
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
     ctx.mail_service()
         .process_archive_session(&job, &mut session)
         .await
