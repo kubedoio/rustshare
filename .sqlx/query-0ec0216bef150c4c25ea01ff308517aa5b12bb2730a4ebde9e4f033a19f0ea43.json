@@ -1,0 +1,120 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO vault_files (id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)\n            ON CONFLICT (vault_id, relative_path) WHERE deleted_at IS NULL DO UPDATE SET\n                content_type = EXCLUDED.content_type,\n                sha256 = EXCLUDED.sha256,\n                size = EXCLUDED.size,\n                server_rev = EXCLUDED.server_rev,\n                mtime_client = EXCLUDED.mtime_client,\n                mtime_server = EXCLUDED.mtime_server,\n                deleted = EXCLUDED.deleted,\n                deleted_at = EXCLUDED.deleted_at,\n                last_writer_device_id = EXCLUDED.last_writer_device_id,\n                updated_at = EXCLUDED.updated_at\n            RETURNING id, tenant_id, vault_id, relative_path, content_type, sha256, size, server_rev, mtime_client, mtime_server, deleted, deleted_at, last_writer_device_id, created_at, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "vault_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "relative_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "sha256",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "server_rev",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "mtime_client",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "mtime_server",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "deleted",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_writer_device_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Bool",
+        "Timestamptz",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0ec0216bef150c4c25ea01ff308517aa5b12bb2730a4ebde9e4f033a19f0ea43"
+}

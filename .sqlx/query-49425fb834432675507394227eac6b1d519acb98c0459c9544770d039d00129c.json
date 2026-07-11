@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version\n            FROM events\n            WHERE user_id = $1\n              AND ($2::uuid IS NULL OR (timestamp, event_id) > (\n                SELECT timestamp, event_id FROM events WHERE event_id = $2\n              ))\n            ORDER BY timestamp ASC, event_id ASC\n            LIMIT $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "aggregate_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "aggregate_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "49425fb834432675507394227eac6b1d519acb98c0459c9544770d039d00129c"
+}

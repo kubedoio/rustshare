@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            id,\n            name,\n            destination_type,\n            endpoint,\n            bucket,\n            region,\n            base_path,\n            is_required,\n            enabled,\n            health_status,\n            last_healthy_at,\n            last_error,\n            updated_at\n        FROM replication_targets\n        ORDER BY is_required DESC, name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "destination_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "endpoint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "bucket",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "region",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "base_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "health_status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_healthy_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "e1d93a0ce2c9b34f61a10e3bd29f825477d2e04ad6160f9fcb0b464d1ecbf353"
+}

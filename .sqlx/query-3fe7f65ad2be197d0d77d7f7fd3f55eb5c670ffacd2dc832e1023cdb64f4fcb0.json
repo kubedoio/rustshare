@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET status = 'failed',\n                last_error = $2,\n                completed_at = NOW(),\n                updated_at = NOW()\n            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3fe7f65ad2be197d0d77d7f7fd3f55eb5c670ffacd2dc832e1023cdb64f4fcb0"
+}

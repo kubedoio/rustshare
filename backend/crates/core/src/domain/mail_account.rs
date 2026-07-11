@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
@@ -58,6 +58,21 @@ impl From<MailImportJobStatus> for String {
             MailImportJobStatus::Completed => "completed".to_string(),
             MailImportJobStatus::Failed => "failed".to_string(),
             MailImportJobStatus::Cancelled => "cancelled".to_string(),
+        }
+    }
+}
+
+impl std::str::FromStr for MailImportJobStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(MailImportJobStatus::Pending),
+            "running" => Ok(MailImportJobStatus::Running),
+            "completed" => Ok(MailImportJobStatus::Completed),
+            "failed" => Ok(MailImportJobStatus::Failed),
+            "cancelled" => Ok(MailImportJobStatus::Cancelled),
+            _ => Err(format!("Invalid mail import job status: {s}")),
         }
     }
 }
@@ -130,6 +145,13 @@ pub struct MailImportJob {
     pub folder_name: String,
     pub selected_uids: Option<Vec<i64>>,
     pub source_uidvalidity: Option<i64>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
+    pub last_uid_validity: Option<i64>,
+    pub last_imported_uid: Option<i64>,
+    pub retention_days: Option<i32>,
+    pub retry_count: i32,
+    pub max_retries: i32,
     pub status: String,
     pub total_messages: i32,
     pub processed_messages: i32,
@@ -162,8 +184,60 @@ impl MailImportJob {
             folder_name,
             selected_uids: Some(selected_uids),
             source_uidvalidity,
+            archive_since: None,
+            archive_before: None,
+            last_uid_validity: None,
+            last_imported_uid: None,
+            retention_days: None,
+            retry_count: 0,
+            max_retries: 3,
             status: MailImportJobStatus::Pending.into(),
             total_messages,
+            processed_messages: 0,
+            failed_messages: 0,
+            last_error: None,
+            started_at: None,
+            completed_at: None,
+            deleted_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Create a new IMAP archive import job.
+    ///
+    /// `max_retries` is the maximum total number of attempts, including the
+    /// initial attempt. Callers must ensure it is at least 1.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_archive(
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: String,
+        archive_since: Option<NaiveDate>,
+        archive_before: Option<NaiveDate>,
+        retention_days: Option<i32>,
+        max_retries: i32,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            tenant_id,
+            owner_id,
+            account_id,
+            source_mode: "imap_archive".to_string(),
+            folder_name,
+            selected_uids: None,
+            source_uidvalidity: None,
+            archive_since,
+            archive_before,
+            last_uid_validity: None,
+            last_imported_uid: None,
+            retention_days,
+            retry_count: 0,
+            max_retries,
+            status: MailImportJobStatus::Pending.into(),
+            total_messages: 0,
             processed_messages: 0,
             failed_messages: 0,
             last_error: None,

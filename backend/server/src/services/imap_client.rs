@@ -4,7 +4,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use async_imap::types::{Fetch, Name};
-use chrono::{DateTime, Utc};
+use async_trait::async_trait;
+use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
@@ -351,12 +352,95 @@ impl ImapSession {
         Ok(body.to_vec())
     }
 
+    pub async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
+        let uid_validity = self
+            .select_folder(folder)
+            .await?
+            .ok_or_else(|| ImapError::CommandFailed("Missing UIDVALIDITY".to_string()))?;
+
+        if let (Some(since), Some(before)) = (since, before) {
+            if since >= before {
+                return Err(ImapError::CommandFailed(
+                    "archive_since must be before archive_before".to_string(),
+                ));
+            }
+        }
+
+        let query = build_archive_search_query(since, before);
+
+        let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(query))
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
+            .map_err(|e| ImapError::CommandFailed(format!("UID SEARCH failed: {e}")))?;
+
+        let mut uids: Vec<u32> = uids.into_iter().collect();
+        uids.sort_unstable();
+        Ok((Some(uid_validity), uids))
+    }
+
     pub async fn logout(mut self) -> Result<(), ImapError> {
         tokio::time::timeout(DEFAULT_TIMEOUT, self.session.logout())
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         Ok(())
     }
+}
+
+/// Trait abstracting the IMAP operations required by archive jobs.
+///
+/// This allows archive job processing to be tested without a real IMAP server.
+#[async_trait]
+pub trait ImapArchiveSession: Send {
+    async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError>;
+
+    async fn fetch_rfc822(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError>;
+}
+
+#[async_trait]
+impl ImapArchiveSession for ImapSession {
+    async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
+        ImapSession::fetch_uids_by_date_range(self, folder, since, before).await
+    }
+
+    async fn fetch_rfc822(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError> {
+        ImapSession::fetch_rfc822(self, folder, uid, expected_uidvalidity).await
+    }
+}
+
+fn build_archive_search_query(since: Option<NaiveDate>, before: Option<NaiveDate>) -> String {
+    let mut criteria = vec!["ALL".to_string()];
+    if let Some(since) = since {
+        criteria.push(format!("SINCE {}", since.format("%d-%b-%Y")));
+    }
+    if let Some(before) = before {
+        criteria.push(format!("BEFORE {}", before.format("%d-%b-%Y")));
+    }
+    criteria.join(" ")
 }
 
 fn build_tls_connector() -> Result<tokio_rustls::TlsConnector, ImapError> {
@@ -472,6 +556,7 @@ fn address_to_bytes(addr: &async_imap::imap_proto::types::Address<'_>) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn decode_plain_ascii_subject() {
@@ -527,5 +612,33 @@ mod tests {
     fn parse_fallback_date_format() {
         let parsed = parse_imap_date("15 Aug 2022 10:30:00 +0000").unwrap();
         assert_eq!(parsed.timestamp(), 1_660_559_400);
+    }
+
+    #[test]
+    fn build_archive_search_query_open_range() {
+        let query = build_archive_search_query(None, None);
+        assert_eq!(query, "ALL");
+    }
+
+    #[test]
+    fn build_archive_search_query_since_only() {
+        let since = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let query = build_archive_search_query(Some(since), None);
+        assert_eq!(query, "ALL SINCE 15-Jan-2024");
+    }
+
+    #[test]
+    fn build_archive_search_query_before_only() {
+        let before = NaiveDate::from_ymd_opt(2024, 6, 30).unwrap();
+        let query = build_archive_search_query(None, Some(before));
+        assert_eq!(query, "ALL BEFORE 30-Jun-2024");
+    }
+
+    #[test]
+    fn build_archive_search_query_both_bounds() {
+        let since = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let before = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+        let query = build_archive_search_query(Some(since), Some(before));
+        assert_eq!(query, "ALL SINCE 01-Jan-2024 BEFORE 31-Dec-2024");
     }
 }

@@ -164,14 +164,14 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27,
-                $28, $29, $30
+                $21, $22, $23, $24, $25, $26, $27, $28,
+                $29, $30, $31
             )
             "#,
             msg.id,
@@ -201,6 +201,7 @@ impl MetadataStore {
             msg.blob_sha256,
             msg.size_bytes,
             msg.has_attachments,
+            msg.archive_job_id,
             msg.deleted_at,
             msg.created_at,
             msg.updated_at,
@@ -222,14 +223,14 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27,
-                $28, $29, $30
+                $21, $22, $23, $24, $25, $26, $27, $28,
+                $29, $30, $31
             )
             ON CONFLICT (owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity)
             WHERE deleted_at IS NULL AND source_mode IN ('imap_selected', 'imap_archive')
@@ -262,6 +263,7 @@ impl MetadataStore {
             msg.blob_sha256,
             msg.size_bytes,
             msg.has_attachments,
+            msg.archive_job_id,
             msg.deleted_at,
             msg.created_at,
             msg.updated_at,
@@ -289,6 +291,40 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Reassign a mail message to a different archive job.
+    ///
+    /// Used when a new archive job encounters a message that was previously
+    /// imported by another archive job that is no longer active, so the
+    /// current job's retention policy applies to it.
+    ///
+    /// The update is a compare-and-swap on `archive_job_id`: it only succeeds
+    /// if the row still has `expected_archive_job_id`. Returns `true` if a row
+    /// was updated.
+    pub async fn update_mail_message_archive_job_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: UserId,
+        expected_archive_job_id: Option<MailImportJobId>,
+        new_archive_job_id: MailImportJobId,
+    ) -> Result<bool> {
+        let rows = sqlx::query!(
+            r#"
+            UPDATE mail_messages
+            SET archive_job_id = $3, updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND archive_job_id IS NOT DISTINCT FROM $4
+            "#,
+            id,
+            owner_id,
+            new_archive_job_id,
+            expected_archive_job_id as Option<MailImportJobId>,
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(rows > 0)
     }
 
     /// Hard-delete a mail message row. Intended for cleaning up a partially
@@ -400,7 +436,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
             "#,
@@ -430,7 +466,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE owner_id = $1
               AND account_id = $2
@@ -594,7 +630,7 @@ impl MetadataStore {
                 message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
-                deleted_at, created_at, updated_at
+                archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
             WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
             ORDER BY imported_at DESC, created_at DESC
@@ -844,17 +880,25 @@ impl MetadataStore {
         Ok(updated)
     }
 
-    /// Create a new mail import job.
-    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+    /// Create a new mail import job inside an existing transaction.
+    pub async fn create_mail_import_job_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        job: &MailImportJob,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO mail_import_jobs (
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
-                selected_uids, source_uidvalidity, status, total_messages, processed_messages,
-                failed_messages, last_error, started_at, completed_at, deleted_at, created_at,
-                updated_at
+                selected_uids, source_uidvalidity, archive_since, archive_before,
+                last_uid_validity, last_imported_uid, retention_days, retry_count, max_retries,
+                status, total_messages, processed_messages, failed_messages, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+            )
             "#,
             job.id,
             job.tenant_id,
@@ -864,6 +908,13 @@ impl MetadataStore {
             job.folder_name,
             job.selected_uids.as_deref(),
             job.source_uidvalidity,
+            job.archive_since,
+            job.archive_before,
+            job.last_uid_validity,
+            job.last_imported_uid,
+            job.retention_days,
+            job.retry_count,
+            job.max_retries,
             job.status,
             job.total_messages,
             job.processed_messages,
@@ -875,8 +926,16 @@ impl MetadataStore {
             job.created_at,
             job.updated_at,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
+        Ok(())
+    }
+
+    /// Create a new mail import job.
+    pub async fn create_mail_import_job(&self, job: &MailImportJob) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_mail_import_job_in_tx(&mut tx, job).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -893,6 +952,8 @@ impl MetadataStore {
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
                 source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM mail_import_jobs
@@ -941,10 +1002,13 @@ impl MetadataStore {
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
                     source_uidvalidity,
+                    archive_since, archive_before, last_uid_validity, last_imported_uid,
+                    retention_days, retry_count, max_retries,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
-                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3 AND deleted_at IS NULL
+                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+                  AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 "#,
                 tenant_id,
@@ -962,10 +1026,13 @@ impl MetadataStore {
                     id, tenant_id, owner_id, account_id, source_mode, folder_name,
                     selected_uids AS "selected_uids: _",
                     source_uidvalidity,
+                    archive_since, archive_before, last_uid_validity, last_imported_uid,
+                    retention_days, retry_count, max_retries,
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
-                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+                WHERE tenant_id = $1 AND owner_id = $2
+                  AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 "#,
                 tenant_id,
@@ -975,6 +1042,39 @@ impl MetadataStore {
             .await?;
             Ok(rows)
         }
+    }
+
+    /// List active IMAP archive jobs for a user, filtered by account.
+    pub async fn list_mail_archive_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailImportJob>> {
+        let rows = sqlx::query_as!(
+            MailImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, folder_name,
+                selected_uids AS "selected_uids: _",
+                source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
+                status, total_messages, processed_messages, failed_messages,
+                last_error, started_at, completed_at, deleted_at, created_at, updated_at
+            FROM mail_import_jobs
+            WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+              AND source_mode = 'imap_archive'
+              AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+            tenant_id,
+            owner_id,
+            account_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     /// Atomically claim the oldest pending mail import job for processing.
@@ -998,6 +1098,21 @@ impl MetadataStore {
                   AND a.is_enabled = true
                   AND m.module_key = 'mail'
                   AND m.enabled = true
+                  AND (
+                      j.source_mode != 'imap_archive'
+                      OR j.completed_at IS NULL
+                      OR j.completed_at <= NOW() - interval '1 minute'
+                  )
+                  AND (
+                      j.source_mode != 'imap_archive'
+                      OR (
+                          j.retry_count < j.max_retries
+                          AND (
+                              j.retry_count = 0
+                              OR j.updated_at <= NOW() - (interval '1 second' * POWER(2, j.retry_count))
+                          )
+                      )
+                  )
                 ORDER BY j.created_at ASC
                 FOR UPDATE OF j SKIP LOCKED
                 LIMIT 1
@@ -1013,6 +1128,8 @@ impl MetadataStore {
                 id, tenant_id, owner_id, account_id, source_mode, folder_name,
                 selected_uids AS "selected_uids: _",
                 source_uidvalidity,
+                archive_since, archive_before, last_uid_validity, last_imported_uid,
+                retention_days, retry_count, max_retries,
                 status, total_messages, processed_messages, failed_messages,
                 last_error, started_at, completed_at, deleted_at, created_at, updated_at
             FROM updated
@@ -1050,6 +1167,244 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Update the total number of messages an IMAP archive job expects to
+    /// process, based on the UID list fetched from the server.
+    pub async fn update_mail_archive_job_total(
+        &self,
+        id: MailImportJobId,
+        total_messages: i32,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET total_messages = $1,
+                updated_at = NOW()
+            WHERE id = $2 AND deleted_at IS NULL
+            "#,
+            total_messages,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update the progress counters and UID watermark for an IMAP archive job.
+    pub async fn update_mail_archive_job_progress(
+        &self,
+        id: MailImportJobId,
+        processed: i32,
+        failed: i32,
+        last_uid_validity: Option<i64>,
+        last_imported_uid: Option<i64>,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET processed_messages = $1,
+                failed_messages = $2,
+                last_uid_validity = $3,
+                last_imported_uid = $4,
+                last_error = $5,
+                updated_at = NOW()
+            WHERE id = $6 AND deleted_at IS NULL
+            "#,
+            processed,
+            failed,
+            last_uid_validity,
+            last_imported_uid,
+            last_error,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a mail import job, but only if it is an `imap_archive` job.
+    ///
+    /// Also sets the status to `cancelled` atomically so a worker that is
+    /// already inside the scan sees the cancellation and exits cleanly instead
+    /// of getting stuck in `running` against a deleted row.
+    ///
+    /// Returns `true` if a row was updated.
+    pub async fn soft_delete_mail_archive_job(
+        &self,
+        id: MailImportJobId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let rows = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET deleted_at = NOW(),
+                status = 'cancelled',
+                updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND source_mode = 'imap_archive'
+            "#,
+            id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(rows > 0)
+    }
+
+    /// Soft-delete archived mail messages and their visible artifacts that exceed the configured retention period.
+    ///
+    /// Returns the number of rows soft-deleted.
+    pub async fn apply_archive_retention(
+        &self,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder_name: &str,
+        archive_job_id: MailImportJobId,
+        retention_days: i32,
+    ) -> Result<u64> {
+        if retention_days <= 0 {
+            return Err(anyhow::anyhow!("retention_days must be positive"));
+        }
+        let mut tx = self.pool.begin().await?;
+        let target_filter = r#"
+            owner_id = $1
+              AND account_id = $2
+              AND source_folder = $3
+              AND archive_job_id = $4
+              AND source_mode = 'imap_archive'
+              AND imported_at < NOW() - (interval '1 day' * $5)
+              AND deleted_at IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM mail_import_jobs j
+                  WHERE j.id = archive_job_id
+                    AND j.deleted_at IS NULL
+                    AND j.status = 'running'
+              )
+        "#;
+
+        sqlx::query(&format!(
+            r#"
+            UPDATE files
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE owner_id = $1
+              AND parent_folder_id IN (
+                  SELECT folder_id FROM mail_messages
+                  WHERE {target_filter} AND folder_id IS NOT NULL
+              )
+              AND deleted_at IS NULL
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            UPDATE folders
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE owner_id = $1
+              AND id IN (
+                  SELECT folder_id FROM mail_messages
+                  WHERE {target_filter} AND folder_id IS NOT NULL
+              )
+              AND deleted_at IS NULL
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        // Remove internal message parts/attachments before soft-deleting the
+        // parent rows. These tables do not have a deleted_at column, so they
+        // are hard-deleted as part of retention; the visible artifacts above
+        // are soft-deleted to match the rest of the trash semantics.
+        sqlx::query(&format!(
+            r#"
+            DELETE FROM mail_message_parts
+            WHERE message_id IN (
+                SELECT id FROM mail_messages
+                WHERE {target_filter}
+            )
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            DELETE FROM mail_attachments
+            WHERE message_id IN (
+                SELECT id FROM mail_messages
+                WHERE {target_filter}
+            )
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        let rows = sqlx::query(&format!(
+            r#"
+            UPDATE mail_messages
+            SET deleted_at = NOW(), updated_at = NOW()
+            WHERE {target_filter}
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        tx.commit().await?;
+        Ok(rows)
+    }
+
+    /// Atomically update a mail import job's status, but only if its current
+    /// status is one of `allowed_from`.
+    ///
+    /// Returns `true` if a row was updated.
+    pub async fn update_mail_import_job_status(
+        &self,
+        id: MailImportJobId,
+        status: &str,
+        allowed_from: &[&str],
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = $2, updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = ANY($3)
+            "#,
+            id,
+            status,
+            allowed_from as &[&str],
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Mark a pending or already-running mail import job as running and record
@@ -1116,6 +1471,26 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Finish an archive scan and schedule the recurring job for another scan.
+    pub async fn requeue_mail_archive_job(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'pending',
+                retry_count = 0,
+                last_error = NULL,
+                completed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+              AND source_mode = 'imap_archive' AND status = 'running'
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Mark a running mail import job as failed.
     ///
     /// Returns `true` if the job was in the `running` state and updated,
@@ -1128,7 +1503,10 @@ impl MetadataStore {
         let result = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
-            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            SET status = 'failed',
+                last_error = $2,
+                completed_at = NOW(),
+                updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
             "#,
             id,
@@ -1137,6 +1515,51 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a running IMAP archive job as failed, with retry/backoff semantics.
+    ///
+    /// `max_retries` is interpreted as the maximum total number of attempts,
+    /// including the initial attempt. This method transitions the job to
+    /// `failed` once `retry_count + 1 >= max_retries`; otherwise it returns the
+    /// job to `pending` with `started_at` cleared so it can be claimed again
+    /// after the backoff delay. Once retries are exhausted, `completed_at` is
+    /// recorded.
+    ///
+    /// Returns the new job status if the job was in the `running` state and
+    /// updated.
+    pub async fn mark_archive_job_failed_with_retry(
+        &self,
+        id: MailImportJobId,
+        error: &str,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = CASE
+                    WHEN retry_count + 1 >= max_retries THEN 'failed'
+                    ELSE 'pending'
+                 END,
+                last_error = $2,
+                retry_count = retry_count + 1,
+                started_at = CASE
+                    WHEN retry_count + 1 >= max_retries THEN started_at
+                    ELSE NULL
+                 END,
+                completed_at = CASE
+                    WHEN retry_count + 1 >= max_retries THEN NOW()
+                    ELSE NULL
+                 END,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND source_mode = 'imap_archive' AND status = 'running'
+            RETURNING status
+            "#,
+            id,
+            error
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.status))
     }
 
     fn parse_replication_state(value: &str) -> Result<ReplicationState> {

@@ -74,6 +74,12 @@ pub enum EventType {
     MailAccountCreated,
     MailAccountDeleted,
     MailImported,
+    MailArchiveJobCreated,
+    MailArchiveJobStarted,
+    MailArchiveJobCompleted,
+    MailArchiveJobFailed,
+    MailArchiveJobCancelled,
+    MailArchiveJobDeleted,
 }
 
 impl EventType {
@@ -114,6 +120,12 @@ impl EventType {
             EventType::MailAccountCreated => "MailAccountCreated",
             EventType::MailAccountDeleted => "MailAccountDeleted",
             EventType::MailImported => "MailImported",
+            EventType::MailArchiveJobCreated => "MailArchiveJobCreated",
+            EventType::MailArchiveJobStarted => "MailArchiveJobStarted",
+            EventType::MailArchiveJobCompleted => "MailArchiveJobCompleted",
+            EventType::MailArchiveJobFailed => "MailArchiveJobFailed",
+            EventType::MailArchiveJobCancelled => "MailArchiveJobCancelled",
+            EventType::MailArchiveJobDeleted => "MailArchiveJobDeleted",
         }
     }
 }
@@ -511,6 +523,59 @@ pub struct MailImportedPayload {
     pub source_uid: i64,
     #[schema(value_type = Uuid)]
     pub owner_id: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobCreatedPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub folder_name: String,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobStartedPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobCompletedPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub processed_messages: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobFailedPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobCancelledPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailArchiveJobDeletedPayload {
+    #[schema(value_type = Uuid)]
+    pub job_id: MailImportJobId,
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
 }
 
 #[cfg(test)]

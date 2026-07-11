@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE modules SET enabled = true, updated_at = now() WHERE module_key = $1 AND tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "56d91efbd5e20821b55218071d60629d99d7a01507b99d860d3cc9db4ee9a05b"
+}

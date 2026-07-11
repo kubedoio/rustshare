@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE security_config\n            SET\n                login_protection_enabled = COALESCE($1, login_protection_enabled),\n                max_login_attempts = COALESCE($2, max_login_attempts),\n                login_block_duration_minutes = COALESCE($3, login_block_duration_minutes),\n                updated_at = NOW()\n            WHERE id = 1\n            RETURNING login_protection_enabled, max_login_attempts, login_block_duration_minutes, updated_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "login_protection_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "max_login_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "login_block_duration_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bool",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9adec2d6a7662a0a685a40088cba67fd69dbcea14a47286a5b4b29d9a9f9fa2c"
+}

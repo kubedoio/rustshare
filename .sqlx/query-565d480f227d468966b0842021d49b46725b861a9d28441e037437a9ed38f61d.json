@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            COUNT(*) FILTER (WHERE status = 'queued') AS queued,\n            COUNT(*) FILTER (WHERE status = 'syncing') AS syncing,\n            COUNT(*) FILTER (WHERE status = 'retrying') AS retrying,\n            COUNT(*) FILTER (WHERE status = 'completed') AS completed,\n            COUNT(*) FILTER (WHERE status = 'failed') AS failed,\n            CAST(EXTRACT(EPOCH FROM (NOW() - (MIN(created_at) FILTER (WHERE status IN ('queued', 'retrying', 'syncing'))))) AS BIGINT) AS oldest_pending_job_age_seconds,\n            CAST(EXTRACT(EPOCH FROM (NOW() - (MIN(updated_at) FILTER (WHERE status = 'failed')))) AS BIGINT) AS oldest_failed_job_age_seconds\n        FROM replication_jobs\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "queued",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "syncing",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "retrying",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "completed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "failed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "oldest_pending_job_age_seconds",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "oldest_failed_job_age_seconds",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "565d480f227d468966b0842021d49b46725b861a9d28441e037437a9ed38f61d"
+}

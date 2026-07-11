@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oidc_config\n         SET enabled = true,\n             client_id = $2,\n             client_secret_enc = $3,\n             issuer_url = $4,\n             redirect_url = $5,\n             login_label = $6,\n             scopes = $7,\n             updated_at = NOW()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b68298ff82f2d02a3494e4c8a576783b32bc6830783974d18c22814ba4ffeb72"
+}

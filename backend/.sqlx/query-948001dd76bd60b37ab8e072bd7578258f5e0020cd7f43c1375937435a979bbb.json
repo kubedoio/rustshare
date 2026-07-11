@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_messages\n            SET archive_job_id = $3, updated_at = NOW()\n            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL\n              AND archive_job_id IS NOT DISTINCT FROM $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "948001dd76bd60b37ab8e072bd7578258f5e0020cd7f43c1375937435a979bbb"
+}

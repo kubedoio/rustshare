@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            COUNT(*) FILTER (WHERE enabled = TRUE) AS enabled,\n            COUNT(*) FILTER (WHERE enabled = TRUE AND is_required = TRUE) AS required,\n            COUNT(*) FILTER (WHERE enabled = TRUE AND health_status = 'healthy') AS healthy,\n            COUNT(*) FILTER (WHERE enabled = TRUE AND health_status = 'degraded') AS degraded,\n            COUNT(*) FILTER (WHERE enabled = TRUE AND health_status = 'failed') AS failed\n        FROM replication_targets\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "enabled",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "required",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "healthy",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "degraded",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "failed",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "36233e5be5f23b2fdba12988ec15cab44db25f44184c89eaf7ce9255fb89684d"
+}

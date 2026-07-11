@@ -4,7 +4,10 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::{FolderId, MailAccountId, MailAttachmentId, MailMessageId, MailMessagePartId, UserId};
+use super::{
+    FolderId, MailAccountId, MailAttachmentId, MailImportJobId, MailMessageId, MailMessagePartId,
+    UserId,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +92,8 @@ pub struct MailMessage {
     pub blob_sha256: Option<String>,
     pub size_bytes: Option<i64>,
     pub has_attachments: bool,
+    #[schema(value_type = Option<Uuid>)]
+    pub archive_job_id: Option<MailImportJobId>,
     pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -130,6 +135,7 @@ impl MailMessage {
             blob_sha256: None,
             size_bytes: None,
             has_attachments: false,
+            archive_job_id: None,
             deleted_at: None,
             created_at: now,
             updated_at: now,

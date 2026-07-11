@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{LinkTargetType, MailTlsMode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -166,6 +166,49 @@ pub struct MailImportJobResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailImportJobListResponse {
     pub jobs: Vec<MailImportJobResponse>,
+}
+
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct CreateMailArchiveJobRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub folder_name: String,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
+    #[validate(range(min = 1, max = 36500))]
+    pub retention_days: Option<i32>,
+    #[validate(range(min = 1, max = 100))]
+    pub max_retries: Option<i32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailArchiveJobResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub account_id: Uuid,
+    pub folder_name: String,
+    pub source_mode: String,
+    pub status: String,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
+    pub last_uid_validity: Option<i64>,
+    pub last_imported_uid: Option<i64>,
+    pub retention_days: Option<i32>,
+    pub retry_count: i32,
+    pub max_retries: i32,
+    pub total_messages: i32,
+    pub processed_messages: i32,
+    pub failed_messages: i32,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailArchiveJobListResponse {
+    pub jobs: Vec<MailArchiveJobResponse>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -542,6 +585,31 @@ fn job_to_response(job: rustshare_core::domain::MailImportJob) -> MailImportJobR
     }
 }
 
+fn archive_job_to_response(job: rustshare_core::domain::MailImportJob) -> MailArchiveJobResponse {
+    MailArchiveJobResponse {
+        id: job.id,
+        account_id: job.account_id,
+        folder_name: job.folder_name,
+        source_mode: job.source_mode,
+        status: job.status,
+        archive_since: job.archive_since,
+        archive_before: job.archive_before,
+        last_uid_validity: job.last_uid_validity,
+        last_imported_uid: job.last_imported_uid,
+        retention_days: job.retention_days,
+        retry_count: job.retry_count,
+        max_retries: job.max_retries,
+        total_messages: job.total_messages,
+        processed_messages: job.processed_messages,
+        failed_messages: job.failed_messages,
+        last_error: job.last_error,
+        started_at: job.started_at,
+        completed_at: job.completed_at,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListMailMessagesQuery {
     #[serde(default)]
@@ -872,4 +940,144 @@ pub async fn get_mail_import_job(
         .await?;
 
     Ok(Json(job_to_response(job)))
+}
+
+/// Create a recurring IMAP archive job for a folder and optional date range.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{account_id}/archive-jobs",
+    tag = "Mail",
+    params(("account_id" = Uuid, Path, description = "Mail account ID")),
+    request_body = CreateMailArchiveJobRequest,
+    responses(
+        (status = 202, description = "Archive job created", body = MailArchiveJobResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn create_mail_archive_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<CreateMailArchiveJobRequest>,
+) -> Result<(StatusCode, Json<MailArchiveJobResponse>), AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .mail_service
+        .create_archive_job(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.folder_name,
+            req.archive_since,
+            req.archive_before,
+            req.retention_days,
+            req.max_retries,
+        )
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(archive_job_to_response(job))))
+}
+
+/// List active archive jobs for a mail account.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{account_id}/archive-jobs",
+    tag = "Mail",
+    params(("account_id" = Uuid, Path, description = "Mail account ID")),
+    responses(
+        (status = 200, description = "Archive jobs", body = MailArchiveJobListResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_archive_jobs(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<MailArchiveJobListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let jobs = state
+        .mail_service
+        .list_archive_jobs(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+    Ok(Json(MailArchiveJobListResponse {
+        jobs: jobs.into_iter().map(archive_job_to_response).collect(),
+    }))
+}
+
+/// Get a single archive job by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/archive-jobs/{job_id}",
+    tag = "Mail",
+    params(("job_id" = Uuid, Path, description = "Archive job ID")),
+    responses(
+        (status = 200, description = "Archive job", body = MailArchiveJobResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_mail_archive_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<MailArchiveJobResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .mail_service
+        .get_archive_job(auth.tenant_id, auth.user_id, job_id)
+        .await?;
+    Ok(Json(archive_job_to_response(job)))
+}
+
+/// Cancel a pending or running archive job.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/mail/archive-jobs/{job_id}/cancel",
+    tag = "Mail",
+    params(("job_id" = Uuid, Path, description = "Archive job ID")),
+    responses(
+        (status = 200, description = "Archive job cancelled", body = MailArchiveJobResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Cannot cancel job in current state", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn cancel_mail_archive_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<MailArchiveJobResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .mail_service
+        .cancel_archive_job(auth.tenant_id, auth.user_id, job_id)
+        .await?;
+    Ok(Json(archive_job_to_response(job)))
+}
+
+/// Soft-delete an archive job.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/archive-jobs/{job_id}",
+    tag = "Mail",
+    params(("job_id" = Uuid, Path, description = "Archive job ID")),
+    responses(
+        (status = 204, description = "Archive job deleted"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn delete_mail_archive_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    state
+        .mail_service
+        .delete_archive_job(auth.tenant_id, auth.user_id, job_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }

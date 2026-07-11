@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, file_id, folder_id, share_token, permissions as \"permissions: SharePermissions\", password_hash,\n                   expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,\n                   created_by, created_at, revoked_at, tenant_id\n            FROM shares\n            WHERE file_id IS NOT DISTINCT FROM $1::uuid\n              AND folder_id IS NOT DISTINCT FROM $2::uuid\n              AND recipient_group_id = ANY($3)\n              AND tenant_id = $4\n              AND revoked_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "file_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "folder_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "share_token",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "permissions: SharePermissions",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "upload_only",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "access_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "recipient_user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "recipient_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "revoked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "fa4e9dfab7217d7452c8a8c8ad15924930157b3b8c090efa599247ff4ced26e2"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE modules\n            SET icon = 'lightbulb',\n                ui_config = jsonb_set(\n                    COALESCE(ui_config, '{}'),\n                    '{sidebar,icon}',\n                    '\"lightbulb\"'\n                )\n            WHERE module_key = 'brainstorming'\n              AND tenant_id = $1\n              AND icon = 'pen-tool'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "323f5e7a3d50f493ca7c640c15e41d25b67486e60e2786dfd9ea511cb4ac5223"
+}
