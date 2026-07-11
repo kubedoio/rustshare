@@ -39,6 +39,9 @@ Retry uses `retry_count` and exponential backoff derived from `updated_at`. Jobs
 6. **No admin-only archive jobs in this phase.**
    Archive jobs follow the same ownership model as selected imports. Admin archive visibility is future work.
 
+7. **UIDVALIDITY changes reset incremental state and may create duplicates.**
+   IMAP `UIDVALIDITY` is the server's promise that UIDs are stable. When it changes (folder rebuild, server migration, etc.), RustShare resets `last_imported_uid` and re-imports the date range. Because the unique index on `mail_messages` includes `source_uidvalidity`, messages imported under the old UIDVALIDITY are not deduplicated against the new import. This can produce visible duplicates; deduplication by `Message-Id` across UIDVALIDITY changes is future work.
+
 ## Data model changes
 
 ### Migration: `backend/migrations/20260709150001_mail_archive_jobs.sql`

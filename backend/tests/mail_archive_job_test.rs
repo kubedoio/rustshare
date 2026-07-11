@@ -1,6 +1,13 @@
 //! Integration test for the archive job lifecycle.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use chrono::{Duration, Utc};
 use rustshare_core::domain::MailTlsMode;
+use rustshare_server::services::imap_client::{ImapArchiveSession, ImapError};
 
 mod contracts;
 use contracts::common::{cleanup_tenant, cleanup_user, setup_test_env};
@@ -81,6 +88,370 @@ async fn archive_job_lifecycle_create_cancel_delete() {
         .get_archive_job(ctx.tenant_id, user.id, job.id)
         .await;
     assert!(result.is_err());
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+fn sample_email_bytes(subject: &str, message_id: &str, date: &str, body: &str) -> Vec<u8> {
+    format!(
+        "From: sender@example.com\r\n\
+         To: recipient@example.com\r\n\
+         Subject: {}\r\n\
+         Message-Id: <{}>\r\n\
+         Date: {}\r\n\
+         MIME-Version: 1.0\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\r\n\
+         {}\r\n",
+        subject, message_id, date, body
+    )
+    .into_bytes()
+}
+
+struct MockImapArchiveSession {
+    uidvalidity: Option<u32>,
+    uids: Vec<u32>,
+    messages: HashMap<u32, Vec<u8>>,
+    fetch_count: Arc<AtomicUsize>,
+    fetch_uids_error: Option<String>,
+    fetch_rfc822_error: Option<String>,
+}
+
+impl MockImapArchiveSession {
+    fn new(
+        uidvalidity: Option<u32>,
+        uids: Vec<u32>,
+        messages: HashMap<u32, Vec<u8>>,
+    ) -> (Self, Arc<AtomicUsize>) {
+        let fetch_count = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                uidvalidity,
+                uids,
+                messages,
+                fetch_count: fetch_count.clone(),
+                fetch_uids_error: None,
+                fetch_rfc822_error: None,
+            },
+            fetch_count,
+        )
+    }
+}
+
+#[async_trait]
+impl ImapArchiveSession for MockImapArchiveSession {
+    async fn fetch_uids_by_date_range(
+        &mut self,
+        _folder: &str,
+        _since: Option<chrono::DateTime<Utc>>,
+        _before: Option<chrono::DateTime<Utc>>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
+        if let Some(err) = &self.fetch_uids_error {
+            return Err(ImapError::CommandFailed(err.clone()));
+        }
+        Ok((self.uidvalidity, self.uids.clone()))
+    }
+
+    async fn fetch_rfc822(
+        &mut self,
+        _folder: &str,
+        uid: u32,
+        _expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError> {
+        self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(err) = &self.fetch_rfc822_error {
+            return Err(ImapError::CommandFailed(err.clone()));
+        }
+        self.messages
+            .get(&uid)
+            .cloned()
+            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} not found")))
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_processes_with_mock_imap() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            Some(90),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut messages = HashMap::new();
+    messages.insert(
+        1,
+        sample_email_bytes(
+            "First",
+            "msg1@example.com",
+            "Mon, 15 Aug 2022 10:30:00 +0000",
+            "body one",
+        ),
+    );
+    messages.insert(
+        2,
+        sample_email_bytes(
+            "Second",
+            "msg2@example.com",
+            "Tue, 16 Aug 2022 11:00:00 +0000",
+            "body two",
+        ),
+    );
+    let (mut session, fetch_count) = MockImapArchiveSession::new(Some(1000), vec![1, 2], messages);
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let updated = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.total_messages, 2);
+    assert_eq!(updated.processed_messages, 2);
+    assert_eq!(updated.failed_messages, 0);
+    assert_eq!(updated.last_uid_validity, Some(1000));
+    assert_eq!(updated.last_imported_uid, Some(2));
+
+    let msgs = ctx
+        .metadata_store
+        .list_mail_messages(ctx.tenant_id, user.id)
+        .await
+        .unwrap();
+    assert_eq!(msgs.len(), 2);
+    let uids: Vec<_> = msgs.iter().map(|m| m.source_uid).collect();
+    assert!(uids.contains(&Some(1)));
+    assert!(uids.contains(&Some(2)));
+    for m in &msgs {
+        assert_eq!(m.source_mode, "imap_archive");
+        assert_eq!(m.source_folder.as_deref(), Some("INBOX"));
+        assert_eq!(m.source_uidvalidity, Some(1000));
+        assert_eq!(m.account_id, Some(account.id));
+    }
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 2);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_uidvalidity_reset_reimports() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let msg = sample_email_bytes(
+        "Reimport",
+        "msg@example.com",
+        "Mon, 15 Aug 2022 10:30:00 +0000",
+        "body",
+    );
+
+    let (mut session1, fetch_count) =
+        MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg.clone())].into());
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session1)
+        .await
+        .unwrap();
+
+    let msgs_after_first = ctx
+        .metadata_store
+        .list_mail_messages(ctx.tenant_id, user.id)
+        .await
+        .unwrap();
+    assert_eq!(msgs_after_first.len(), 1);
+
+    // Simulate a UIDVALIDITY reset on the server and run the same job again.
+    sqlx::query("UPDATE mail_import_jobs SET status = 'running' WHERE id = $1")
+        .bind(job.id)
+        .execute(&ctx.pool)
+        .await
+        .unwrap();
+
+    let (mut session2, _) = MockImapArchiveSession::new(Some(2000), vec![1], [(1, msg)].into());
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session2)
+        .await
+        .unwrap();
+
+    let updated = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+    assert_eq!(updated.last_uid_validity, Some(2000));
+
+    let msgs = ctx
+        .metadata_store
+        .list_mail_messages(ctx.tenant_id, user.id)
+        .await
+        .unwrap();
+    assert_eq!(msgs.len(), 2);
+    let uidvalidities: Vec<_> = msgs
+        .iter()
+        .map(|m| (m.source_uid, m.source_uidvalidity))
+        .collect();
+    assert!(uidvalidities.contains(&(Some(1), Some(1000))));
+    assert!(uidvalidities.contains(&(Some(1), Some(2000))));
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 2);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_retention_soft_deletes_old_messages() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let msg = sample_email_bytes(
+        "Old",
+        "old@example.com",
+        "Mon, 15 Aug 2022 10:30:00 +0000",
+        "body",
+    );
+
+    let (mut session, _) = MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg)].into());
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    // Age the imported message so that a 1-day retention policy deletes it.
+    let old_imported_at = Utc::now() - Duration::days(10);
+    sqlx::query(
+        "UPDATE mail_messages SET imported_at = $1 WHERE owner_id = $2 AND source_uid = $3 AND source_uidvalidity = $4",
+    )
+    .bind(old_imported_at)
+    .bind(user.id)
+    .bind(1_i64)
+    .bind(1000_i64)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    // Re-run the job with the same UID; the message is deduplicated, but the
+    // retention pass still applies.
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let deleted_count: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM mail_messages WHERE owner_id = $1 AND deleted_at IS NOT NULL",
+    )
+    .bind(user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(deleted_count, 1);
+
+    let visible = ctx
+        .metadata_store
+        .list_mail_messages(ctx.tenant_id, user.id)
+        .await
+        .unwrap();
+    assert!(visible.is_empty());
 
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;

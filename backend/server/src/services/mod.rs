@@ -2,7 +2,9 @@ pub mod brainstorming_service;
 pub mod decision_service;
 pub mod icon_registry;
 pub mod imap_client;
-pub use imap_client::{ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder};
+pub use imap_client::{
+    ImapArchiveSession, ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder,
+};
 pub mod kanban_service;
 pub mod mail_service;
 pub mod meeting_service;

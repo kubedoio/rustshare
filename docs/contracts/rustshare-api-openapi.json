@@ -16649,6 +16649,109 @@
           }
         }
       },
+      "MailArchiveJobCancelledPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MailArchiveJobCompletedPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id",
+          "processed_messages"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "processed_messages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "MailArchiveJobCreatedPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id",
+          "folder_name",
+          "owner_id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "folder_name": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MailArchiveJobDeletedPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MailArchiveJobFailedPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id",
+          "error"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "error": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "MailArchiveJobListResponse": {
         "type": "object",
         "required": [
@@ -16779,6 +16882,23 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "MailArchiveJobStartedPayload": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "account_id"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

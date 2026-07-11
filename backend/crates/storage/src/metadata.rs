@@ -973,7 +973,8 @@ impl MetadataStore {
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
-                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3 AND deleted_at IS NULL
+                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+                  AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 "#,
                 tenant_id,
@@ -996,7 +997,8 @@ impl MetadataStore {
                     status, total_messages, processed_messages, failed_messages,
                     last_error, started_at, completed_at, deleted_at, created_at, updated_at
                 FROM mail_import_jobs
-                WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+                WHERE tenant_id = $1 AND owner_id = $2
+                  AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 "#,
                 tenant_id,
@@ -1223,15 +1225,20 @@ impl MetadataStore {
         }
         let rows = sqlx::query!(
             r#"
-            UPDATE mail_messages
+            UPDATE mail_messages m
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE owner_id = $1
-              AND account_id = $2
-              AND source_folder = $3
-              AND archive_job_id = $4
-              AND source_mode = 'imap_archive'
-              AND imported_at < NOW() - (interval '1 day' * $5)
-              AND deleted_at IS NULL
+            WHERE m.owner_id = $1
+              AND m.account_id = $2
+              AND m.source_folder = $3
+              AND m.archive_job_id = $4
+              AND m.source_mode = 'imap_archive'
+              AND m.imported_at < NOW() - (interval '1 day' * $5)
+              AND m.deleted_at IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM mail_import_jobs j
+                  WHERE j.id = m.archive_job_id
+                    AND j.deleted_at IS NULL
+              )
             "#,
             owner_id,
             account_id,

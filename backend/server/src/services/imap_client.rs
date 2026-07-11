@@ -4,6 +4,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use async_imap::types::{Fetch, Name};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
@@ -387,6 +388,47 @@ impl ImapSession {
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         Ok(())
+    }
+}
+
+/// Trait abstracting the IMAP operations required by archive jobs.
+///
+/// This allows archive job processing to be tested without a real IMAP server.
+#[async_trait]
+pub trait ImapArchiveSession: Send {
+    async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<DateTime<Utc>>,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError>;
+
+    async fn fetch_rfc822(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError>;
+}
+
+#[async_trait]
+impl ImapArchiveSession for ImapSession {
+    async fn fetch_uids_by_date_range(
+        &mut self,
+        folder: &str,
+        since: Option<DateTime<Utc>>,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
+        ImapSession::fetch_uids_by_date_range(self, folder, since, before).await
+    }
+
+    async fn fetch_rfc822(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        expected_uidvalidity: Option<i64>,
+    ) -> Result<Vec<u8>, ImapError> {
+        ImapSession::fetch_rfc822(self, folder, uid, expected_uidvalidity).await
     }
 }
 
