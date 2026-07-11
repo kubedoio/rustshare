@@ -12719,14 +12719,14 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date"
           },
           "archive_since": {
             "type": [
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date"
           },
           "folder_name": {
             "type": "string"
@@ -12751,7 +12751,6 @@
         "type": "object",
         "required": [
           "folder_name",
-          "source_uidvalidity",
           "selected_uids"
         ],
         "properties": {
@@ -12766,9 +12765,12 @@
             }
           },
           "source_uidvalidity": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "UIDVALIDITY value observed when the folder was listed. UIDs are only\nstable within this value; if it changes, the selected UIDs may refer to\ndifferent messages."
+            "description": "UIDVALIDITY value observed when the folder was listed. UIDs are only\nstable within this value; if it changes, the selected UIDs may refer to\ndifferent messages. Servers that did not return UIDVALIDITY should pass null."
           }
         }
       },
@@ -16792,14 +16794,14 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date"
           },
           "archive_since": {
             "type": [
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date"
           },
           "completed_at": {
             "type": [

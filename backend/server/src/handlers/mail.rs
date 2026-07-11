@@ -1101,6 +1101,18 @@ mod tests {
     }
 
     #[test]
+    fn import_job_request_accepts_positive_uidvalidity() {
+        let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
+            "folder_name": "INBOX",
+            "source_uidvalidity": 1,
+            "selected_uids": [1]
+        }))
+        .expect("request should deserialize");
+
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
     fn import_job_request_rejects_non_positive_uidvalidity() {
         let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
             "folder_name": "INBOX",
@@ -1109,6 +1121,28 @@ mod tests {
         }))
         .expect("request should deserialize");
 
-        assert!(req.validate().is_err());
+        let err = req.validate().expect_err("zero should fail validation");
+        assert!(
+            err.field_errors().contains_key("source_uidvalidity"),
+            "error should be on source_uidvalidity"
+        );
+    }
+
+    #[test]
+    fn import_job_request_rejects_negative_uidvalidity() {
+        let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
+            "folder_name": "INBOX",
+            "source_uidvalidity": -1,
+            "selected_uids": [1]
+        }))
+        .expect("request should deserialize");
+
+        let err = req
+            .validate()
+            .expect_err("negative value should fail validation");
+        assert!(
+            err.field_errors().contains_key("source_uidvalidity"),
+            "error should be on source_uidvalidity"
+        );
     }
 }
