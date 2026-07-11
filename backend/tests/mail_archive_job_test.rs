@@ -643,3 +643,94 @@ async fn archive_job_reclaims_incomplete_row() {
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_watermark_advances_across_gaps() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut messages = HashMap::new();
+    messages.insert(
+        1,
+        sample_email_bytes(
+            "First",
+            "msg1@example.com",
+            "Mon, 15 Aug 2022 10:30:00 +0000",
+            "body one",
+        ),
+    );
+    messages.insert(
+        3,
+        sample_email_bytes(
+            "Third",
+            "msg3@example.com",
+            "Mon, 15 Aug 2022 11:00:00 +0000",
+            "body three",
+        ),
+    );
+    messages.insert(
+        5,
+        sample_email_bytes(
+            "Fifth",
+            "msg5@example.com",
+            "Mon, 15 Aug 2022 12:00:00 +0000",
+            "body five",
+        ),
+    );
+    let (mut session, _) = MockImapArchiveSession::new(Some(1000), vec![1, 3, 5], messages);
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let updated = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+    // IMAP UIDs are monotonic but not contiguous; the watermark must reach the
+    // highest successfully imported UID even when gaps represent deleted messages.
+    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.last_uid_validity, Some(1000));
+    assert_eq!(updated.last_imported_uid, Some(5));
+    assert_eq!(updated.processed_messages, 3);
+    assert_eq!(updated.failed_messages, 0);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}

@@ -176,7 +176,7 @@ pub struct CreateMailArchiveJobRequest {
     pub archive_before: Option<DateTime<Utc>>,
     #[validate(range(min = 1, max = 36500))]
     pub retention_days: Option<i32>,
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, max = 100))]
     pub max_retries: Option<i32>,
 }
 

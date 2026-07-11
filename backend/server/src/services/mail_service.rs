@@ -1710,10 +1710,13 @@ impl MailService {
                         payload,
                         job.owner_id,
                     );
-                    self.event_store
-                        .append(&event, &self.broadcaster)
-                        .await
-                        .ok();
+                    if let Err(e) = self.event_store.append(&event, &self.broadcaster).await {
+                        tracing::error!(
+                            job_id = %job.id,
+                            error = %e,
+                            "Failed to append MailArchiveJobFailed event"
+                        );
+                    }
                 }
             }
             _ => {}
@@ -1758,6 +1761,7 @@ impl MailService {
 
         let mut processed = 0i32;
         let mut failed = 0i32;
+        let mut failed_once = false;
         let mut last_uid: Option<i64> = last_imported_uid;
 
         // Update progress watermark before the loop.
@@ -1794,12 +1798,6 @@ impl MailService {
                 }
             }
 
-            // Helper: is this UID the next contiguous one after the current
-            // watermark? We only advance last_uid across a contiguous prefix of
-            // successful imports so a failed UID is retried on the next run.
-            let next_expected_uid = last_uid.map(|l| l + 1).unwrap_or(uid_i64);
-            let is_contiguous = uid_i64 == next_expected_uid;
-
             // Skip UIDs that were already imported by this archive job.
             match self
                 .metadata_store
@@ -1824,6 +1822,7 @@ impl MailService {
                             .await
                         {
                             failed += 1;
+                            failed_once = true;
                             self.metadata_store
                                 .update_mail_archive_job_progress(
                                     job.id,
@@ -1842,9 +1841,10 @@ impl MailService {
                         }
                     } else {
                         // Already imported under this UIDVALIDITY; advance the
-                        // watermark only across a contiguous prefix and do not
-                        // count it as work done this run.
-                        if is_contiguous {
+                        // watermark to this UID as long as no earlier UID in
+                        // this run failed. Gaps are permanently missing messages
+                        // within the current UIDVALIDITY.
+                        if !failed_once {
                             last_uid = Some(uid_i64);
                         }
                         continue;
@@ -1853,6 +1853,7 @@ impl MailService {
                 Ok(None) => {}
                 Err(e) => {
                     failed += 1;
+                    failed_once = true;
                     self.metadata_store
                         .update_mail_archive_job_progress(
                             job.id,
@@ -1876,6 +1877,7 @@ impl MailService {
                 Ok(r) => r,
                 Err(e) => {
                     failed += 1;
+                    failed_once = true;
                     self.metadata_store
                         .update_mail_archive_job_progress(
                             job.id,
@@ -1926,14 +1928,18 @@ impl MailService {
                     match self.event_store.append(&event, &self.broadcaster).await {
                         Ok(()) => {
                             processed += 1;
-                            // Only advance the watermark across a contiguous
-                            // prefix of successful imports.
-                            if is_contiguous {
+                            if !failed_once {
                                 last_uid = Some(uid_i64);
                             }
                         }
                         Err(e) => {
+                            tracing::error!(
+                                message_id = %msg.id,
+                                error = %e,
+                                "Failed to append MailImported event"
+                            );
                             failed += 1;
+                            failed_once = true;
                             let err = format!("Failed to append MailImported event: {e}");
                             self.metadata_store
                                 .update_mail_archive_job_progress(
@@ -1957,6 +1963,7 @@ impl MailService {
                 }
                 Err(e) => {
                     failed += 1;
+                    failed_once = true;
                     self.metadata_store
                         .update_mail_archive_job_progress(
                             job.id,
@@ -1972,7 +1979,8 @@ impl MailService {
             }
 
             // Update progress periodically.
-            self.metadata_store
+            if let Err(e) = self
+                .metadata_store
                 .update_mail_archive_job_progress(
                     job.id,
                     processed,
@@ -1982,7 +1990,13 @@ impl MailService {
                     None,
                 )
                 .await
-                .ok();
+            {
+                tracing::error!(
+                    job_id = %job.id,
+                    error = %e,
+                    "Failed to update archive job progress"
+                );
+            }
         }
 
         // Apply retention.
@@ -1997,7 +2011,7 @@ impl MailService {
                         retention_days,
                     )
                     .await
-                    .ok();
+                    .map_err(|e| MailError::Database(format!("Retention cleanup failed: {e}")))?;
             }
         }
 
@@ -2035,10 +2049,13 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?,
             job.owner_id,
         );
-        self.event_store
-            .append(&event, &self.broadcaster)
-            .await
-            .ok();
+        if let Err(e) = self.event_store.append(&event, &self.broadcaster).await {
+            tracing::error!(
+                job_id = %job.id,
+                error = %e,
+                "Failed to append MailArchiveJobCompleted event"
+            );
+        }
 
         Ok(())
     }
@@ -2077,10 +2094,13 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?,
             job.owner_id,
         );
-        self.event_store
-            .append(&event, &self.broadcaster)
-            .await
-            .ok();
+        if let Err(e) = self.event_store.append(&event, &self.broadcaster).await {
+            tracing::error!(
+                job_id = %job.id,
+                error = %e,
+                "Failed to append MailArchiveJobStarted event"
+            );
+        }
 
         // Load account.
         let account = match self
