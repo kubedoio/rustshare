@@ -71,11 +71,7 @@
 				<ArrowLeft size={14} />
 				<span>Back</span>
 			</button>
-			<a
-				href={mailApi.downloadSourceUrl(messageId!)}
-				download
-				class="btn gap-2 btn-outline btn-sm"
-			>
+			<a href={mailApi.downloadSourceUrl(messageId!)} download class="btn gap-2 btn-outline btn-sm">
 				<Download size={14} />
 				<span>Download .eml</span>
 			</a>
@@ -84,12 +80,24 @@
 		<div class="flex flex-col gap-6">
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
 				<div class="grid grid-cols-1 gap-2 text-sm">
-					<div><span class="text-base-content/55">From:</span> {formatAddresses([message.from_name, message.from_address].filter(Boolean))}</div>
-					<div><span class="text-base-content/55">To:</span> {formatAddresses(message.to_addresses)}</div>
+					<div>
+						<span class="text-base-content/55">From:</span>
+						{formatAddresses([message.from_name, message.from_address].filter(Boolean))}
+					</div>
+					<div>
+						<span class="text-base-content/55">To:</span>
+						{formatAddresses(message.to_addresses)}
+					</div>
 					{#if message.cc_addresses && JSON.stringify(message.cc_addresses) !== '[]'}
-						<div><span class="text-base-content/55">Cc:</span> {formatAddresses(message.cc_addresses)}</div>
+						<div>
+							<span class="text-base-content/55">Cc:</span>
+							{formatAddresses(message.cc_addresses)}
+						</div>
 					{/if}
-					<div><span class="text-base-content/55">Date:</span> {message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'}</div>
+					<div>
+						<span class="text-base-content/55">Date:</span>
+						{message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'}
+					</div>
 				</div>
 			</div>
 
@@ -102,7 +110,11 @@
 					{:else if body.type === 'text'}
 						<pre class="whitespace-pre-wrap font-mono text-sm">{body.content}</pre>
 					{:else}
-						<EmptyState icon="📄" title="No readable body" description="This message has no text or HTML body part." />
+						<EmptyState
+							icon="📄"
+							title="No readable body"
+							description="This message has no text or HTML body part."
+						/>
 					{/if}
 				{:catch error}
 					<ErrorState title="Failed to load body" message={error?.message || 'Unknown error'} />
