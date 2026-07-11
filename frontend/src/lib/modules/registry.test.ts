@@ -123,7 +123,8 @@ describe('Module Registry', () => {
 			'globe',
 			'settings',
 			'lightbulb',
-			'activity'
+			'activity',
+			'mail'
 		]);
 
 		for (const module of modules) {

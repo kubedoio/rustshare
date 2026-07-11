@@ -7,6 +7,7 @@
 	import DecisionsModuleView from '$lib/components/modules/DecisionsModuleView.svelte';
 	import SharesModuleView from '$lib/components/modules/SharesModuleView.svelte';
 	import BrainstormingModuleView from '$lib/components/modules/BrainstormingModuleView.svelte';
+	import MailModuleView from '$lib/components/modules/MailModuleView.svelte';
 	import GenericModuleView from '$lib/components/modules/GenericModuleView.svelte';
 
 	let { module }: { module: ModuleDefinition } = $props();
@@ -19,7 +20,8 @@
 		kanban: KanbanModuleView,
 		decisions: DecisionsModuleView,
 		shares: SharesModuleView,
-		brainstorming: BrainstormingModuleView
+		brainstorming: BrainstormingModuleView,
+		'mail-list': MailModuleView
 	};
 
 	let Renderer = $derived(rendererMap[module.ui.page.renderer] || GenericModuleView);

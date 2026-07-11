@@ -133,7 +133,8 @@ const APPROVED_ICONS = new Set([
 	'globe',
 	'settings',
 	'lightbulb',
-	'activity'
+	'activity',
+	'mail'
 ]);
 
 export function isValidIconKey(icon: string): boolean {
@@ -522,6 +523,58 @@ export const PREDEFINED_MODULES: ModuleDefinition[] = [
 			}
 		},
 		aiIndexing: { enabled: true },
+		audit: { enabled: true }
+	},
+	{
+		id: 'module_mail',
+		key: 'mail',
+		displayName: 'Mail',
+		description: 'Import, archive, and reference email inside RustShare workspaces.',
+		enabled: true,
+		rootPath: getModuleRoot('Mail'),
+		renderer: 'mail-list',
+		defaultTemplate: null,
+		icon: 'mail',
+		schemaVersion: '1.0',
+		permissions: {
+			adminCanConfigure: true,
+			workspaceMembersCanUse: true,
+			allowPublicShare: false,
+			allowInternalShare: true
+		},
+		ui: {
+			sidebar: { enabled: true, order: 65, icon: 'mail', label: 'Mail' },
+			dashboard: {
+				enabled: true,
+				order: 65,
+				widget: {
+					enabled: true,
+					type: 'mail-summary',
+					title: 'Mail',
+					description: 'Imported messages.',
+					size: 'small',
+					columns: { desktop: 3, tablet: 6, mobile: 12 },
+					maxItems: 0,
+					primaryAction: { label: 'Import mail', action: 'generic-create' }
+				}
+			},
+			page: {
+				enabled: true,
+				route: '/modules/mail',
+				renderer: 'mail-list',
+				layout: 'list-grid',
+				emptyStateTitle: 'No imported mail yet',
+				emptyStateDescription:
+					'No imported mail yet. Upload an .eml file or connect an IMAP account to import messages.',
+				primaryAction: { label: 'Import mail', action: 'generic-create' },
+				searchPlaceholder: 'Search messages...',
+				filterLabel: 'All messages',
+				sortLabel: 'Imported',
+				itemSingular: 'message',
+				itemPlural: 'messages'
+			}
+		},
+		aiIndexing: { enabled: false },
 		audit: { enabled: true }
 	}
 ];

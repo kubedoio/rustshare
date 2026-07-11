@@ -13,7 +13,8 @@ export const APPROVED_MODULE_ICONS = [
 	'globe',
 	'settings',
 	'lightbulb',
-	'activity'
+	'activity',
+	'mail'
 ] as const;
 
 export const DEFAULT_MODULE_ICON = 'folder';

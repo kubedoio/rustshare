@@ -23,7 +23,8 @@ export function getModuleObjectHref(
 		decisions: `/modules/decisions/${objectId}`,
 		kanban: `/modules/kanban/${objectId}`,
 		brainstorming: `/modules/brainstorming/${objectId}`,
-		shares: `/modules/shares/${objectId}`
+		shares: `/modules/shares/${objectId}`,
+		mail: `/modules/mail/messages/${objectId}`
 	};
 
 	if (moduleRouteMap[moduleKey]) {
