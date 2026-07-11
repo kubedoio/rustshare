@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{LinkTargetType, MailTlsMode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -172,8 +172,8 @@ pub struct MailImportJobListResponse {
 pub struct CreateMailArchiveJobRequest {
     #[validate(length(min = 1, max = 255))]
     pub folder_name: String,
-    pub archive_since: Option<DateTime<Utc>>,
-    pub archive_before: Option<DateTime<Utc>>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
     #[validate(range(min = 1, max = 36500))]
     pub retention_days: Option<i32>,
     #[validate(range(min = 1, max = 100))]
@@ -189,8 +189,8 @@ pub struct MailArchiveJobResponse {
     pub folder_name: String,
     pub source_mode: String,
     pub status: String,
-    pub archive_since: Option<DateTime<Utc>>,
-    pub archive_before: Option<DateTime<Utc>>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
     pub last_uid_validity: Option<i64>,
     pub last_imported_uid: Option<i64>,
     pub retention_days: Option<i32>,

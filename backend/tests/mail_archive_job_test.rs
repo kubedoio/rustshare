@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDate, Utc};
 use rustshare_core::domain::MailTlsMode;
 use rustshare_server::services::imap_client::{ImapArchiveSession, ImapError};
 use uuid::Uuid;
@@ -151,8 +151,8 @@ impl ImapArchiveSession for MockImapArchiveSession {
     async fn fetch_uids_by_date_range(
         &mut self,
         _folder: &str,
-        _since: Option<chrono::DateTime<Utc>>,
-        _before: Option<chrono::DateTime<Utc>>,
+        _since: Option<chrono::NaiveDate>,
+        _before: Option<chrono::NaiveDate>,
     ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
         if let Some(err) = &self.fetch_uids_error {
             return Err(ImapError::CommandFailed(err.clone()));

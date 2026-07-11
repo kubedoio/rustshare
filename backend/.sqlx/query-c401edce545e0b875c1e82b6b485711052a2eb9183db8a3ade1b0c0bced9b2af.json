@@ -46,12 +46,12 @@
       {
         "ordinal": 8,
         "name": "archive_since",
-        "type_info": "Timestamptz"
+        "type_info": "Date"
       },
       {
         "ordinal": 9,
         "name": "archive_before",
-        "type_info": "Timestamptz"
+        "type_info": "Date"
       },
       {
         "ordinal": 10,

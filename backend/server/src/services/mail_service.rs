@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{NaiveDate, Utc};
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSourceMode,
@@ -1475,8 +1475,8 @@ impl MailService {
         owner_id: UserId,
         account_id: MailAccountId,
         folder_name: String,
-        archive_since: Option<DateTime<Utc>>,
-        archive_before: Option<DateTime<Utc>>,
+        archive_since: Option<NaiveDate>,
+        archive_before: Option<NaiveDate>,
         retention_days: Option<i32>,
         max_retries: Option<i32>,
     ) -> Result<MailImportJob, MailError> {
@@ -1754,7 +1754,12 @@ impl MailService {
         };
         if is_inactive {
             self.metadata_store
-                .update_mail_message_archive_job_id(message.id, job.owner_id, job.id)
+                .update_mail_message_archive_job_id(
+                    message.id,
+                    job.owner_id,
+                    message.archive_job_id,
+                    job.id,
+                )
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?;
         }

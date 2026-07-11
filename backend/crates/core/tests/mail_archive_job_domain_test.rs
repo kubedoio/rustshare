@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::NaiveDate;
 use rustshare_core::domain::MailImportJob;
 use uuid::Uuid;
 
@@ -23,8 +23,8 @@ fn archive_job_defaults_to_imap_archive_source_mode() {
 
 #[test]
 fn archive_job_stores_date_range_and_defaults() {
-    let since = Utc::now();
-    let before = since + chrono::Duration::days(1);
+    let since = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+    let before = NaiveDate::from_ymd_opt(2024, 6, 30).unwrap();
     let job = MailImportJob::new_archive(
         Uuid::nil(),
         Uuid::new_v4(),

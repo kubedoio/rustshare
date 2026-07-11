@@ -296,27 +296,35 @@ impl MetadataStore {
     /// Reassign a mail message to a different archive job.
     ///
     /// Used when a new archive job encounters a message that was previously
-    /// imported by another archive job that has since been deleted, so the
+    /// imported by another archive job that is no longer active, so the
     /// current job's retention policy applies to it.
+    ///
+    /// The update is a compare-and-swap on `archive_job_id`: it only succeeds
+    /// if the row still has `expected_archive_job_id`. Returns `true` if a row
+    /// was updated.
     pub async fn update_mail_message_archive_job_id(
         &self,
         id: uuid::Uuid,
         owner_id: UserId,
-        archive_job_id: MailImportJobId,
-    ) -> Result<()> {
-        sqlx::query!(
+        expected_archive_job_id: Option<MailImportJobId>,
+        new_archive_job_id: MailImportJobId,
+    ) -> Result<bool> {
+        let rows = sqlx::query!(
             r#"
             UPDATE mail_messages
             SET archive_job_id = $3, updated_at = NOW()
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND archive_job_id IS NOT DISTINCT FROM $4
             "#,
             id,
             owner_id,
-            archive_job_id
+            new_archive_job_id,
+            expected_archive_job_id as Option<MailImportJobId>,
         )
         .execute(&self.pool)
-        .await?;
-        Ok(())
+        .await?
+        .rows_affected();
+        Ok(rows > 0)
     }
 
     /// Hard-delete a mail message row. Intended for cleaning up a partially

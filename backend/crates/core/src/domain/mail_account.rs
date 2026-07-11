@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
@@ -145,8 +145,8 @@ pub struct MailImportJob {
     pub folder_name: String,
     pub selected_uids: Option<Vec<i64>>,
     pub source_uidvalidity: Option<i64>,
-    pub archive_since: Option<DateTime<Utc>>,
-    pub archive_before: Option<DateTime<Utc>>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
     pub last_uid_validity: Option<i64>,
     pub last_imported_uid: Option<i64>,
     pub retention_days: Option<i32>,
@@ -214,8 +214,8 @@ impl MailImportJob {
         owner_id: UserId,
         account_id: MailAccountId,
         folder_name: String,
-        archive_since: Option<DateTime<Utc>>,
-        archive_before: Option<DateTime<Utc>>,
+        archive_since: Option<NaiveDate>,
+        archive_before: Option<NaiveDate>,
         retention_days: Option<i32>,
         max_retries: i32,
     ) -> Self {

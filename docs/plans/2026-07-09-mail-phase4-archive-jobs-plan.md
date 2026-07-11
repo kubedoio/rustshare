@@ -52,8 +52,8 @@
 
 ```sql
 ALTER TABLE mail_import_jobs
-    ADD COLUMN archive_since TIMESTAMPTZ,
-    ADD COLUMN archive_before TIMESTAMPTZ,
+    ADD COLUMN archive_since DATE,
+    ADD COLUMN archive_before DATE,
     ADD COLUMN last_uid_validity BIGINT,
     ADD COLUMN last_imported_uid BIGINT,
     ADD COLUMN retention_days INTEGER,
@@ -94,8 +94,8 @@ Refs #147"
 Add after `source_uidvalidity`:
 
 ```rust
-pub archive_since: Option<DateTime<Utc>>,
-pub archive_before: Option<DateTime<Utc>>,
+pub archive_since: Option<NaiveDate>,
+pub archive_before: Option<NaiveDate>,
 pub last_uid_validity: Option<i64>,
 pub last_imported_uid: Option<i64>,
 pub retention_days: Option<i32>,
@@ -116,8 +116,8 @@ pub fn new_archive(
     owner_id: UserId,
     account_id: MailAccountId,
     folder_name: String,
-    archive_since: Option<DateTime<Utc>>,
-    archive_before: Option<DateTime<Utc>>,
+    archive_since: Option<NaiveDate>,
+    archive_before: Option<NaiveDate>,
     retention_days: Option<i32>,
     max_retries: i32,
 ) -> Self {
@@ -371,8 +371,8 @@ Refs #147"
 pub async fn fetch_uids_by_date_range(
     &mut self,
     folder: &str,
-    since: Option<DateTime<Utc>>,
-    before: Option<DateTime<Utc>>,
+    since: Option<NaiveDate>,
+    before: Option<NaiveDate>,
 ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
     self.select_folder(folder).await?;
     let uid_validity = self
@@ -428,8 +428,8 @@ pub async fn create_archive_job(
     owner_id: UserId,
     account_id: MailAccountId,
     folder_name: String,
-    archive_since: Option<DateTime<Utc>>,
-    archive_before: Option<DateTime<Utc>>,
+    archive_since: Option<NaiveDate>,
+    archive_before: Option<NaiveDate>,
     retention_days: Option<i32>,
     max_retries: Option<i32>,
 ) -> Result<MailImportJob, MailError> {
@@ -565,8 +565,8 @@ Refs #147"
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CreateMailArchiveJobRequest {
     pub folder_name: String,
-    pub archive_since: Option<DateTime<Utc>>,
-    pub archive_before: Option<DateTime<Utc>>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
     pub retention_days: Option<i32>,
     pub max_retries: Option<i32>,
 }
@@ -578,8 +578,8 @@ pub struct MailArchiveJobResponse {
     pub folder_name: String,
     pub source_mode: String,
     pub status: String,
-    pub archive_since: Option<DateTime<Utc>>,
-    pub archive_before: Option<DateTime<Utc>>,
+    pub archive_since: Option<NaiveDate>,
+    pub archive_before: Option<NaiveDate>,
     pub last_uid_validity: Option<i64>,
     pub last_imported_uid: Option<i64>,
     pub retention_days: Option<i32>,

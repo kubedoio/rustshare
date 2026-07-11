@@ -50,8 +50,8 @@ Add columns to `mail_import_jobs`:
 
 ```sql
 ALTER TABLE mail_import_jobs
-    ADD COLUMN archive_since TIMESTAMPTZ,
-    ADD COLUMN archive_before TIMESTAMPTZ,
+    ADD COLUMN archive_since DATE,
+    ADD COLUMN archive_before DATE,
     ADD COLUMN last_uid_validity BIGINT,
     ADD COLUMN last_imported_uid BIGINT,
     ADD COLUMN retention_days INTEGER,

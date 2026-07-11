@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_imap::types::{Fetch, Name};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
@@ -355,8 +355,8 @@ impl ImapSession {
     pub async fn fetch_uids_by_date_range(
         &mut self,
         folder: &str,
-        since: Option<DateTime<Utc>>,
-        before: Option<DateTime<Utc>>,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
     ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
         let uid_validity = self
             .select_folder(folder)
@@ -399,8 +399,8 @@ pub trait ImapArchiveSession: Send {
     async fn fetch_uids_by_date_range(
         &mut self,
         folder: &str,
-        since: Option<DateTime<Utc>>,
-        before: Option<DateTime<Utc>>,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
     ) -> Result<(Option<u32>, Vec<u32>), ImapError>;
 
     async fn fetch_rfc822(
@@ -416,8 +416,8 @@ impl ImapArchiveSession for ImapSession {
     async fn fetch_uids_by_date_range(
         &mut self,
         folder: &str,
-        since: Option<DateTime<Utc>>,
-        before: Option<DateTime<Utc>>,
+        since: Option<NaiveDate>,
+        before: Option<NaiveDate>,
     ) -> Result<(Option<u32>, Vec<u32>), ImapError> {
         ImapSession::fetch_uids_by_date_range(self, folder, since, before).await
     }
@@ -432,10 +432,7 @@ impl ImapArchiveSession for ImapSession {
     }
 }
 
-fn build_archive_search_query(
-    since: Option<DateTime<Utc>>,
-    before: Option<DateTime<Utc>>,
-) -> String {
+fn build_archive_search_query(since: Option<NaiveDate>, before: Option<NaiveDate>) -> String {
     let mut criteria = vec!["ALL".to_string()];
     if let Some(since) = since {
         criteria.push(format!("SINCE {}", since.format("%d-%b-%Y")));
@@ -625,22 +622,22 @@ mod tests {
 
     #[test]
     fn build_archive_search_query_since_only() {
-        let since = Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap();
+        let since = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let query = build_archive_search_query(Some(since), None);
         assert_eq!(query, "ALL SINCE 15-Jan-2024");
     }
 
     #[test]
     fn build_archive_search_query_before_only() {
-        let before = Utc.with_ymd_and_hms(2024, 6, 30, 23, 59, 59).unwrap();
+        let before = NaiveDate::from_ymd_opt(2024, 6, 30).unwrap();
         let query = build_archive_search_query(None, Some(before));
         assert_eq!(query, "ALL BEFORE 30-Jun-2024");
     }
 
     #[test]
     fn build_archive_search_query_both_bounds() {
-        let since = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let before = Utc.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap();
+        let since = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let before = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
         let query = build_archive_search_query(Some(since), Some(before));
         assert_eq!(query, "ALL SINCE 01-Jan-2024 BEFORE 31-Dec-2024");
     }
