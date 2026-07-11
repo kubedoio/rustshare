@@ -1101,6 +1101,18 @@ mod tests {
     }
 
     #[test]
+    fn import_job_request_allows_omitted_uidvalidity() {
+        let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
+            "folder_name": "INBOX",
+            "selected_uids": [1]
+        }))
+        .expect("request should deserialize when source_uidvalidity is omitted");
+
+        assert!(req.source_uidvalidity.is_none());
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
     fn import_job_request_accepts_positive_uidvalidity() {
         let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
             "folder_name": "INBOX",
