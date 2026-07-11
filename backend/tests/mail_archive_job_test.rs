@@ -115,6 +115,7 @@ struct MockImapArchiveSession {
     fetch_count: Arc<AtomicUsize>,
     fetch_uids_error: Option<String>,
     fetch_rfc822_error: Option<String>,
+    fetch_rfc822_errors: HashMap<u32, String>,
 }
 
 impl MockImapArchiveSession {
@@ -132,9 +133,15 @@ impl MockImapArchiveSession {
                 fetch_count: fetch_count.clone(),
                 fetch_uids_error: None,
                 fetch_rfc822_error: None,
+                fetch_rfc822_errors: HashMap::new(),
             },
             fetch_count,
         )
+    }
+
+    fn with_rfc822_error(mut self, uid: u32, error: impl Into<String>) -> Self {
+        self.fetch_rfc822_errors.insert(uid, error.into());
+        self
     }
 }
 
@@ -159,6 +166,9 @@ impl ImapArchiveSession for MockImapArchiveSession {
         _expected_uidvalidity: Option<i64>,
     ) -> Result<Vec<u8>, ImapError> {
         self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(err) = self.fetch_rfc822_errors.get(&uid) {
+            return Err(ImapError::CommandFailed(err.clone()));
+        }
         if let Some(err) = &self.fetch_rfc822_error {
             return Err(ImapError::CommandFailed(err.clone()));
         }
@@ -452,6 +462,183 @@ async fn archive_job_retention_soft_deletes_old_messages() {
         .await
         .unwrap();
     assert!(visible.is_empty());
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_watermark_stops_at_first_failure() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut messages = HashMap::new();
+    messages.insert(
+        1,
+        sample_email_bytes(
+            "First",
+            "msg1@example.com",
+            "Mon, 15 Aug 2022 10:30:00 +0000",
+            "body one",
+        ),
+    );
+    messages.insert(
+        3,
+        sample_email_bytes(
+            "Third",
+            "msg3@example.com",
+            "Tue, 16 Aug 2022 11:00:00 +0000",
+            "body three",
+        ),
+    );
+    let (mut session, _) = MockImapArchiveSession::new(Some(1000), vec![1, 2, 3], messages);
+    session = session.with_rfc822_error(2, "simulate fetch failure");
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let updated = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+    // UID 2 failed, so the watermark must not advance past UID 1 even though
+    // UID 3 imported successfully.
+    assert_eq!(updated.last_uid_validity, Some(1000));
+    assert_eq!(updated.last_imported_uid, Some(1));
+    assert_eq!(updated.processed_messages, 2);
+    assert_eq!(updated.failed_messages, 1);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_reclaims_incomplete_row() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Insert an incomplete mail_messages row (folder_id is NULL) as if a
+    // previous run crashed after deduplication but before artifacts were ready.
+    let old_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO mail_messages (
+            id, tenant_id, owner_id, account_id, source_mode, source_folder,
+            source_uid, source_uidvalidity, imported_at, imported_by, visibility
+        ) VALUES ($1, $2, $3, $4, 'imap_archive', 'INBOX', 1, 1000, NOW(), $3, 'private')
+        "#,
+    )
+    .bind(old_id)
+    .bind(ctx.tenant_id)
+    .bind(user.id)
+    .bind(account.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    let msg = sample_email_bytes(
+        "Complete",
+        "complete@example.com",
+        "Mon, 15 Aug 2022 10:30:00 +0000",
+        "body",
+    );
+    let (mut session, _) = MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg)].into());
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let updated = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.last_imported_uid, Some(1));
+
+    let msgs = ctx
+        .metadata_store
+        .list_mail_messages(ctx.tenant_id, user.id)
+        .await
+        .unwrap();
+    assert_eq!(msgs.len(), 1);
+    let m = &msgs[0];
+    // The incomplete row must have been replaced, not reused.
+    assert_ne!(m.id, old_id);
+    assert!(m.folder_id.is_some());
+    assert_eq!(m.source_uid, Some(1));
 
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;

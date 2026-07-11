@@ -1794,6 +1794,12 @@ impl MailService {
                 }
             }
 
+            // Helper: is this UID the next contiguous one after the current
+            // watermark? We only advance last_uid across a contiguous prefix of
+            // successful imports so a failed UID is retried on the next run.
+            let next_expected_uid = last_uid.map(|l| l + 1).unwrap_or(uid_i64);
+            let is_contiguous = uid_i64 == next_expected_uid;
+
             // Skip UIDs that were already imported by this archive job.
             match self
                 .metadata_store
@@ -1807,11 +1813,42 @@ impl MailService {
                 )
                 .await
             {
-                Ok(Some(_)) => {
-                    // Already imported under this UIDVALIDITY; advance the
-                    // watermark but do not count it as work done this run.
-                    last_uid = Some(uid_i64);
-                    continue;
+                Ok(Some(existing)) => {
+                    if existing.folder_id.is_none() {
+                        // A previous run crashed after inserting the
+                        // deduplication row but before artifacts were durable.
+                        // Reclaim the partial row and re-import this UID.
+                        if let Err(e) = self
+                            .metadata_store
+                            .delete_mail_message(existing.id, job.owner_id)
+                            .await
+                        {
+                            failed += 1;
+                            self.metadata_store
+                                .update_mail_archive_job_progress(
+                                    job.id,
+                                    processed,
+                                    failed,
+                                    uid_validity,
+                                    last_uid,
+                                    Some(&format!(
+                                        "Failed to reclaim incomplete message {}: {e}",
+                                        existing.id
+                                    )),
+                                )
+                                .await
+                                .ok();
+                            continue;
+                        }
+                    } else {
+                        // Already imported under this UIDVALIDITY; advance the
+                        // watermark only across a contiguous prefix and do not
+                        // count it as work done this run.
+                        if is_contiguous {
+                            last_uid = Some(uid_i64);
+                        }
+                        continue;
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -1889,7 +1926,11 @@ impl MailService {
                     match self.event_store.append(&event, &self.broadcaster).await {
                         Ok(()) => {
                             processed += 1;
-                            last_uid = Some(uid_i64);
+                            // Only advance the watermark across a contiguous
+                            // prefix of successful imports.
+                            if is_contiguous {
+                                last_uid = Some(uid_i64);
+                            }
                         }
                         Err(e) => {
                             failed += 1;
