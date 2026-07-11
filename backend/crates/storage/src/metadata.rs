@@ -457,11 +457,7 @@ impl MetadataStore {
         Ok(rows)
     }
 
-    pub async fn find_mail_message_by_id(
-        &self,
-        id: Uuid,
-        owner_id: Uuid,
-    ) -> Result<Option<MailMessage>> {
+    pub async fn find_mail_message_by_id(&self, id: Uuid) -> Result<Option<MailMessage>> {
         let row = sqlx::query_as!(
             MailMessage,
             r#"
@@ -472,10 +468,9 @@ impl MetadataStore {
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 archive_job_id, deleted_at, created_at, updated_at
             FROM mail_messages
-            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
-            id,
-            owner_id
+            id
         )
         .fetch_optional(&self.pool)
         .await?;

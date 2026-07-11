@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                archive_job_id, deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,\n                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,\n                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,\n                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,\n                archive_job_id, deleted_at, created_at, updated_at\n            FROM mail_messages\n            WHERE id = $1 AND deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -161,7 +161,6 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
         "Uuid"
       ]
     },
@@ -199,5 +198,5 @@
       false
     ]
   },
-  "hash": "2d9ca72cb460369005815758f4ae332ae52a28dd16c0b1620ee3812da8ef5c61"
+  "hash": "730462c286d2d60b260d16331a6b5469af7f215f30c90adf06f8fa3ff437d35f"
 }

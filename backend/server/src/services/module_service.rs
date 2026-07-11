@@ -1013,7 +1013,11 @@ impl ModuleService {
                 .fetch_one(self.metadata_store.pool())
                 .await;
                 let count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
-                Ok(("mail-summary".to_string(), vec![], Some(json!({ "count": count }))))
+                Ok((
+                    "mail-summary".to_string(),
+                    vec![],
+                    Some(json!({ "count": count })),
+                ))
             }
             _ => {
                 let items = self

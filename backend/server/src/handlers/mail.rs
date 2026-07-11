@@ -1142,8 +1142,10 @@ pub async fn delete_mail_archive_job(
 }
 
 fn sanitize_email_html(html: &str) -> String {
+    let schemes: std::collections::HashSet<&str> =
+        ["http", "https", "mailto"].into_iter().collect();
     ammonia::Builder::default()
-        .url_schemes(["http".into(), "https".into(), "mailto".into()].into_iter().collect())
+        .url_schemes(schemes)
         .clean(html)
         .to_string()
 }
@@ -1171,7 +1173,10 @@ pub async fn list_mail_message_parts(
         .list_parts(auth.tenant_id, auth.user_id, message_id)
         .await?;
     Ok(Json(ListMailMessagePartsResponse {
-        parts: parts.into_iter().map(MailMessagePartResponse::from).collect(),
+        parts: parts
+            .into_iter()
+            .map(MailMessagePartResponse::from)
+            .collect(),
     }))
 }
 
@@ -1205,7 +1210,10 @@ pub async fn get_mail_message_part(
         let sanitized = sanitize_email_html(std::str::from_utf8(&bytes).unwrap_or(""));
         emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
         return Ok((
-            [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            )],
             sanitized,
         )
             .into_response());
@@ -1256,7 +1264,8 @@ pub async fn download_mail_message_source(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&content_disposition).map_err(|e| AppError::internal(e.to_string()))?,
+        HeaderValue::from_str(&content_disposition)
+            .map_err(|e| AppError::internal(e.to_string()))?,
     );
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
@@ -1395,7 +1404,8 @@ mod tests {
 
     #[test]
     fn sanitize_email_html_strips_scripts() {
-        let raw = r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
+        let raw =
+            r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
         let clean = sanitize_email_html(raw);
         assert!(!clean.contains("<script>"));
         assert!(!clean.contains("javascript:"));

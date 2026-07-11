@@ -422,18 +422,23 @@ impl MailService {
         Ok(part_index + 1)
     }
 
-    /// Get a single imported mail message if owned by `owner_id`.
+    /// Get a single imported mail message if owned by `owner_id` in `tenant_id`.
     pub async fn get_message(
         &self,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
         owner_id: Uuid,
         message_id: Uuid,
     ) -> Result<MailMessage, MailError> {
-        self.metadata_store
-            .find_mail_message_by_id(message_id, owner_id)
+        let msg = self
+            .metadata_store
+            .find_mail_message_by_id(message_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?
-            .ok_or(MailError::NotFound(message_id))
+            .ok_or(MailError::NotFound(message_id))?;
+        if msg.tenant_id != tenant_id || msg.owner_id != owner_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(msg)
     }
 
     /// Verify the caller can read the link target.
@@ -730,6 +735,9 @@ impl MailService {
         owner_id: Uuid,
         message_id: Uuid,
     ) -> Result<Vec<MailMessagePart>, MailError> {
+        // Verify the caller can access the message first so cross-tenant requests
+        // are rejected with a permission error rather than an empty list.
+        self.get_message(tenant_id, owner_id, message_id).await?;
         self.metadata_store
             .list_mail_message_parts_by_message_id(message_id, tenant_id, owner_id)
             .await
@@ -788,6 +796,9 @@ impl MailService {
         owner_id: Uuid,
         message_id: Uuid,
     ) -> Result<Vec<MailAttachment>, MailError> {
+        // Verify the caller can access the message first so cross-tenant requests
+        // are rejected with a permission error rather than an empty list.
+        self.get_message(tenant_id, owner_id, message_id).await?;
         self.metadata_store
             .list_mail_attachments_by_message_id(message_id, tenant_id, owner_id)
             .await
