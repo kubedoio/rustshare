@@ -2076,10 +2076,14 @@ impl MailService {
             return Ok(());
         }
 
-        self.metadata_store
+        let requeued = self
+            .metadata_store
             .requeue_mail_archive_job(job.id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+        if !requeued {
+            return Ok(());
+        }
 
         let event = Event::new(
             EventType::MailArchiveJobCompleted,

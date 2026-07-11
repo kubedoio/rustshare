@@ -1214,7 +1214,7 @@ impl MetadataStore {
         Ok(rows > 0)
     }
 
-    /// Soft-delete archived mail messages that exceed the configured retention period.
+    /// Soft-delete archived mail messages and their visible artifacts that exceed the configured retention period.
     ///
     /// Returns the number of rows soft-deleted.
     pub async fn apply_archive_retention(
@@ -1228,32 +1228,78 @@ impl MetadataStore {
         if retention_days <= 0 {
             return Err(anyhow::anyhow!("retention_days must be positive"));
         }
-        let rows = sqlx::query!(
-            r#"
-            UPDATE mail_messages m
-            SET deleted_at = NOW(), updated_at = NOW()
-            WHERE m.owner_id = $1
-              AND m.account_id = $2
-              AND m.source_folder = $3
-              AND m.archive_job_id = $4
-              AND m.source_mode = 'imap_archive'
-              AND m.imported_at < NOW() - (interval '1 day' * $5)
-              AND m.deleted_at IS NULL
+        let mut tx = self.pool.begin().await?;
+        let target_filter = r#"
+            owner_id = $1
+              AND account_id = $2
+              AND source_folder = $3
+              AND archive_job_id = $4
+              AND source_mode = 'imap_archive'
+              AND imported_at < NOW() - (interval '1 day' * $5)
+              AND deleted_at IS NULL
               AND EXISTS (
                   SELECT 1 FROM mail_import_jobs j
-                  WHERE j.id = m.archive_job_id
+                  WHERE j.id = archive_job_id
                     AND j.deleted_at IS NULL
               )
-            "#,
-            owner_id,
-            account_id,
-            folder_name,
-            archive_job_id,
-            retention_days as f64
-        )
-        .execute(&self.pool)
+        "#;
+
+        sqlx::query(&format!(
+            r#"
+            UPDATE files
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE owner_id = $1
+              AND parent_folder_id IN (
+                  SELECT folder_id FROM mail_messages
+                  WHERE {target_filter} AND folder_id IS NOT NULL
+              )
+              AND deleted_at IS NULL
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            UPDATE folders
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE owner_id = $1
+              AND id IN (
+                  SELECT folder_id FROM mail_messages
+                  WHERE {target_filter} AND folder_id IS NOT NULL
+              )
+              AND deleted_at IS NULL
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        let rows = sqlx::query(&format!(
+            r#"
+            UPDATE mail_messages
+            SET deleted_at = NOW(), updated_at = NOW()
+            WHERE {target_filter}
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+        tx.commit().await?;
         Ok(rows)
     }
 

@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use rustshare_core::domain::MailTlsMode;
 use rustshare_server::services::imap_client::{ImapArchiveSession, ImapError};
+use uuid::Uuid;
 
 mod contracts;
 use contracts::common::{cleanup_tenant, cleanup_user, setup_test_env};
@@ -443,6 +444,16 @@ async fn archive_job_retention_soft_deletes_old_messages() {
     .execute(&ctx.pool)
     .await
     .unwrap();
+    let folder_id: Uuid = sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT folder_id FROM mail_messages WHERE owner_id = $1 AND source_uid = $2 AND source_uidvalidity = $3",
+    )
+    .bind(user.id)
+    .bind(1_i64)
+    .bind(1000_i64)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap()
+    .expect("archive import should set folder_id");
 
     // Re-run the job with the same UID; the message is deduplicated, but the
     // retention pass still applies.
@@ -466,6 +477,19 @@ async fn archive_job_retention_soft_deletes_old_messages() {
         .await
         .unwrap();
     assert!(visible.is_empty());
+
+    let visible_artifacts: i64 = sqlx::query_scalar(
+        r#"
+        SELECT
+          (SELECT COUNT(*) FROM folders WHERE id = $1 AND deleted_at IS NULL)
+        + (SELECT COUNT(*) FROM files WHERE parent_folder_id = $1 AND deleted_at IS NULL)
+        "#,
+    )
+    .bind(folder_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(visible_artifacts, 0);
 
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
