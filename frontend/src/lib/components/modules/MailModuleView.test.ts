@@ -5,7 +5,17 @@ import MailModuleView from './MailModuleView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
-	listMessages: vi.fn()
+	listMessages: vi.fn(),
+	listAccounts: vi.fn(),
+	listFolders: vi.fn(),
+	listAccountMessages: vi.fn(),
+	listArchiveJobs: vi.fn(),
+	createAccount: vi.fn(),
+	deleteAccount: vi.fn(),
+	testAccount: vi.fn(),
+	createImportJob: vi.fn(),
+	createArchiveJob: vi.fn(),
+	cancelArchiveJob: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -14,7 +24,17 @@ vi.mock('$app/navigation', () => ({
 
 vi.mock('$lib/api/mail', () => ({
 	mailApi: {
-		listMessages: mocks.listMessages
+		listMessages: mocks.listMessages,
+		listAccounts: mocks.listAccounts,
+		listFolders: mocks.listFolders,
+		listAccountMessages: mocks.listAccountMessages,
+		listArchiveJobs: mocks.listArchiveJobs,
+		createAccount: mocks.createAccount,
+		deleteAccount: mocks.deleteAccount,
+		testAccount: mocks.testAccount,
+		createImportJob: mocks.createImportJob,
+		createArchiveJob: mocks.createArchiveJob,
+		cancelArchiveJob: mocks.cancelArchiveJob
 	}
 }));
 
@@ -74,6 +94,10 @@ describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		queryClient.clear();
+		mocks.listAccounts.mockResolvedValue([]);
+		mocks.listFolders.mockResolvedValue([]);
+		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
+		mocks.listArchiveJobs.mockResolvedValue([]);
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
@@ -112,5 +136,43 @@ describe('MailModuleView', () => {
 
 		const emptyTitle = await screen.findByText('No imported mail yet');
 		expect(emptyTitle).toBeTruthy();
+	});
+
+	it('renders accounts, folders, and mailbox messages', async () => {
+		mocks.listAccounts.mockResolvedValueOnce([
+			{
+				id: 'acct-1',
+				name: 'Work mail',
+				host: 'imap.example.com',
+				port: 993,
+				username: 'alice@example.com',
+				tls_mode: 'tls',
+				is_enabled: true,
+				last_connected_at: null,
+				last_error: null,
+				created_at: '2026-07-01T00:00:00Z'
+			}
+		]);
+		mocks.listFolders.mockResolvedValue([{ name: 'INBOX', delimiter: '/' }]);
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			messages: [
+				{
+					uid: 12,
+					subject: 'Server alert',
+					from_address: 'ops@example.com',
+					from_name: 'Ops',
+					sent_at: '2026-07-01T10:00:00Z',
+					size_bytes: 2048
+				}
+			]
+		});
+		mocks.listMessages.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByText('Work mail')).toBeTruthy();
+		expect(await screen.findByText('INBOX')).toBeTruthy();
+		expect(await screen.findByText('Server alert')).toBeTruthy();
 	});
 });

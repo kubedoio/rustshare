@@ -1,34 +1,71 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { createQuery } from '$lib/query-compat';
-	import { mailApi, type MailAttachment, type MailMessagePart } from '$lib/api/mail';
+	import { createMutation, createQuery } from '$lib/query-compat';
+	import {
+		mailApi,
+		type MailAttachment,
+		type MailLink,
+		type MailMessage,
+		type MailMessagePart
+	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
-	import { ArrowLeft, Download, Paperclip } from 'lucide-svelte';
+	import { ArrowLeft, Download, Paperclip, Link2, Trash2 } from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
 
-	const messageQuery = createQuery({
-		queryKey: ['mail-message', messageId],
-		queryFn: () => mailApi.getMessage(messageId!),
-		enabled: !!messageId
+	const messageQuery = createQuery<MailMessage>({
+		queryKey: ['mail-message', null],
+		queryFn: () => Promise.reject(new Error('Missing message id')),
+		enabled: false
 	});
 
-	const partsQuery = createQuery({
-		queryKey: ['mail-message-parts', messageId],
-		queryFn: () => mailApi.listParts(messageId!),
-		enabled: !!messageId
+	const partsQuery = createQuery<MailMessagePart[]>({
+		queryKey: ['mail-message-parts', null],
+		queryFn: () => Promise.resolve([]),
+		enabled: false
 	});
 
-	const attachmentsQuery = createQuery({
-		queryKey: ['mail-message-attachments', messageId],
-		queryFn: () => mailApi.listAttachments(messageId!),
-		enabled: !!messageId
+	const attachmentsQuery = createQuery<MailAttachment[]>({
+		queryKey: ['mail-message-attachments', null],
+		queryFn: () => Promise.resolve([]),
+		enabled: false
+	});
+
+	const linksQuery = createQuery<MailLink[]>({
+		queryKey: ['mail-message-links', null],
+		queryFn: () => Promise.resolve([]),
+		enabled: false
+	});
+
+	$effect(() => {
+		const id = messageId ?? null;
+		messageQuery.setOptions({
+			queryKey: ['mail-message', id],
+			queryFn: () => mailApi.getMessage(messageId!),
+			enabled: !!messageId
+		});
+		partsQuery.setOptions({
+			queryKey: ['mail-message-parts', id],
+			queryFn: () => mailApi.listParts(messageId!),
+			enabled: !!messageId
+		});
+		attachmentsQuery.setOptions({
+			queryKey: ['mail-message-attachments', id],
+			queryFn: () => mailApi.listAttachments(messageId!),
+			enabled: !!messageId
+		});
+		linksQuery.setOptions({
+			queryKey: ['mail-message-links', id],
+			queryFn: () => mailApi.listLinks(messageId!),
+			enabled: !!messageId
+		});
 	});
 
 	let bodyContent = $derived.by(async () => {
@@ -45,6 +82,33 @@
 	});
 
 	let previewAttachment = $state<MailAttachment | null>(null);
+	let linkTargetType = $state('file');
+	let linkTargetId = $state('');
+
+	const createLinkMutation = createMutation({
+		mutationFn: () =>
+			mailApi.createLink(messageId!, {
+				target_type: linkTargetType,
+				target_id: linkTargetId.trim()
+			}),
+		onSuccess: async () => {
+			linkTargetId = '';
+			await linksQuery.refetch();
+			toastStore.show('Mail link added', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Link failed', 'error')
+	});
+
+	const deleteLinkMutation = createMutation({
+		mutationFn: (linkId: string) => mailApi.deleteLink(messageId!, linkId),
+		onSuccess: async () => {
+			await linksQuery.refetch();
+			toastStore.show('Mail link removed', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Unlink failed', 'error')
+	});
 
 	function formatAddresses(value: unknown): string {
 		if (Array.isArray(value)) return value.join(', ');
@@ -128,17 +192,99 @@
 					</h3>
 					<div class="flex flex-wrap gap-2">
 						{#each $attachmentsQuery.data as attachment}
-							<button
-								type="button"
-								class="btn btn-outline btn-sm"
-								onclick={() => (previewAttachment = attachment)}
-							>
-								{attachment.filename}
-							</button>
+							<div class="max-w-full rounded-lg border border-base-300 px-3 py-2 text-sm">
+								<div class="flex items-center gap-2">
+									<span class="truncate font-medium">{attachment.filename}</span>
+									{#if attachment.file_id}
+										<button
+											type="button"
+											class="btn btn-outline btn-xs"
+											onclick={() => (previewAttachment = attachment)}
+										>
+											Open file
+										</button>
+									{:else}
+										<span class="badge badge-ghost badge-sm">mail-only</span>
+									{/if}
+								</div>
+								<div class="mt-1 truncate text-xs text-base-content/55">
+									{attachment.mime_type ?? 'application/octet-stream'} · {Number(
+										attachment.size_bytes ?? 0
+									).toLocaleString()} bytes
+								</div>
+							</div>
 						{/each}
 					</div>
 				</div>
 			{/if}
+
+			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
+				<h3 class="mb-3 flex items-center gap-2 font-semibold"><Link2 size={16} /> Links</h3>
+				<form
+					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[160px_minmax(0,1fr)_auto]"
+					onsubmit={(event) => {
+						event.preventDefault();
+						createLinkMutation.mutate();
+					}}
+				>
+					<select class="select select-sm select-bordered" bind:value={linkTargetType}>
+						<option value="file">File</option>
+						<option value="folder">Folder</option>
+						<option value="note">Note</option>
+						<option value="kanban_card">Kanban card</option>
+						<option value="kanban_board">Kanban board</option>
+						<option value="meeting">Meeting</option>
+						<option value="mail_message">Mail message</option>
+					</select>
+					<input
+						class="input input-sm input-bordered"
+						placeholder="Target object ID"
+						bind:value={linkTargetId}
+						required
+					/>
+					<button
+						class="btn btn-sm btn-primary"
+						type="submit"
+						disabled={$createLinkMutation.isPending}
+					>
+						Add link
+					</button>
+				</form>
+				{#if $linksQuery.isLoading}
+					<ModulePageSkeleton />
+				{:else if $linksQuery.isError}
+					<ErrorState
+						title="Failed to load links"
+						message={$linksQuery.error?.message || 'Unknown error'}
+						onRetry={() => linksQuery.refetch()}
+					/>
+				{:else if ($linksQuery.data ?? []).length === 0}
+					<p class="text-sm text-base-content/60">No links yet.</p>
+				{:else}
+					<div class="flex flex-col gap-2">
+						{#each $linksQuery.data ?? [] as link}
+							<div
+								class="flex items-center justify-between gap-3 rounded-lg border border-base-300 p-3"
+							>
+								<div class="min-w-0">
+									<div class="text-sm font-medium">{link.target_type}</div>
+									<div class="truncate font-mono text-xs text-base-content/60">
+										{link.target_id}
+									</div>
+								</div>
+								<button
+									type="button"
+									class="btn btn-error btn-xs btn-outline"
+									onclick={() => deleteLinkMutation.mutate(link.id)}
+									aria-label="Remove link"
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		</div>
 	</ModulePageShell>
 
