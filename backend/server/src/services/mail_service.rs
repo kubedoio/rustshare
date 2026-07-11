@@ -1818,7 +1818,34 @@ impl MailService {
                     if existing.folder_id.is_none() {
                         // A previous run crashed after inserting the
                         // deduplication row but before artifacts were durable.
-                        // Reclaim the partial row and re-import this UID.
+                        // If another archive job still owns that partial row,
+                        // leave it alone and retry this job later.
+                        if let Some(archive_job_id) = existing.archive_job_id {
+                            if archive_job_id != job.id {
+                                let status = self
+                                    .metadata_store
+                                    .get_mail_import_job_status(archive_job_id, job.owner_id)
+                                    .await
+                                    .map_err(|e| MailError::Database(e.to_string()))?;
+                                if status.as_deref() == Some("running") {
+                                    failed += 1;
+                                    failed_once = true;
+                                    self.metadata_store
+                                        .update_mail_archive_job_progress(
+                                            job.id,
+                                            processed,
+                                            failed,
+                                            uid_validity,
+                                            last_uid,
+                                            Some("Partial row is still owned by another running archive job"),
+                                        )
+                                        .await
+                                        .ok();
+                                    continue;
+                                }
+                            }
+                        }
+                        // Reclaim the abandoned partial row and re-import this UID.
                         if let Err(e) = self
                             .metadata_store
                             .delete_mail_message(existing.id, job.owner_id)
