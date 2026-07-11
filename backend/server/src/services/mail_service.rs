@@ -327,15 +327,14 @@ impl MailService {
             // If this import is tied to a job, re-check cancellation before
             // finalizing the row so a cancelled job does not leave visible mail.
             if let Some(jid) = job_id {
-                if let Some(status) = self
+                match self
                     .metadata_store
                     .get_mail_import_job_status(jid, owner_id)
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?
                 {
-                    if status != "running" {
-                        return Err(MailError::Cancelled);
-                    }
+                    Some(status) if status == "running" => {}
+                    _ => return Err(MailError::Cancelled),
                 }
             }
 
@@ -1759,7 +1758,9 @@ impl MailService {
             job.last_imported_uid
         };
 
-        let mut processed = 0i32;
+        let mut processed = last_imported_uid
+            .map(|last| uids.iter().filter(|&&uid| i64::from(uid) <= last).count() as i32)
+            .unwrap_or(0);
         let mut failed = 0i32;
         let mut failed_once = false;
         let mut last_uid: Option<i64> = last_imported_uid;
@@ -1788,14 +1789,16 @@ impl MailService {
             }
 
             // Check cancellation.
-            if let Ok(Some(status)) = self
+            match self
                 .metadata_store
                 .get_mail_import_job_status(job.id, job.owner_id)
                 .await
             {
-                if status == "cancelled" {
+                Ok(Some(status)) if status == "running" => {}
+                Ok(_) => {
                     break;
                 }
+                Err(e) => return Err(MailError::Database(e.to_string())),
             }
 
             // Skip UIDs that were already imported by this archive job.
@@ -1844,9 +1847,21 @@ impl MailService {
                         // watermark to this UID as long as no earlier UID in
                         // this run failed. Gaps are permanently missing messages
                         // within the current UIDVALIDITY.
+                        processed += 1;
                         if !failed_once {
                             last_uid = Some(uid_i64);
                         }
+                        self.metadata_store
+                            .update_mail_archive_job_progress(
+                                job.id,
+                                processed,
+                                failed,
+                                uid_validity,
+                                last_uid,
+                                None,
+                            )
+                            .await
+                            .map_err(|e| MailError::Database(e.to_string()))?;
                         continue;
                     }
                 }
@@ -2016,14 +2031,16 @@ impl MailService {
         }
 
         // Mark completed if not cancelled and no failures.
-        if let Ok(Some(status)) = self
+        match self
             .metadata_store
             .get_mail_import_job_status(job.id, job.owner_id)
             .await
         {
-            if status == "cancelled" {
+            Ok(Some(status)) if status == "running" => {}
+            Ok(_) => {
                 return Ok(());
             }
+            Err(e) => return Err(MailError::Database(e.to_string())),
         }
 
         if failed > 0 {

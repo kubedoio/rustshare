@@ -316,7 +316,7 @@ pub fn mail_routes() -> Router<AppState> {
             get(crate::handlers::mail::get_mail_import_job),
         )
         .route(
-            "/api/v1/mail/accounts/{account_id}/archive-jobs",
+            "/api/v1/mail/accounts/{id}/archive-jobs",
             get(crate::handlers::mail::list_mail_archive_jobs)
                 .post(crate::handlers::mail::create_mail_archive_job),
         )
