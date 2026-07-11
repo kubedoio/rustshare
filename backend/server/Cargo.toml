@@ -66,6 +66,7 @@ serde_yaml = "0.9"
 validator = { workspace = true }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+ammonia = "4"
 
 [[test]]
 name = "admin_require_admin_test"
