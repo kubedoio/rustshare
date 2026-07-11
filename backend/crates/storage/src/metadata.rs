@@ -430,6 +430,42 @@ impl MetadataStore {
         Ok(rows)
     }
 
+    /// Find a single mail message part by ID, scoped to the owning user and tenant.
+    pub async fn find_mail_message_part_by_id(
+        &self,
+        part_id: Uuid,
+        message_id: Uuid,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Option<MailMessagePart>> {
+        let row = sqlx::query_as!(
+            MailMessagePart,
+            r#"
+            SELECT
+                p.id, p.tenant_id, p.message_id, p.part_index, p.content_type, p.charset,
+                p.blob_key, p.blob_sha256, p.size_bytes, p.is_body, p.created_at
+            FROM mail_message_parts p
+            WHERE p.id = $1
+              AND p.message_id = $2
+              AND p.tenant_id = $3
+              AND EXISTS (
+                  SELECT 1 FROM mail_messages m
+                  WHERE m.id = p.message_id
+                    AND m.tenant_id = $3
+                    AND m.owner_id = $4
+                    AND m.deleted_at IS NULL
+              )
+            "#,
+            part_id,
+            message_id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// List all attachments for a mail message, scoped to the owning user and tenant.
     pub async fn list_mail_attachments_by_message_id(
         &self,
@@ -457,6 +493,11 @@ impl MetadataStore {
         Ok(rows)
     }
 
+    /// Find a mail message by ID.
+    ///
+    /// This method does not enforce tenant or ownership checks. Callers must
+    /// verify `msg.tenant_id` and `msg.owner_id` before returning the message
+    /// to a user.
     pub async fn find_mail_message_by_id(&self, id: Uuid) -> Result<Option<MailMessage>> {
         let row = sqlx::query_as!(
             MailMessage,

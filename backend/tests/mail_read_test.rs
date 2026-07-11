@@ -330,32 +330,32 @@ async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up files");
     sqlx::query("DELETE FROM folders WHERE owner_id = $1")
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up folders");
     sqlx::query("DELETE FROM mail_message_parts WHERE message_id IN (SELECT id FROM mail_messages WHERE owner_id = $1)")
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up mail message parts");
     sqlx::query("DELETE FROM mail_attachments WHERE message_id IN (SELECT id FROM mail_messages WHERE owner_id = $1)")
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up mail attachments");
     sqlx::query("DELETE FROM mail_messages WHERE owner_id = $1")
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up mail messages");
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up user");
 }
 
 async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
@@ -363,12 +363,12 @@ async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
         .bind(tenant_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up modules");
     sqlx::query("DELETE FROM tenants WHERE id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await
-        .ok();
+        .expect("failed to clean up tenant");
 }
 
 fn read_fixture(name: &str) -> Vec<u8> {

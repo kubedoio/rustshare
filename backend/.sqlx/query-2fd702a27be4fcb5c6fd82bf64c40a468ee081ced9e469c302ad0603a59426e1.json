@@ -1,0 +1,85 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                p.id, p.tenant_id, p.message_id, p.part_index, p.content_type, p.charset,\n                p.blob_key, p.blob_sha256, p.size_bytes, p.is_body, p.created_at\n            FROM mail_message_parts p\n            WHERE p.id = $1\n              AND p.message_id = $2\n              AND p.tenant_id = $3\n              AND EXISTS (\n                  SELECT 1 FROM mail_messages m\n                  WHERE m.id = p.message_id\n                    AND m.tenant_id = $3\n                    AND m.owner_id = $4\n                    AND m.deleted_at IS NULL\n              )\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "message_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "part_index",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "charset",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "blob_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "blob_sha256",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_body",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2fd702a27be4fcb5c6fd82bf64c40a468ee081ced9e469c302ad0603a59426e1"
+}

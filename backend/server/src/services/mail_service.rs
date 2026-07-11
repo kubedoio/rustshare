@@ -752,10 +752,11 @@ impl MailService {
         message_id: Uuid,
         part_id: Uuid,
     ) -> Result<(MailMessagePart, bytes::Bytes), MailError> {
-        let parts = self.list_parts(tenant_id, owner_id, message_id).await?;
-        let part = parts
-            .into_iter()
-            .find(|p| p.id == part_id)
+        let part = self
+            .metadata_store
+            .find_mail_message_part_by_id(part_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
             .ok_or(MailError::NotFound(part_id))?;
         let blob_key = part
             .blob_key

@@ -1207,7 +1207,9 @@ pub async fn get_mail_message_part(
         .await?;
 
     let content_type = if part.content_type.eq_ignore_ascii_case("text/html") {
-        let sanitized = sanitize_email_html(std::str::from_utf8(&bytes).unwrap_or(""));
+        let html = std::str::from_utf8(&bytes)
+            .map_err(|_| AppError::internal("HTML part is not valid UTF-8"))?;
+        let sanitized = sanitize_email_html(html);
         emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
         return Ok((
             [(
@@ -1217,6 +1219,8 @@ pub async fn get_mail_message_part(
             sanitized,
         )
             .into_response());
+    } else if let Some(charset) = &part.charset {
+        format!("{}; charset={}", part.content_type, charset)
     } else {
         part.content_type.clone()
     };
