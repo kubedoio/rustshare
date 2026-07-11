@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 use rustshare_server::middleware;
 use rustshare_server::routes;
 use rustshare_server::state::AppState;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -574,4 +574,221 @@ async fn cross_tenant_message_access_rejected() {
     cleanup_user(&state.db_pool, user_b.id).await;
     cleanup_tenant(&state.db_pool, tenant_a).await;
     cleanup_tenant(&state.db_pool, tenant_b).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn unknown_message_and_part_return_404() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_404", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let unknown_message_id = Uuid::new_v4();
+
+    // Unknown message: list parts
+    let request = Request::builder()
+        .uri(format!(
+            "/api/v1/mail/messages/{}/parts",
+            unknown_message_id
+        ))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Unknown message: source
+    let request = Request::builder()
+        .uri(format!(
+            "/api/v1/mail/messages/{}/source",
+            unknown_message_id
+        ))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Known message but unknown part
+    let raw = read_fixture("simple_plain.eml");
+    let message = state
+        .mail_service
+        .import_eml(tenant_id, user.id, user.id, raw)
+        .await
+        .expect("import_eml should succeed");
+
+    let unknown_part_id = Uuid::new_v4();
+    let request = Request::builder()
+        .uri(format!(
+            "/api/v1/mail/messages/{}/parts/{}",
+            message.id, unknown_part_id
+        ))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn mail_module_disabled_returns_403() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_disabled", tenant_id).await;
+    // Do not enable the mail module.
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let message_id = Uuid::new_v4();
+
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{}/parts", message_id))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{}/source", message_id))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn reading_part_and_source_appends_viewed_event() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_viewed", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+
+    let raw = read_fixture("simple_plain.eml");
+    let message = state
+        .mail_service
+        .import_eml(tenant_id, user.id, user.id, raw)
+        .await
+        .expect("import_eml should succeed");
+
+    let app = build_app(state.clone());
+
+    // Fetch parts to obtain a part id.
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{}/parts", message.id))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let parts_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let parts = parts_resp["parts"].as_array().expect("parts array");
+    let first_part = parts
+        .first()
+        .expect("message should have at least one part");
+
+    // Read the body part.
+    let request = Request::builder()
+        .uri(format!(
+            "/api/v1/mail/messages/{}/parts/{}",
+            message.id,
+            first_part["id"].as_str().unwrap()
+        ))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The event store serializes AggregateType and EventType as JSON strings,
+    // so bind the serde_json-encoded values to match the stored representation.
+    let aggregate_type_str =
+        serde_json::to_string(&rustshare_core::events::AggregateType::MailMessage).unwrap();
+    let event_type_str =
+        serde_json::to_string(&rustshare_core::events::EventType::MailMessageViewed).unwrap();
+
+    // Assert MailMessageViewed event with view_type "body".
+    let body_events = sqlx::query(
+        "SELECT payload FROM events
+         WHERE aggregate_id = $1
+           AND aggregate_type = $2
+           AND event_type = $3",
+    )
+    .bind(message.id)
+    .bind(&aggregate_type_str)
+    .bind(&event_type_str)
+    .fetch_all(&state.db_pool)
+    .await
+    .expect("query events");
+    let body_viewed = body_events.iter().any(|row| {
+        let payload: serde_json::Value = row.try_get("payload").unwrap();
+        payload.get("view_type").and_then(|v| v.as_str()) == Some("body")
+    });
+    assert!(
+        body_viewed,
+        "body view should append a MailMessageViewed event"
+    );
+
+    // Read the source.
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{}/source", message.id))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Assert MailMessageViewed event with view_type "source".
+    let all_events = sqlx::query(
+        "SELECT payload FROM events
+         WHERE aggregate_id = $1
+           AND aggregate_type = $2
+           AND event_type = $3",
+    )
+    .bind(message.id)
+    .bind(&aggregate_type_str)
+    .bind(&event_type_str)
+    .fetch_all(&state.db_pool)
+    .await
+    .expect("query events");
+    assert_eq!(
+        all_events.len(),
+        2,
+        "should have one body and one source MailMessageViewed event"
+    );
+    let source_viewed = all_events.iter().any(|row| {
+        let payload: serde_json::Value = row.try_get("payload").unwrap();
+        payload.get("view_type").and_then(|v| v.as_str()) == Some("source")
+    });
+    assert!(
+        source_viewed,
+        "source view should append a MailMessageViewed event"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
 }
