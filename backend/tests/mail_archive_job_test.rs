@@ -344,7 +344,8 @@ async fn archive_job_uidvalidity_reset_reimports() {
         .await
         .unwrap();
 
-    let (mut session2, _) = MockImapArchiveSession::new(Some(2000), vec![1], [(1, msg)].into());
+    let (mut session2, fetch_count2) =
+        MockImapArchiveSession::new(Some(2000), vec![1], [(1, msg)].into());
     ctx.mail_service()
         .process_archive_session(&job, &mut session2)
         .await
@@ -369,7 +370,10 @@ async fn archive_job_uidvalidity_reset_reimports() {
         .collect();
     assert!(uidvalidities.contains(&(Some(1), Some(1000))));
     assert!(uidvalidities.contains(&(Some(1), Some(2000))));
-    assert_eq!(fetch_count.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        fetch_count.load(Ordering::SeqCst) + fetch_count2.load(Ordering::SeqCst),
+        2
+    );
 
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
