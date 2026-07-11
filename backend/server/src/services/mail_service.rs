@@ -723,13 +723,62 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
-    /// Placeholder: list parts for a message.
+    /// List body parts for a message, scoped to the owning user and tenant.
     pub async fn list_parts(
         &self,
-        _tenant_id: Uuid,
-        _message_id: Uuid,
-    ) -> anyhow::Result<Vec<MailMessagePart>> {
-        Ok(vec![])
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<Vec<MailMessagePart>, MailError> {
+        self.metadata_store
+            .list_mail_message_parts_by_message_id(message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Fetch a single message part and its blob bytes.
+    pub async fn get_message_part(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        part_id: Uuid,
+    ) -> Result<(MailMessagePart, bytes::Bytes), MailError> {
+        let parts = self.list_parts(tenant_id, owner_id, message_id).await?;
+        let part = parts
+            .into_iter()
+            .find(|p| p.id == part_id)
+            .ok_or(MailError::NotFound(part_id))?;
+        let blob_key = part
+            .blob_key
+            .clone()
+            .ok_or_else(|| MailError::InvalidSource("part has no blob".to_string()))?;
+        let bytes = self
+            .object_store
+            .get(&blob_key)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+        Ok((part, bytes))
+    }
+
+    /// Download the original raw `.eml` source for a message.
+    pub async fn download_message_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<(String, bytes::Bytes), MailError> {
+        let msg = self.get_message(tenant_id, owner_id, message_id).await?;
+        let blob_key = msg
+            .blob_key
+            .ok_or_else(|| MailError::InvalidSource("message has no source blob".to_string()))?;
+        let bytes = self
+            .object_store
+            .get(&blob_key)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+        let filename = format!("message-{message_id}.eml");
+        Ok((filename, bytes))
     }
 
     /// List attachments for a message, scoped to the owning user and tenant.
