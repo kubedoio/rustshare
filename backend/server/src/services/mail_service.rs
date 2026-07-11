@@ -1651,6 +1651,10 @@ impl MailService {
     }
 
     /// Soft-delete an archive job.
+    ///
+    /// If the job is currently running it is cancelled first so a worker inside
+    /// `process_archive_session` does not continue against a deleted row and
+    /// get stuck in a running state.
     pub async fn delete_archive_job(
         &self,
         tenant_id: Uuid,
@@ -1658,6 +1662,12 @@ impl MailService {
         job_id: MailImportJobId,
     ) -> Result<(), MailError> {
         let job = self.get_archive_job(tenant_id, owner_id, job_id).await?;
+
+        // Cancel a running job before deleting so the worker exits cleanly
+        // instead of failing to requeue against a soft-deleted row.
+        if job.status == "running" {
+            self.cancel_archive_job(tenant_id, owner_id, job_id).await?;
+        }
 
         let deleted = self
             .metadata_store
@@ -1720,6 +1730,34 @@ impl MailService {
             }
             _ => {}
         }
+    }
+
+    /// If `message` is owned by another archive job that has since been deleted,
+    /// reassign it to `job` so the current job's retention policy applies.
+    /// Active overlapping jobs keep their ownership to avoid a ping-pong race.
+    async fn maybe_reassign_archive_message_ownership(
+        &self,
+        message: &MailMessage,
+        job: &MailImportJob,
+    ) -> Result<(), MailError> {
+        let Some(existing_job_id) = message.archive_job_id else {
+            return Ok(());
+        };
+        if existing_job_id == job.id {
+            return Ok(());
+        }
+        let other_status = self
+            .metadata_store
+            .get_mail_import_job_status(existing_job_id, job.owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        if other_status.is_none() {
+            self.metadata_store
+                .update_mail_message_archive_job_id(message.id, job.owner_id, job.id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Process an IMAP archive session for `job` without connecting or logging
@@ -1870,10 +1908,18 @@ impl MailService {
                             continue;
                         }
                     } else {
-                        // Already imported under this UIDVALIDITY; advance the
-                        // watermark to this UID as long as no earlier UID in
-                        // this run failed. Gaps are permanently missing messages
-                        // within the current UIDVALIDITY.
+                        // Already imported under this UIDVALIDITY.
+                        // If the row is owned by another archive job that has
+                        // since been deleted, reassign it to the current job so
+                        // the current job's retention policy applies. Active
+                        // overlapping jobs keep their ownership to avoid a
+                        // ping-pong race.
+                        self.maybe_reassign_archive_message_ownership(&existing, job)
+                            .await?;
+
+                        // Advance the watermark to this UID as long as no
+                        // earlier UID in this run failed. Gaps are permanently
+                        // missing messages within the current UIDVALIDITY.
                         processed += 1;
                         if !failed_once {
                             last_uid = Some(uid_i64);
@@ -1953,6 +1999,9 @@ impl MailService {
                 .await
             {
                 Ok(msg) => {
+                    self.maybe_reassign_archive_message_ownership(&msg, job)
+                        .await?;
+
                     let event = Event::new(
                         EventType::MailImported,
                         msg.id,
@@ -2041,19 +2090,34 @@ impl MailService {
             }
         }
 
-        // Apply retention.
-        if let Some(retention_days) = job.retention_days {
-            if retention_days > 0 {
-                self.metadata_store
-                    .apply_archive_retention(
-                        job.owner_id,
-                        job.account_id,
-                        &job.folder_name,
-                        job.id,
-                        retention_days,
-                    )
-                    .await
-                    .map_err(|e| MailError::Database(format!("Retention cleanup failed: {e}")))?;
+        // Apply retention only if the job is still running. If it was cancelled
+        // during the scan, skip retention so a user-requested stop does not
+        // delete aged messages.
+        let still_running = match self
+            .metadata_store
+            .get_mail_import_job_status(job.id, job.owner_id)
+            .await
+        {
+            Ok(Some(status)) if status == "running" => true,
+            Ok(_) => false,
+            Err(e) => return Err(MailError::Database(e.to_string())),
+        };
+        if still_running {
+            if let Some(retention_days) = job.retention_days {
+                if retention_days > 0 {
+                    self.metadata_store
+                        .apply_archive_retention(
+                            job.owner_id,
+                            job.account_id,
+                            &job.folder_name,
+                            job.id,
+                            retention_days,
+                        )
+                        .await
+                        .map_err(|e| {
+                            MailError::Database(format!("Retention cleanup failed: {e}"))
+                        })?;
+                }
             }
         }
 

@@ -491,6 +491,25 @@ async fn archive_job_retention_soft_deletes_old_messages() {
     .unwrap();
     assert_eq!(visible_artifacts, 0);
 
+    // Internal parts/attachments rows must also be purged.
+    let remaining_parts: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM mail_message_parts WHERE message_id IN (SELECT id FROM mail_messages WHERE owner_id = $1)"
+    )
+    .bind(user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining_parts, 0);
+
+    let remaining_attachments: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM mail_attachments WHERE message_id IN (SELECT id FROM mail_messages WHERE owner_id = $1)"
+    )
+    .bind(user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining_attachments, 0);
+
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
 }
@@ -758,6 +777,271 @@ async fn archive_job_watermark_advances_across_gaps() {
     assert_eq!(updated.last_imported_uid, Some(5));
     assert_eq!(updated.processed_messages, 3);
     assert_eq!(updated.failed_messages, 0);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_retention_skipped_when_cancelled() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let msg = sample_email_bytes(
+        "Old",
+        "old@example.com",
+        "Mon, 15 Aug 2022 10:30:00 +0000",
+        "body",
+    );
+    let (mut session, _) = MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg)].into());
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    // Age the imported message so it would be deleted by retention.
+    let old_imported_at = Utc::now() - Duration::days(10);
+    sqlx::query(
+        "UPDATE mail_messages SET imported_at = $1 WHERE owner_id = $2 AND source_uid = $3 AND source_uidvalidity = $4",
+    )
+    .bind(old_imported_at)
+    .bind(user.id)
+    .bind(1_i64)
+    .bind(1000_i64)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    // Cancel the job, then run the session again. The deduplication loop
+    // breaks immediately and retention must be skipped.
+    ctx.metadata_store
+        .update_mail_import_job_status(job.id, "cancelled", &["pending", "running"])
+        .await
+        .unwrap();
+
+    ctx.mail_service()
+        .process_archive_session(&job, &mut session)
+        .await
+        .unwrap();
+
+    let deleted_count: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM mail_messages WHERE owner_id = $1 AND deleted_at IS NOT NULL",
+    )
+    .bind(user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(deleted_count, 0);
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_reassigns_ownership_from_deleted_job() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job_a = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let msg = sample_email_bytes(
+        "Shared",
+        "shared@example.com",
+        "Mon, 15 Aug 2022 10:30:00 +0000",
+        "body",
+    );
+    let (mut session_a, _) =
+        MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg.clone())].into());
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job_a.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job_a, &mut session_a)
+        .await
+        .unwrap();
+
+    // Delete job A so its archived messages are orphaned.
+    ctx.mail_service()
+        .delete_archive_job(ctx.tenant_id, user.id, job_a.id)
+        .await
+        .unwrap();
+
+    // Create job B for the same folder and run it over the same UID.
+    let job_b = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let (mut session_b, _) = MockImapArchiveSession::new(Some(1000), vec![1], [(1, msg)].into());
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job_b.id)
+        .await
+        .unwrap();
+    ctx.mail_service()
+        .process_archive_session(&job_b, &mut session_b)
+        .await
+        .unwrap();
+
+    let updated_b = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job_b.id)
+        .await
+        .unwrap();
+    assert_eq!(updated_b.last_imported_uid, Some(1));
+    assert_eq!(updated_b.processed_messages, 1);
+
+    let archive_job_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT archive_job_id FROM mail_messages WHERE owner_id = $1 AND source_uid = $2 AND source_uidvalidity = $3 AND deleted_at IS NULL",
+    )
+    .bind(user.id)
+    .bind(1_i64)
+    .bind(1000_i64)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(archive_job_id, Some(job_b.id));
+
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn archive_job_delete_cancels_running_job() {
+    let ctx = setup_test_env().await;
+    let user = ctx.create_test_user("archiveowner").await;
+    let account = ctx
+        .mail_service()
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "Test".to_string(),
+            "imap.example.com".to_string(),
+            993,
+            "user".to_string(),
+            "pass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    let job = ctx
+        .mail_service()
+        .create_archive_job(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "INBOX".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    ctx.metadata_store
+        .mark_mail_import_job_running(job.id)
+        .await
+        .unwrap();
+
+    ctx.mail_service()
+        .delete_archive_job(ctx.tenant_id, user.id, job.id)
+        .await
+        .unwrap();
+
+    let result = ctx
+        .mail_service()
+        .get_archive_job(ctx.tenant_id, user.id, job.id)
+        .await;
+    assert!(result.is_err());
+
+    let (status, deleted_at): (String, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, deleted_at FROM mail_import_jobs WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(job.id)
+    .bind(user.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "cancelled");
+    assert!(deleted_at.is_some());
 
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;

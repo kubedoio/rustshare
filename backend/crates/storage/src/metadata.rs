@@ -293,6 +293,32 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Reassign a mail message to a different archive job.
+    ///
+    /// Used when a new archive job encounters a message that was previously
+    /// imported by another archive job that has since been deleted, so the
+    /// current job's retention policy applies to it.
+    pub async fn update_mail_message_archive_job_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: UserId,
+        archive_job_id: MailImportJobId,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_messages
+            SET archive_job_id = $3, updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+            id,
+            owner_id,
+            archive_job_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Hard-delete a mail message row. Intended for cleaning up a partially
     /// imported message when artifact creation fails after the row was inserted
     /// for deduplication.
@@ -1274,6 +1300,44 @@ impl MetadataStore {
                   WHERE {target_filter} AND folder_id IS NOT NULL
               )
               AND deleted_at IS NULL
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        // Remove internal message parts/attachments before soft-deleting the
+        // parent rows. These tables do not have a deleted_at column, so they
+        // are hard-deleted as part of retention; the visible artifacts above
+        // are soft-deleted to match the rest of the trash semantics.
+        sqlx::query(&format!(
+            r#"
+            DELETE FROM mail_message_parts
+            WHERE message_id IN (
+                SELECT id FROM mail_messages
+                WHERE {target_filter}
+            )
+            "#
+        ))
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(folder_name)
+        .bind(archive_job_id)
+        .bind(retention_days as f64)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            DELETE FROM mail_attachments
+            WHERE message_id IN (
+                SELECT id FROM mail_messages
+                WHERE {target_filter}
+            )
             "#
         ))
         .bind(owner_id)
