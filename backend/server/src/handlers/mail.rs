@@ -137,8 +137,9 @@ pub struct CreateMailImportJobRequest {
     pub folder_name: String,
     /// UIDVALIDITY value observed when the folder was listed. UIDs are only
     /// stable within this value; if it changes, the selected UIDs may refer to
-    /// different messages.
-    pub source_uidvalidity: i64,
+    /// different messages. Servers that did not return UIDVALIDITY should pass null.
+    #[validate(range(min = 1))]
+    pub source_uidvalidity: Option<i64>,
     #[validate(custom(
         function = "validate_selected_uids",
         message = "selected_uids must be non-empty, contain at most 1000 entries, and all values must be in 1..=u32::MAX"
@@ -908,7 +909,7 @@ pub async fn create_mail_import_job(
             auth.user_id,
             account_id,
             req.folder_name,
-            Some(req.source_uidvalidity),
+            req.source_uidvalidity,
             req.selected_uids,
         )
         .await?;
@@ -1080,4 +1081,34 @@ pub async fn delete_mail_archive_job(
         .delete_archive_job(auth.tenant_id, auth.user_id, job_id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CreateMailImportJobRequest;
+    use validator::Validate;
+
+    #[test]
+    fn import_job_request_allows_null_uidvalidity() {
+        let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
+            "folder_name": "INBOX",
+            "source_uidvalidity": null,
+            "selected_uids": [1]
+        }))
+        .expect("request should deserialize");
+
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn import_job_request_rejects_non_positive_uidvalidity() {
+        let req: CreateMailImportJobRequest = serde_json::from_value(serde_json::json!({
+            "folder_name": "INBOX",
+            "source_uidvalidity": 0,
+            "selected_uids": [1]
+        }))
+        .expect("request should deserialize");
+
+        assert!(req.validate().is_err());
+    }
 }
