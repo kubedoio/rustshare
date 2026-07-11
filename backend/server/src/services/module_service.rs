@@ -1004,6 +1004,17 @@ impl ModuleService {
                     Some(json!({ "publicCount": public_count, "internalCount": internal_count })),
                 ))
             }
+            "mail" => {
+                let row = sqlx::query!(
+                    "SELECT COUNT(*) as count FROM mail_messages WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL",
+                    tenant_id,
+                    user_id
+                )
+                .fetch_one(self.metadata_store.pool())
+                .await;
+                let count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+                Ok(("mail-summary".to_string(), vec![], Some(json!({ "count": count }))))
+            }
             _ => {
                 let items = self
                     .recent_mixed_items(path_prefix, max_items, tenant_id, user_id)
