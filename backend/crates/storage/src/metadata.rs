@@ -396,6 +396,40 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// List body parts for a mail message, scoped to the owning user and tenant.
+    pub async fn list_mail_message_parts_by_message_id(
+        &self,
+        message_id: Uuid,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Vec<MailMessagePart>> {
+        let rows = sqlx::query_as!(
+            MailMessagePart,
+            r#"
+            SELECT
+                p.id, p.tenant_id, p.message_id, p.part_index, p.content_type, p.charset,
+                p.blob_key, p.blob_sha256, p.size_bytes, p.is_body, p.created_at
+            FROM mail_message_parts p
+            WHERE p.message_id = $1
+              AND p.tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM mail_messages m
+                  WHERE m.id = p.message_id
+                    AND m.tenant_id = $2
+                    AND m.owner_id = $3
+                    AND m.deleted_at IS NULL
+              )
+            ORDER BY p.part_index ASC
+            "#,
+            message_id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// List all attachments for a mail message, scoped to the owning user and tenant.
     pub async fn list_mail_attachments_by_message_id(
         &self,
