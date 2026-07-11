@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_import_jobs\n            SET status = 'pending',\n                retry_count = 0,\n                last_error = NULL,\n                completed_at = NOW(),\n                updated_at = NOW()\n            WHERE id = $1 AND deleted_at IS NULL\n              AND source_mode = 'imap_archive' AND status = 'running'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e051687e3064948dfe62683b15c0053a5d168526b09182161caa53267445fe44"
+}

@@ -2077,7 +2077,7 @@ impl MailService {
         }
 
         self.metadata_store
-            .mark_mail_import_job_completed(job.id)
+            .requeue_mail_archive_job(job.id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
 

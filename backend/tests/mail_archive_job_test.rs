@@ -249,7 +249,7 @@ async fn archive_job_processes_with_mock_imap() {
         .get_archive_job(ctx.tenant_id, user.id, job.id)
         .await
         .unwrap();
-    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.status, "pending");
     assert_eq!(updated.total_messages, 2);
     assert_eq!(updated.processed_messages, 2);
     assert_eq!(updated.failed_messages, 0);
@@ -629,7 +629,7 @@ async fn archive_job_reclaims_incomplete_row() {
         .get_archive_job(ctx.tenant_id, user.id, job.id)
         .await
         .unwrap();
-    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.status, "pending");
     assert_eq!(updated.last_imported_uid, Some(1));
 
     let msgs = ctx
@@ -729,7 +729,7 @@ async fn archive_job_watermark_advances_across_gaps() {
         .unwrap();
     // IMAP UIDs are monotonic but not contiguous; the watermark must reach the
     // highest successfully imported UID even when gaps represent deleted messages.
-    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.status, "pending");
     assert_eq!(updated.last_uid_validity, Some(1000));
     assert_eq!(updated.last_imported_uid, Some(5));
     assert_eq!(updated.processed_messages, 3);

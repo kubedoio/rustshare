@@ -1066,6 +1066,11 @@ impl MetadataStore {
                   AND m.enabled = true
                   AND (
                       j.source_mode != 'imap_archive'
+                      OR j.completed_at IS NULL
+                      OR j.completed_at <= NOW() - interval '1 minute'
+                  )
+                  AND (
+                      j.source_mode != 'imap_archive'
                       OR (
                           j.retry_count < j.max_retries
                           AND (
@@ -1333,6 +1338,26 @@ impl MetadataStore {
             UPDATE mail_import_jobs
             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
             WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Finish an archive scan and schedule the recurring job for another scan.
+    pub async fn requeue_mail_archive_job(&self, id: MailImportJobId) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE mail_import_jobs
+            SET status = 'pending',
+                retry_count = 0,
+                last_error = NULL,
+                completed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+              AND source_mode = 'imap_archive' AND status = 'running'
             "#,
             id
         )
