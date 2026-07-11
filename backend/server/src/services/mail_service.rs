@@ -1652,9 +1652,10 @@ impl MailService {
 
     /// Soft-delete an archive job.
     ///
-    /// If the job is currently running it is cancelled first so a worker inside
-    /// `process_archive_session` does not continue against a deleted row and
-    /// get stuck in a running state.
+    /// The metadata store atomically sets the status to `cancelled` while
+    /// soft-deleting, so a worker already inside `process_archive_session`
+    /// sees the cancellation and exits cleanly instead of getting stuck in a
+    /// `running` state against a deleted row.
     pub async fn delete_archive_job(
         &self,
         tenant_id: Uuid,
@@ -1662,12 +1663,6 @@ impl MailService {
         job_id: MailImportJobId,
     ) -> Result<(), MailError> {
         let job = self.get_archive_job(tenant_id, owner_id, job_id).await?;
-
-        // Cancel a running job before deleting so the worker exits cleanly
-        // instead of failing to requeue against a soft-deleted row.
-        if job.status == "running" {
-            self.cancel_archive_job(tenant_id, owner_id, job_id).await?;
-        }
 
         let deleted = self
             .metadata_store
@@ -1732,9 +1727,10 @@ impl MailService {
         }
     }
 
-    /// If `message` is owned by another archive job that has since been deleted,
-    /// reassign it to `job` so the current job's retention policy applies.
-    /// Active overlapping jobs keep their ownership to avoid a ping-pong race.
+    /// If `message` is owned by another archive job that is no longer active
+    /// (deleted, cancelled, or failed), reassign it to `job` so the current
+    /// job's retention policy applies. Active overlapping jobs keep their
+    /// ownership to avoid a ping-pong race.
     async fn maybe_reassign_archive_message_ownership(
         &self,
         message: &MailMessage,
@@ -1751,7 +1747,12 @@ impl MailService {
             .get_mail_import_job_status(existing_job_id, job.owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
-        if other_status.is_none() {
+        let is_inactive = match other_status.as_deref() {
+            None => true, // soft-deleted
+            Some("cancelled") | Some("failed") => true,
+            _ => false,
+        };
+        if is_inactive {
             self.metadata_store
                 .update_mail_message_archive_job_id(message.id, job.owner_id, job.id)
                 .await

@@ -1218,6 +1218,10 @@ impl MetadataStore {
 
     /// Soft-delete a mail import job, but only if it is an `imap_archive` job.
     ///
+    /// Also sets the status to `cancelled` atomically so a worker that is
+    /// already inside the scan sees the cancellation and exits cleanly instead
+    /// of getting stuck in `running` against a deleted row.
+    ///
     /// Returns `true` if a row was updated.
     pub async fn soft_delete_mail_archive_job(
         &self,
@@ -1227,7 +1231,9 @@ impl MetadataStore {
         let rows = sqlx::query!(
             r#"
             UPDATE mail_import_jobs
-            SET deleted_at = NOW(), updated_at = NOW()
+            SET deleted_at = NOW(),
+                status = 'cancelled',
+                updated_at = NOW()
             WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
               AND source_mode = 'imap_archive'
             "#,
@@ -1267,6 +1273,7 @@ impl MetadataStore {
                   SELECT 1 FROM mail_import_jobs j
                   WHERE j.id = archive_job_id
                     AND j.deleted_at IS NULL
+                    AND j.status = 'running'
               )
         "#;
 
