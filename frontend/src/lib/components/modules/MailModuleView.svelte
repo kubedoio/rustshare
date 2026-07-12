@@ -38,6 +38,7 @@
 	let archiveSince = $state('');
 	let archiveBefore = $state('');
 	let retentionDays = $state('');
+	let uploadInput: HTMLInputElement | null = $state(null);
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -213,6 +214,16 @@
 			toastStore.show(error instanceof Error ? error.message : 'Cancel failed', 'error')
 	});
 
+	const uploadMutation = createMutation({
+		mutationFn: (file: File) => mailApi.uploadMessage(file),
+		onSuccess: async () => {
+			await importedMessagesQuery.refetch();
+			toastStore.show('Mail imported', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Upload failed', 'error')
+	});
+
 	let selectedAccount = $derived(
 		($accountsQuery.data ?? []).find((account) => account.id === selectedAccountId) ?? null
 	);
@@ -250,6 +261,13 @@
 	function importJobProgress(job: MailImportJob): string {
 		return `${job.processed_messages}/${job.total_messages} processed`;
 	}
+
+	function handleUploadChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file) uploadMutation.mutate(file);
+		input.value = '';
+	}
 </script>
 
 <ModulePageShell title="Mail" subtitle={module.description}>
@@ -258,9 +276,20 @@
 			<RefreshCw size={14} />
 			<span>Refresh imported</span>
 		</button>
-		<button class="btn gap-2 btn-sm btn-primary" onclick={() => goto('/files')}>
+		<input
+			bind:this={uploadInput}
+			class="hidden"
+			type="file"
+			accept=".eml,message/rfc822"
+			onchange={handleUploadChange}
+		/>
+		<button
+			class="btn gap-2 btn-sm btn-primary"
+			disabled={$uploadMutation.isPending}
+			onclick={() => uploadInput?.click()}
+		>
 			<Download size={14} />
-			<span>Upload .eml</span>
+			<span>{$uploadMutation.isPending ? 'Uploading...' : 'Upload .eml'}</span>
 		</button>
 	</div>
 

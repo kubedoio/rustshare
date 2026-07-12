@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
 	testAccount: vi.fn(),
 	createImportJob: vi.fn(),
 	createArchiveJob: vi.fn(),
-	cancelArchiveJob: vi.fn()
+	cancelArchiveJob: vi.fn(),
+	uploadMessage: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -34,7 +35,8 @@ vi.mock('$lib/api/mail', () => ({
 		testAccount: mocks.testAccount,
 		createImportJob: mocks.createImportJob,
 		createArchiveJob: mocks.createArchiveJob,
-		cancelArchiveJob: mocks.cancelArchiveJob
+		cancelArchiveJob: mocks.cancelArchiveJob,
+		uploadMessage: mocks.uploadMessage
 	}
 }));
 
@@ -98,6 +100,7 @@ describe('MailModuleView', () => {
 		mocks.listFolders.mockResolvedValue([]);
 		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
 		mocks.listArchiveJobs.mockResolvedValue([]);
+		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
@@ -174,5 +177,21 @@ describe('MailModuleView', () => {
 		expect(await screen.findByText('Work mail')).toBeTruthy();
 		expect(await screen.findByText('INBOX')).toBeTruthy();
 		expect(await screen.findByText('Server alert')).toBeTruthy();
+	});
+
+	it('uploads .eml files through the mail import endpoint', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+		const file = new File(['From: alice@example.com'], 'message.eml', { type: 'message/rfc822' });
+
+		await fireEvent.change(input, { target: { files: [file] } });
+
+		await waitFor(() => {
+			expect(mocks.uploadMessage).toHaveBeenCalledWith(file);
+			expect(mocks.listMessages).toHaveBeenCalledTimes(2);
+		});
 	});
 });

@@ -95,6 +95,17 @@ describe('mailApi', () => {
 		});
 	});
 
+	it('uploads .eml messages as multipart form data', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({ id: 'msg-1' });
+		const file = new File(['From: alice@example.com'], 'message.eml', { type: 'message/rfc822' });
+
+		await mailApi.uploadMessage(file);
+
+		expect(apiClient.post).toHaveBeenCalledWith('/mail/upload', expect.any(FormData));
+		const form = vi.mocked(apiClient.post).mock.calls[0][1] as FormData;
+		expect(form.get('file')).toBe(file);
+	});
+
 	it('refreshes import job status', async () => {
 		vi.mocked(apiClient.get).mockResolvedValueOnce({ id: 'import-1', status: 'completed' });
 

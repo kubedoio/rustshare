@@ -203,6 +203,12 @@ export const mailApi = {
 		return apiClient.patch<MailArchiveJob>(`/mail/archive-jobs/${jobId}/cancel`, {});
 	},
 
+	uploadMessage: async (file: File): Promise<MailMessage> => {
+		const form = new FormData();
+		form.append('file', file);
+		return apiClient.post<MailMessage>('/mail/upload', form);
+	},
+
 	listMessages: async (): Promise<MailMessage[]> => {
 		const res = await apiClient.get<ListMailMessagesResponse>('/mail/messages');
 		return res.messages;

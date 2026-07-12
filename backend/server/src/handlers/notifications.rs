@@ -484,6 +484,7 @@ fn event_type_to_action(event_type: &EventType) -> &'static str {
         EventType::NoteModified => "note_modified",
         EventType::MailLinked => "linked",
         EventType::MailUnlinked => "unlinked",
+        EventType::MailMessageViewed => "mail_message_viewed",
         _ => "unknown",
     }
 }
@@ -657,6 +658,10 @@ mod tests {
         assert_eq!(
             event_type_to_action(&EventType::BrainstormBoardModified),
             "brainstorm_board_modified"
+        );
+        assert_eq!(
+            event_type_to_action(&EventType::MailMessageViewed),
+            "mail_message_viewed"
         );
     }
 
