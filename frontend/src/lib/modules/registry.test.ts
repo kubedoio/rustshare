@@ -10,7 +10,7 @@ import {
 describe('Module Registry', () => {
 	it('all predefined modules exist', () => {
 		const modules = getAllModules();
-		expect(modules.length).toBeGreaterThanOrEqual(6);
+		expect(modules.length).toBeGreaterThanOrEqual(7);
 		const keys = modules.map((m) => m.key);
 		expect(keys).toContain('notes');
 		expect(keys).toContain('meetings');
@@ -18,6 +18,15 @@ describe('Module Registry', () => {
 		expect(keys).toContain('kanban');
 		expect(keys).toContain('decisions');
 		expect(keys).toContain('shares');
+		expect(keys).toContain('mail');
+	});
+
+	it('mail module uses the mail-list renderer', () => {
+		const modules = getAllModules();
+		const mail = modules.find((m) => m.key === 'mail');
+		expect(mail).toBeDefined();
+		expect(mail?.renderer).toBe('mail-list');
+		expect(mail?.ui.page.renderer).toBe('mail-list');
 	});
 
 	it('keys are unique', () => {
@@ -123,7 +132,8 @@ describe('Module Registry', () => {
 			'globe',
 			'settings',
 			'lightbulb',
-			'activity'
+			'activity',
+			'mail'
 		]);
 
 		for (const module of modules) {

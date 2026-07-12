@@ -66,6 +66,7 @@ serde_yaml = "0.9"
 validator = { workspace = true }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+ammonia = "4"
 
 [[test]]
 name = "admin_require_admin_test"
@@ -202,6 +203,10 @@ path = "../tests/mail_imap_import_test.rs"
 [[test]]
 name = "mail_archive_job_test"
 path = "../tests/mail_archive_job_test.rs"
+
+[[test]]
+name = "mail_read_test"
+path = "../tests/mail_read_test.rs"
 
 [dev-dependencies]
 tokio-tungstenite = "0.29"

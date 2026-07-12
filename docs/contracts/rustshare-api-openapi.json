@@ -5693,6 +5693,59 @@
         }
       }
     },
+    "/api/v1/mail/messages/{id}/attachments": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "List attachments for an imported mail message.",
+        "operationId": "list_mail_message_attachments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail message ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMailMessageAttachmentsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/messages/{id}/links": {
       "get": {
         "tags": [
@@ -5887,6 +5940,161 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/messages/{id}/parts": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "List body parts for an imported mail message.",
+        "operationId": "list_mail_message_parts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail message ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Message parts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMailMessagePartsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/messages/{id}/parts/{part_id}": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Get the content of a single message part. HTML parts are sanitized before delivery.",
+        "operationId": "get_mail_message_part",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail message ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "part_id",
+            "in": "path",
+            "description": "Part ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Part content"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/messages/{id}/source": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Download the raw `.eml` source for an imported mail message.",
+        "operationId": "download_mail_message_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail message ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw message source"
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -14330,6 +14538,20 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailMessageViewed"
+                ]
+              }
+            }
           }
         ],
         "description": "Event types in the system"
@@ -16329,6 +16551,34 @@
           }
         }
       },
+      "ListMailMessageAttachmentsResponse": {
+        "type": "object",
+        "required": [
+          "attachments"
+        ],
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailAttachmentResponse"
+            }
+          }
+        }
+      },
+      "ListMailMessagePartsResponse": {
+        "type": "object",
+        "required": [
+          "parts"
+        ],
+        "properties": {
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailMessagePartResponse"
+            }
+          }
+        }
+      },
       "ListMailMessagesResponse": {
         "type": "object",
         "required": [
@@ -16904,6 +17154,42 @@
           }
         }
       },
+      "MailAttachmentResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "filename"
+        ],
+        "properties": {
+          "file_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "MailFolderListResponse": {
         "type": "object",
         "required": [
@@ -17092,6 +17378,44 @@
           },
           "target_type": {
             "type": "string"
+          }
+        }
+      },
+      "MailMessagePartResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "part_index",
+          "content_type",
+          "is_body"
+        ],
+        "properties": {
+          "charset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_body": {
+            "type": "boolean"
+          },
+          "part_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },

@@ -387,9 +387,9 @@ pub async fn list_activity(
                 AggregateType::User => false,
                 AggregateType::MailMessage => state
                     .metadata_store
-                    .find_mail_message_by_id(event.aggregate_id, auth.user_id)
+                    .find_mail_message_by_id(event.aggregate_id)
                     .await
-                    .map(|msg| msg.is_some())
+                    .map(|msg| msg.map(|m| m.owner_id == auth.user_id).unwrap_or(false))
                     .unwrap_or(false),
                 AggregateType::MailAccount => false,
                 AggregateType::MailImportJob => false,
@@ -484,6 +484,7 @@ fn event_type_to_action(event_type: &EventType) -> &'static str {
         EventType::NoteModified => "note_modified",
         EventType::MailLinked => "linked",
         EventType::MailUnlinked => "unlinked",
+        EventType::MailMessageViewed => "mail_message_viewed",
         _ => "unknown",
     }
 }
@@ -657,6 +658,10 @@ mod tests {
         assert_eq!(
             event_type_to_action(&EventType::BrainstormBoardModified),
             "brainstorm_board_modified"
+        );
+        assert_eq!(
+            event_type_to_action(&EventType::MailMessageViewed),
+            "mail_message_viewed"
         );
     }
 

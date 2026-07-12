@@ -1,6 +1,7 @@
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
@@ -335,6 +336,63 @@ pub struct MailMessageResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListMailMessagesResponse {
     pub messages: Vec<MailMessageResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailMessagePartResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    pub part_index: i32,
+    pub content_type: String,
+    pub charset: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub is_body: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListMailMessagePartsResponse {
+    pub parts: Vec<MailMessagePartResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListMailMessageAttachmentsResponse {
+    pub attachments: Vec<MailAttachmentResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailAttachmentResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    #[schema(value_type = Option<Uuid>)]
+    pub file_id: Option<Uuid>,
+    pub filename: String,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+}
+
+impl From<rustshare_core::domain::MailMessagePart> for MailMessagePartResponse {
+    fn from(part: rustshare_core::domain::MailMessagePart) -> Self {
+        Self {
+            id: part.id,
+            part_index: part.part_index,
+            content_type: part.content_type,
+            charset: part.charset,
+            size_bytes: part.size_bytes,
+            is_body: part.is_body,
+        }
+    }
+}
+
+impl From<rustshare_core::domain::MailAttachment> for MailAttachmentResponse {
+    fn from(att: rustshare_core::domain::MailAttachment) -> Self {
+        Self {
+            id: att.id,
+            file_id: att.file_id,
+            filename: att.filename,
+            mime_type: att.mime_type,
+            size_bytes: att.size_bytes,
+        }
+    }
 }
 
 impl From<rustshare_core::domain::MailMessage> for MailMessageResponse {
@@ -1083,9 +1141,199 @@ pub async fn delete_mail_archive_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn sanitize_email_html(html: &str) -> String {
+    let schemes: std::collections::HashSet<&str> =
+        ["http", "https", "mailto"].into_iter().collect();
+    ammonia::Builder::default()
+        .url_schemes(schemes)
+        .clean(html)
+        .to_string()
+}
+
+/// List body parts for an imported mail message.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/parts",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail message ID")),
+    responses(
+        (status = 200, description = "Message parts", body = ListMailMessagePartsResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_message_parts(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<ListMailMessagePartsResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let parts = state
+        .mail_service
+        .list_parts(auth.tenant_id, auth.user_id, message_id)
+        .await?;
+    Ok(Json(ListMailMessagePartsResponse {
+        parts: parts
+            .into_iter()
+            .map(MailMessagePartResponse::from)
+            .collect(),
+    }))
+}
+
+/// Get the content of a single message part. HTML parts are sanitized before delivery.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/parts/{part_id}",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail message ID"),
+        ("part_id" = Uuid, Path, description = "Part ID"),
+    ),
+    responses(
+        (status = 200, description = "Part content"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_mail_message_part(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((message_id, part_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let (part, bytes) = state
+        .mail_service
+        .get_message_part(auth.tenant_id, auth.user_id, message_id, part_id)
+        .await?;
+
+    let content_type = if part.content_type.eq_ignore_ascii_case("text/html") {
+        let html = std::str::from_utf8(&bytes)
+            .map_err(|_| AppError::internal("HTML part is not valid UTF-8"))?;
+        let sanitized = sanitize_email_html(html);
+        emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
+        return Ok((
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            )],
+            sanitized,
+        )
+            .into_response());
+    } else if let Some(charset) = &part.charset {
+        format!("{}; charset={}", part.content_type, charset)
+    } else {
+        part.content_type.clone()
+    };
+
+    emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    Ok((StatusCode::OK, headers, bytes).into_response())
+}
+
+/// Download the raw `.eml` source for an imported mail message.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/source",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail message ID")),
+    responses(
+        (status = 200, description = "Raw message source"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn download_mail_message_source(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(message_id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let (filename, bytes) = state
+        .mail_service
+        .download_message_source(auth.tenant_id, auth.user_id, message_id)
+        .await?;
+    emit_mail_message_viewed(&state, message_id, auth.user_id, "source").await?;
+
+    let content_disposition = super::public_shares::build_content_disposition(&filename);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("message/rfc822"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .map_err(|e| AppError::internal(e.to_string()))?,
+    );
+    Ok((StatusCode::OK, headers, bytes).into_response())
+}
+
+/// List attachments for an imported mail message.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/attachments",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail message ID")),
+    responses(
+        (status = 200, description = "Attachments", body = ListMailMessageAttachmentsResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_mail_message_attachments(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<ListMailMessageAttachmentsResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let attachments = state
+        .mail_service
+        .list_attachments(auth.tenant_id, auth.user_id, message_id)
+        .await?;
+    Ok(Json(ListMailMessageAttachmentsResponse {
+        attachments: attachments
+            .into_iter()
+            .map(MailAttachmentResponse::from)
+            .collect(),
+    }))
+}
+
+async fn emit_mail_message_viewed(
+    state: &AppState,
+    message_id: Uuid,
+    viewed_by: rustshare_core::domain::UserId,
+    view_type: &str,
+) -> Result<(), AppError> {
+    use rustshare_core::events::{AggregateType, Event, EventType, MailMessageViewedPayload};
+    let payload = MailMessageViewedPayload {
+        message_id,
+        viewed_by,
+        view_type: view_type.to_string(),
+    };
+    let event = Event::new(
+        EventType::MailMessageViewed,
+        message_id,
+        AggregateType::MailMessage,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        viewed_by,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CreateMailImportJobRequest;
+    use super::{sanitize_email_html, CreateMailImportJobRequest};
     use validator::Validate;
 
     #[test]
@@ -1156,5 +1404,15 @@ mod tests {
             err.field_errors().contains_key("source_uidvalidity"),
             "error should be on source_uidvalidity"
         );
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_scripts() {
+        let raw =
+            r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
+        let clean = sanitize_email_html(raw);
+        assert!(!clean.contains("<script>"));
+        assert!(!clean.contains("javascript:"));
+        assert!(clean.contains("<p>Hello</p>"));
     }
 }

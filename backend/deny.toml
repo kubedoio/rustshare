@@ -21,6 +21,8 @@ allow = [
     "CC0-1.0",
     "MIT-0",
     "BSL-1.0",
+    # Required by cssparser/dtoa-short through ammonia, used for backend mail HTML sanitization.
+    "MPL-2.0",
 ]
 confidence-threshold = 0.8
 

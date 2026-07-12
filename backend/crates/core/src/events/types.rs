@@ -80,6 +80,7 @@ pub enum EventType {
     MailArchiveJobFailed,
     MailArchiveJobCancelled,
     MailArchiveJobDeleted,
+    MailMessageViewed,
 }
 
 impl EventType {
@@ -126,6 +127,7 @@ impl EventType {
             EventType::MailArchiveJobFailed => "MailArchiveJobFailed",
             EventType::MailArchiveJobCancelled => "MailArchiveJobCancelled",
             EventType::MailArchiveJobDeleted => "MailArchiveJobDeleted",
+            EventType::MailMessageViewed => "MailMessageViewed",
         }
     }
 }
@@ -576,6 +578,15 @@ pub struct MailArchiveJobDeletedPayload {
     pub job_id: MailImportJobId,
     #[schema(value_type = Uuid)]
     pub account_id: MailAccountId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailMessageViewedPayload {
+    #[schema(value_type = Uuid)]
+    pub message_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub viewed_by: UserId,
+    pub view_type: String, // "body" or "source"
 }
 
 #[cfg(test)]

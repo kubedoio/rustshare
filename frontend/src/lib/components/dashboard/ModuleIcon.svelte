@@ -14,7 +14,8 @@
 		Settings,
 		Activity,
 		Users,
-		Lightbulb
+		Lightbulb,
+		Mail
 	} from 'lucide-svelte';
 	import { DEFAULT_MODULE_ICON } from '$lib/modules/iconRegistry';
 	import PathSeparationIcon from './PathSeparationIcon.svelte';
@@ -45,7 +46,8 @@
 		settings: Settings,
 		activity: Activity,
 		users: Users,
-		lightbulb: Lightbulb
+		lightbulb: Lightbulb,
+		mail: Mail
 	};
 
 	let IconComponent = $derived(iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder);

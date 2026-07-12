@@ -272,6 +272,22 @@ pub fn mail_routes() -> Router<AppState> {
             get(crate::handlers::mail::get_mail_message),
         )
         .route(
+            "/api/v1/mail/messages/{id}/parts",
+            get(crate::handlers::mail::list_mail_message_parts),
+        )
+        .route(
+            "/api/v1/mail/messages/{id}/parts/{part_id}",
+            get(crate::handlers::mail::get_mail_message_part),
+        )
+        .route(
+            "/api/v1/mail/messages/{id}/source",
+            get(crate::handlers::mail::download_mail_message_source),
+        )
+        .route(
+            "/api/v1/mail/messages/{id}/attachments",
+            get(crate::handlers::mail::list_mail_message_attachments),
+        )
+        .route(
             "/api/v1/mail/messages/{id}/links",
             get(crate::handlers::mail::list_mail_links)
                 .post(crate::handlers::mail::create_mail_link),

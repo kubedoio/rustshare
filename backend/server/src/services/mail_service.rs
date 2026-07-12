@@ -422,18 +422,23 @@ impl MailService {
         Ok(part_index + 1)
     }
 
-    /// Get a single imported mail message if owned by `owner_id`.
+    /// Get a single imported mail message if owned by `owner_id` in `tenant_id`.
     pub async fn get_message(
         &self,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
         owner_id: Uuid,
         message_id: Uuid,
     ) -> Result<MailMessage, MailError> {
-        self.metadata_store
-            .find_mail_message_by_id(message_id, owner_id)
+        let msg = self
+            .metadata_store
+            .find_mail_message_by_id(message_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?
-            .ok_or(MailError::NotFound(message_id))
+            .ok_or(MailError::NotFound(message_id))?;
+        if msg.tenant_id != tenant_id || msg.owner_id != owner_id {
+            return Err(MailError::PermissionDenied);
+        }
+        Ok(msg)
     }
 
     /// Verify the caller can read the link target.
@@ -723,13 +728,66 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
-    /// Placeholder: list parts for a message.
+    /// List body parts for a message, scoped to the owning user and tenant.
     pub async fn list_parts(
         &self,
-        _tenant_id: Uuid,
-        _message_id: Uuid,
-    ) -> anyhow::Result<Vec<MailMessagePart>> {
-        Ok(vec![])
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<Vec<MailMessagePart>, MailError> {
+        // Verify the caller can access the message first so cross-tenant requests
+        // are rejected with a permission error rather than an empty list.
+        self.get_message(tenant_id, owner_id, message_id).await?;
+        self.metadata_store
+            .list_mail_message_parts_by_message_id(message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Fetch a single message part and its blob bytes.
+    pub async fn get_message_part(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        part_id: Uuid,
+    ) -> Result<(MailMessagePart, bytes::Bytes), MailError> {
+        let part = self
+            .metadata_store
+            .find_mail_message_part_by_id(part_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(part_id))?;
+        let blob_key = part
+            .blob_key
+            .clone()
+            .ok_or_else(|| MailError::InvalidSource("part has no blob".to_string()))?;
+        let bytes = self
+            .object_store
+            .get(&blob_key)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+        Ok((part, bytes))
+    }
+
+    /// Download the original raw `.eml` source for a message.
+    pub async fn download_message_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<(String, bytes::Bytes), MailError> {
+        let msg = self.get_message(tenant_id, owner_id, message_id).await?;
+        let blob_key = msg
+            .blob_key
+            .ok_or_else(|| MailError::InvalidSource("message has no source blob".to_string()))?;
+        let bytes = self
+            .object_store
+            .get(&blob_key)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+        let filename = format!("message-{message_id}.eml");
+        Ok((filename, bytes))
     }
 
     /// List attachments for a message, scoped to the owning user and tenant.
@@ -739,6 +797,9 @@ impl MailService {
         owner_id: Uuid,
         message_id: Uuid,
     ) -> Result<Vec<MailAttachment>, MailError> {
+        // Verify the caller can access the message first so cross-tenant requests
+        // are rejected with a permission error rather than an empty list.
+        self.get_message(tenant_id, owner_id, message_id).await?;
         self.metadata_store
             .list_mail_attachments_by_message_id(message_id, tenant_id, owner_id)
             .await
