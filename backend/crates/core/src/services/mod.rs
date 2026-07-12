@@ -36,7 +36,7 @@ pub use chat_integration::{
     IncomingChatEvent, MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest,
     UnfurlResponse, WebhookDispatcher,
 };
-pub use email_service::{EmailError, EmailService};
+pub use email_service::{EmailError, EmailService, OutboundEmail};
 pub use eml_parser::{EmlParseError, EmlParser, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{

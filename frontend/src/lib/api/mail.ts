@@ -135,6 +135,18 @@ export interface ListMailMessageAttachmentsResponse {
 	attachments: MailAttachment[];
 }
 
+export interface SendMailMessageRequest {
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	body: string;
+}
+
+export interface SendMailMessageResponse {
+	ok: boolean;
+}
+
 export const mailApi = {
 	listAccounts: async (): Promise<MailAccount[]> => {
 		const res = await apiClient.get<ListMailAccountsResponse>('/mail/accounts');
@@ -207,6 +219,10 @@ export const mailApi = {
 		const form = new FormData();
 		form.append('file', file);
 		return apiClient.post<MailMessage>('/mail/upload', form);
+	},
+
+	sendMessage: async (input: SendMailMessageRequest): Promise<SendMailMessageResponse> => {
+		return apiClient.post<SendMailMessageResponse>('/mail/send', input);
 	},
 
 	listMessages: async (): Promise<MailMessage[]> => {

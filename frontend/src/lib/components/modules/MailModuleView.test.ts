@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
 	createImportJob: vi.fn(),
 	createArchiveJob: vi.fn(),
 	cancelArchiveJob: vi.fn(),
-	uploadMessage: vi.fn()
+	uploadMessage: vi.fn(),
+	sendMessage: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -36,7 +37,8 @@ vi.mock('$lib/api/mail', () => ({
 		createImportJob: mocks.createImportJob,
 		createArchiveJob: mocks.createArchiveJob,
 		cancelArchiveJob: mocks.cancelArchiveJob,
-		uploadMessage: mocks.uploadMessage
+		uploadMessage: mocks.uploadMessage,
+		sendMessage: mocks.sendMessage
 	}
 }));
 
@@ -101,6 +103,7 @@ describe('MailModuleView', () => {
 		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
 		mocks.listArchiveJobs.mockResolvedValue([]);
 		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
+		mocks.sendMessage.mockResolvedValue({ ok: true });
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
@@ -192,6 +195,34 @@ describe('MailModuleView', () => {
 		await waitFor(() => {
 			expect(mocks.uploadMessage).toHaveBeenCalledWith(file);
 			expect(mocks.listMessages).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	it('opens compose and sends outbound mail', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText('Compose'));
+		await fireEvent.input(screen.getByPlaceholderText('To'), {
+			target: { value: 'bob@example.com' }
+		});
+		await fireEvent.input(screen.getByPlaceholderText('Subject'), {
+			target: { value: 'Hello' }
+		});
+		await fireEvent.input(screen.getByPlaceholderText('Message'), {
+			target: { value: 'Hi Bob' }
+		});
+		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
+
+		await waitFor(() => {
+			expect(mocks.sendMessage.mock.calls[0][0]).toEqual({
+				to: ['bob@example.com'],
+				cc: [],
+				bcc: [],
+				subject: 'Hello',
+				body: 'Hi Bob'
+			});
 		});
 	});
 });

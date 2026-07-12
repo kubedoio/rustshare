@@ -301,6 +301,10 @@ pub fn mail_routes() -> Router<AppState> {
             post(crate::handlers::mail::upload_mail).layer(DefaultBodyLimit::disable()),
         )
         .route(
+            "/api/v1/mail/send",
+            post(crate::handlers::mail::send_mail_message),
+        )
+        .route(
             "/api/v1/mail/accounts",
             get(crate::handlers::mail::list_mail_accounts)
                 .post(crate::handlers::mail::create_mail_account),

@@ -14,9 +14,10 @@
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
-	import { ArrowLeft, Download, Paperclip, Link2, Trash2 } from 'lucide-svelte';
+	import { ArrowLeft, Download, Paperclip, Link2, Trash2, Reply, Forward } from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
 
@@ -84,6 +85,10 @@
 	let previewAttachment = $state<MailAttachment | null>(null);
 	let linkTargetType = $state('file');
 	let linkTargetId = $state('');
+	let composeOpen = $state(false);
+	let composeTo = $state('');
+	let composeSubject = $state('');
+	let composeBody = $state('');
 
 	const createLinkMutation = createMutation({
 		mutationFn: () =>
@@ -110,9 +115,42 @@
 			toastStore.show(error instanceof Error ? error.message : 'Unlink failed', 'error')
 	});
 
+	const sendMutation = createMutation({
+		mutationFn: mailApi.sendMessage,
+		onSuccess: () => {
+			composeOpen = false;
+			toastStore.show('Mail sent', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
+	});
+
 	function formatAddresses(value: unknown): string {
 		if (Array.isArray(value)) return value.join(', ');
 		return String(value ?? '');
+	}
+
+	function prefixedSubject(prefix: string, subject: string | null): string {
+		const value = subject || '(no subject)';
+		return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value : `${prefix} ${value}`;
+	}
+
+	function openReply(message: MailMessage) {
+		composeTo = message.from_address ?? '';
+		composeSubject = prefixedSubject('Re:', message.subject);
+		composeBody = '';
+		composeOpen = true;
+	}
+
+	function openForward(message: MailMessage) {
+		composeTo = '';
+		composeSubject = prefixedSubject('Fwd:', message.subject);
+		composeBody = `\n\nForwarded message\nFrom: ${formatAddresses(
+			[message.from_name, message.from_address].filter(Boolean)
+		)}\nDate: ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
+		}\nSubject: ${message.subject || '(no subject)'}\n`;
+		composeOpen = true;
 	}
 </script>
 
@@ -131,6 +169,14 @@
 		subtitle={message.from_name || message.from_address || 'Unknown sender'}
 	>
 		<div slot="secondaryActions">
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReply(message)}>
+				<Reply size={14} />
+				<span>Reply</span>
+			</button>
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openForward(message)}>
+				<Forward size={14} />
+				<span>Forward</span>
+			</button>
 			<button class="btn gap-2 btn-outline btn-sm" onclick={() => goto('/modules/mail')}>
 				<ArrowLeft size={14} />
 				<span>Back</span>
@@ -299,5 +345,15 @@
 				}
 			: null}
 		onClose={() => (previewAttachment = null)}
+	/>
+
+	<MailComposeModal
+		open={composeOpen}
+		initialTo={composeTo}
+		initialSubject={composeSubject}
+		initialBody={composeBody}
+		sending={$sendMutation.isPending}
+		onClose={() => (composeOpen = false)}
+		onSend={(message) => sendMutation.mutate(message)}
 	/>
 {/if}

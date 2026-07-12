@@ -16,6 +16,7 @@
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
+	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { Mail, Download, Inbox, RefreshCw, Trash2, Archive, CheckSquare } from 'lucide-svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -39,6 +40,7 @@
 	let archiveBefore = $state('');
 	let retentionDays = $state('');
 	let uploadInput: HTMLInputElement | null = $state(null);
+	let composeOpen = $state(false);
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -224,6 +226,16 @@
 			toastStore.show(error instanceof Error ? error.message : 'Upload failed', 'error')
 	});
 
+	const sendMutation = createMutation({
+		mutationFn: mailApi.sendMessage,
+		onSuccess: () => {
+			composeOpen = false;
+			toastStore.show('Mail sent', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
+	});
+
 	let selectedAccount = $derived(
 		($accountsQuery.data ?? []).find((account) => account.id === selectedAccountId) ?? null
 	);
@@ -272,6 +284,10 @@
 
 <ModulePageShell title="Mail" subtitle={module.description}>
 	<div slot="primaryAction" class="flex flex-wrap gap-2">
+		<button class="btn gap-2 btn-sm btn-outline" onclick={() => (composeOpen = true)}>
+			<Mail size={14} />
+			<span>Compose</span>
+		</button>
 		<button class="btn gap-2 btn-sm btn-outline" onclick={() => importedMessagesQuery.refetch()}>
 			<RefreshCw size={14} />
 			<span>Refresh imported</span>
@@ -704,4 +720,11 @@
 	danger
 	onConfirm={() => deleteTarget && deleteAccountMutation.mutate(deleteTarget.id)}
 	onCancel={() => (deleteTarget = null)}
+/>
+
+<MailComposeModal
+	open={composeOpen}
+	sending={$sendMutation.isPending}
+	onClose={() => (composeOpen = false)}
+	onSend={(message) => sendMutation.mutate(message)}
 />

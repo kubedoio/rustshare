@@ -1,6 +1,7 @@
 use lettre::{
-    message::Mailbox, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
-    AsyncTransport, Message, Tokio1Executor,
+    message::{Mailbox, MultiPart, SinglePart},
+    transport::smtp::authentication::Credentials,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use rustshare_crypto::{decrypt_secret, SecretEncryptionKey};
 use sqlx::PgPool;
@@ -21,6 +22,16 @@ pub enum EmailError {
 pub struct EmailService {
     pool: PgPool,
     secret_key: SecretEncryptionKey,
+}
+
+pub struct OutboundEmail<'a> {
+    pub sender_name: &'a str,
+    pub sender_email: &'a str,
+    pub recipients: &'a [String],
+    pub cc: &'a [String],
+    pub bcc: &'a [String],
+    pub subject: &'a str,
+    pub body: &'a str,
 }
 
 impl EmailService {
@@ -113,6 +124,57 @@ impl EmailService {
         Ok(())
     }
 
+    pub async fn send_user_email(&self, email: OutboundEmail<'_>) -> Result<(), EmailError> {
+        if email.recipients.is_empty() && email.cc.is_empty() && email.bcc.is_empty() {
+            return Err(EmailError::SmtpSendFailed(
+                "At least one recipient is required".to_string(),
+            ));
+        }
+
+        let config = self.load_config().await?;
+        let from_address = config
+            .from_address
+            .as_deref()
+            .ok_or(EmailError::SmtpNotConfigured)?;
+        let reply_to: Mailbox = format_mailbox(email.sender_name, email.sender_email)?;
+        let mut builder = Message::builder()
+            .from(format_mailbox(
+                config.from_name.as_deref().unwrap_or("RustShare"),
+                from_address,
+            )?)
+            .reply_to(reply_to)
+            .subject(email.subject);
+
+        for recipient in email.recipients {
+            builder = builder.to(parse_mailbox(recipient)?);
+        }
+        for recipient in email.cc {
+            builder = builder.cc(parse_mailbox(recipient)?);
+        }
+        for recipient in email.bcc {
+            builder = builder.bcc(parse_mailbox(recipient)?);
+        }
+
+        let email = builder
+            .multipart(
+                MultiPart::alternative()
+                    .singlepart(SinglePart::plain(email.body.to_string()))
+                    .singlepart(SinglePart::html(format!(
+                        "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
+                        html_escape(email.body)
+                    ))),
+            )
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        self.build_transport(&config)
+            .await?
+            .send(email)
+            .await
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
     async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
         let row = sqlx::query_as::<_, SmtpConfigRow>(
             "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode
@@ -184,6 +246,28 @@ impl EmailService {
 
         Ok(builder.build())
     }
+}
+
+fn parse_mailbox(address: &str) -> Result<Mailbox, EmailError> {
+    address
+        .parse()
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid email address: {e}")))
+}
+
+fn format_mailbox(name: &str, address: &str) -> Result<Mailbox, EmailError> {
+    let address = address
+        .parse()
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid email address: {e}")))?;
+    Ok(Mailbox::new(Some(name.to_string()), address))
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 #[derive(sqlx::FromRow)]

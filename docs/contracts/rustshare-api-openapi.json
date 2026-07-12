@@ -6116,6 +6116,87 @@
         }
       }
     },
+    "/api/v1/mail/send": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Send a plain-text outbound email through the configured SMTP relay.",
+        "operationId": "send_mail_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMailMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Mail sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailMessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "SMTP send failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SMTP unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/upload": {
       "post": {
         "tags": [
@@ -14552,6 +14633,20 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailMessageSent"
+                ]
+              }
+            }
           }
         ],
         "description": "Event types in the system"
@@ -17476,6 +17571,37 @@
           "to_addresses": {}
         }
       },
+      "MailMessageSentPayload": {
+        "type": "object",
+        "required": [
+          "sent_by",
+          "to_count",
+          "cc_count",
+          "bcc_count",
+          "subject"
+        ],
+        "properties": {
+          "bcc_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cc_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sent_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "MailMessageSummaryListResponse": {
         "type": "object",
         "required": [
@@ -19559,6 +19685,51 @@
           },
           "snippet": {
             "type": "string"
+          }
+        }
+      },
+      "SendMailMessageRequest": {
+        "type": "object",
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "properties": {
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SendMailMessageResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
           }
         }
       },

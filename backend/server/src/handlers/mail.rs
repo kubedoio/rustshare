@@ -6,6 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{LinkTargetType, MailTlsMode};
+use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -14,6 +15,8 @@ use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
 const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
+const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
 const MAIL_MODULE_KEY: &str = "mail";
 
 async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -116,6 +119,22 @@ pub struct MailMessageSummaryListResponse {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailTestConnectionResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SendMailMessageRequest {
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    #[serde(default)]
+    pub bcc: Vec<String>,
+    pub subject: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SendMailMessageResponse {
     pub ok: bool,
 }
 
@@ -679,6 +698,58 @@ pub struct ListMailMessagesQuery {
 
 fn default_message_limit() -> i64 {
     100
+}
+
+/// Send a plain-text outbound email through the configured SMTP relay.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/send",
+    tag = "Mail",
+    request_body = SendMailMessageRequest,
+    responses(
+        (status = 200, description = "Mail sent", body = SendMailMessageResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 502, description = "SMTP send failed", body = crate::handlers::ErrorResponse),
+        (status = 503, description = "SMTP unavailable", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn send_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Json(req): Json<SendMailMessageRequest>,
+) -> Result<Json<SendMailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_send_mail_request(&req)?;
+
+    let user = state
+        .metadata_store
+        .find_user_by_id(auth.user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    if user.tenant_id != auth.tenant_id {
+        return Err(AppError::Forbidden(
+            "User is not in this tenant".to_string(),
+        ));
+    }
+
+    let email_service = EmailService::new(state.db_pool.clone(), state.secret_key.clone());
+    email_service
+        .send_user_email(OutboundEmail {
+            sender_name: &user.display_name,
+            sender_email: &user.email,
+            recipients: &req.to,
+            cc: &req.cc,
+            bcc: &req.bcc,
+            subject: req.subject.trim(),
+            body: &req.body,
+        })
+        .await
+        .map_err(email_error_to_app_error)?;
+
+    emit_mail_message_sent(&state, auth.user_id, &req).await?;
+    Ok(Json(SendMailMessageResponse { ok: true }))
 }
 
 /// Create a new IMAP mail account.
@@ -1322,6 +1393,84 @@ async fn emit_mail_message_viewed(
         AggregateType::MailMessage,
         serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
         viewed_by,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(())
+}
+
+fn validate_send_mail_request(req: &SendMailMessageRequest) -> Result<(), AppError> {
+    let recipient_count = req.to.len() + req.cc.len() + req.bcc.len();
+    if recipient_count == 0 {
+        return Err(AppError::bad_request("At least one recipient is required"));
+    }
+    if recipient_count > MAX_MAIL_SEND_RECIPIENTS {
+        return Err(AppError::bad_request(format!(
+            "At most {MAX_MAIL_SEND_RECIPIENTS} recipients are allowed"
+        )));
+    }
+    if req.subject.trim().is_empty() {
+        return Err(AppError::bad_request("Subject is required"));
+    }
+    if req.subject.len() > 998 {
+        return Err(AppError::bad_request("Subject is too long"));
+    }
+    if req.body.trim().is_empty() {
+        return Err(AppError::bad_request("Body is required"));
+    }
+    if req.body.len() > MAX_MAIL_SEND_BODY_BYTES {
+        return Err(AppError::payload_too_large("Message body is too large"));
+    }
+    if req
+        .to
+        .iter()
+        .chain(req.cc.iter())
+        .chain(req.bcc.iter())
+        .any(|address| address.trim().is_empty() || address.len() > 512)
+    {
+        return Err(AppError::bad_request("Recipient addresses are invalid"));
+    }
+    Ok(())
+}
+
+fn email_error_to_app_error(err: EmailError) -> AppError {
+    match err {
+        EmailError::SmtpNotConfigured => AppError::service_unavailable("SMTP is not configured"),
+        EmailError::SmtpSendFailed(message)
+            if message.starts_with("Invalid email address")
+                || message.starts_with("At least one recipient") =>
+        {
+            AppError::bad_request(message)
+        }
+        EmailError::SmtpSendFailed(_) => AppError::bad_gateway("SMTP send failed"),
+        EmailError::DecryptFailed | EmailError::InvalidTlsMode(_) => {
+            AppError::internal("SMTP configuration is invalid")
+        }
+    }
+}
+
+async fn emit_mail_message_sent(
+    state: &AppState,
+    sent_by: rustshare_core::domain::UserId,
+    req: &SendMailMessageRequest,
+) -> Result<(), AppError> {
+    use rustshare_core::events::{AggregateType, Event, EventType, MailMessageSentPayload};
+    let payload = MailMessageSentPayload {
+        sent_by,
+        to_count: req.to.len(),
+        cc_count: req.cc.len(),
+        bcc_count: req.bcc.len(),
+        subject: req.subject.trim().to_string(),
+    };
+    let event = Event::new(
+        EventType::MailMessageSent,
+        sent_by,
+        AggregateType::User,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        sent_by,
     );
     state
         .event_store
