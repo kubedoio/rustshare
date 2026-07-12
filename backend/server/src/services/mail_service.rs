@@ -30,6 +30,7 @@ use super::imap_client::{
 
 const MAX_MAIL_ARTIFACT_NAME_LEN: usize = 200;
 const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
+const MAX_OUTBOUND_MAIL_ATTACHMENT_BYTES: i64 = 25 * 1024 * 1024;
 
 // ============================================================================
 // Errors
@@ -2648,6 +2649,7 @@ impl MailService {
         }
 
         let mut smtp_attachments = Vec::new();
+        let mut attachment_bytes = 0_i64;
         for file_id in &attachment_ids {
             let file = self
                 .file_service
@@ -2657,6 +2659,12 @@ impl MailService {
 
             if file.tenant_id != tenant_id {
                 return Err(MailError::PermissionDenied);
+            }
+            attachment_bytes = attachment_bytes.saturating_add(file.size);
+            if attachment_bytes > MAX_OUTBOUND_MAIL_ATTACHMENT_BYTES {
+                return Err(MailError::InvalidSource(
+                    "Mail attachments are too large".to_string(),
+                ));
             }
 
             let content = self

@@ -5,7 +5,10 @@ use lettre::{
         header::{ContentDisposition, ContentType},
         Mailbox, MultiPart, SinglePart,
     },
-    transport::smtp::authentication::Credentials,
+    transport::smtp::{
+        authentication::Credentials,
+        client::{Tls, TlsParameters},
+    },
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use rustshare_crypto::{decrypt_secret, SecretEncryptionKey};
@@ -264,7 +267,7 @@ impl EmailService {
         let port = u16::try_from(port).map_err(|_| {
             EmailError::SmtpSendFailed(format!("SMTP port {} is out of range", port))
         })?;
-        validate_smtp_host(host, port).await?;
+        let connection_host = validate_smtp_host(host, port).await?;
 
         let creds = config
             .username
@@ -286,18 +289,26 @@ impl EmailService {
             .as_deref()
         {
             Some("tls") => {
-                let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-                    .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
-                    .port(port);
+                let tls = TlsParameters::new(host.to_string())
+                    .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                    connection_host.clone(),
+                )
+                .tls(Tls::Wrapper(tls))
+                .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
                 b
             }
             Some("starttls") => {
-                let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
-                    .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
-                    .port(port);
+                let tls = TlsParameters::new(host.to_string())
+                    .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                    connection_host.clone(),
+                )
+                .tls(Tls::Required(tls))
+                .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
@@ -305,7 +316,8 @@ impl EmailService {
             }
             Some("none") => {
                 let mut b =
-                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).port(port);
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connection_host)
+                        .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
@@ -322,17 +334,20 @@ impl EmailService {
     }
 }
 
-async fn validate_smtp_host(host: &str, port: u16) -> Result<(), EmailError> {
+async fn validate_smtp_host(host: &str, port: u16) -> Result<String, EmailError> {
     if cfg!(debug_assertions)
         && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true")
     {
-        return Ok(());
+        return Ok(host.to_string());
     }
 
-    resolve_public_socket_addrs(host, port).await.map_err(|e| {
+    let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
         EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
     })?;
-    Ok(())
+    addrs
+        .first()
+        .map(|addr| addr.ip().to_string())
+        .ok_or_else(|| EmailError::SmtpSendFailed("SMTP host resolved no addresses".to_string()))
 }
 
 fn build_outbound_smtp_message(

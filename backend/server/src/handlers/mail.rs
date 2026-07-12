@@ -17,6 +17,7 @@ use crate::state::AppState;
 const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
 const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
+const MAX_MAIL_SEND_ATTACHMENTS: usize = 20;
 const MAIL_MODULE_KEY: &str = "mail";
 
 async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -340,6 +341,7 @@ pub async fn list_mail_messages(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailMessageResponse {
     pub id: Uuid,
+    pub account_id: Option<Uuid>,
     pub subject: Option<String>,
     pub from_address: Option<String>,
     pub from_name: Option<String>,
@@ -418,6 +420,7 @@ impl From<rustshare_core::domain::MailMessage> for MailMessageResponse {
     fn from(msg: rustshare_core::domain::MailMessage) -> Self {
         Self {
             id: msg.id,
+            account_id: msg.account_id,
             subject: msg.subject,
             from_address: msg.from_address,
             from_name: msg.from_name,
@@ -1559,6 +1562,11 @@ fn validate_send_outbound_mail_request(req: &SendOutboundMailRequest) -> Result<
     }
     if req.body.len() > MAX_MAIL_SEND_BODY_BYTES {
         return Err(AppError::payload_too_large("Message body is too large"));
+    }
+    if req.attachments.len() > MAX_MAIL_SEND_ATTACHMENTS {
+        return Err(AppError::bad_request(format!(
+            "At most {MAX_MAIL_SEND_ATTACHMENTS} attachments are allowed"
+        )));
     }
     if req
         .to
