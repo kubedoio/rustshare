@@ -3100,8 +3100,16 @@ impl MailService {
         account_id: MailAccountId,
         draft_id: Uuid,
     ) -> Result<(), MailError> {
-        self.get_draft(tenant_id, owner_id, account_id, draft_id)
+        let draft = self
+            .get_draft(tenant_id, owner_id, account_id, draft_id)
             .await?;
+
+        if let Some(folder_id) = draft.folder_id {
+            self.folder_service
+                .delete_folder(folder_id, owner_id)
+                .await
+                .map_err(|e| MailError::Storage(e.to_string()))?;
+        }
 
         self.metadata_store
             .delete_mail_message(draft_id, owner_id)
@@ -3153,9 +3161,9 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))?;
         let attachment_ids: Vec<Uuid> = attachments.iter().filter_map(|a| a.file_id).collect();
 
-        let to: Vec<String> = serde_json::from_value(draft.to_addresses).unwrap_or_default();
-        let cc: Vec<String> = serde_json::from_value(draft.cc_addresses).unwrap_or_default();
-        let bcc: Vec<String> = serde_json::from_value(draft.bcc_addresses).unwrap_or_default();
+        let to = mail_address_strings(&draft.to_addresses);
+        let cc = mail_address_strings(&draft.cc_addresses);
+        let bcc = mail_address_strings(&draft.bcc_addresses);
         let subject = draft.subject.unwrap_or_default();
 
         let sent_msg = self
@@ -3213,6 +3221,21 @@ fn addresses_to_json(
             })
             .collect(),
     )
+}
+
+fn mail_address_strings(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            item.as_str()
+                .or_else(|| item.get("address").and_then(serde_json::Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn mail_message_folder_name(subject: Option<&str>, short_uuid: &str) -> String {

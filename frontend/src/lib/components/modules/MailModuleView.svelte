@@ -340,7 +340,12 @@
 	}
 
 	function formatAddresses(value: unknown): string {
-		if (Array.isArray(value)) return value.join(', ');
+		if (Array.isArray(value)) {
+			return value
+				.map((item) => (typeof item === 'string' ? item : item?.address))
+				.filter(Boolean)
+				.join(', ');
+		}
 		return String(value ?? '');
 	}
 

@@ -175,8 +175,12 @@
 	});
 
 	function formatAddresses(value: unknown): string {
-		if (Array.isArray(value)) return value.join(', ');
-		return String(value ?? '');
+		return addressStrings(value).join(', ');
+	}
+
+	function addressStrings(value: unknown): string[] {
+		if (!Array.isArray(value)) return value ? [String(value)] : [];
+		return value.map((item) => (typeof item === 'string' ? item : item?.address)).filter(Boolean);
 	}
 
 	function prefixedSubject(prefix: string, subject: string | null): string {
@@ -199,7 +203,7 @@
 
 	function openReplyAll(message: MailMessage) {
 		composeMode = 'reply-all';
-		composeTo = [message.from_address, ...((message.to_addresses as string[]) ?? [])]
+		composeTo = [message.from_address, ...addressStrings(message.to_addresses)]
 			.filter(Boolean)
 			.join(', ');
 		composeCc = formatAddresses(message.cc_addresses);
