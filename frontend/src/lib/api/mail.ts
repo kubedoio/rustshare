@@ -212,6 +212,13 @@ export const mailApi = {
 		return apiClient.post<MailAccount>('/mail/accounts', input);
 	},
 
+	updateAccount: async (
+		accountId: string,
+		input: Partial<CreateMailAccountRequest> & { is_enabled?: boolean }
+	): Promise<MailAccount> => {
+		return apiClient.patch<MailAccount>(`/mail/accounts/${accountId}`, input);
+	},
+
 	deleteAccount: async (accountId: string): Promise<void> => {
 		await apiClient.delete(`/mail/accounts/${accountId}`);
 	},

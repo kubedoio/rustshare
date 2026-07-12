@@ -415,11 +415,7 @@
 		await refreshMailbox();
 	}
 
-	async function runMailboxAction(
-		action: () => Promise<void>,
-		success: string,
-		failure: string
-	) {
+	async function runMailboxAction(action: () => Promise<void>, success: string, failure: string) {
 		try {
 			await action();
 			await refreshMailbox();
@@ -688,66 +684,66 @@
 													type="button"
 													class="btn btn-xs btn-ghost"
 													onclick={(event) => {
-													event.stopPropagation();
-													runMailboxAction(
-														() =>
-															message.is_seen
-																? mailApi.markMessageUnread(
-																		selectedAccountId!,
-																		message.uid,
-																		selectedFolder!
-																	)
-																: mailApi.markMessageRead(
-																		selectedAccountId!,
-																		message.uid,
-																		selectedFolder!
-																	),
-														message.is_seen ? 'Marked unread' : 'Marked read',
-														'Failed to update read state'
-													);
-												}}
-											>
+														event.stopPropagation();
+														runMailboxAction(
+															() =>
+																message.is_seen
+																	? mailApi.markMessageUnread(
+																			selectedAccountId!,
+																			message.uid,
+																			selectedFolder!
+																		)
+																	: mailApi.markMessageRead(
+																			selectedAccountId!,
+																			message.uid,
+																			selectedFolder!
+																		),
+															message.is_seen ? 'Marked unread' : 'Marked read',
+															'Failed to update read state'
+														);
+													}}
+												>
 													{#if message.is_seen}
 														<EyeOff size={12} />
 													{:else}
 														<Eye size={12} />
 													{/if}
 												</button>
-											<button
-												type="button"
-												class="btn btn-xs btn-ghost"
-												onclick={(event) => {
-													event.stopPropagation();
-													runMailboxAction(
-														() =>
-															mailApi.archiveMessage(
-																selectedAccountId!,
-																message.uid,
-																selectedFolder!
-															),
-														'Archived message',
-														'Failed to archive message'
-													);
-												}}
-											>
+												<button
+													type="button"
+													class="btn btn-xs btn-ghost"
+													onclick={(event) => {
+														event.stopPropagation();
+														runMailboxAction(
+															() =>
+																mailApi.archiveMessage(
+																	selectedAccountId!,
+																	message.uid,
+																	selectedFolder!
+																),
+															'Archived message',
+															'Failed to archive message'
+														);
+													}}
+												>
 													<Archive size={12} />
 												</button>
-											<button
-												type="button"
-												class="btn btn-xs btn-ghost"
-												onclick={(event) => {
-													event.stopPropagation();
-													runMailboxAction(
-														() =>
-															mailApi.trashMessage(
-																selectedAccountId!,
-																message.uid,
-																selectedFolder!
-															),
-														'Moved to trash',
-														'Failed to trash message'
-													);
-												}}
+												<button
+													type="button"
+													class="btn btn-xs btn-ghost"
+													onclick={(event) => {
+														event.stopPropagation();
+														runMailboxAction(
+															() =>
+																mailApi.trashMessage(
+																	selectedAccountId!,
+																	message.uid,
+																	selectedFolder!
+																),
+															'Moved to trash',
+															'Failed to trash message'
+														);
+													}}
 												>
 													<Trash2 size={12} />
 												</button>
@@ -774,21 +770,21 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
-												onclick={(event) => {
-													event.stopPropagation();
-													runMailboxAction(
-														() =>
-															mailApi.moveMessage(
-																selectedAccountId!,
-																message.uid,
-																selectedFolder!,
-																'Archive'
-															),
-														'Moved message',
-														'Failed to move message'
-													);
-												}}
-											>
+													onclick={(event) => {
+														event.stopPropagation();
+														runMailboxAction(
+															() =>
+																mailApi.moveMessage(
+																	selectedAccountId!,
+																	message.uid,
+																	selectedFolder!,
+																	'Archive'
+																),
+															'Moved message',
+															'Failed to move message'
+														);
+													}}
+												>
 													<MoveRight size={12} />
 												</button>
 											</div>
@@ -800,11 +796,7 @@
 								<p class="text-xs text-base-content/50">
 									Showing the newest {mailboxPageSize} messages.
 								</p>
-								<button
-									type="button"
-									class="btn btn-xs btn-outline"
-									onclick={loadMoreMessages}
-								>
+								<button type="button" class="btn btn-xs btn-outline" onclick={loadMoreMessages}>
 									Load more
 								</button>
 							</div>
