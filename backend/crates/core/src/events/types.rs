@@ -82,6 +82,14 @@ pub enum EventType {
     MailArchiveJobDeleted,
     MailMessageViewed,
     MailMessageSent,
+    MailSmtpSettingsCreated,
+    MailSmtpSettingsUpdated,
+    MailSmtpSettingsDeleted,
+    MailSmtpConnectionTested,
+    MailReplySent,
+    MailForwardSent,
+    MailSendFailed,
+    MailSentFolderAppendFailed,
 }
 
 impl EventType {
@@ -130,6 +138,14 @@ impl EventType {
             EventType::MailArchiveJobDeleted => "MailArchiveJobDeleted",
             EventType::MailMessageViewed => "MailMessageViewed",
             EventType::MailMessageSent => "MailMessageSent",
+            EventType::MailSmtpSettingsCreated => "MailSmtpSettingsCreated",
+            EventType::MailSmtpSettingsUpdated => "MailSmtpSettingsUpdated",
+            EventType::MailSmtpSettingsDeleted => "MailSmtpSettingsDeleted",
+            EventType::MailSmtpConnectionTested => "MailSmtpConnectionTested",
+            EventType::MailReplySent => "MailReplySent",
+            EventType::MailForwardSent => "MailForwardSent",
+            EventType::MailSendFailed => "MailSendFailed",
+            EventType::MailSentFolderAppendFailed => "MailSentFolderAppendFailed",
         }
     }
 }

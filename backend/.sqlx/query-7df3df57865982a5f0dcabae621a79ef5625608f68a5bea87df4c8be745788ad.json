@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE mail_smtp_settings\n            SET\n                host = $3,\n                port = $4,\n                username = $5,\n                password_enc = $6,\n                tls_mode = $7,\n                from_address = $8,\n                from_name = $9,\n                reply_to = $10,\n                sent_folder = $11,\n                is_enabled = $12,\n                updated_at = NOW()\n            WHERE mail_account_id = $1 AND owner_id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Varchar",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7df3df57865982a5f0dcabae621a79ef5625608f68a5bea87df4c8be745788ad"
+}

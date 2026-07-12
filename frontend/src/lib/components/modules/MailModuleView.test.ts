@@ -17,11 +17,20 @@ const mocks = vi.hoisted(() => ({
 	createArchiveJob: vi.fn(),
 	cancelArchiveJob: vi.fn(),
 	uploadMessage: vi.fn(),
-	sendMessage: vi.fn()
+	sendMessage: vi.fn(),
+	sendOutboundMail: vi.fn(),
+	getSmtpSettings: vi.fn(),
+	updateSmtpSettings: vi.fn(),
+	deleteSmtpSettings: vi.fn(),
+	testSmtpConnection: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
 	goto: mocks.goto
+}));
+
+vi.mock('$lib/api/files', () => ({
+	listAllFiles: vi.fn().mockResolvedValue([])
 }));
 
 vi.mock('$lib/api/mail', () => ({
@@ -38,7 +47,12 @@ vi.mock('$lib/api/mail', () => ({
 		createArchiveJob: mocks.createArchiveJob,
 		cancelArchiveJob: mocks.cancelArchiveJob,
 		uploadMessage: mocks.uploadMessage,
-		sendMessage: mocks.sendMessage
+		sendMessage: mocks.sendMessage,
+		sendOutboundMail: mocks.sendOutboundMail,
+		getSmtpSettings: mocks.getSmtpSettings,
+		updateSmtpSettings: mocks.updateSmtpSettings,
+		deleteSmtpSettings: mocks.deleteSmtpSettings,
+		testSmtpConnection: mocks.testSmtpConnection
 	}
 }));
 
@@ -104,6 +118,8 @@ describe('MailModuleView', () => {
 		mocks.listArchiveJobs.mockResolvedValue([]);
 		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
 		mocks.sendMessage.mockResolvedValue({ ok: true });
+		mocks.sendOutboundMail.mockResolvedValue({ message_id: 'outbound-1' });
+		mocks.getSmtpSettings.mockResolvedValue(null);
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
@@ -199,9 +215,28 @@ describe('MailModuleView', () => {
 	});
 
 	it('opens compose and sends outbound mail', async () => {
+		const testAccount = {
+			id: 'acct-1',
+			tenant_id: 'tenant-1',
+			owner_id: 'user-1',
+			name: 'Test Account',
+			host: 'imap.example.com',
+			port: 993,
+			username: 'testuser',
+			tls_mode: 'tls',
+			created_at: '',
+			updated_at: ''
+		};
+		mocks.listAccounts.mockResolvedValueOnce([testAccount]);
 		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.getSmtpSettings.mockResolvedValueOnce(null);
 
 		render(MailModuleView, { module: testModule });
+
+		// Wait for accounts to load
+		await waitFor(() => {
+			expect(screen.queryAllByText('Test Account').length).toBeGreaterThan(0);
+		});
 
 		await fireEvent.click(await screen.findByText('Compose'));
 		await fireEvent.input(screen.getByPlaceholderText('To'), {
@@ -216,12 +251,14 @@ describe('MailModuleView', () => {
 		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
 
 		await waitFor(() => {
-			expect(mocks.sendMessage.mock.calls[0][0]).toEqual({
+			expect(mocks.sendOutboundMail.mock.calls[0][1]).toEqual({
 				to: ['bob@example.com'],
 				cc: [],
 				bcc: [],
 				subject: 'Hello',
-				body: 'Hi Bob'
+				body: 'Hi Bob',
+				attachments: [],
+				in_reply_to_msg_id: null
 			});
 		});
 	});

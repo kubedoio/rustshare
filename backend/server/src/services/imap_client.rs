@@ -383,6 +383,16 @@ impl ImapSession {
         Ok((Some(uid_validity), uids))
     }
 
+    pub async fn append_message(&mut self, folder: &str, message: &[u8]) -> Result<(), ImapError> {
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.append(folder, None, None, message),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
     pub async fn logout(mut self) -> Result<(), ImapError> {
         tokio::time::timeout(DEFAULT_TIMEOUT, self.session.logout())
             .await

@@ -1480,6 +1480,396 @@ async fn emit_mail_message_sent(
     Ok(())
 }
 
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct CreateOrUpdateSmtpSettingsRequest {
+    #[validate(length(min = 1, max = 255))]
+    pub host: String,
+    #[validate(range(min = 1, max = 65535))]
+    pub port: i32,
+    #[validate(length(min = 1, max = 512))]
+    pub username: String,
+    pub password: Option<String>,
+    pub tls_mode: MailTlsMode,
+    #[validate(email)]
+    pub from_address: String,
+    pub from_name: Option<String>,
+    pub reply_to: Option<String>,
+    pub sent_folder: Option<String>,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailSmtpSettingsResponse {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub tenant_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub owner_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub mail_account_id: Uuid,
+    pub host: String,
+    pub port: i32,
+    pub username: String,
+    pub tls_mode: String,
+    pub from_address: String,
+    pub from_name: Option<String>,
+    pub reply_to: Option<String>,
+    pub sent_folder: Option<String>,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SendOutboundMailRequest {
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    #[serde(default)]
+    pub bcc: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    #[serde(default)]
+    pub attachments: Vec<Uuid>,
+    pub in_reply_to_msg_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SendMailResponse {
+    pub message_id: Uuid,
+}
+
+fn validate_send_outbound_mail_request(req: &SendOutboundMailRequest) -> Result<(), AppError> {
+    let recipient_count = req.to.len() + req.cc.len() + req.bcc.len();
+    if recipient_count == 0 {
+        return Err(AppError::bad_request("At least one recipient is required"));
+    }
+    if recipient_count > MAX_MAIL_SEND_RECIPIENTS {
+        return Err(AppError::bad_request(format!(
+            "At most {MAX_MAIL_SEND_RECIPIENTS} recipients are allowed"
+        )));
+    }
+    if req.subject.trim().is_empty() {
+        return Err(AppError::bad_request("Subject is required"));
+    }
+    if req.subject.len() > 998 {
+        return Err(AppError::bad_request("Subject is too long"));
+    }
+    if req.body.trim().is_empty() {
+        return Err(AppError::bad_request("Body is required"));
+    }
+    if req.body.len() > MAX_MAIL_SEND_BODY_BYTES {
+        return Err(AppError::payload_too_large("Message body is too large"));
+    }
+    if req
+        .to
+        .iter()
+        .chain(req.cc.iter())
+        .chain(req.bcc.iter())
+        .any(|address| address.trim().is_empty() || address.len() > 512)
+    {
+        return Err(AppError::bad_request("Recipient addresses are invalid"));
+    }
+    Ok(())
+}
+
+/// Get SMTP settings for a mail account.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/smtp",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "SMTP settings summary", body = MailSmtpSettingsResponse),
+        (status = 404, description = "Not found"),
+    ),
+)]
+pub async fn get_smtp_settings_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<MailSmtpSettingsResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    let settings = state
+        .mail_service
+        .get_smtp_settings(auth.tenant_id, auth.user_id, account_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("SMTP settings not configured"))?;
+
+    Ok(Json(MailSmtpSettingsResponse {
+        id: settings.id,
+        tenant_id: settings.tenant_id,
+        owner_id: settings.owner_id,
+        mail_account_id: settings.mail_account_id,
+        host: settings.host,
+        port: settings.port,
+        username: settings.username,
+        tls_mode: settings.tls_mode,
+        from_address: settings.from_address,
+        from_name: settings.from_name,
+        reply_to: settings.reply_to,
+        sent_folder: settings.sent_folder,
+        is_enabled: settings.is_enabled,
+    }))
+}
+
+/// Create or update SMTP settings for a mail account.
+#[utoipa::path(
+    put,
+    path = "/api/v1/mail/accounts/{id}/smtp",
+    tag = "Mail",
+    request_body = CreateOrUpdateSmtpSettingsRequest,
+    responses(
+        (status = 200, description = "SMTP settings updated", body = MailSmtpSettingsResponse),
+    ),
+)]
+pub async fn create_or_update_smtp_settings_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<CreateOrUpdateSmtpSettingsRequest>,
+) -> Result<Json<MailSmtpSettingsResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    let settings = state
+        .mail_service
+        .create_or_update_smtp_settings(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.host,
+            req.port,
+            req.username,
+            req.password,
+            req.tls_mode,
+            req.from_address,
+            req.from_name,
+            req.reply_to,
+            req.sent_folder,
+            req.is_enabled,
+        )
+        .await?;
+
+    Ok(Json(MailSmtpSettingsResponse {
+        id: settings.id,
+        tenant_id: settings.tenant_id,
+        owner_id: settings.owner_id,
+        mail_account_id: settings.mail_account_id,
+        host: settings.host,
+        port: settings.port,
+        username: settings.username,
+        tls_mode: settings.tls_mode,
+        from_address: settings.from_address,
+        from_name: settings.from_name,
+        reply_to: settings.reply_to,
+        sent_folder: settings.sent_folder,
+        is_enabled: settings.is_enabled,
+    }))
+}
+
+/// Delete SMTP settings for a mail account.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/accounts/{id}/smtp",
+    tag = "Mail",
+    responses(
+        (status = 204, description = "SMTP settings deleted"),
+    ),
+)]
+pub async fn delete_smtp_settings_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    state
+        .mail_service
+        .delete_smtp_settings(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Test SMTP connection for a mail account.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/smtp/test",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Connection test successful"),
+    ),
+)]
+pub async fn test_smtp_connection_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<SendMailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    state
+        .mail_service
+        .test_smtp_connection(auth.tenant_id, auth.user_id, account_id)
+        .await?;
+
+    Ok(Json(SendMailMessageResponse { ok: true }))
+}
+
+/// Send outbound mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/send",
+    tag = "Mail",
+    request_body = SendOutboundMailRequest,
+    responses(
+        (status = 200, description = "Mail sent", body = SendMailResponse),
+    ),
+)]
+pub async fn send_outbound_mail_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Json(req): Json<SendOutboundMailRequest>,
+) -> Result<Json<SendMailResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_send_outbound_mail_request(&req)?;
+
+    let msg = state
+        .mail_service
+        .send_outbound_mail(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+            req.in_reply_to_msg_id,
+            false,
+        )
+        .await?;
+
+    Ok(Json(SendMailResponse { message_id: msg.id }))
+}
+
+/// Reply to mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/reply",
+    tag = "Mail",
+    request_body = SendOutboundMailRequest,
+    responses(
+        (status = 200, description = "Reply sent", body = SendMailResponse),
+    ),
+)]
+pub async fn reply_mail_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Json(req): Json<SendOutboundMailRequest>,
+) -> Result<Json<SendMailResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_send_outbound_mail_request(&req)?;
+
+    let msg = state
+        .mail_service
+        .send_outbound_mail(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+            req.in_reply_to_msg_id,
+            false,
+        )
+        .await?;
+
+    Ok(Json(SendMailResponse { message_id: msg.id }))
+}
+
+/// Reply all to mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/reply-all",
+    tag = "Mail",
+    request_body = SendOutboundMailRequest,
+    responses(
+        (status = 200, description = "Reply all sent", body = SendMailResponse),
+    ),
+)]
+pub async fn reply_all_mail_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Json(req): Json<SendOutboundMailRequest>,
+) -> Result<Json<SendMailResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_send_outbound_mail_request(&req)?;
+
+    let msg = state
+        .mail_service
+        .send_outbound_mail(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+            req.in_reply_to_msg_id,
+            false,
+        )
+        .await?;
+
+    Ok(Json(SendMailResponse { message_id: msg.id }))
+}
+
+/// Forward mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/forward",
+    tag = "Mail",
+    request_body = SendOutboundMailRequest,
+    responses(
+        (status = 200, description = "Forward sent", body = SendMailResponse),
+    ),
+)]
+pub async fn forward_mail_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Json(req): Json<SendOutboundMailRequest>,
+) -> Result<Json<SendMailResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_send_outbound_mail_request(&req)?;
+
+    let msg = state
+        .mail_service
+        .send_outbound_mail(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+            req.in_reply_to_msg_id,
+            true,
+        )
+        .await?;
+
+    Ok(Json(SendMailResponse { message_id: msg.id }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{sanitize_email_html, CreateMailImportJobRequest};

@@ -8,9 +8,9 @@ use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
-    OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget,
-    Share, SharePermissions, User, UserId, UserSession, Vault, VaultDevice, VaultFile,
-    VaultWritePolicy,
+    MailSmtpSettings, OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState,
+    ReplicationTarget, Share, SharePermissions, User, UserId, UserSession, Vault, VaultDevice,
+    VaultFile, VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
 use serde_json;
@@ -948,6 +948,119 @@ impl MetadataStore {
             .await?;
         tx.commit().await?;
         Ok(updated)
+    }
+
+    /// Create mail SMTP settings.
+    pub async fn create_mail_smtp_settings(&self, settings: &MailSmtpSettings) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO mail_smtp_settings (
+                id, tenant_id, owner_id, mail_account_id, host, port, username, password_enc,
+                tls_mode, from_address, from_name, reply_to, sent_folder, is_enabled,
+                created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            "#,
+            settings.id,
+            settings.tenant_id,
+            settings.owner_id,
+            settings.mail_account_id,
+            settings.host,
+            settings.port,
+            settings.username,
+            settings.password_enc,
+            settings.tls_mode,
+            settings.from_address,
+            settings.from_name.as_deref(),
+            settings.reply_to.as_deref(),
+            settings.sent_folder.as_deref(),
+            settings.is_enabled,
+            settings.created_at,
+            settings.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Update mail SMTP settings.
+    pub async fn update_mail_smtp_settings(&self, settings: &MailSmtpSettings) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE mail_smtp_settings
+            SET
+                host = $3,
+                port = $4,
+                username = $5,
+                password_enc = $6,
+                tls_mode = $7,
+                from_address = $8,
+                from_name = $9,
+                reply_to = $10,
+                sent_folder = $11,
+                is_enabled = $12,
+                updated_at = NOW()
+            WHERE mail_account_id = $1 AND owner_id = $2
+            "#,
+            settings.mail_account_id,
+            settings.owner_id,
+            settings.host,
+            settings.port,
+            settings.username,
+            settings.password_enc,
+            settings.tls_mode,
+            settings.from_address,
+            settings.from_name.as_deref(),
+            settings.reply_to.as_deref(),
+            settings.sent_folder.as_deref(),
+            settings.is_enabled,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find SMTP settings by mail account ID, scoped to the owning user.
+    pub async fn get_mail_smtp_settings(
+        &self,
+        mail_account_id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<Option<MailSmtpSettings>> {
+        let row = sqlx::query_as!(
+            MailSmtpSettings,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, mail_account_id, host, port, username, password_enc,
+                tls_mode, from_address, from_name, reply_to, sent_folder, is_enabled,
+                created_at, updated_at
+            FROM mail_smtp_settings
+            WHERE mail_account_id = $1 AND owner_id = $2
+            "#,
+            mail_account_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Delete/disable SMTP settings.
+    pub async fn delete_mail_smtp_settings(
+        &self,
+        mail_account_id: MailAccountId,
+        owner_id: UserId,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM mail_smtp_settings
+            WHERE mail_account_id = $1 AND owner_id = $2
+            "#,
+            mail_account_id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Create a new mail import job inside an existing transaction.

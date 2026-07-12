@@ -9,7 +9,8 @@
 		type MailImportJob,
 		type MailFolder,
 		type ListMailAccountMessagesResponse,
-		type MailMessage
+		type MailMessage,
+		type MailSmtpSettings
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
@@ -227,13 +228,126 @@
 	});
 
 	const sendMutation = createMutation({
-		mutationFn: mailApi.sendMessage,
+		mutationFn: (input: any) => {
+			if (!selectedAccountId) {
+				throw new Error('Select a mail account to compose/send.');
+			}
+			return mailApi.sendOutboundMail(selectedAccountId, input);
+		},
 		onSuccess: () => {
 			composeOpen = false;
 			toastStore.show('Mail sent', 'success');
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
+	});
+
+	let smtpHost = $state('');
+	let smtpPort = $state(587);
+	let smtpUsername = $state('');
+	let smtpPassword = $state('');
+	let smtpTlsMode = $state<'tls' | 'starttls' | 'none'>('tls');
+	let smtpFromAddress = $state('');
+	let smtpFromName = $state('');
+	let smtpReplyTo = $state('');
+	let smtpSentFolder = $state('');
+	let smtpIsEnabled = $state(true);
+
+	let smtpSettings = $state<MailSmtpSettings | null>(null);
+	let loadingSmtp = $state(false);
+
+	async function loadSmtpSettings(accountId: string) {
+		loadingSmtp = true;
+		try {
+			smtpSettings = await mailApi.getSmtpSettings(accountId);
+			if (smtpSettings) {
+				smtpHost = smtpSettings.host;
+				smtpPort = smtpSettings.port;
+				smtpUsername = smtpSettings.username;
+				smtpPassword = '';
+				smtpTlsMode = smtpSettings.tls_mode;
+				smtpFromAddress = smtpSettings.from_address;
+				smtpFromName = smtpSettings.from_name ?? '';
+				smtpReplyTo = smtpSettings.reply_to ?? '';
+				smtpSentFolder = smtpSettings.sent_folder ?? '';
+				smtpIsEnabled = smtpSettings.is_enabled;
+			} else {
+				smtpHost = '';
+				smtpPort = 587;
+				smtpUsername = '';
+				smtpPassword = '';
+				smtpTlsMode = 'tls';
+				smtpFromAddress = '';
+				smtpFromName = '';
+				smtpReplyTo = '';
+				smtpSentFolder = '';
+				smtpIsEnabled = true;
+			}
+		} catch (err) {
+			console.error('Failed to load SMTP settings:', err);
+		} finally {
+			loadingSmtp = false;
+		}
+	}
+
+	$effect(() => {
+		if (selectedAccountId) {
+			loadSmtpSettings(selectedAccountId);
+		} else {
+			smtpSettings = null;
+		}
+	});
+
+	const updateSmtpMutation = createMutation({
+		mutationFn: () =>
+			mailApi.updateSmtpSettings(selectedAccountId!, {
+				host: smtpHost.trim(),
+				port: smtpPort,
+				username: smtpUsername.trim(),
+				password: smtpPassword ? smtpPassword : null,
+				tls_mode: smtpTlsMode,
+				from_address: smtpFromAddress.trim(),
+				from_name: smtpFromName.trim() || null,
+				reply_to: smtpReplyTo.trim() || null,
+				sent_folder: smtpSentFolder.trim() || null,
+				is_enabled: smtpIsEnabled
+			}),
+		onSuccess: (settings) => {
+			smtpSettings = settings;
+			smtpPassword = '';
+			toastStore.show('SMTP settings saved', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Save failed', 'error')
+	});
+
+	const deleteSmtpMutation = createMutation({
+		mutationFn: () => mailApi.deleteSmtpSettings(selectedAccountId!),
+		onSuccess: () => {
+			smtpSettings = null;
+			smtpHost = '';
+			smtpPort = 587;
+			smtpUsername = '';
+			smtpPassword = '';
+			smtpTlsMode = 'tls';
+			smtpFromAddress = '';
+			smtpFromName = '';
+			smtpReplyTo = '';
+			smtpSentFolder = '';
+			smtpIsEnabled = true;
+			toastStore.show('SMTP settings deleted', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Delete failed', 'error')
+	});
+
+	const testSmtpMutation = createMutation({
+		mutationFn: () => mailApi.testSmtpConnection(selectedAccountId!),
+		onSuccess: () => {
+			toastStore.show('SMTP connection test successful', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Connection test failed', 'error')
 	});
 
 	let selectedAccount = $derived(
@@ -419,7 +533,7 @@
 						class="btn btn-sm btn-outline flex-1"
 						onclick={() => testAccountMutation.mutate(selectedAccount!.id)}
 					>
-						Test
+						Test IMAP
 					</button>
 					<button
 						class="btn btn-sm btn-error btn-outline"
@@ -427,6 +541,112 @@
 					>
 						<Trash2 size={14} />
 					</button>
+				</div>
+
+				<div class="rounded-lg border border-base-300 bg-base-100 p-4 mt-2">
+					<h3 class="mb-3 text-sm font-semibold">SMTP Settings</h3>
+					<form
+						class="flex flex-col gap-2"
+						onsubmit={(event) => {
+							event.preventDefault();
+							updateSmtpMutation.mutate();
+						}}
+					>
+						<input
+							class="input input-sm input-bordered"
+							placeholder="SMTP host"
+							bind:value={smtpHost}
+							required
+						/>
+						<div class="grid grid-cols-[1fr_80px] gap-2">
+							<input
+								class="input input-sm input-bordered"
+								placeholder="Username"
+								bind:value={smtpUsername}
+								required
+							/>
+							<input
+								class="input input-sm input-bordered"
+								type="number"
+								min="1"
+								max="65535"
+								placeholder="Port"
+								bind:value={smtpPort}
+								required
+							/>
+						</div>
+						<input
+							class="input input-sm input-bordered"
+							type="password"
+							placeholder={smtpSettings ? 'Password (unchanged)' : 'Password'}
+							bind:value={smtpPassword}
+							autocomplete="new-password"
+							required={!smtpSettings}
+						/>
+						<select class="select select-sm select-bordered" bind:value={smtpTlsMode}>
+							<option value="tls">TLS</option>
+							<option value="starttls">STARTTLS</option>
+							<option value="none">No TLS</option>
+						</select>
+
+						<input
+							class="input input-sm input-bordered"
+							type="email"
+							placeholder="Sender email (From)"
+							bind:value={smtpFromAddress}
+							required
+						/>
+						<input
+							class="input input-sm input-bordered"
+							placeholder="Sender name (optional)"
+							bind:value={smtpFromName}
+						/>
+						<input
+							class="input input-sm input-bordered"
+							type="email"
+							placeholder="Reply-To (optional)"
+							bind:value={smtpReplyTo}
+						/>
+						<input
+							class="input input-sm input-bordered"
+							placeholder="Sent folder name (optional)"
+							bind:value={smtpSentFolder}
+						/>
+
+						<label class="label cursor-pointer justify-start gap-2 py-1">
+							<input type="checkbox" class="checkbox checkbox-xs" bind:checked={smtpIsEnabled} />
+							<span class="label-text text-xs">Enable SMTP</span>
+						</label>
+
+						<div class="flex gap-2 mt-1">
+							<button
+								class="btn btn-sm btn-primary flex-1 text-xs"
+								type="submit"
+								disabled={$updateSmtpMutation.isPending}
+							>
+								Save SMTP
+							</button>
+							{#if smtpSettings}
+								<button
+									class="btn btn-sm btn-outline text-xs"
+									type="button"
+									onclick={() => testSmtpMutation.mutate()}
+									disabled={$testSmtpMutation.isPending}
+								>
+									Test
+								</button>
+								<button
+									class="btn btn-sm btn-error btn-outline"
+									type="button"
+									onclick={() => deleteSmtpMutation.mutate()}
+									disabled={$deleteSmtpMutation.isPending}
+									title="Delete SMTP settings"
+								>
+									<Trash2 size={12} />
+								</button>
+							{/if}
+						</div>
+					</form>
 				</div>
 			{/if}
 		</section>

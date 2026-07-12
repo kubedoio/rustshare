@@ -2,6 +2,7 @@ import { apiClient } from './client';
 
 export interface MailMessage {
 	id: string;
+	account_id: string | null;
 	subject: string | null;
 	from_address: string | null;
 	from_name: string | null;
@@ -147,6 +148,45 @@ export interface SendMailMessageResponse {
 	ok: boolean;
 }
 
+export interface MailSmtpSettings {
+	id: string;
+	tenant_id: string;
+	owner_id: string;
+	mail_account_id: string;
+	host: string;
+	port: number;
+	username: string;
+	tls_mode: 'tls' | 'starttls' | 'none';
+	from_address: string;
+	from_name?: string | null;
+	reply_to?: string | null;
+	sent_folder?: string | null;
+	is_enabled: boolean;
+}
+
+export interface CreateOrUpdateSmtpSettingsRequest {
+	host: string;
+	port: number;
+	username: string;
+	password?: string | null;
+	tls_mode: 'tls' | 'starttls' | 'none';
+	from_address: string;
+	from_name?: string | null;
+	reply_to?: string | null;
+	sent_folder?: string | null;
+	is_enabled: boolean;
+}
+
+export interface SendOutboundMailRequest {
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	body: string;
+	attachments?: string[];
+	in_reply_to_msg_id?: string | null;
+}
+
 export const mailApi = {
 	listAccounts: async (): Promise<MailAccount[]> => {
 		const res = await apiClient.get<ListMailAccountsResponse>('/mail/accounts');
@@ -270,5 +310,59 @@ export const mailApi = {
 
 	downloadSourceUrl: (messageId: string): string => {
 		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/source`;
+	},
+
+	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {
+		try {
+			return await apiClient.get<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`);
+		} catch (err: any) {
+			if (err?.status === 404) {
+				return null;
+			}
+			throw err;
+		}
+	},
+
+	updateSmtpSettings: async (
+		accountId: string,
+		input: CreateOrUpdateSmtpSettingsRequest
+	): Promise<MailSmtpSettings> => {
+		return apiClient.put<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`, input);
+	},
+
+	deleteSmtpSettings: async (accountId: string): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/smtp`);
+	},
+
+	testSmtpConnection: async (accountId: string): Promise<{ ok: boolean }> => {
+		return apiClient.post<{ ok: boolean }>(`/mail/accounts/${accountId}/smtp/test`, {});
+	},
+
+	sendOutboundMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/send`, input);
+	},
+
+	replyMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply`, input);
+	},
+
+	replyAllMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply-all`, input);
+	},
+
+	forwardMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/forward`, input);
 	}
 };

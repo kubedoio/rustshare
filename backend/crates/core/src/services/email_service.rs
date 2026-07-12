@@ -1,5 +1,8 @@
 use lettre::{
-    message::{Mailbox, MultiPart, SinglePart},
+    message::{
+        header::{ContentDisposition, ContentType},
+        Mailbox, MultiPart, SinglePart,
+    },
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
@@ -32,6 +35,24 @@ pub struct OutboundEmail<'a> {
     pub bcc: &'a [String],
     pub subject: &'a str,
     pub body: &'a str,
+}
+
+#[derive(Clone)]
+pub struct SmtpAttachment {
+    pub filename: String,
+    pub mime_type: String,
+    pub content: Vec<u8>,
+}
+
+pub struct OutboundMailMessage<'a> {
+    pub recipients: &'a [String],
+    pub cc: &'a [String],
+    pub bcc: &'a [String],
+    pub subject: &'a str,
+    pub body: &'a str,
+    pub in_reply_to: Option<String>,
+    pub references: Option<String>,
+    pub attachments: Vec<SmtpAttachment>,
 }
 
 impl EmailService {
@@ -175,6 +196,97 @@ impl EmailService {
         Ok(())
     }
 
+    pub async fn send_user_email_via_smtp(
+        &self,
+        smtp: &crate::domain::MailSmtpSettings,
+        email: OutboundMailMessage<'_>,
+    ) -> Result<Vec<u8>, EmailError> {
+        if !smtp.is_enabled {
+            return Err(EmailError::SmtpNotConfigured);
+        }
+        if email.recipients.is_empty() && email.cc.is_empty() && email.bcc.is_empty() {
+            return Err(EmailError::SmtpSendFailed(
+                "At least one recipient is required".to_string(),
+            ));
+        }
+
+        let from_mailbox: Mailbox =
+            format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
+        let mut builder = Message::builder().from(from_mailbox).subject(email.subject);
+
+        if let Some(ref reply_to_addr) = smtp.reply_to {
+            if !reply_to_addr.trim().is_empty() {
+                builder = builder.reply_to(parse_mailbox(reply_to_addr)?);
+            }
+        }
+
+        if let Some(ref in_reply_to) = email.in_reply_to {
+            if !in_reply_to.trim().is_empty() {
+                builder = builder.in_reply_to(in_reply_to.clone());
+            }
+        }
+
+        if let Some(ref references) = email.references {
+            if !references.trim().is_empty() {
+                builder = builder.references(references.clone());
+            }
+        }
+
+        for recipient in email.recipients {
+            builder = builder.to(parse_mailbox(recipient)?);
+        }
+        for recipient in email.cc {
+            builder = builder.cc(parse_mailbox(recipient)?);
+        }
+        for recipient in email.bcc {
+            builder = builder.bcc(parse_mailbox(recipient)?);
+        }
+
+        let alternative = MultiPart::alternative()
+            .singlepart(SinglePart::plain(email.body.to_string()))
+            .singlepart(SinglePart::html(format!(
+                "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
+                html_escape(email.body)
+            )));
+
+        let email_msg = if email.attachments.is_empty() {
+            builder.multipart(alternative)
+        } else {
+            let mut multipart = MultiPart::mixed().multipart(alternative);
+            for attachment in email.attachments {
+                let ct = ContentType::parse(&attachment.mime_type)
+                    .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+                let part = SinglePart::builder()
+                    .header(ct)
+                    .header(ContentDisposition::attachment(&attachment.filename))
+                    .body(attachment.content);
+                multipart = multipart.singlepart(part);
+            }
+            builder.multipart(multipart)
+        }
+        .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        let row = SmtpConfigRow {
+            enabled: smtp.is_enabled,
+            host: Some(smtp.host.clone()),
+            port: Some(smtp.port),
+            username: Some(smtp.username.clone()),
+            password_enc: Some(smtp.password_enc.clone()),
+            from_address: Some(smtp.from_address.clone()),
+            from_name: smtp.from_name.clone(),
+            tls_mode: Some(smtp.tls_mode.clone()),
+        };
+
+        let bytes = email_msg.formatted();
+        self.build_transport(&row)
+            .await?
+            .send(email_msg)
+            .await
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+
+        Ok(bytes)
+    }
+
     async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
         let row = sqlx::query_as::<_, SmtpConfigRow>(
             "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode
@@ -218,7 +330,12 @@ impl EmailService {
             })
             .transpose()?;
 
-        let builder = match config.tls_mode.as_deref() {
+        let builder = match config
+            .tls_mode
+            .as_deref()
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
             Some("tls") => {
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
@@ -232,6 +349,14 @@ impl EmailService {
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?
                     .port(port);
+                if let Some(c) = creds {
+                    b = b.credentials(c);
+                }
+                b
+            }
+            Some("none") => {
+                let mut b =
+                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }

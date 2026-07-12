@@ -320,6 +320,32 @@ pub fn mail_routes() -> Router<AppState> {
             post(crate::handlers::mail::test_mail_account),
         )
         .route(
+            "/api/v1/mail/accounts/{id}/smtp",
+            get(crate::handlers::mail::get_smtp_settings_handler)
+                .put(crate::handlers::mail::create_or_update_smtp_settings_handler)
+                .delete(crate::handlers::mail::delete_smtp_settings_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/smtp/test",
+            post(crate::handlers::mail::test_smtp_connection_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/send",
+            post(crate::handlers::mail::send_outbound_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/reply",
+            post(crate::handlers::mail::reply_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/reply-all",
+            post(crate::handlers::mail::reply_all_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/forward",
+            post(crate::handlers::mail::forward_mail_handler),
+        )
+        .route(
             "/api/v1/mail/accounts/{id}/folders",
             get(crate::handlers::mail::list_mail_account_folders),
         )

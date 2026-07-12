@@ -87,8 +87,16 @@
 	let linkTargetId = $state('');
 	let composeOpen = $state(false);
 	let composeTo = $state('');
+	let composeCc = $state('');
 	let composeSubject = $state('');
 	let composeBody = $state('');
+	let composeAttachments = $state<string[]>([]);
+	let composeMode = $state<'new' | 'reply' | 'forward'>('new');
+
+	const accountsQuery = createQuery({
+		queryKey: ['mail-accounts'],
+		queryFn: () => mailApi.listAccounts()
+	});
 
 	const createLinkMutation = createMutation({
 		mutationFn: () =>
@@ -116,7 +124,20 @@
 	});
 
 	const sendMutation = createMutation({
-		mutationFn: mailApi.sendMessage,
+		mutationFn: async (input: any) => {
+			const message = $messageQuery.data;
+			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+			if (!accountId) {
+				throw new Error('No mail account configured to send from.');
+			}
+			if (composeMode === 'reply') {
+				return mailApi.replyMail(accountId, input);
+			} else if (composeMode === 'forward') {
+				return mailApi.forwardMail(accountId, input);
+			} else {
+				return mailApi.sendOutboundMail(accountId, input);
+			}
+		},
 		onSuccess: () => {
 			composeOpen = false;
 			toastStore.show('Mail sent', 'success');
@@ -136,20 +157,32 @@
 	}
 
 	function openReply(message: MailMessage) {
+		composeMode = 'reply';
 		composeTo = message.from_address ?? '';
+		composeCc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
-		composeBody = '';
+		composeBody = `\n\nOn ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		composeAttachments = [];
 		composeOpen = true;
 	}
 
 	function openForward(message: MailMessage) {
+		composeMode = 'forward';
 		composeTo = '';
+		composeCc = '';
 		composeSubject = prefixedSubject('Fwd:', message.subject);
-		composeBody = `\n\nForwarded message\nFrom: ${formatAddresses(
+		composeBody = `\n\n---------- Forwarded message ----------\nFrom: ${formatAddresses(
 			[message.from_name, message.from_address].filter(Boolean)
 		)}\nDate: ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
 		}\nSubject: ${message.subject || '(no subject)'}\n`;
+
+		// Copy attachments if any
+		const attachments = $attachmentsQuery.data ?? [];
+		composeAttachments = attachments.map((a) => a.file_id).filter((id): id is string => !!id);
+
 		composeOpen = true;
 	}
 </script>
@@ -350,8 +383,11 @@
 	<MailComposeModal
 		open={composeOpen}
 		initialTo={composeTo}
+		initialCc={composeCc}
 		initialSubject={composeSubject}
 		initialBody={composeBody}
+		initialAttachments={composeAttachments}
+		inReplyToMsgId={messageId}
 		sending={$sendMutation.isPending}
 		onClose={() => (composeOpen = false)}
 		onSend={(message) => sendMutation.mutate(message)}
