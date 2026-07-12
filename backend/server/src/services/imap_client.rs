@@ -195,9 +195,38 @@ impl ImapClient {
                     })??;
                 Ok(async_imap::Client::new(ImapStream::Plain(tcp_stream)))
             }
-            MailTlsMode::StartTls => Err(ImapError::Tls(
-                "STARTTLS not supported in this phase".to_string(),
-            )),
+            MailTlsMode::StartTls => {
+                let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
+                    .await
+                    .map_err(|_| {
+                        ImapError::ConnectionFailed("operation timed out".to_string())
+                    })??;
+                let mut client = async_imap::Client::new(ImapStream::Plain(tcp_stream));
+                tokio::time::timeout(
+                    DEFAULT_TIMEOUT,
+                    client.run_command_and_check_ok("STARTTLS", None),
+                )
+                .await
+                .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))??;
+                let stream = client.into_inner();
+                let ImapStream::Plain(tcp_stream) = stream else {
+                    return Err(ImapError::Tls(
+                        "unexpected IMAP stream state after STARTTLS".to_string(),
+                    ));
+                };
+                let connector = build_tls_connector()?;
+                let server_name = host
+                    .to_string()
+                    .try_into()
+                    .map_err(|e| ImapError::Tls(format!("invalid server name: {e}")))?;
+                let tls_stream = tokio::time::timeout(
+                    DEFAULT_TIMEOUT,
+                    connector.connect(server_name, tcp_stream),
+                )
+                .await
+                .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))??;
+                Ok(async_imap::Client::new(ImapStream::Tls(tls_stream)))
+            }
         }
     }
 }
