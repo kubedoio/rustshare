@@ -2857,7 +2857,7 @@ impl MailService {
                                     let event = Event::new(
                                         EventType::MailSentFolderAppendFailed,
                                         mail_message.id,
-                                        AggregateType::MailAccount,
+                                        AggregateType::MailMessage,
                                         serde_json::json!({
                                             "mail_message_id": mail_message.id,
                                             "error": e.to_string(),
@@ -2897,7 +2897,7 @@ impl MailService {
         let event = Event::new(
             event_type,
             mail_message.id,
-            AggregateType::MailAccount,
+            AggregateType::MailMessage,
             serde_json::json!({
                 "mail_message_id": mail_message.id,
                 "sent_by": owner_id,

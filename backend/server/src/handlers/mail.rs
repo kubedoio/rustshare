@@ -794,6 +794,11 @@ pub async fn send_mail_message(
             "User is not in this tenant".to_string(),
         ));
     }
+    if !user.is_admin {
+        return Err(AppError::Forbidden(
+            "Admin access required for system SMTP relay".to_string(),
+        ));
+    }
 
     let email_service = EmailService::new(state.db_pool.clone(), state.secret_key.clone());
     email_service
