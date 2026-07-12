@@ -20,7 +20,19 @@
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { Mail, Download, Inbox, RefreshCw, Trash2, Archive, CheckSquare } from 'lucide-svelte';
+	import {
+		Mail,
+		Download,
+		Inbox,
+		RefreshCw,
+		Trash2,
+		Archive,
+		CheckSquare,
+		Eye,
+		EyeOff,
+		MoveRight,
+		Trash
+	} from 'lucide-svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	let { module }: { module: ModuleDefinition } = $props();
@@ -30,6 +42,7 @@
 	let selectedUids = $state<number[]>([]);
 	let uidvalidity = $state<number | null>(null);
 	let recentImportJobs = $state<MailImportJob[]>([]);
+	let mailboxPageSize = $state(100);
 
 	let archiveSince = $state('');
 	let archiveBefore = $state('');
@@ -117,11 +130,19 @@
 
 	$effect(() => {
 		selectedUids = [];
+		mailboxPageSize = 100;
 		accountMessagesQuery.setOptions({
 			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder],
-			queryFn: () => mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100),
+			queryFn: () =>
+				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, mailboxPageSize),
 			enabled: !!selectedAccountId && !!selectedFolder
 		});
+	});
+
+	$effect(() => {
+		if (selectedAccountId && selectedFolder) {
+			accountMessagesQuery.refetch();
+		}
 	});
 
 	$effect(() => {
@@ -362,6 +383,29 @@
 			: [...selectedUids, uid];
 	}
 
+	async function refreshMailbox() {
+		await $accountMessagesQuery.refetch();
+	}
+
+	async function loadMoreMessages() {
+		mailboxPageSize += 100;
+		await refreshMailbox();
+	}
+
+	async function runMailboxAction(
+		action: () => Promise<void>,
+		success: string,
+		failure: string
+	) {
+		try {
+			await action();
+			await refreshMailbox();
+			toastStore.show(success, 'success');
+		} catch (error) {
+			toastStore.show(error instanceof Error ? error.message : failure, 'error');
+		}
+	}
+
 	function selectAllVisible(messages: MailAccountMessage[]) {
 		selectedUids = messages.map((message) => message.uid);
 	}
@@ -595,25 +639,152 @@
 											onchange={() => toggleUid(message.uid)}
 										/>
 										<span class="min-w-0">
-											<span class="block truncate text-sm font-medium"
-												>{message.subject || '(no subject)'}</span
-											>
+											<span class="flex items-center gap-2">
+												<span class="block truncate text-sm font-medium"
+													>{message.subject || '(no subject)'}</span
+												>
+												{#if message.is_seen}
+													<span class="badge badge-ghost badge-xs">read</span>
+												{:else}
+													<span class="badge badge-primary badge-xs">unread</span>
+												{/if}
+											</span>
 											<span class="block truncate text-xs text-base-content/60"
 												>{message.from_name || message.from_address || 'Unknown sender'}</span
 											>
 										</span>
-										<span class="text-right text-xs text-base-content/55">
-											{message.sent_at
-												? new Date(message.sent_at).toLocaleDateString()
-												: 'No date'}<br />
-											{formatBytes(message.size_bytes)}
-										</span>
+										<div class="flex items-start gap-2">
+											<span class="text-right text-xs text-base-content/55">
+												{message.sent_at
+													? new Date(message.sent_at).toLocaleDateString()
+													: 'No date'}<br />
+												{formatBytes(message.size_bytes)}
+											</span>
+											<div class="flex flex-col gap-1">
+												<button
+													type="button"
+													class="btn btn-xs btn-ghost"
+													onclick={(event) => {
+													event.stopPropagation();
+													runMailboxAction(
+														() =>
+															message.is_seen
+																? mailApi.markMessageUnread(
+																		selectedAccountId!,
+																		message.uid,
+																		selectedFolder!
+																	)
+																: mailApi.markMessageRead(
+																		selectedAccountId!,
+																		message.uid,
+																		selectedFolder!
+																	),
+														message.is_seen ? 'Marked unread' : 'Marked read',
+														'Failed to update read state'
+													);
+												}}
+											>
+													{#if message.is_seen}
+														<EyeOff size={12} />
+													{:else}
+														<Eye size={12} />
+													{/if}
+												</button>
+											<button
+												type="button"
+												class="btn btn-xs btn-ghost"
+												onclick={(event) => {
+													event.stopPropagation();
+													runMailboxAction(
+														() =>
+															mailApi.archiveMessage(
+																selectedAccountId!,
+																message.uid,
+																selectedFolder!
+															),
+														'Archived message',
+														'Failed to archive message'
+													);
+												}}
+											>
+													<Archive size={12} />
+												</button>
+											<button
+												type="button"
+												class="btn btn-xs btn-ghost"
+												onclick={(event) => {
+													event.stopPropagation();
+													runMailboxAction(
+														() =>
+															mailApi.trashMessage(
+																selectedAccountId!,
+																message.uid,
+																selectedFolder!
+															),
+														'Moved to trash',
+														'Failed to trash message'
+													);
+												}}
+												>
+													<Trash2 size={12} />
+												</button>
+												<button
+													type="button"
+													class="btn btn-xs btn-ghost text-error"
+													onclick={(event) => {
+														event.stopPropagation();
+														if (!confirm('Delete this message from the mailbox?')) return;
+														runMailboxAction(
+															() =>
+																mailApi.deleteMessage(
+																	selectedAccountId!,
+																	message.uid,
+																	selectedFolder!
+																),
+															'Deleted message',
+															'Failed to delete message'
+														);
+													}}
+												>
+													<Trash size={12} />
+												</button>
+												<button
+													type="button"
+													class="btn btn-xs btn-ghost"
+												onclick={(event) => {
+													event.stopPropagation();
+													runMailboxAction(
+														() =>
+															mailApi.moveMessage(
+																selectedAccountId!,
+																message.uid,
+																selectedFolder!,
+																'Archive'
+															),
+														'Moved message',
+														'Failed to move message'
+													);
+												}}
+											>
+													<MoveRight size={12} />
+												</button>
+											</div>
+										</div>
 									</label>
 								{/each}
 							</div>
-							<p class="mt-2 text-xs text-base-content/50">
-								Showing the newest 100 messages to avoid loading huge folders.
-							</p>
+							<div class="mt-2 flex items-center justify-between gap-2">
+								<p class="text-xs text-base-content/50">
+									Showing the newest {mailboxPageSize} messages.
+								</p>
+								<button
+									type="button"
+									class="btn btn-xs btn-outline"
+									onclick={loadMoreMessages}
+								>
+									Load more
+								</button>
+							</div>
 						{/if}
 					</div>
 

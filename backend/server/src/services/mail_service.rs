@@ -1115,17 +1115,84 @@ impl MailService {
         account_id: MailAccountId,
         folder: &str,
         limit: usize,
+        before_uid: Option<u32>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
         let result = session
-            .fetch_message_summaries(folder, limit)
+            .fetch_message_summaries(folder, limit, before_uid)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
         Ok(result)
+    }
+
+    pub async fn mark_imap_message_seen(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        uid: u32,
+        seen: bool,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        session
+            .mark_seen(folder, uid, seen)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
+    }
+
+    pub async fn move_imap_message(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        session
+            .copy_message(folder, uid, destination_folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        session
+            .delete_message(folder, uid)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
+    }
+
+    pub async fn delete_imap_message(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        uid: u32,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        session
+            .delete_message(folder, uid)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
     }
 
     // ============================================================================

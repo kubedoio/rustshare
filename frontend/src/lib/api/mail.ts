@@ -13,6 +13,7 @@ export interface MailMessage {
 	imported_at: string;
 	size_bytes: number;
 	has_attachments: boolean;
+	is_seen?: boolean;
 	source_mode: MailSourceMode;
 	in_reply_to?: string | null;
 }
@@ -71,6 +72,7 @@ export interface MailAccountMessage {
 	from_name: string | null;
 	sent_at: string | null;
 	size_bytes: number;
+	is_seen?: boolean;
 }
 
 export interface MailImportJob {
@@ -226,11 +228,45 @@ export const mailApi = {
 	listAccountMessages: async (
 		accountId: string,
 		folder: string,
-		limit = 100
+		limit = 100,
+		cursor?: number | null
 	): Promise<ListMailAccountMessagesResponse> => {
+		const cursorParam = cursor ? `&cursor=${cursor}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}`
 		);
+	},
+
+	markMessageRead: async (accountId: string, uid: number, folder: string): Promise<void> => {
+		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, { folder });
+	},
+
+	markMessageUnread: async (accountId: string, uid: number, folder: string): Promise<void> => {
+		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/mark-unread`, { folder });
+	},
+
+	moveMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		destination_folder: string
+	): Promise<void> => {
+		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/move`, {
+			folder,
+			destination_folder
+		});
+	},
+
+	archiveMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
+		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/archive`, { folder });
+	},
+
+	trashMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
+		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/trash`, { folder });
+	},
+
+	deleteMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/messages/${uid}`, { folder });
 	},
 
 	createImportJob: async (

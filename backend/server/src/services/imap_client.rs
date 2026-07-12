@@ -108,6 +108,7 @@ pub struct ImapMessageSummary {
     pub from_name: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
     pub size_bytes: i64,
+    pub is_seen: bool,
 }
 
 pub struct ImapClient;
@@ -245,6 +246,7 @@ impl ImapSession {
         &mut self,
         folder: &str,
         limit: usize,
+        before_uid: Option<u32>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), ImapError> {
         let uidvalidity = self.select_folder(folder).await?;
 
@@ -255,7 +257,11 @@ impl ImapSession {
         // deterministic slice instead of an arbitrary HashSet subset.
         let mut all_uids: Vec<u32> = uids.into_iter().collect();
         all_uids.sort_unstable_by(|a, b| b.cmp(a));
-        let limited: Vec<u32> = all_uids.into_iter().take(limit).collect();
+        let limited: Vec<u32> = all_uids
+            .into_iter()
+            .filter(|uid| before_uid.map(|cursor| *uid < cursor).unwrap_or(true))
+            .take(limit)
+            .collect();
         if limited.is_empty() {
             return Ok((uidvalidity, Vec::new()));
         }
@@ -268,7 +274,7 @@ impl ImapSession {
 
         let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
             self.session
-                .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE)")
+                .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE FLAGS)")
                 .await?
                 .try_collect::<Vec<Fetch>>()
                 .await
@@ -390,6 +396,62 @@ impl ImapSession {
         )
         .await
         .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
+    pub async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        let query = if seen {
+            "+FLAGS.SILENT (\\Seen)"
+        } else {
+            "-FLAGS.SILENT (\\Seen)"
+        };
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_store(uid.to_string(), query),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+        .try_collect::<Vec<Fetch>>()
+        .await
+        .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn copy_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_copy(uid.to_string(), destination_folder),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
+    pub async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session
+                .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)"),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+        .try_collect::<Vec<Fetch>>()
+        .await
+        .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_expunge(uid.to_string()))
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| ImapError::CommandFailed(format!("UID EXPUNGE failed: {e}")))?;
         Ok(())
     }
 
@@ -523,6 +585,9 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
         .and_then(|d| parse_imap_date(&d));
 
     let size_bytes = i64::from(fetch.size.unwrap_or(0));
+    let is_seen = fetch
+        .flags()
+        .any(|flag| flag == async_imap::types::Flag::Seen);
 
     Some(ImapMessageSummary {
         uid,
@@ -531,6 +596,7 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
         from_name,
         sent_at,
         size_bytes,
+        is_seen,
     })
 }
 

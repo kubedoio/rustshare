@@ -156,8 +156,11 @@ export class ApiClient {
 		});
 	}
 
-	async delete(endpoint: string): Promise<void> {
-		return this.requestVoid(endpoint, { method: 'DELETE' });
+	async delete(endpoint: string, body?: object | FormData | null): Promise<void> {
+		return this.requestVoid(endpoint, {
+			method: 'DELETE',
+			body: body instanceof FormData ? body : JSON.stringify(body)
+		});
 	}
 
 	async patch<T>(endpoint: string, body?: object | FormData | null): Promise<T> {
