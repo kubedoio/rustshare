@@ -211,6 +211,27 @@ impl MetadataStore {
         Ok(())
     }
 
+    pub async fn update_mail_message_in_reply_to(
+        &self,
+        id: Uuid,
+        owner_id: Uuid,
+        in_reply_to: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE mail_messages
+            SET in_reply_to = $3, updated_at = NOW()
+            WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(in_reply_to)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Insert a mail message if one does not already exist for the same source.
     ///
     /// Returns `true` if a new row was inserted, `false` if the unique source

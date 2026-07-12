@@ -261,7 +261,7 @@ pub fn module_routes() -> Router<AppState> {
 
 pub fn mail_routes() -> Router<AppState> {
     use axum::extract::DefaultBodyLimit;
-    use axum::routing::{delete, get, patch, post, put};
+    use axum::routing::{delete, get, patch, post};
     Router::new()
         .route(
             "/api/v1/mail/messages",
@@ -347,11 +347,13 @@ pub fn mail_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/mail/accounts/{id}/drafts",
-            post(crate::handlers::mail::create_draft_handler),
+            get(crate::handlers::mail::list_drafts_handler)
+                .post(crate::handlers::mail::create_draft_handler),
         )
         .route(
             "/api/v1/mail/accounts/{id}/drafts/{draft_id}",
-            put(crate::handlers::mail::update_draft_handler)
+            get(crate::handlers::mail::get_draft_handler)
+                .put(crate::handlers::mail::update_draft_handler)
                 .delete(crate::handlers::mail::discard_draft_handler),
         )
         .route(

@@ -10,7 +10,8 @@
 		type MailFolder,
 		type ListMailAccountMessagesResponse,
 		type MailMessage,
-		type MailSmtpSettings
+		type MailSmtpSettings,
+		type SaveDraftRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
@@ -35,6 +36,15 @@
 	let retentionDays = $state('');
 	let uploadInput: HTMLInputElement | null = $state(null);
 	let composeOpen = $state(false);
+	let composeDraftId = $state<string | null>(null);
+	let composeTo = $state('');
+	let composeCc = $state('');
+	let composeBcc = $state('');
+	let composeSubject = $state('');
+	let composeBody = $state('');
+	let composeAttachments = $state<string[]>([]);
+	let composeReplyTo = $state<string | null>(null);
+	let composeSaveError = $state('');
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -64,6 +74,12 @@
 		queryFn: () => mailApi.listMessages()
 	});
 
+	const draftsQuery = createQuery<MailMessage[]>({
+		queryKey: ['mail-drafts', null],
+		queryFn: () => Promise.resolve([]),
+		enabled: false
+	});
+
 	$effect(() => {
 		const accounts = $accountsQuery.data ?? [];
 		if (!selectedAccountId && accounts.length > 0) selectedAccountId = accounts[0].id;
@@ -82,6 +98,11 @@
 		archiveJobsQuery.setOptions({
 			queryKey: ['mail-archive-jobs', selectedAccountId],
 			queryFn: () => mailApi.listArchiveJobs(selectedAccountId!),
+			enabled: !!selectedAccountId
+		});
+		draftsQuery.setOptions({
+			queryKey: ['mail-drafts', selectedAccountId],
+			queryFn: () => mailApi.listDrafts(selectedAccountId!),
 			enabled: !!selectedAccountId
 		});
 	});
@@ -192,6 +213,56 @@
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
 	});
 
+	const saveDraftMutation = createMutation({
+		mutationFn: ({ message, draftId }: { message: SaveDraftRequest; draftId: string | null }) => {
+			if (!selectedAccountId) throw new Error('Select a mail account to save a draft.');
+			return draftId
+				? mailApi.updateDraft(selectedAccountId, draftId, message)
+				: mailApi.saveDraft(selectedAccountId, message);
+		},
+		onSuccess: async (draft) => {
+			composeDraftId = draft.id;
+			composeSaveError = '';
+			await $draftsQuery.refetch();
+			toastStore.show('Draft saved', 'success');
+		},
+		onError: (error) => {
+			composeSaveError = error instanceof Error ? error.message : 'Draft save failed';
+			toastStore.show(composeSaveError, 'error');
+		}
+	});
+
+	const sendDraftMutation = createMutation({
+		mutationFn: (draftId: string) => {
+			if (!selectedAccountId) throw new Error('Select a mail account to send a draft.');
+			return mailApi.sendDraft(selectedAccountId, draftId);
+		},
+		onSuccess: async () => {
+			composeOpen = false;
+			composeDraftId = null;
+			await $draftsQuery.refetch();
+			await $importedMessagesQuery.refetch();
+			toastStore.show('Draft sent', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Draft send failed', 'error')
+	});
+
+	const discardDraftMutation = createMutation({
+		mutationFn: (draftId: string) => {
+			if (!selectedAccountId) throw new Error('Select a mail account to discard a draft.');
+			return mailApi.discardDraft(selectedAccountId, draftId);
+		},
+		onSuccess: async () => {
+			composeOpen = false;
+			composeDraftId = null;
+			await $draftsQuery.refetch();
+			toastStore.show('Draft discarded', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Draft discard failed', 'error')
+	});
+
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
 	let loadingSmtp = $state(false);
 
@@ -220,6 +291,52 @@
 
 	function handleOpenMessage(message: MailMessage) {
 		goto(`/modules/mail/messages/${message.id}`);
+	}
+
+	function openCompose() {
+		composeDraftId = null;
+		composeTo = '';
+		composeCc = '';
+		composeBcc = '';
+		composeSubject = '';
+		composeBody = '';
+		composeAttachments = [];
+		composeReplyTo = null;
+		composeSaveError = '';
+		composeOpen = true;
+	}
+
+	async function openDraft(message: MailMessage) {
+		if (!selectedAccountId) return;
+		try {
+			const draft = await mailApi.getDraft(selectedAccountId, message.id);
+			composeDraftId = message.id;
+			composeTo = formatAddresses(draft.message.to_addresses);
+			composeCc = formatAddresses(draft.message.cc_addresses);
+			composeBcc = formatAddresses(draft.message.bcc_addresses);
+			composeSubject = draft.message.subject ?? '';
+			composeBody = draft.body;
+			composeAttachments = draft.attachments;
+			composeReplyTo = draft.message.in_reply_to ?? null;
+			composeSaveError = '';
+			composeOpen = true;
+		} catch (error) {
+			toastStore.show(error instanceof Error ? error.message : 'Draft no longer exists', 'error');
+			await $draftsQuery.refetch();
+		}
+	}
+
+	async function saveComposeDraft(message: SaveDraftRequest, draftId: string | null) {
+		await saveDraftMutation.mutate({ message, draftId });
+	}
+
+	async function sendCompose(message: SaveDraftRequest) {
+		if (!composeDraftId) {
+			await sendMutation.mutate(message);
+			return;
+		}
+		await saveDraftMutation.mutate({ message, draftId: composeDraftId });
+		await sendDraftMutation.mutate(composeDraftId);
 	}
 
 	function formatAddresses(value: unknown): string {
@@ -262,7 +379,7 @@
 
 <ModulePageShell title="Mail" subtitle={module.description}>
 	<div slot="primaryAction" class="flex flex-wrap gap-2">
-		<button class="btn gap-2 btn-sm btn-outline" onclick={() => (composeOpen = true)}>
+		<button class="btn gap-2 btn-sm btn-outline" onclick={openCompose}>
 			<Mail size={14} />
 			<span>Compose</span>
 		</button>
@@ -377,6 +494,44 @@
 				</div>
 
 				<div class="flex flex-col gap-4">
+					<div class="rounded-lg border border-base-300 bg-base-100 p-4">
+						<div class="mb-3 flex items-center justify-between gap-2">
+							<h2 class="text-sm font-semibold">Drafts</h2>
+							<span class="badge badge-ghost">{($draftsQuery.data ?? []).length}</span>
+						</div>
+						{#if $draftsQuery.isLoading}
+							<ModulePageSkeleton />
+						{:else if $draftsQuery.isError}
+							<ErrorState
+								title="Failed to load drafts"
+								message={$draftsQuery.error?.message || 'Unknown error'}
+								onRetry={() => $draftsQuery.refetch()}
+							/>
+						{:else if ($draftsQuery.data ?? []).length === 0}
+							<p class="text-sm text-base-content/60">No drafts</p>
+						{:else}
+							<div class="flex flex-col gap-2">
+								{#each $draftsQuery.data ?? [] as draft}
+									<button
+										type="button"
+										class="rounded-lg border border-base-300/70 p-3 text-left hover:border-primary/40"
+										onclick={() => openDraft(draft)}
+									>
+										<span class="block truncate text-sm font-semibold"
+											>{draft.subject || '(no subject)'}</span
+										>
+										<span class="block truncate text-xs text-base-content/55">
+											To: {formatAddresses(draft.to_addresses) || '(no recipients)'}
+										</span>
+										<span class="block text-xs text-base-content/45">
+											Updated {new Date(draft.imported_at).toLocaleString()}
+										</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
 					<div class="rounded-lg border border-base-300 bg-base-100 p-4">
 						<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
 							<div>
@@ -622,8 +777,22 @@
 
 <MailComposeModal
 	open={composeOpen}
-	sending={$sendMutation.isPending}
+	mode={composeDraftId ? 'draft-edit' : 'new'}
+	draftId={composeDraftId}
+	initialTo={composeTo}
+	initialCc={composeCc}
+	initialBcc={composeBcc}
+	initialSubject={composeSubject}
+	initialBody={composeBody}
+	initialAttachments={composeAttachments}
+	inReplyToMsgId={composeReplyTo}
+	sending={$sendMutation.isPending || $sendDraftMutation.isPending}
+	saving={$saveDraftMutation.isPending}
+	discarding={$discardDraftMutation.isPending}
 	hasSmtp={!!smtpSettings && smtpSettings.is_enabled}
+	saveError={composeSaveError}
 	onClose={() => (composeOpen = false)}
-	onSend={(message) => sendMutation.mutate(message)}
+	onSend={(message) => sendCompose(message)}
+	onSave={(message, draftId) => saveComposeDraft(message, draftId)}
+	onDiscard={(draftId) => discardDraftMutation.mutate(draftId)}
 />

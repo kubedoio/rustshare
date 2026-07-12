@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Send, X, Paperclip, AlertTriangle } from 'lucide-svelte';
-	import type { SendOutboundMailRequest } from '$lib/api/mail';
+	import { Send, X, Paperclip, AlertTriangle, Save, Trash2 } from 'lucide-svelte';
+	import type { SaveDraftRequest, SendOutboundMailRequest } from '$lib/api/mail';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File as WorkspaceFile } from '$lib/api/types';
 
@@ -18,26 +18,42 @@
 		open,
 		initialTo = '',
 		initialCc = '',
+		initialBcc = '',
 		initialSubject = '',
 		initialBody = '',
 		initialAttachments = [],
 		inReplyToMsgId = null,
+		mode = 'new',
+		draftId = null,
 		sending = false,
+		saving = false,
+		discarding = false,
 		hasSmtp = true,
+		saveError = '',
 		onClose,
-		onSend
+		onSend,
+		onSave,
+		onDiscard
 	}: {
 		open: boolean;
 		initialTo?: string;
 		initialCc?: string;
+		initialBcc?: string;
 		initialSubject?: string;
 		initialBody?: string;
 		initialAttachments?: string[];
 		inReplyToMsgId?: string | null;
+		mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'draft-edit';
+		draftId?: string | null;
 		sending?: boolean;
+		saving?: boolean;
+		discarding?: boolean;
 		hasSmtp?: boolean;
+		saveError?: string;
 		onClose: () => void;
 		onSend: (message: SendOutboundMailRequest) => void;
+		onSave: (message: SaveDraftRequest, draftId: string | null) => void;
+		onDiscard?: (draftId: string) => void;
 	} = $props();
 
 	let draft = $state<Draft>({
@@ -52,6 +68,8 @@
 	let files = $state<WorkspaceFile[]>([]);
 	let selectedFileIdToAdd = $state('');
 	let lastOpen = $state(false);
+	let saved = $state(false);
+	let baseline = $state('');
 
 	onMount(async () => {
 		try {
@@ -66,14 +84,18 @@
 			draft = {
 				to: initialTo,
 				cc: initialCc,
-				bcc: '',
+				bcc: initialBcc,
 				subject: initialSubject,
 				body: initialBody,
 				attachments: [...initialAttachments]
 			};
+			saved = false;
+			baseline = JSON.stringify(draft);
 		}
 		lastOpen = open;
 	});
+
+	let changed = $derived(JSON.stringify(draft) !== baseline);
 
 	let attachedFiles = $derived(
 		draft.attachments
@@ -99,8 +121,8 @@
 			.filter(Boolean);
 	}
 
-	function handleSubmit() {
-		onSend({
+	function payload(): SendOutboundMailRequest {
+		return {
 			to: splitAddresses(draft.to),
 			cc: splitAddresses(draft.cc),
 			bcc: splitAddresses(draft.bcc),
@@ -108,7 +130,22 @@
 			body: draft.body,
 			attachments: draft.attachments,
 			in_reply_to_msg_id: inReplyToMsgId
-		});
+		};
+	}
+
+	function handleSubmit() {
+		onSend(payload());
+	}
+
+	function handleSave() {
+		onSave(payload(), draftId);
+		saved = true;
+		baseline = JSON.stringify(draft);
+	}
+
+	function handleClose() {
+		if (changed && !saved && !confirm('Close compose and lose unsaved changes?')) return;
+		onClose();
 	}
 </script>
 
@@ -121,7 +158,7 @@
 					type="button"
 					class="btn btn-ghost btn-sm btn-square"
 					aria-label="Close compose"
-					onclick={onClose}
+					onclick={handleClose}
 				>
 					<X size={18} />
 				</button>
@@ -136,7 +173,8 @@
 					</div>
 					<h3 class="text-md font-bold text-base-content">Outgoing SMTP not configured</h3>
 					<p class="text-sm text-base-content/60 mt-1 mb-6">
-						Outgoing SMTP is not configured for this mail account. Configure SMTP in Settings.
+						Outgoing SMTP is not configured for this mail account. Configure SMTP in Settings to
+						send mail.
 					</p>
 					<div class="flex justify-center gap-2">
 						<button type="button" class="btn btn-sm btn-outline" onclick={onClose}>Close</button>
@@ -230,8 +268,45 @@
 						bind:value={draft.body}
 						required></textarea>
 
-					<div class="modal-action">
-						<button type="button" class="btn btn-outline" onclick={onClose}> Cancel </button>
+					{#if saveError}
+						<p class="text-sm text-error">{saveError}</p>
+					{:else if saved && !changed}
+						<p class="text-sm text-success">Saved draft</p>
+					{:else if changed && draftId}
+						<p class="text-sm text-base-content/60">Unsaved changes</p>
+					{/if}
+
+					<div class="modal-action flex-wrap">
+						{#if draftId && onDiscard}
+							<button
+								type="button"
+								class="btn btn-error btn-outline gap-2"
+								disabled={discarding || sending || saving}
+								onclick={() => onDiscard?.(draftId)}
+							>
+								<Trash2 size={16} />
+								{discarding ? 'Discarding...' : 'Discard'}
+							</button>
+						{/if}
+						<button type="button" class="btn btn-outline" onclick={handleClose}>Cancel</button>
+						<button
+							type="button"
+							class="btn btn-outline gap-2"
+							disabled={saving ||
+								sending ||
+								discarding ||
+								(!draft.subject.trim() && !draft.body.trim())}
+							onclick={handleSave}
+						>
+							<Save size={16} />
+							<span
+								>{saving
+									? 'Saving...'
+									: mode === 'draft-edit'
+										? 'Save changes'
+										: 'Save draft'}</span
+							>
+						</button>
 						<button type="submit" class="btn btn-primary gap-2" disabled={sending}>
 							<Send size={16} />
 							<span>{sending ? 'Sending...' : 'Send'}</span>
@@ -240,7 +315,7 @@
 				</form>
 			{/if}
 		</div>
-		<button class="modal-backdrop" type="button" aria-label="Close compose" onclick={onClose}>
+		<button class="modal-backdrop" type="button" aria-label="Close compose" onclick={handleClose}>
 			Close
 		</button>
 	</div>

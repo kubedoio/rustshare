@@ -737,6 +737,35 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
+    pub async fn list_drafts(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        account_id: MailAccountId,
+    ) -> Result<Vec<MailMessage>, MailError> {
+        self.get_account(tenant_id, owner_id, account_id).await?;
+        Ok(self
+            .list_messages(tenant_id, owner_id)
+            .await?
+            .into_iter()
+            .filter(|msg| msg.account_id == Some(account_id) && msg.source_mode == "draft")
+            .collect())
+    }
+
+    pub async fn get_draft(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        account_id: MailAccountId,
+        draft_id: Uuid,
+    ) -> Result<MailMessage, MailError> {
+        let msg = self.get_message(tenant_id, owner_id, draft_id).await?;
+        if msg.account_id != Some(account_id) || msg.source_mode != "draft" {
+            return Err(MailError::NotFound(draft_id));
+        }
+        Ok(msg)
+    }
+
     /// List body parts for a message, scoped to the owning user and tenant.
     pub async fn list_parts(
         &self,
@@ -2913,6 +2942,7 @@ impl MailService {
         subject: String,
         body: String,
         attachment_ids: Vec<Uuid>,
+        in_reply_to_msg_id: Option<Uuid>,
     ) -> Result<MailMessage, MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
@@ -2983,7 +3013,11 @@ impl MailService {
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?
             {
-                if existing.tenant_id != tenant_id || existing.owner_id != owner_id {
+                if existing.tenant_id != tenant_id
+                    || existing.owner_id != owner_id
+                    || existing.account_id != Some(account_id)
+                    || existing.source_mode != "draft"
+                {
                     return Err(MailError::PermissionDenied);
                 }
                 self.metadata_store
@@ -3012,6 +3046,11 @@ impl MailService {
                 Some(target_id),
             )
             .await?;
+        msg.in_reply_to = in_reply_to_msg_id.map(|id| id.to_string());
+        self.metadata_store
+            .update_mail_message_in_reply_to(target_id, owner_id, msg.in_reply_to.as_deref())
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
 
         for file_id in &attachment_ids {
             let file = self
@@ -3058,18 +3097,11 @@ impl MailService {
         &self,
         tenant_id: Uuid,
         owner_id: UserId,
+        account_id: MailAccountId,
         draft_id: Uuid,
     ) -> Result<(), MailError> {
-        let existing = self
-            .metadata_store
-            .find_mail_message_by_id(draft_id)
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?
-            .ok_or(MailError::NotFound(draft_id))?;
-
-        if existing.tenant_id != tenant_id || existing.owner_id != owner_id {
-            return Err(MailError::PermissionDenied);
-        }
+        self.get_draft(tenant_id, owner_id, account_id, draft_id)
+            .await?;
 
         self.metadata_store
             .delete_mail_message(draft_id, owner_id)
@@ -3097,12 +3129,9 @@ impl MailService {
         account_id: MailAccountId,
         draft_id: Uuid,
     ) -> Result<MailMessage, MailError> {
-        let draft = self.get_message(tenant_id, owner_id, draft_id).await?;
-        if draft.source_mode != "draft" {
-            return Err(MailError::InvalidSource(
-                "Message is not a draft".to_string(),
-            ));
-        }
+        let draft = self
+            .get_draft(tenant_id, owner_id, account_id, draft_id)
+            .await?;
 
         let parts = self.list_parts(tenant_id, owner_id, draft_id).await?;
         let body_part = parts

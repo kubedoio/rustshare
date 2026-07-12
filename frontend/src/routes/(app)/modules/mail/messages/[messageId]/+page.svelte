@@ -7,7 +7,8 @@
 		type MailAttachment,
 		type MailLink,
 		type MailMessage,
-		type MailMessagePart
+		type MailMessagePart,
+		type SaveDraftRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
@@ -17,7 +18,16 @@
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
-	import { ArrowLeft, Download, Paperclip, Link2, Trash2, Reply, Forward } from 'lucide-svelte';
+	import {
+		ArrowLeft,
+		Download,
+		Paperclip,
+		Link2,
+		Trash2,
+		Reply,
+		Forward,
+		ReplyAll
+	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
 
@@ -88,10 +98,11 @@
 	let composeOpen = $state(false);
 	let composeTo = $state('');
 	let composeCc = $state('');
+	let composeBcc = $state('');
 	let composeSubject = $state('');
 	let composeBody = $state('');
 	let composeAttachments = $state<string[]>([]);
-	let composeMode = $state<'new' | 'reply' | 'forward'>('new');
+	let composeMode = $state<'new' | 'reply' | 'reply-all' | 'forward'>('new');
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -132,6 +143,8 @@
 			}
 			if (composeMode === 'reply') {
 				return mailApi.replyMail(accountId, input);
+			} else if (composeMode === 'reply-all') {
+				return mailApi.replyAllMail(accountId, input);
 			} else if (composeMode === 'forward') {
 				return mailApi.forwardMail(accountId, input);
 			} else {
@@ -144,6 +157,21 @@
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
+	});
+
+	const saveDraftMutation = createMutation({
+		mutationFn: async (input: SaveDraftRequest) => {
+			const message = $messageQuery.data;
+			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+			if (!accountId) throw new Error('No mail account configured to save a draft.');
+			return mailApi.saveDraft(accountId, input);
+		},
+		onSuccess: () => {
+			composeOpen = false;
+			toastStore.show('Draft saved', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Draft save failed', 'error')
 	});
 
 	function formatAddresses(value: unknown): string {
@@ -160,6 +188,22 @@
 		composeMode = 'reply';
 		composeTo = message.from_address ?? '';
 		composeCc = '';
+		composeBcc = '';
+		composeSubject = prefixedSubject('Re:', message.subject);
+		composeBody = `\n\nOn ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		composeAttachments = [];
+		composeOpen = true;
+	}
+
+	function openReplyAll(message: MailMessage) {
+		composeMode = 'reply-all';
+		composeTo = [message.from_address, ...((message.to_addresses as string[]) ?? [])]
+			.filter(Boolean)
+			.join(', ');
+		composeCc = formatAddresses(message.cc_addresses);
+		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
@@ -172,6 +216,7 @@
 		composeMode = 'forward';
 		composeTo = '';
 		composeCc = '';
+		composeBcc = '';
 		composeSubject = prefixedSubject('Fwd:', message.subject);
 		composeBody = `\n\n---------- Forwarded message ----------\nFrom: ${formatAddresses(
 			[message.from_name, message.from_address].filter(Boolean)
@@ -205,6 +250,10 @@
 			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReply(message)}>
 				<Reply size={14} />
 				<span>Reply</span>
+			</button>
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReplyAll(message)}>
+				<ReplyAll size={14} />
+				<span>Reply all</span>
 			</button>
 			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openForward(message)}>
 				<Forward size={14} />
@@ -384,12 +433,16 @@
 		open={composeOpen}
 		initialTo={composeTo}
 		initialCc={composeCc}
+		initialBcc={composeBcc}
 		initialSubject={composeSubject}
 		initialBody={composeBody}
 		initialAttachments={composeAttachments}
 		inReplyToMsgId={messageId}
+		mode={composeMode}
 		sending={$sendMutation.isPending}
+		saving={$saveDraftMutation.isPending}
 		onClose={() => (composeOpen = false)}
 		onSend={(message) => sendMutation.mutate(message)}
+		onSave={(message) => saveDraftMutation.mutate(message)}
 	/>
 {/if}

@@ -13,7 +13,12 @@ export interface MailMessage {
 	imported_at: string;
 	size_bytes: number;
 	has_attachments: boolean;
+	source_mode: MailSourceMode;
+	in_reply_to?: string | null;
 }
+
+export type MailSourceMode =
+	'eml_upload' | 'imap_selected' | 'imap_archive' | 'inbound_address' | 'outbound' | 'draft';
 
 export interface MailMessagePart {
 	id: string;
@@ -187,6 +192,14 @@ export interface SendOutboundMailRequest {
 	in_reply_to_msg_id?: string | null;
 }
 
+export type SaveDraftRequest = SendOutboundMailRequest;
+
+export interface MailDraft {
+	message: MailMessage;
+	body: string;
+	attachments: string[];
+}
+
 export const mailApi = {
 	listAccounts: async (): Promise<MailAccount[]> => {
 		const res = await apiClient.get<ListMailAccountsResponse>('/mail/accounts');
@@ -270,8 +283,57 @@ export const mailApi = {
 		return res.messages;
 	},
 
+	listDrafts: async (accountId: string): Promise<MailMessage[]> => {
+		const res = await apiClient.get<ListMailMessagesResponse>(`/mail/accounts/${accountId}/drafts`);
+		return res.messages;
+	},
+
+	saveDraft: async (accountId: string, input: SaveDraftRequest): Promise<MailMessage> => {
+		return apiClient.post<MailMessage>(`/mail/accounts/${accountId}/drafts`, input);
+	},
+
+	updateDraft: async (
+		accountId: string,
+		draftId: string,
+		input: SaveDraftRequest
+	): Promise<MailMessage> => {
+		return apiClient.put<MailMessage>(`/mail/accounts/${accountId}/drafts/${draftId}`, input);
+	},
+
+	discardDraft: async (accountId: string, draftId: string): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/drafts/${draftId}`);
+	},
+
+	sendDraft: async (accountId: string, draftId: string): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(
+			`/mail/accounts/${accountId}/drafts/${draftId}/send`,
+			{}
+		);
+	},
+
 	getMessage: async (id: string): Promise<MailMessage> => {
 		return apiClient.get<MailMessage>(`/mail/messages/${id}`);
+	},
+
+	getDraft: async (accountId: string, draftId: string): Promise<MailDraft> => {
+		const message = await apiClient.get<MailMessage>(
+			`/mail/accounts/${accountId}/drafts/${draftId}`
+		);
+		const [parts, attachments] = await Promise.all([
+			mailApi.listParts(draftId),
+			mailApi.listAttachments(draftId)
+		]);
+		const bodyPart = parts.find(
+			(part) => part.is_body && part.content_type.startsWith('text/plain')
+		);
+		const body = bodyPart ? await mailApi.getPartContent(draftId, bodyPart.id) : '';
+		return {
+			message,
+			body,
+			attachments: attachments
+				.map((attachment) => attachment.file_id)
+				.filter((id): id is string => !!id)
+		};
 	},
 
 	listParts: async (messageId: string): Promise<MailMessagePart[]> => {

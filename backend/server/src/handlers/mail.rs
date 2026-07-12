@@ -338,6 +338,34 @@ pub async fn list_mail_messages(
     Ok(Json(ListMailMessagesResponse { messages }))
 }
 
+/// List draft mail messages for an account.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/drafts",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Draft messages", body = ListMailMessagesResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn list_drafts_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+) -> Result<Json<ListMailMessagesResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    let messages = state
+        .mail_service
+        .list_drafts(auth.tenant_id, auth.user_id, account_id)
+        .await?
+        .into_iter()
+        .map(MailMessageResponse::from)
+        .collect();
+
+    Ok(Json(ListMailMessagesResponse { messages }))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailMessageResponse {
     pub id: Uuid,
@@ -353,6 +381,7 @@ pub struct MailMessageResponse {
     pub size_bytes: i64,
     pub has_attachments: bool,
     pub source_mode: String,
+    pub in_reply_to: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -433,6 +462,7 @@ impl From<rustshare_core::domain::MailMessage> for MailMessageResponse {
             size_bytes: msg.size_bytes.unwrap_or(0),
             has_attachments: msg.has_attachments,
             source_mode: msg.source_mode,
+            in_reply_to: msg.in_reply_to,
         }
     }
 }
@@ -459,6 +489,32 @@ pub async fn get_mail_message(
     let msg = state
         .mail_service
         .get_message(auth.tenant_id, auth.user_id, message_id)
+        .await?;
+
+    Ok(Json(MailMessageResponse::from(msg)))
+}
+
+/// Get a draft mail message by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/drafts/{draft_id}",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Draft message", body = MailMessageResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_draft_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, draft_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<MailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+
+    let msg = state
+        .mail_service
+        .get_draft(auth.tenant_id, auth.user_id, account_id, draft_id)
         .await?;
 
     Ok(Json(MailMessageResponse::from(msg)))
@@ -1891,6 +1947,7 @@ pub struct SaveDraftRequest {
     pub body: String,
     #[serde(default)]
     pub attachments: Vec<Uuid>,
+    pub in_reply_to_msg_id: Option<Uuid>,
 }
 
 /// Create draft mail.
@@ -1923,6 +1980,7 @@ pub async fn create_draft_handler(
             req.subject,
             req.body,
             req.attachments,
+            req.in_reply_to_msg_id,
         )
         .await?;
     Ok(Json(MailMessageResponse::from(msg)))
@@ -1958,6 +2016,7 @@ pub async fn update_draft_handler(
             req.subject,
             req.body,
             req.attachments,
+            req.in_reply_to_msg_id,
         )
         .await?;
     Ok(Json(MailMessageResponse::from(msg)))
@@ -1975,12 +2034,12 @@ pub async fn update_draft_handler(
 pub async fn discard_draft_handler(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    Path((_account_id, draft_id)): Path<(Uuid, Uuid)>,
+    Path((account_id, draft_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     state
         .mail_service
-        .discard_draft(auth.tenant_id, auth.user_id, draft_id)
+        .discard_draft(auth.tenant_id, auth.user_id, account_id, draft_id)
         .await?;
     Ok(StatusCode::OK)
 }
