@@ -127,6 +127,15 @@ export interface ListMailAccountMessagesResponse {
 	messages: MailAccountMessage[];
 }
 
+export interface MailFolderActionRequest {
+	folder: string;
+	source_uidvalidity?: number | null;
+}
+
+export interface MailFolderMoveRequest extends MailFolderActionRequest {
+	destination_folder: string;
+}
+
 export interface ListMailArchiveJobsResponse {
 	jobs: MailArchiveJob[];
 }
@@ -244,13 +253,27 @@ export const mailApi = {
 		);
 	},
 
-	markMessageRead: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, { folder });
+	markMessageRead: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, {
+			folder,
+			source_uidvalidity
+		});
 	},
 
-	markMessageUnread: async (accountId: string, uid: number, folder: string): Promise<void> => {
+	markMessageUnread: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
 		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-unread`, {
-			folder
+			folder,
+			source_uidvalidity
 		});
 	},
 
@@ -258,24 +281,50 @@ export const mailApi = {
 		accountId: string,
 		uid: number,
 		folder: string,
-		destination_folder: string
+		destination_folder: string,
+		source_uidvalidity?: number | null
 	): Promise<void> => {
 		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/move`, {
 			folder,
-			destination_folder
+			destination_folder,
+			source_uidvalidity
 		});
 	},
 
-	archiveMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/archive`, { folder });
+	archiveMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/archive`, {
+			folder,
+			source_uidvalidity
+		});
 	},
 
-	trashMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/trash`, { folder });
+	trashMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/trash`, {
+			folder,
+			source_uidvalidity
+		});
 	},
 
-	deleteMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.delete(`/mail/accounts/${accountId}/messages/${uid}`, { folder });
+	deleteMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/messages/${uid}`, {
+			folder,
+			source_uidvalidity
+		});
 	},
 
 	createImportJob: async (
@@ -422,8 +471,8 @@ export const mailApi = {
 	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {
 		try {
 			return await apiClient.get<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`);
-		} catch (err: any) {
-			if (err?.status === 404) {
+		} catch (err: unknown) {
+			if (typeof err === 'object' && err !== null && 'status' in err && (err as { status?: number }).status === 404) {
 				return null;
 			}
 			throw err;

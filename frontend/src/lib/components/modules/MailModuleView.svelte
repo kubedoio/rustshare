@@ -11,7 +11,8 @@
 		type ListMailAccountMessagesResponse,
 		type MailMessage,
 		type MailSmtpSettings,
-		type SaveDraftRequest
+		type SaveDraftRequest,
+		type SendOutboundMailRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
@@ -224,7 +225,7 @@
 	});
 
 	const sendMutation = createMutation({
-		mutationFn: (input: any) => {
+		mutationFn: (input: SendOutboundMailRequest) => {
 			if (!selectedAccountId) {
 				throw new Error('Select a mail account to compose/send.');
 			}
@@ -691,12 +692,14 @@
 																	? mailApi.markMessageUnread(
 																			selectedAccountId!,
 																			message.uid,
-																			selectedFolder!
+																			selectedFolder!,
+																			uidvalidity
 																		)
 																	: mailApi.markMessageRead(
 																			selectedAccountId!,
 																			message.uid,
-																			selectedFolder!
+																			selectedFolder!,
+																			uidvalidity
 																		),
 															message.is_seen ? 'Marked unread' : 'Marked read',
 															'Failed to update read state'
@@ -719,7 +722,8 @@
 																mailApi.archiveMessage(
 																	selectedAccountId!,
 																	message.uid,
-																	selectedFolder!
+																	selectedFolder!,
+																	uidvalidity
 																),
 															'Archived message',
 															'Failed to archive message'
@@ -738,7 +742,8 @@
 																mailApi.trashMessage(
 																	selectedAccountId!,
 																	message.uid,
-																	selectedFolder!
+																	selectedFolder!,
+																	uidvalidity
 																),
 															'Moved to trash',
 															'Failed to trash message'
@@ -758,7 +763,8 @@
 																mailApi.deleteMessage(
 																	selectedAccountId!,
 																	message.uid,
-																	selectedFolder!
+																	selectedFolder!,
+																	uidvalidity
 																),
 															'Deleted message',
 															'Failed to delete message'
@@ -778,7 +784,8 @@
 																	selectedAccountId!,
 																	message.uid,
 																	selectedFolder!,
-																	'Archive'
+																	'Archive',
+																	uidvalidity
 																),
 															'Moved message',
 															'Failed to move message'

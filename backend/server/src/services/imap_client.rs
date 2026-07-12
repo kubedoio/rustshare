@@ -434,8 +434,21 @@ impl ImapSession {
         Ok(())
     }
 
+    pub async fn supports_uidplus(&mut self) -> Result<bool, ImapError> {
+        let caps = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.capabilities())
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
+            .map_err(|e| ImapError::CommandFailed(format!("CAPABILITY failed: {e}")))?;
+        Ok(caps.has_str("UIDPLUS"))
+    }
+
     pub async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
         self.select_folder(folder).await?;
+        if !self.supports_uidplus().await? {
+            return Err(ImapError::CommandFailed(
+                "Server does not support UIDPLUS; refusing unsafe mailbox-wide EXPUNGE".to_string(),
+            ));
+        }
         tokio::time::timeout(
             DEFAULT_TIMEOUT,
             self.session
@@ -446,12 +459,12 @@ impl ImapSession {
         .try_collect::<Vec<Fetch>>()
         .await
         .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
-        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.expunge())
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_expunge(uid.to_string()))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
             .try_collect::<Vec<_>>()
             .await
-            .map_err(|e| ImapError::CommandFailed(format!("EXPUNGE failed: {e}")))?;
+            .map_err(|e| ImapError::CommandFailed(format!("UID EXPUNGE failed: {e}")))?;
         Ok(())
     }
 

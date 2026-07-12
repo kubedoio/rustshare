@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
@@ -1156,6 +1157,7 @@ impl MailService {
         owner_id: UserId,
         account_id: MailAccountId,
         folder: &str,
+        expected_uidvalidity: Option<i64>,
         uid: u32,
         destination_folder: &str,
     ) -> Result<(), MailError> {
@@ -1163,6 +1165,34 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
+        if !session
+            .supports_uidplus()
+            .await
+            .map_err(imap_to_mail_error)?
+        {
+            let _ = session.logout().await;
+            return Err(MailError::InvalidSource(
+                "Server does not support UIDPLUS; refusing unsafe mailbox move".to_string(),
+            ));
+        }
         session
             .copy_message(folder, uid, destination_folder)
             .await
@@ -1181,12 +1211,31 @@ impl MailService {
         owner_id: UserId,
         account_id: MailAccountId,
         folder: &str,
+        expected_uidvalidity: Option<i64>,
         uid: u32,
     ) -> Result<(), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
         session
             .delete_message(folder, uid)
             .await

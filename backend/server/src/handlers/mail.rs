@@ -1090,12 +1090,14 @@ pub async fn list_mail_account_messages(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MailMessageActionRequest {
     pub folder: String,
+    pub source_uidvalidity: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MailMessageMoveRequest {
     pub folder: String,
     pub destination_folder: String,
+    pub source_uidvalidity: Option<i64>,
 }
 
 #[utoipa::path(
@@ -1181,6 +1183,7 @@ pub async fn move_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
+            req.source_uidvalidity,
             uid,
             &req.destination_folder,
         )
@@ -1211,6 +1214,7 @@ pub async fn archive_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
+            req.source_uidvalidity,
             uid,
             "Archive",
         )
@@ -1241,6 +1245,7 @@ pub async fn trash_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
+            req.source_uidvalidity,
             uid,
             "Trash",
         )
@@ -1266,7 +1271,14 @@ pub async fn delete_mail_message(
     let uid = validate_imap_uid(uid)?;
     state
         .mail_service
-        .delete_imap_message(auth.tenant_id, auth.user_id, account_id, &req.folder, uid)
+        .delete_imap_message(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -18328,6 +18328,13 @@
         "properties": {
           "folder": {
             "type": "string"
+          },
+          "source_uidvalidity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -18343,6 +18350,13 @@
           },
           "folder": {
             "type": "string"
+          },
+          "source_uidvalidity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
