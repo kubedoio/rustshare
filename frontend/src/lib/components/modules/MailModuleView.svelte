@@ -377,6 +377,25 @@
 		return `${(value / 1024 / 1024).toFixed(1)} MB`;
 	}
 
+	function formatSourceMode(mode: MailMessage['source_mode']): string {
+		switch (mode) {
+			case 'draft':
+				return 'Draft';
+			case 'outbound':
+				return 'Sent';
+			case 'imap_archive':
+				return 'Archived';
+			case 'imap_selected':
+				return 'Mailbox';
+			case 'inbound_address':
+				return 'Inbound';
+			case 'eml_upload':
+				return 'Imported';
+			default:
+				return mode;
+		}
+	}
+
 	function toggleUid(uid: number) {
 		selectedUids = selectedUids.includes(uid)
 			? selectedUids.filter((selected) => selected !== uid)
@@ -925,17 +944,27 @@
 											<Mail size={20} />
 										</div>
 										<div class="min-w-0 flex-1">
-											<span class="block truncate text-sm font-semibold"
-												>{message.subject || '(no subject)'}</span
-											>
+											<div class="flex flex-wrap items-center gap-2">
+												<span class="block truncate text-sm font-semibold"
+													>{message.subject || '(no subject)'}</span
+												>
+												<span class="badge badge-ghost badge-xs">
+													{formatSourceMode(message.source_mode)}
+												</span>
+												{#if message.is_seen}
+													<span class="badge badge-ghost badge-xs">read</span>
+												{:else}
+													<span class="badge badge-primary badge-xs">unread</span>
+												{/if}
+											</div>
 											<span class="block truncate text-xs text-base-content/55"
 												>{message.from_name || message.from_address || 'Unknown sender'} · {message.sent_at
 													? new Date(message.sent_at).toLocaleString()
 													: `imported ${new Date(message.imported_at).toLocaleString()}`}</span
 											>
-											<span class="block truncate text-xs text-base-content/45"
-												>To: {formatAddresses(message.to_addresses)}</span
-											>
+											<span class="block truncate text-xs text-base-content/45">
+												To: {formatAddresses(message.to_addresses) || '(no recipients)'}
+											</span>
 										</div>
 										{#if message.has_attachments}
 											<span class="badge badge-sm badge-ghost">attachments</span>
