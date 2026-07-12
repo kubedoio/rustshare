@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO mail_smtp_settings (\n                id, tenant_id, owner_id, mail_account_id, host, port, username, password_enc,\n                tls_mode, from_address, from_name, reply_to, sent_folder, is_enabled,\n                created_at, updated_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Varchar",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "94418ff10594cbd0fe89afc7b73c59caffd5bd3411b1ca370bba3c64b14cff83"
+}

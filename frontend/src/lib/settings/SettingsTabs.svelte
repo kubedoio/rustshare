@@ -1,10 +1,19 @@
 <script lang="ts" module>
 	export type TabId =
-		'general' | 'security' | 'devices' | 'appearance' | 'sharing' | 'activity' | 'modules';
+		'general' | 'security' | 'devices' | 'appearance' | 'sharing' | 'activity' | 'modules' | 'mail';
 </script>
 
 <script lang="ts">
-	import { User, Shield, Smartphone, Palette, Share2, Activity, LayoutGrid } from 'lucide-svelte';
+	import {
+		User,
+		Shield,
+		Smartphone,
+		Palette,
+		Share2,
+		Activity,
+		LayoutGrid,
+		Mail
+	} from 'lucide-svelte';
 
 	let {
 		activeTab = 'general',
@@ -27,7 +36,8 @@
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },
 		{ id: 'activity', label: 'Activity', icon: Activity },
-		{ id: 'modules', label: 'Modules', icon: LayoutGrid }
+		{ id: 'modules', label: 'Modules', icon: LayoutGrid },
+		{ id: 'mail', label: 'Mail accounts', icon: Mail }
 	];
 
 	function handleTabClick(tabId: TabId) {

@@ -249,3 +249,27 @@ impl MailImportJob {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
+pub struct MailSmtpSettings {
+    #[schema(value_type = Uuid)]
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
+    #[schema(value_type = Uuid)]
+    pub mail_account_id: MailAccountId,
+    pub host: String,
+    pub port: i32,
+    pub username: String,
+    #[serde(skip_serializing)]
+    pub password_enc: String,
+    pub tls_mode: String,
+    pub from_address: String,
+    pub from_name: Option<String>,
+    pub reply_to: Option<String>,
+    pub sent_folder: Option<String>,
+    pub is_enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}

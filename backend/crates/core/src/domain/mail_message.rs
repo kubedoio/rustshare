@@ -17,6 +17,8 @@ pub enum MailSourceMode {
     ImapSelected,
     ImapArchive,
     InboundAddress,
+    Outbound,
+    Draft,
 }
 
 impl MailSourceMode {
@@ -26,6 +28,8 @@ impl MailSourceMode {
             MailSourceMode::ImapSelected => "imap_selected",
             MailSourceMode::ImapArchive => "imap_archive",
             MailSourceMode::InboundAddress => "inbound_address",
+            MailSourceMode::Outbound => "outbound",
+            MailSourceMode::Draft => "draft",
         }
     }
 }

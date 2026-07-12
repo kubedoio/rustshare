@@ -5190,6 +5190,37 @@
         }
       }
     },
+    "/api/v1/mail/accounts/{id}/forward": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Forward mail.",
+        "operationId": "forward_mail_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOutboundMailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Forward sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/accounts/{id}/import": {
       "post": {
         "tags": [
@@ -5339,6 +5370,178 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/reply": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Reply to mail.",
+        "operationId": "reply_mail_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOutboundMailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reply sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/reply-all": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Reply all to mail.",
+        "operationId": "reply_all_mail_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOutboundMailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reply all sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/send": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Send outbound mail.",
+        "operationId": "send_outbound_mail_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOutboundMailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Mail sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/smtp": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Get SMTP settings for a mail account.",
+        "operationId": "get_smtp_settings_handler",
+        "responses": {
+          "200": {
+            "description": "SMTP settings summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailSmtpSettingsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Create or update SMTP settings for a mail account.",
+        "operationId": "create_or_update_smtp_settings_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrUpdateSmtpSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SMTP settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailSmtpSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Delete SMTP settings for a mail account.",
+        "operationId": "delete_smtp_settings_handler",
+        "responses": {
+          "204": {
+            "description": "SMTP settings deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/smtp/test": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Test SMTP connection for a mail account.",
+        "operationId": "test_smtp_connection_handler",
+        "responses": {
+          "200": {
+            "description": "Connection test successful"
           }
         }
       }
@@ -6105,6 +6308,87 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/send": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Send a plain-text outbound email through the configured SMTP relay.",
+        "operationId": "send_mail_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMailMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Mail sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailMessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "SMTP send failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SMTP unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -13107,6 +13391,62 @@
           }
         }
       },
+      "CreateOrUpdateSmtpSettingsRequest": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "tls_mode",
+          "from_address",
+          "is_enabled"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "is_enabled": {
+            "type": "boolean"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tls_mode": {
+            "$ref": "#/components/schemas/MailTlsMode"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "CreateSessionRequest": {
         "type": "object",
         "properties": {
@@ -14549,6 +14889,132 @@
                 "type": "string",
                 "enum": [
                   "MailMessageViewed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailMessageSent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSmtpSettingsCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSmtpSettingsUpdated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSmtpSettingsDeleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSmtpConnectionTested"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailReplySent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailForwardSent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSendFailed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailSentFolderAppendFailed"
                 ]
               }
             }
@@ -17431,6 +17897,13 @@
           "has_attachments"
         ],
         "properties": {
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "bcc_addresses": {},
           "cc_addresses": {},
           "from_address": {
@@ -17474,6 +17947,37 @@
             ]
           },
           "to_addresses": {}
+        }
+      },
+      "MailMessageSentPayload": {
+        "type": "object",
+        "required": [
+          "sent_by",
+          "to_count",
+          "cc_count",
+          "bcc_count",
+          "subject"
+        ],
+        "properties": {
+          "bcc_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cc_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sent_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to_count": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       },
       "MailMessageSummaryListResponse": {
@@ -17537,6 +18041,76 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "MailSmtpSettingsResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenant_id",
+          "owner_id",
+          "mail_account_id",
+          "host",
+          "port",
+          "username",
+          "tls_mode",
+          "from_address",
+          "is_enabled"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_enabled": {
+            "type": "boolean"
+          },
+          "mail_account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent_folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tls_mode": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -19559,6 +20133,111 @@
           },
           "snippet": {
             "type": "string"
+          }
+        }
+      },
+      "SendMailMessageRequest": {
+        "type": "object",
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "properties": {
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SendMailMessageResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SendMailResponse": {
+        "type": "object",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SendOutboundMailRequest": {
+        "type": "object",
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "in_reply_to_msg_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

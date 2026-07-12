@@ -2,6 +2,7 @@ import { apiClient } from './client';
 
 export interface MailMessage {
 	id: string;
+	account_id: string | null;
 	subject: string | null;
 	from_address: string | null;
 	from_name: string | null;
@@ -12,7 +13,12 @@ export interface MailMessage {
 	imported_at: string;
 	size_bytes: number;
 	has_attachments: boolean;
+	source_mode: MailSourceMode;
+	in_reply_to?: string | null;
 }
+
+export type MailSourceMode =
+	'eml_upload' | 'imap_selected' | 'imap_archive' | 'inbound_address' | 'outbound' | 'draft';
 
 export interface MailMessagePart {
 	id: string;
@@ -135,6 +141,65 @@ export interface ListMailMessageAttachmentsResponse {
 	attachments: MailAttachment[];
 }
 
+export interface SendMailMessageRequest {
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	body: string;
+}
+
+export interface SendMailMessageResponse {
+	ok: boolean;
+}
+
+export interface MailSmtpSettings {
+	id: string;
+	tenant_id: string;
+	owner_id: string;
+	mail_account_id: string;
+	host: string;
+	port: number;
+	username: string;
+	tls_mode: 'tls' | 'starttls' | 'none';
+	from_address: string;
+	from_name?: string | null;
+	reply_to?: string | null;
+	sent_folder?: string | null;
+	is_enabled: boolean;
+}
+
+export interface CreateOrUpdateSmtpSettingsRequest {
+	host: string;
+	port: number;
+	username: string;
+	password?: string | null;
+	tls_mode: 'tls' | 'starttls' | 'none';
+	from_address: string;
+	from_name?: string | null;
+	reply_to?: string | null;
+	sent_folder?: string | null;
+	is_enabled: boolean;
+}
+
+export interface SendOutboundMailRequest {
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	body: string;
+	attachments?: string[];
+	in_reply_to_msg_id?: string | null;
+}
+
+export type SaveDraftRequest = SendOutboundMailRequest;
+
+export interface MailDraft {
+	message: MailMessage;
+	body: string;
+	attachments: string[];
+}
+
 export const mailApi = {
 	listAccounts: async (): Promise<MailAccount[]> => {
 		const res = await apiClient.get<ListMailAccountsResponse>('/mail/accounts');
@@ -209,13 +274,66 @@ export const mailApi = {
 		return apiClient.post<MailMessage>('/mail/upload', form);
 	},
 
+	sendMessage: async (input: SendMailMessageRequest): Promise<SendMailMessageResponse> => {
+		return apiClient.post<SendMailMessageResponse>('/mail/send', input);
+	},
+
 	listMessages: async (): Promise<MailMessage[]> => {
 		const res = await apiClient.get<ListMailMessagesResponse>('/mail/messages');
 		return res.messages;
 	},
 
+	listDrafts: async (accountId: string): Promise<MailMessage[]> => {
+		const res = await apiClient.get<ListMailMessagesResponse>(`/mail/accounts/${accountId}/drafts`);
+		return res.messages;
+	},
+
+	saveDraft: async (accountId: string, input: SaveDraftRequest): Promise<MailMessage> => {
+		return apiClient.post<MailMessage>(`/mail/accounts/${accountId}/drafts`, input);
+	},
+
+	updateDraft: async (
+		accountId: string,
+		draftId: string,
+		input: SaveDraftRequest
+	): Promise<MailMessage> => {
+		return apiClient.put<MailMessage>(`/mail/accounts/${accountId}/drafts/${draftId}`, input);
+	},
+
+	discardDraft: async (accountId: string, draftId: string): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/drafts/${draftId}`);
+	},
+
+	sendDraft: async (accountId: string, draftId: string): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(
+			`/mail/accounts/${accountId}/drafts/${draftId}/send`,
+			{}
+		);
+	},
+
 	getMessage: async (id: string): Promise<MailMessage> => {
 		return apiClient.get<MailMessage>(`/mail/messages/${id}`);
+	},
+
+	getDraft: async (accountId: string, draftId: string): Promise<MailDraft> => {
+		const message = await apiClient.get<MailMessage>(
+			`/mail/accounts/${accountId}/drafts/${draftId}`
+		);
+		const [parts, attachments] = await Promise.all([
+			mailApi.listParts(draftId),
+			mailApi.listAttachments(draftId)
+		]);
+		const bodyPart = parts.find(
+			(part) => part.is_body && part.content_type.startsWith('text/plain')
+		);
+		const body = bodyPart ? await mailApi.getPartContent(draftId, bodyPart.id) : '';
+		return {
+			message,
+			body,
+			attachments: attachments
+				.map((attachment) => attachment.file_id)
+				.filter((id): id is string => !!id)
+		};
 	},
 
 	listParts: async (messageId: string): Promise<MailMessagePart[]> => {
@@ -254,5 +372,59 @@ export const mailApi = {
 
 	downloadSourceUrl: (messageId: string): string => {
 		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/source`;
+	},
+
+	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {
+		try {
+			return await apiClient.get<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`);
+		} catch (err: any) {
+			if (err?.status === 404) {
+				return null;
+			}
+			throw err;
+		}
+	},
+
+	updateSmtpSettings: async (
+		accountId: string,
+		input: CreateOrUpdateSmtpSettingsRequest
+	): Promise<MailSmtpSettings> => {
+		return apiClient.put<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`, input);
+	},
+
+	deleteSmtpSettings: async (accountId: string): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/smtp`);
+	},
+
+	testSmtpConnection: async (accountId: string): Promise<{ ok: boolean }> => {
+		return apiClient.post<{ ok: boolean }>(`/mail/accounts/${accountId}/smtp/test`, {});
+	},
+
+	sendOutboundMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/send`, input);
+	},
+
+	replyMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply`, input);
+	},
+
+	replyAllMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply-all`, input);
+	},
+
+	forwardMail: async (
+		accountId: string,
+		input: SendOutboundMailRequest
+	): Promise<{ message_id: string }> => {
+		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/forward`, input);
 	}
 };

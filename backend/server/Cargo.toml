@@ -208,6 +208,10 @@ path = "../tests/mail_archive_job_test.rs"
 name = "mail_read_test"
 path = "../tests/mail_read_test.rs"
 
+[[test]]
+name = "mail_smtp_send_test"
+path = "../tests/mail_smtp_send_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 rustshare-crypto = { path = "../crates/crypto" }

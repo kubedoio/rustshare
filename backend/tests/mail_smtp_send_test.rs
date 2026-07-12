@@ -1,0 +1,261 @@
+//! Integration tests for user-based SMTP and outbound mail workflows.
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+
+use rustshare_core::domain::MailTlsMode;
+mod contracts;
+use contracts::common::{cleanup_tenant, cleanup_user, setup_test_env};
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn test_smtp_settings_crud_and_isolation() {
+    let ctx = setup_test_env().await;
+    let mail_service = ctx.mail_service();
+
+    // 1. Create two users (isolation testing)
+    let user_a = ctx.create_test_user("user_a").await;
+    let user_b = ctx.create_test_user("user_b").await;
+
+    // Create an IMAP account for User A to attach SMTP settings to
+    let account_a = mail_service
+        .create_account(
+            ctx.tenant_id,
+            user_a.id,
+            "User A IMAP".to_string(),
+            "imap.a.com".to_string(),
+            993,
+            "usera".to_string(),
+            "passa".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    // Create an IMAP account for User B to attach SMTP settings to
+    let _account_b = mail_service
+        .create_account(
+            ctx.tenant_id,
+            user_b.id,
+            "User B IMAP".to_string(),
+            "imap.b.com".to_string(),
+            993,
+            "userb".to_string(),
+            "passb".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    // 2. CRUD for User A
+    let smtp_a = mail_service
+        .create_or_update_smtp_settings(
+            ctx.tenant_id,
+            user_a.id,
+            account_a.id,
+            "smtp.a.com".to_string(),
+            587,
+            "smtp_user_a".to_string(),
+            Some("smtp_pass_a".to_string()),
+            MailTlsMode::None,
+            "usera@a.com".to_string(),
+            Some("User A Name".to_string()),
+            None,
+            Some("Sent".to_string()),
+            true,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(smtp_a.host, "smtp.a.com");
+    assert_eq!(smtp_a.port, 587);
+    assert_eq!(smtp_a.username, "smtp_user_a");
+    assert_eq!(smtp_a.from_address, "usera@a.com");
+    assert_eq!(smtp_a.sent_folder.as_deref(), Some("Sent"));
+
+    // Get settings
+    let fetched_a = mail_service
+        .get_smtp_settings(ctx.tenant_id, user_a.id, account_a.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched_a.id, smtp_a.id);
+
+    // 3. Isolation: User B cannot access User A's SMTP settings
+    let isolation_get = mail_service
+        .get_smtp_settings(ctx.tenant_id, user_b.id, account_a.id)
+        .await;
+    assert!(isolation_get.is_err()); // PermissionDenied because account_a belongs to User A
+
+    // 4. Update Settings
+    let updated_a = mail_service
+        .create_or_update_smtp_settings(
+            ctx.tenant_id,
+            user_a.id,
+            account_a.id,
+            "smtp.a.com".to_string(),
+            465,
+            "smtp_user_a".to_string(),
+            None, // Password omitted to preserve existing
+            MailTlsMode::Tls,
+            "usera@a.com".to_string(),
+            Some("User A Updated".to_string()),
+            None,
+            Some("Sent".to_string()),
+            true,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(updated_a.port, 465);
+    assert_eq!(updated_a.from_name.as_deref(), Some("User A Updated"));
+    assert_eq!(updated_a.password_enc, smtp_a.password_enc); // password should be preserved
+
+    // 5. Delete Settings
+    mail_service
+        .delete_smtp_settings(ctx.tenant_id, user_a.id, account_a.id)
+        .await
+        .unwrap();
+
+    let after_delete = mail_service
+        .get_smtp_settings(ctx.tenant_id, user_a.id, account_a.id)
+        .await
+        .unwrap();
+    assert!(after_delete.is_none());
+
+    // Clean up
+    cleanup_user(&ctx.pool, user_a.id).await;
+    cleanup_user(&ctx.pool, user_b.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn test_outbound_mail_send_flow() {
+    let ctx = setup_test_env().await;
+    let mail_service = ctx.mail_service();
+    let user = ctx.create_test_user("smtp_sender").await;
+
+    // 1. Setup mock SMTP server in background
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    let smtp_port = local_addr.port() as i32;
+
+    let server_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 4096];
+
+        // 220 Greeting
+        stream.write_all(b"220 localhost ESMTP\r\n").await.unwrap();
+
+        // EHLO
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream
+            .write_all(b"250-localhost\r\n250 AUTH PLAIN\r\n")
+            .await
+            .unwrap();
+
+        // AUTH PLAIN
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream
+            .write_all(b"235 Authentication successful\r\n")
+            .await
+            .unwrap();
+
+        // MAIL FROM
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"250 Ok\r\n").await.unwrap();
+
+        // RCPT TO
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"250 Ok\r\n").await.unwrap();
+
+        // DATA
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"354 Start mail input\r\n").await.unwrap();
+
+        // Read EML content until CRLF.CRLF
+        let n = stream.read(&mut buf).await.unwrap();
+        let received_eml = String::from_utf8_lossy(&buf[..n]).to_string();
+
+        stream
+            .write_all(b"250 Ok: queued as 12345\r\n")
+            .await
+            .unwrap();
+
+        // QUIT
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"221 Bye\r\n").await.unwrap();
+
+        received_eml
+    });
+
+    // 2. Configure IMAP and SMTP settings for User
+    let account = mail_service
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "IMAP".to_string(),
+            "127.0.0.1".to_string(),
+            993,
+            "smtpuser".to_string(),
+            "imappass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+
+    mail_service
+        .create_or_update_smtp_settings(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "127.0.0.1".to_string(),
+            smtp_port,
+            "smtpuser".to_string(),
+            Some("smtppass".to_string()),
+            MailTlsMode::None,
+            "sender@example.com".to_string(),
+            Some("Sender Name".to_string()),
+            None,
+            None, // No sent append in this test case
+            true,
+        )
+        .await
+        .unwrap();
+
+    // 3. Send outbound mail
+    std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
+    let outbound_msg = mail_service
+        .send_outbound_mail(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            vec!["recipient@example.com".to_string()],
+            vec![],
+            vec![],
+            "Test Subject".to_string(),
+            "Test body content".to_string(),
+            vec![], // No attachments
+            None,   // Not a reply
+            false,
+        )
+        .await
+        .unwrap();
+    std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS");
+
+    // 4. Verify DB mail message is saved as outbound
+    assert_eq!(outbound_msg.source_mode, "outbound");
+    assert_eq!(outbound_msg.subject, Some("Test Subject".to_string()));
+
+    // 5. Verify the received EML on the mock SMTP server
+    let received_eml = server_task.await.unwrap();
+    assert!(received_eml.contains("Subject: Test Subject"));
+    assert!(received_eml.contains("Test body content"));
+    assert!(received_eml.contains("sender@example.com"));
+    assert!(received_eml.contains("recipient@example.com"));
+
+    // Clean up
+    cleanup_user(&ctx.pool, user.id).await;
+    cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
+}

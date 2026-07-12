@@ -106,6 +106,26 @@ describe('mailApi', () => {
 		expect(form.get('file')).toBe(file);
 	});
 
+	it('sends outbound messages', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({ ok: true });
+
+		await mailApi.sendMessage({
+			to: ['bob@example.com'],
+			cc: [],
+			bcc: [],
+			subject: 'Hello',
+			body: 'Hi Bob'
+		});
+
+		expect(apiClient.post).toHaveBeenCalledWith('/mail/send', {
+			to: ['bob@example.com'],
+			cc: [],
+			bcc: [],
+			subject: 'Hello',
+			body: 'Hi Bob'
+		});
+	});
+
 	it('refreshes import job status', async () => {
 		vi.mocked(apiClient.get).mockResolvedValueOnce({ id: 'import-1', status: 'completed' });
 

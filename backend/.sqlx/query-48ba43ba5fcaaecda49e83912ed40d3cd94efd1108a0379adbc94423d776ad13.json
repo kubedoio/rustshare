@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM mail_smtp_settings\n            WHERE mail_account_id = $1 AND owner_id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "48ba43ba5fcaaecda49e83912ed40d3cd94efd1108a0379adbc94423d776ad13"
+}

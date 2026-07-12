@@ -7,16 +7,27 @@
 		type MailAttachment,
 		type MailLink,
 		type MailMessage,
-		type MailMessagePart
+		type MailMessagePart,
+		type SaveDraftRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
+	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
-	import { ArrowLeft, Download, Paperclip, Link2, Trash2 } from 'lucide-svelte';
+	import {
+		ArrowLeft,
+		Download,
+		Paperclip,
+		Link2,
+		Trash2,
+		Reply,
+		Forward,
+		ReplyAll
+	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
 
@@ -84,6 +95,19 @@
 	let previewAttachment = $state<MailAttachment | null>(null);
 	let linkTargetType = $state('file');
 	let linkTargetId = $state('');
+	let composeOpen = $state(false);
+	let composeTo = $state('');
+	let composeCc = $state('');
+	let composeBcc = $state('');
+	let composeSubject = $state('');
+	let composeBody = $state('');
+	let composeAttachments = $state<string[]>([]);
+	let composeMode = $state<'new' | 'reply' | 'reply-all' | 'forward'>('new');
+
+	const accountsQuery = createQuery({
+		queryKey: ['mail-accounts'],
+		queryFn: () => mailApi.listAccounts()
+	});
 
 	const createLinkMutation = createMutation({
 		mutationFn: () =>
@@ -110,9 +134,105 @@
 			toastStore.show(error instanceof Error ? error.message : 'Unlink failed', 'error')
 	});
 
+	const sendMutation = createMutation({
+		mutationFn: async (input: any) => {
+			const message = $messageQuery.data;
+			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+			if (!accountId) {
+				throw new Error('No mail account configured to send from.');
+			}
+			if (composeMode === 'reply') {
+				return mailApi.replyMail(accountId, input);
+			} else if (composeMode === 'reply-all') {
+				return mailApi.replyAllMail(accountId, input);
+			} else if (composeMode === 'forward') {
+				return mailApi.forwardMail(accountId, input);
+			} else {
+				return mailApi.sendOutboundMail(accountId, input);
+			}
+		},
+		onSuccess: () => {
+			composeOpen = false;
+			toastStore.show('Mail sent', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
+	});
+
+	const saveDraftMutation = createMutation({
+		mutationFn: async (input: SaveDraftRequest) => {
+			const message = $messageQuery.data;
+			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+			if (!accountId) throw new Error('No mail account configured to save a draft.');
+			return mailApi.saveDraft(accountId, input);
+		},
+		onSuccess: () => {
+			composeOpen = false;
+			toastStore.show('Draft saved', 'success');
+		},
+		onError: (error) =>
+			toastStore.show(error instanceof Error ? error.message : 'Draft save failed', 'error')
+	});
+
 	function formatAddresses(value: unknown): string {
-		if (Array.isArray(value)) return value.join(', ');
-		return String(value ?? '');
+		return addressStrings(value).join(', ');
+	}
+
+	function addressStrings(value: unknown): string[] {
+		if (!Array.isArray(value)) return value ? [String(value)] : [];
+		return value.map((item) => (typeof item === 'string' ? item : item?.address)).filter(Boolean);
+	}
+
+	function prefixedSubject(prefix: string, subject: string | null): string {
+		const value = subject || '(no subject)';
+		return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value : `${prefix} ${value}`;
+	}
+
+	function openReply(message: MailMessage) {
+		composeMode = 'reply';
+		composeTo = message.from_address ?? '';
+		composeCc = '';
+		composeBcc = '';
+		composeSubject = prefixedSubject('Re:', message.subject);
+		composeBody = `\n\nOn ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		composeAttachments = [];
+		composeOpen = true;
+	}
+
+	function openReplyAll(message: MailMessage) {
+		composeMode = 'reply-all';
+		composeTo = [message.from_address, ...addressStrings(message.to_addresses)]
+			.filter(Boolean)
+			.join(', ');
+		composeCc = formatAddresses(message.cc_addresses);
+		composeBcc = '';
+		composeSubject = prefixedSubject('Re:', message.subject);
+		composeBody = `\n\nOn ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		composeAttachments = [];
+		composeOpen = true;
+	}
+
+	function openForward(message: MailMessage) {
+		composeMode = 'forward';
+		composeTo = '';
+		composeCc = '';
+		composeBcc = '';
+		composeSubject = prefixedSubject('Fwd:', message.subject);
+		composeBody = `\n\n---------- Forwarded message ----------\nFrom: ${formatAddresses(
+			[message.from_name, message.from_address].filter(Boolean)
+		)}\nDate: ${
+			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
+		}\nSubject: ${message.subject || '(no subject)'}\n`;
+
+		// Copy attachments if any
+		const attachments = $attachmentsQuery.data ?? [];
+		composeAttachments = attachments.map((a) => a.file_id).filter((id): id is string => !!id);
+
+		composeOpen = true;
 	}
 </script>
 
@@ -131,6 +251,18 @@
 		subtitle={message.from_name || message.from_address || 'Unknown sender'}
 	>
 		<div slot="secondaryActions">
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReply(message)}>
+				<Reply size={14} />
+				<span>Reply</span>
+			</button>
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReplyAll(message)}>
+				<ReplyAll size={14} />
+				<span>Reply all</span>
+			</button>
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openForward(message)}>
+				<Forward size={14} />
+				<span>Forward</span>
+			</button>
 			<button class="btn gap-2 btn-outline btn-sm" onclick={() => goto('/modules/mail')}>
 				<ArrowLeft size={14} />
 				<span>Back</span>
@@ -299,5 +431,22 @@
 				}
 			: null}
 		onClose={() => (previewAttachment = null)}
+	/>
+
+	<MailComposeModal
+		open={composeOpen}
+		initialTo={composeTo}
+		initialCc={composeCc}
+		initialBcc={composeBcc}
+		initialSubject={composeSubject}
+		initialBody={composeBody}
+		initialAttachments={composeAttachments}
+		inReplyToMsgId={messageId}
+		mode={composeMode}
+		sending={$sendMutation.isPending}
+		saving={$saveDraftMutation.isPending}
+		onClose={() => (composeOpen = false)}
+		onSend={(message) => sendMutation.mutate(message)}
+		onSave={(message) => saveDraftMutation.mutate(message)}
 	/>
 {/if}

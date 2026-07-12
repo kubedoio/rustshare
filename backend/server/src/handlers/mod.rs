@@ -671,6 +671,7 @@ impl From<crate::services::mail_service::MailError> for AppError {
             MailError::JobInvalidState(_) => AppError::Conflict(err.to_string()),
             MailError::DuplicateAccountName(_) => AppError::Conflict(err.to_string()),
             MailError::Imap(_) => AppError::BadGateway("IMAP server error".to_string()),
+            MailError::Smtp => AppError::BadGateway("SMTP send failed".to_string()),
             MailError::Storage(_) | MailError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }

@@ -301,6 +301,10 @@ pub fn mail_routes() -> Router<AppState> {
             post(crate::handlers::mail::upload_mail).layer(DefaultBodyLimit::disable()),
         )
         .route(
+            "/api/v1/mail/send",
+            post(crate::handlers::mail::send_mail_message),
+        )
+        .route(
             "/api/v1/mail/accounts",
             get(crate::handlers::mail::list_mail_accounts)
                 .post(crate::handlers::mail::create_mail_account),
@@ -314,6 +318,47 @@ pub fn mail_routes() -> Router<AppState> {
         .route(
             "/api/v1/mail/accounts/{id}/test",
             post(crate::handlers::mail::test_mail_account),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/smtp",
+            get(crate::handlers::mail::get_smtp_settings_handler)
+                .put(crate::handlers::mail::create_or_update_smtp_settings_handler)
+                .delete(crate::handlers::mail::delete_smtp_settings_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/smtp/test",
+            post(crate::handlers::mail::test_smtp_connection_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/send",
+            post(crate::handlers::mail::send_outbound_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/reply",
+            post(crate::handlers::mail::reply_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/reply-all",
+            post(crate::handlers::mail::reply_all_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/forward",
+            post(crate::handlers::mail::forward_mail_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/drafts",
+            get(crate::handlers::mail::list_drafts_handler)
+                .post(crate::handlers::mail::create_draft_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/drafts/{draft_id}",
+            get(crate::handlers::mail::get_draft_handler)
+                .put(crate::handlers::mail::update_draft_handler)
+                .delete(crate::handlers::mail::discard_draft_handler),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/drafts/{draft_id}/send",
+            post(crate::handlers::mail::send_draft_handler),
         )
         .route(
             "/api/v1/mail/accounts/{id}/folders",

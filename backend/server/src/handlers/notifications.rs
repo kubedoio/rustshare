@@ -485,6 +485,7 @@ fn event_type_to_action(event_type: &EventType) -> &'static str {
         EventType::MailLinked => "linked",
         EventType::MailUnlinked => "unlinked",
         EventType::MailMessageViewed => "mail_message_viewed",
+        EventType::MailMessageSent => "mail_message_sent",
         _ => "unknown",
     }
 }
@@ -662,6 +663,10 @@ mod tests {
         assert_eq!(
             event_type_to_action(&EventType::MailMessageViewed),
             "mail_message_viewed"
+        );
+        assert_eq!(
+            event_type_to_action(&EventType::MailMessageSent),
+            "mail_message_sent"
         );
     }
 

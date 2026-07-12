@@ -1,0 +1,113 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, mail_account_id, host, port, username, password_enc,\n                tls_mode, from_address, from_name, reply_to, sent_folder, is_enabled,\n                created_at, updated_at\n            FROM mail_smtp_settings\n            WHERE mail_account_id = $1 AND owner_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "mail_account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "password_enc",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "tls_mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "from_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "from_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "reply_to",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "sent_folder",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "is_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "249a62ca43038a6dfbbb4bd5fdc035f9bc464c31848936951b3c3a6dc7eafce8"
+}
