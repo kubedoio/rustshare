@@ -112,14 +112,36 @@ describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		queryClient.clear();
-		mocks.listAccounts.mockResolvedValue([]);
+		mocks.listMessages.mockResolvedValue([]);
+		mocks.listAccounts.mockResolvedValue([
+			{
+				id: 'acct-1',
+				name: 'Work mail',
+				host: 'imap.example.com',
+				port: 993,
+				username: 'alice@example.com',
+				tls_mode: 'tls',
+				is_enabled: true,
+				last_connected_at: null,
+				last_error: null,
+				created_at: '2026-07-01T00:00:00Z'
+			}
+		]);
 		mocks.listFolders.mockResolvedValue([]);
 		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
 		mocks.listArchiveJobs.mockResolvedValue([]);
 		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
 		mocks.sendMessage.mockResolvedValue({ ok: true });
 		mocks.sendOutboundMail.mockResolvedValue({ message_id: 'outbound-1' });
-		mocks.getSmtpSettings.mockResolvedValue(null);
+		mocks.getSmtpSettings.mockResolvedValue({
+			id: 'smtp-1',
+			host: 'smtp.example.com',
+			port: 587,
+			username: 'alice@example.com',
+			tls_mode: 'tls',
+			from_address: 'alice@example.com',
+			is_enabled: true
+		});
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
@@ -203,6 +225,8 @@ describe('MailModuleView', () => {
 
 		render(MailModuleView, { module: testModule });
 
+		await screen.findByText('No imported mail yet');
+
 		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
 		const file = new File(['From: alice@example.com'], 'message.eml', { type: 'message/rfc822' });
 
@@ -229,7 +253,15 @@ describe('MailModuleView', () => {
 		};
 		mocks.listAccounts.mockResolvedValueOnce([testAccount]);
 		mocks.listMessages.mockResolvedValueOnce([]);
-		mocks.getSmtpSettings.mockResolvedValueOnce(null);
+		mocks.getSmtpSettings.mockResolvedValueOnce({
+			id: 'smtp-1',
+			host: 'smtp.example.com',
+			port: 587,
+			username: 'testuser',
+			tls_mode: 'tls',
+			from_address: 'test@example.com',
+			is_enabled: true
+		});
 
 		render(MailModuleView, { module: testModule });
 

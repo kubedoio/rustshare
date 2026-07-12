@@ -433,7 +433,12 @@ fn format_mailbox(name: &str, address: &str) -> Result<Mailbox, EmailError> {
     let address = address
         .parse()
         .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid email address: {e}")))?;
-    Ok(Mailbox::new(Some(name.to_string()), address))
+    let display_name = if name.trim().is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    };
+    Ok(Mailbox::new(display_name, address))
 }
 
 fn html_escape(value: &str) -> String {
