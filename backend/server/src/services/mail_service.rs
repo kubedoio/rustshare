@@ -2746,7 +2746,7 @@ impl MailService {
                 MailError::InvalidSource(e.to_string())
             })?;
 
-        let mail_message = self
+        let mail_message = match self
             .import_raw_source(
                 tenant_id,
                 owner_id,
@@ -2760,7 +2760,37 @@ impl MailService {
                 None,
                 None,
             )
-            .await?;
+            .await
+        {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::error!(
+                    "Outbound mail sent via SMTP, but local import/storage failed: {:?}",
+                    e
+                );
+                // Fallback: construct in-memory MailMessage to prevent API retry
+                let parsed = EmlParser::parse(&raw_eml).map_err(|pe| {
+                    MailError::InvalidSource(format!("Failed to parse raw sent EML fallback: {pe}"))
+                })?;
+                let mut fallback_msg = MailMessage::new(
+                    tenant_id,
+                    owner_id,
+                    owner_id,
+                    MailSourceMode::Outbound,
+                );
+                fallback_msg.account_id = Some(account_id);
+                fallback_msg.subject = parsed.subject;
+                fallback_msg.from_address = parsed.from.as_ref().map(|a| a.address.clone());
+                fallback_msg.from_name = parsed.from.as_ref().and_then(|a| a.name.clone());
+                fallback_msg.to_addresses = addresses_to_json(&parsed.to);
+                fallback_msg.cc_addresses = addresses_to_json(&parsed.cc);
+                fallback_msg.bcc_addresses = addresses_to_json(&parsed.bcc);
+                fallback_msg.sent_at = parsed.sent_at;
+                fallback_msg.has_attachments = !parsed.attachments.is_empty();
+                fallback_msg.visibility = MailVisibility::Private.into();
+                fallback_msg
+            }
+        };
 
         let mut append_failed = false;
         if let Some(ref sent_folder) = smtp.sent_folder {
