@@ -133,6 +133,7 @@ impl MailService {
             raw_source,
             None,
             None,
+            None,
         )
         .await
     }
@@ -151,6 +152,7 @@ impl MailService {
         raw_source: Vec<u8>,
         job_id: Option<Uuid>,
         archive_job_id: Option<MailImportJobId>,
+        custom_message_id: Option<Uuid>,
     ) -> Result<MailMessage, MailError> {
         if raw_source.is_empty() {
             return Err(MailError::InvalidSource("Empty mail source".to_string()));
@@ -171,6 +173,9 @@ impl MailService {
             .map_err(|e| MailError::Storage(e.to_string()))?;
 
         let mut msg = MailMessage::new(tenant_id, owner_id, imported_by, source_mode);
+        if let Some(cid) = custom_message_id {
+            msg.id = cid;
+        }
         msg.account_id = account_id;
         msg.source_folder = source_folder.map(|s| s.to_string());
         msg.source_uid = source_uid;
@@ -1424,6 +1429,7 @@ impl MailService {
                             raw_source,
                             Some(job.id),
                             None,
+                            None,
                         )
                         .await
                     {
@@ -2066,6 +2072,7 @@ impl MailService {
                     raw,
                     Some(job.id),
                     Some(job.id),
+                    None,
                 )
                 .await
             {
@@ -2759,6 +2766,7 @@ impl MailService {
                 raw_eml.clone(),
                 None,
                 None,
+                None,
             )
             .await
         {
@@ -2890,6 +2898,261 @@ impl MailService {
             .create_folder(folder_name, Some(mail_root_id), owner_id, tenant_id)
             .await
             .map_err(|e| MailError::Storage(e.to_string()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_draft(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        draft_id: Option<Uuid>,
+        to: Vec<String>,
+        cc: Vec<String>,
+        bcc: Vec<String>,
+        subject: String,
+        body: String,
+        attachment_ids: Vec<Uuid>,
+    ) -> Result<MailMessage, MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+
+        let mut smtp_attachments = Vec::new();
+        for file_id in &attachment_ids {
+            let file = self
+                .file_service
+                .get_file(*file_id, owner_id)
+                .await
+                .map_err(|_| MailError::PermissionDenied)?;
+            if file.tenant_id != tenant_id {
+                return Err(MailError::PermissionDenied);
+            }
+            smtp_attachments.push(rustshare_core::services::SmtpAttachment {
+                filename: file.name.clone(),
+                mime_type: file.mime_type.clone(),
+                content: vec![],
+            });
+        }
+
+        let smtp = self
+            .metadata_store
+            .get_mail_smtp_settings(account_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .unwrap_or_else(|| MailSmtpSettings {
+                id: Uuid::new_v4(),
+                tenant_id,
+                owner_id,
+                mail_account_id: account_id,
+                host: "localhost".to_string(),
+                port: 25,
+                username: "draft".to_string(),
+                password_enc: "".to_string(),
+                tls_mode: "none".to_string(),
+                from_address: account.username.clone(),
+                from_name: None,
+                reply_to: None,
+                sent_folder: None,
+                is_enabled: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
+
+        let email = OutboundMailMessage {
+            recipients: &to,
+            cc: &cc,
+            bcc: &bcc,
+            subject: &subject,
+            body: &body,
+            in_reply_to: None,
+            references: None,
+            attachments: smtp_attachments,
+        };
+
+        let email_service = EmailService::new(
+            self.metadata_store.pool().clone(),
+            (*self.secret_key).clone(),
+        );
+        let raw_eml = email_service
+            .build_raw_eml(&smtp, email)
+            .map_err(|e| MailError::InvalidSource(e.to_string()))?;
+
+        let target_id = if let Some(did) = draft_id {
+            if let Some(existing) = self
+                .metadata_store
+                .find_mail_message_by_id(did)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?
+            {
+                if existing.tenant_id != tenant_id || existing.owner_id != owner_id {
+                    return Err(MailError::PermissionDenied);
+                }
+                self.metadata_store
+                    .delete_mail_message(did, owner_id)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+            }
+            did
+        } else {
+            Uuid::new_v4()
+        };
+
+        let mut msg = self
+            .import_raw_source(
+                tenant_id,
+                owner_id,
+                owner_id,
+                Some(account_id),
+                MailSourceMode::Draft,
+                None,
+                None,
+                None,
+                raw_eml,
+                None,
+                None,
+                Some(target_id),
+            )
+            .await?;
+
+        for file_id in &attachment_ids {
+            let file = self
+                .file_service
+                .get_file(*file_id, owner_id)
+                .await
+                .map_err(|_| MailError::PermissionDenied)?;
+            let attachment = MailAttachment {
+                id: Uuid::new_v4(),
+                tenant_id,
+                message_id: target_id,
+                file_id: Some(*file_id),
+                filename: file.name.clone(),
+                mime_type: Some(file.mime_type.clone()),
+                size_bytes: Some(file.size),
+                part_index: None,
+                content_disposition: None,
+                blob_key: None,
+                created_at: Utc::now(),
+            };
+            self.metadata_store
+                .create_mail_attachment(&attachment)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
+        msg.has_attachments = !attachment_ids.is_empty();
+
+        let event = Event::new(
+            EventType::MailMessageDraftCreated,
+            target_id,
+            AggregateType::MailAccount,
+            serde_json::json!({
+                "mail_message_id": target_id,
+                "subject": subject,
+            }),
+            owner_id,
+        );
+        let _ = self.event_store.append(&event, &self.broadcaster).await;
+
+        Ok(msg)
+    }
+
+    pub async fn discard_draft(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        draft_id: Uuid,
+    ) -> Result<(), MailError> {
+        let existing = self
+            .metadata_store
+            .find_mail_message_by_id(draft_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(draft_id))?;
+
+        if existing.tenant_id != tenant_id || existing.owner_id != owner_id {
+            return Err(MailError::PermissionDenied);
+        }
+
+        self.metadata_store
+            .delete_mail_message(draft_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        let event = Event::new(
+            EventType::MailMessageDraftDeleted,
+            draft_id,
+            AggregateType::MailAccount,
+            serde_json::json!({
+                "mail_message_id": draft_id,
+            }),
+            owner_id,
+        );
+        let _ = self.event_store.append(&event, &self.broadcaster).await;
+
+        Ok(())
+    }
+
+    pub async fn send_draft(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        draft_id: Uuid,
+    ) -> Result<MailMessage, MailError> {
+        let draft = self.get_message(tenant_id, owner_id, draft_id).await?;
+        if draft.source_mode != "draft" {
+            return Err(MailError::InvalidSource(
+                "Message is not a draft".to_string(),
+            ));
+        }
+
+        let parts = self.list_parts(tenant_id, owner_id, draft_id).await?;
+        let body_part = parts
+            .iter()
+            .find(|p| p.content_type.starts_with("text/plain"))
+            .ok_or_else(|| {
+                MailError::InvalidSource("Draft has no plain text body part".to_string())
+            })?;
+        let (_, body_bytes) = self
+            .get_message_part(tenant_id, owner_id, draft_id, body_part.id)
+            .await?;
+        let body = String::from_utf8(body_bytes.to_vec())
+            .map_err(|e| MailError::InvalidSource(format!("Invalid draft body encoding: {e}")))?;
+
+        let attachments = self
+            .metadata_store
+            .list_mail_attachments_by_message_id(draft_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        let attachment_ids: Vec<Uuid> = attachments.iter().filter_map(|a| a.file_id).collect();
+
+        let to: Vec<String> = serde_json::from_value(draft.to_addresses).unwrap_or_default();
+        let cc: Vec<String> = serde_json::from_value(draft.cc_addresses).unwrap_or_default();
+        let bcc: Vec<String> = serde_json::from_value(draft.bcc_addresses).unwrap_or_default();
+        let subject = draft.subject.unwrap_or_default();
+
+        let sent_msg = self
+            .send_outbound_mail(
+                tenant_id,
+                owner_id,
+                account_id,
+                to,
+                cc,
+                bcc,
+                subject,
+                body,
+                attachment_ids,
+                draft
+                    .in_reply_to
+                    .and_then(|id_str| Uuid::parse_str(&id_str).ok()),
+                false,
+            )
+            .await?;
+
+        self.metadata_store
+            .delete_mail_message(draft_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        Ok(sent_msg)
     }
 }
 

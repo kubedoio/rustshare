@@ -90,6 +90,8 @@ pub enum EventType {
     MailForwardSent,
     MailSendFailed,
     MailSentFolderAppendFailed,
+    MailMessageDraftCreated,
+    MailMessageDraftDeleted,
 }
 
 impl EventType {
@@ -146,6 +148,8 @@ impl EventType {
             EventType::MailForwardSent => "MailForwardSent",
             EventType::MailSendFailed => "MailSendFailed",
             EventType::MailSentFolderAppendFailed => "MailSentFolderAppendFailed",
+            EventType::MailMessageDraftCreated => "MailMessageDraftCreated",
+            EventType::MailMessageDraftDeleted => "MailMessageDraftDeleted",
         }
     }
 }

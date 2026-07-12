@@ -238,6 +238,15 @@ impl EmailService {
         Ok(bytes)
     }
 
+    pub fn build_raw_eml(
+        &self,
+        smtp: &crate::domain::MailSmtpSettings,
+        email: OutboundMailMessage<'_>,
+    ) -> Result<Vec<u8>, EmailError> {
+        let msg = build_outbound_smtp_message(smtp, email)?;
+        Ok(msg.formatted())
+    }
+
     async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
         let row = sqlx::query_as::<_, SmtpConfigRow>(
             "SELECT enabled, host, port, username, password_enc, from_address, from_name, tls_mode

@@ -352,6 +352,7 @@ pub struct MailMessageResponse {
     pub imported_at: DateTime<Utc>,
     pub size_bytes: i64,
     pub has_attachments: bool,
+    pub source_mode: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -431,6 +432,7 @@ impl From<rustshare_core::domain::MailMessage> for MailMessageResponse {
             imported_at: msg.imported_at,
             size_bytes: msg.size_bytes.unwrap_or(0),
             has_attachments: msg.has_attachments,
+            source_mode: msg.source_mode,
         }
     }
 }
@@ -1875,6 +1877,133 @@ pub async fn forward_mail_handler(
         )
         .await?;
 
+    Ok(Json(SendMailResponse { message_id: msg.id }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SaveDraftRequest {
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    #[serde(default)]
+    pub bcc: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    #[serde(default)]
+    pub attachments: Vec<Uuid>,
+}
+
+/// Create draft mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/drafts",
+    tag = "Mail",
+    request_body = SaveDraftRequest,
+    responses(
+        (status = 200, description = "Draft created", body = MailMessageResponse),
+    ),
+)]
+pub async fn create_draft_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(account_id): Path<Uuid>,
+    Json(req): Json<SaveDraftRequest>,
+) -> Result<Json<MailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let msg = state
+        .mail_service
+        .save_draft(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            None,
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+        )
+        .await?;
+    Ok(Json(MailMessageResponse::from(msg)))
+}
+
+/// Update draft mail.
+#[utoipa::path(
+    put,
+    path = "/api/v1/mail/accounts/{id}/drafts/{draft_id}",
+    tag = "Mail",
+    request_body = SaveDraftRequest,
+    responses(
+        (status = 200, description = "Draft updated", body = MailMessageResponse),
+    ),
+)]
+pub async fn update_draft_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, draft_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<SaveDraftRequest>,
+) -> Result<Json<MailMessageResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let msg = state
+        .mail_service
+        .save_draft(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            Some(draft_id),
+            req.to,
+            req.cc,
+            req.bcc,
+            req.subject,
+            req.body,
+            req.attachments,
+        )
+        .await?;
+    Ok(Json(MailMessageResponse::from(msg)))
+}
+
+/// Discard draft mail.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/accounts/{id}/drafts/{draft_id}",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Draft discarded"),
+    ),
+)]
+pub async fn discard_draft_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((_account_id, draft_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    state
+        .mail_service
+        .discard_draft(auth.tenant_id, auth.user_id, draft_id)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
+/// Send draft mail.
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/drafts/{draft_id}/send",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Draft sent", body = SendMailResponse),
+    ),
+)]
+pub async fn send_draft_handler(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, draft_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<SendMailResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let msg = state
+        .mail_service
+        .send_draft(auth.tenant_id, auth.user_id, account_id, draft_id)
+        .await?;
     Ok(Json(SendMailResponse { message_id: msg.id }))
 }
 
