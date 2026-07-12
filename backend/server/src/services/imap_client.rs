@@ -446,12 +446,12 @@ impl ImapSession {
         .try_collect::<Vec<Fetch>>()
         .await
         .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
-        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_expunge(uid.to_string()))
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.expunge())
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
             .try_collect::<Vec<_>>()
             .await
-            .map_err(|e| ImapError::CommandFailed(format!("UID EXPUNGE failed: {e}")))?;
+            .map_err(|e| ImapError::CommandFailed(format!("EXPUNGE failed: {e}")))?;
         Ok(())
     }
 

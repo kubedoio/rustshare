@@ -5137,6 +5137,169 @@
         }
       }
     },
+    "/api/v1/mail/accounts/{id}/drafts": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "List draft mail messages for an account.",
+        "operationId": "list_drafts_handler",
+        "responses": {
+          "200": {
+            "description": "Draft messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMailMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Create draft mail.",
+        "operationId": "create_draft_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Draft created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/drafts/{draft_id}": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Get a draft mail message by ID.",
+        "operationId": "get_draft_handler",
+        "responses": {
+          "200": {
+            "description": "Draft message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Update draft mail.",
+        "operationId": "update_draft_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Draft updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Discard draft mail.",
+        "operationId": "discard_draft_handler",
+        "responses": {
+          "200": {
+            "description": "Draft discarded"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/drafts/{draft_id}/send": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Send draft mail.",
+        "operationId": "send_draft_handler",
+        "responses": {
+          "200": {
+            "description": "Draft sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/accounts/{id}/folders": {
       "get": {
         "tags": [
@@ -5328,6 +5491,18 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -5370,6 +5545,276 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}": {
+      "delete": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "delete_mail_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/archive": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "archive_mail_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message archived"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/mark-read": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "mark_mail_message_read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message marked read"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/mark-unread": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "mark_mail_message_unread",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message marked unread"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/move": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "move_mail_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message moved"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/trash": {
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "operationId": "trash_mail_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailMessageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Message trashed"
           }
         }
       }
@@ -15018,6 +15463,34 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailMessageDraftCreated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MailMessageDraftDeleted"
+                ]
+              }
+            }
           }
         ],
         "description": "Event types in the system"
@@ -17847,6 +18320,32 @@
           }
         }
       },
+      "MailMessageActionRequest": {
+        "type": "object",
+        "required": [
+          "folder"
+        ],
+        "properties": {
+          "folder": {
+            "type": "string"
+          }
+        }
+      },
+      "MailMessageMoveRequest": {
+        "type": "object",
+        "required": [
+          "folder",
+          "destination_folder"
+        ],
+        "properties": {
+          "destination_folder": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          }
+        }
+      },
       "MailMessagePartResponse": {
         "type": "object",
         "required": [
@@ -17894,7 +18393,8 @@
           "bcc_addresses",
           "imported_at",
           "size_bytes",
-          "has_attachments"
+          "has_attachments",
+          "source_mode"
         ],
         "properties": {
           "account_id": {
@@ -17929,6 +18429,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "sent_at": {
             "type": [
               "string",
@@ -17939,6 +18445,9 @@
           "size_bytes": {
             "type": "integer",
             "format": "int64"
+          },
+          "source_mode": {
+            "type": "string"
           },
           "subject": {
             "type": [
@@ -18005,7 +18514,8 @@
         "type": "object",
         "required": [
           "uid",
-          "size_bytes"
+          "size_bytes",
+          "is_seen"
         ],
         "properties": {
           "from_address": {
@@ -18019,6 +18529,9 @@
               "string",
               "null"
             ]
+          },
+          "is_seen": {
+            "type": "boolean"
           },
           "sent_at": {
             "type": [
@@ -19959,6 +20472,54 @@
         "properties": {
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "SaveDraftRequest": {
+        "type": "object",
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string"
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "in_reply_to_msg_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
