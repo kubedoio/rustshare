@@ -1,4 +1,6 @@
+use crate::validation::resolve_public_socket_addrs;
 use lettre::{
+    address::Envelope,
     message::{
         header::{ContentDisposition, ContentType},
         Mailbox, MultiPart, SinglePart,
@@ -210,61 +212,7 @@ impl EmailService {
             ));
         }
 
-        let from_mailbox: Mailbox =
-            format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
-        let mut builder = Message::builder().from(from_mailbox).subject(email.subject);
-
-        if let Some(ref reply_to_addr) = smtp.reply_to {
-            if !reply_to_addr.trim().is_empty() {
-                builder = builder.reply_to(parse_mailbox(reply_to_addr)?);
-            }
-        }
-
-        if let Some(ref in_reply_to) = email.in_reply_to {
-            if !in_reply_to.trim().is_empty() {
-                builder = builder.in_reply_to(in_reply_to.clone());
-            }
-        }
-
-        if let Some(ref references) = email.references {
-            if !references.trim().is_empty() {
-                builder = builder.references(references.clone());
-            }
-        }
-
-        for recipient in email.recipients {
-            builder = builder.to(parse_mailbox(recipient)?);
-        }
-        for recipient in email.cc {
-            builder = builder.cc(parse_mailbox(recipient)?);
-        }
-        for recipient in email.bcc {
-            builder = builder.bcc(parse_mailbox(recipient)?);
-        }
-
-        let alternative = MultiPart::alternative()
-            .singlepart(SinglePart::plain(email.body.to_string()))
-            .singlepart(SinglePart::html(format!(
-                "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
-                html_escape(email.body)
-            )));
-
-        let email_msg = if email.attachments.is_empty() {
-            builder.multipart(alternative)
-        } else {
-            let mut multipart = MultiPart::mixed().multipart(alternative);
-            for attachment in email.attachments {
-                let ct = ContentType::parse(&attachment.mime_type)
-                    .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-                let part = SinglePart::builder()
-                    .header(ct)
-                    .header(ContentDisposition::attachment(&attachment.filename))
-                    .body(attachment.content);
-                multipart = multipart.singlepart(part);
-            }
-            builder.multipart(multipart)
-        }
-        .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+        let email_msg = build_outbound_smtp_message(smtp, email)?;
 
         let row = SmtpConfigRow {
             enabled: smtp.is_enabled,
@@ -316,6 +264,7 @@ impl EmailService {
         let port = u16::try_from(port).map_err(|_| {
             EmailError::SmtpSendFailed(format!("SMTP port {} is out of range", port))
         })?;
+        validate_smtp_host(host, port).await?;
 
         let creds = config
             .username
@@ -373,6 +322,86 @@ impl EmailService {
     }
 }
 
+async fn validate_smtp_host(host: &str, port: u16) -> Result<(), EmailError> {
+    resolve_public_socket_addrs(host, port).await.map_err(|e| {
+        EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
+    })?;
+    Ok(())
+}
+
+fn build_outbound_smtp_message(
+    smtp: &crate::domain::MailSmtpSettings,
+    email: OutboundMailMessage<'_>,
+) -> Result<Message, EmailError> {
+    let from_mailbox: Mailbox =
+        format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
+    let mut envelope_to = Vec::new();
+    let envelope_from = from_mailbox.email.clone();
+    let mut builder = Message::builder()
+        .from(from_mailbox.clone())
+        .subject(email.subject);
+
+    if let Some(ref reply_to_addr) = smtp.reply_to {
+        if !reply_to_addr.trim().is_empty() {
+            builder = builder.reply_to(parse_mailbox(reply_to_addr)?);
+        }
+    }
+
+    if let Some(ref in_reply_to) = email.in_reply_to {
+        if !in_reply_to.trim().is_empty() {
+            builder = builder.in_reply_to(in_reply_to.clone());
+        }
+    }
+
+    if let Some(ref references) = email.references {
+        if !references.trim().is_empty() {
+            builder = builder.references(references.clone());
+        }
+    }
+
+    for recipient in email.recipients {
+        let mailbox = parse_mailbox(recipient)?;
+        envelope_to.push(mailbox.email.clone());
+        builder = builder.to(mailbox);
+    }
+    for recipient in email.cc {
+        let mailbox = parse_mailbox(recipient)?;
+        envelope_to.push(mailbox.email.clone());
+        builder = builder.cc(mailbox);
+    }
+    for recipient in email.bcc {
+        envelope_to.push(parse_mailbox(recipient)?.email);
+    }
+
+    let envelope = Envelope::new(Some(envelope_from), envelope_to)
+        .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+    builder = builder.envelope(envelope);
+
+    let alternative = MultiPart::alternative()
+        .singlepart(SinglePart::plain(email.body.to_string()))
+        .singlepart(SinglePart::html(format!(
+            "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
+            html_escape(email.body)
+        )));
+
+    if email.attachments.is_empty() {
+        builder.multipart(alternative)
+    } else {
+        let mut multipart = MultiPart::mixed().multipart(alternative);
+        for attachment in email.attachments {
+            let ct = ContentType::parse(&attachment.mime_type)
+                .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+            let part = SinglePart::builder()
+                .header(ct)
+                .header(ContentDisposition::attachment(&attachment.filename))
+                .body(attachment.content);
+            multipart = multipart.singlepart(part);
+        }
+        builder.multipart(multipart)
+    }
+    .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))
+}
+
 fn parse_mailbox(address: &str) -> Result<Mailbox, EmailError> {
     address
         .parse()
@@ -405,4 +434,70 @@ struct SmtpConfigRow {
     from_address: Option<String>,
     from_name: Option<String>,
     tls_mode: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::MailSmtpSettings;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn smtp_settings() -> MailSmtpSettings {
+        MailSmtpSettings {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            owner_id: Uuid::new_v4(),
+            mail_account_id: Uuid::new_v4(),
+            host: "smtp.example.com".to_string(),
+            port: 587,
+            username: "sender@example.com".to_string(),
+            password_enc: "encrypted".to_string(),
+            tls_mode: "starttls".to_string(),
+            from_address: "sender@example.com".to_string(),
+            from_name: Some("Sender".to_string()),
+            reply_to: None,
+            sent_folder: None,
+            is_enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn outbound_smtp_message_keeps_bcc_out_of_headers() {
+        let smtp = smtp_settings();
+        let bcc = ["blind@example.com".to_string()];
+        let to = ["to@example.com".to_string()];
+        let msg = build_outbound_smtp_message(
+            &smtp,
+            OutboundMailMessage {
+                recipients: &to,
+                cc: &[],
+                bcc: &bcc,
+                subject: "Subject",
+                body: "Body",
+                in_reply_to: None,
+                references: None,
+                attachments: vec![],
+            },
+        )
+        .expect("message should build");
+
+        let raw = String::from_utf8(msg.formatted()).expect("message is utf8");
+        assert!(!raw.contains("Bcc:"));
+        assert!(!raw.contains("blind@example.com"));
+        assert!(msg.envelope().to().iter().any(|addr| {
+            let value: &str = addr.as_ref();
+            value == "blind@example.com"
+        }));
+    }
+
+    #[tokio::test]
+    async fn validate_smtp_host_rejects_localhost() {
+        let err = validate_smtp_host("127.0.0.1", 25)
+            .await
+            .expect_err("loopback SMTP host should be rejected");
+        assert!(err.to_string().contains("internal address"));
+    }
 }

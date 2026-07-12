@@ -1862,7 +1862,7 @@ pub async fn forward_mail_handler(
             req.subject,
             req.body,
             req.attachments,
-            req.in_reply_to_msg_id,
+            None,
             true,
         )
         .await?;
