@@ -243,7 +243,16 @@ impl EmailService {
         smtp: &crate::domain::MailSmtpSettings,
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
-        let msg = build_outbound_smtp_message(smtp, email)?;
+        let msg = build_outbound_message(smtp, email, true)?;
+        Ok(msg.formatted())
+    }
+
+    pub fn build_raw_draft_eml(
+        &self,
+        smtp: &crate::domain::MailSmtpSettings,
+        email: OutboundMailMessage<'_>,
+    ) -> Result<Vec<u8>, EmailError> {
+        let msg = build_outbound_message(smtp, email, false)?;
         Ok(msg.formatted())
     }
 
@@ -363,6 +372,14 @@ fn build_outbound_smtp_message(
     smtp: &crate::domain::MailSmtpSettings,
     email: OutboundMailMessage<'_>,
 ) -> Result<Message, EmailError> {
+    build_outbound_message(smtp, email, true)
+}
+
+fn build_outbound_message(
+    smtp: &crate::domain::MailSmtpSettings,
+    email: OutboundMailMessage<'_>,
+    require_recipients: bool,
+) -> Result<Message, EmailError> {
     let from_mailbox: Mailbox =
         format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
     let mut envelope_to = Vec::new();
@@ -403,9 +420,11 @@ fn build_outbound_smtp_message(
         envelope_to.push(parse_mailbox(recipient)?.email);
     }
 
-    let envelope = Envelope::new(Some(envelope_from), envelope_to)
-        .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
-    builder = builder.envelope(envelope);
+    if require_recipients || !envelope_to.is_empty() {
+        let envelope = Envelope::new(Some(envelope_from), envelope_to)
+            .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
+        builder = builder.envelope(envelope);
+    }
 
     let alternative = MultiPart::alternative()
         .singlepart(SinglePart::plain(email.body.to_string()))

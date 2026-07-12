@@ -58,6 +58,8 @@ pub enum MailError {
     Database(String),
     #[error("IMAP error: {0}")]
     Imap(String),
+    #[error("SMTP send failed")]
+    Smtp,
     #[error("Import cancelled")]
     Cancelled,
 }
@@ -2779,7 +2781,7 @@ impl MailService {
                         let _ = event_store.append(&event, &broadcaster).await;
                     }
                 }));
-                MailError::InvalidSource(e.to_string())
+                MailError::Smtp
             })?;
 
         let mail_message = match self
@@ -2946,7 +2948,6 @@ impl MailService {
     ) -> Result<MailMessage, MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
-        let mut smtp_attachments = Vec::new();
         for file_id in &attachment_ids {
             let file = self
                 .file_service
@@ -2956,11 +2957,6 @@ impl MailService {
             if file.tenant_id != tenant_id {
                 return Err(MailError::PermissionDenied);
             }
-            smtp_attachments.push(rustshare_core::services::SmtpAttachment {
-                filename: file.name.clone(),
-                mime_type: file.mime_type.clone(),
-                content: vec![],
-            });
         }
 
         let smtp = self
@@ -2995,7 +2991,7 @@ impl MailService {
             body: &body,
             in_reply_to: None,
             references: None,
-            attachments: smtp_attachments,
+            attachments: Vec::new(),
         };
 
         let email_service = EmailService::new(
@@ -3003,7 +2999,7 @@ impl MailService {
             (*self.secret_key).clone(),
         );
         let raw_eml = email_service
-            .build_raw_eml(&smtp, email)
+            .build_raw_draft_eml(&smtp, email)
             .map_err(|e| MailError::InvalidSource(e.to_string()))?;
 
         let target_id = if let Some(did) = draft_id {
