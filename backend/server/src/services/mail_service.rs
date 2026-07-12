@@ -2772,12 +2772,8 @@ impl MailService {
                 let parsed = EmlParser::parse(&raw_eml).map_err(|pe| {
                     MailError::InvalidSource(format!("Failed to parse raw sent EML fallback: {pe}"))
                 })?;
-                let mut fallback_msg = MailMessage::new(
-                    tenant_id,
-                    owner_id,
-                    owner_id,
-                    MailSourceMode::Outbound,
-                );
+                let mut fallback_msg =
+                    MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::Outbound);
                 fallback_msg.account_id = Some(account_id);
                 fallback_msg.subject = parsed.subject;
                 fallback_msg.from_address = parsed.from.as_ref().map(|a| a.address.clone());
