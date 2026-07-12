@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
 	listFolders: vi.fn(),
 	listAccountMessages: vi.fn(),
 	listArchiveJobs: vi.fn(),
+	listDrafts: vi.fn(),
+	getDraft: vi.fn(),
 	createAccount: vi.fn(),
 	deleteAccount: vi.fn(),
 	testAccount: vi.fn(),
@@ -40,6 +42,8 @@ vi.mock('$lib/api/mail', () => ({
 		listFolders: mocks.listFolders,
 		listAccountMessages: mocks.listAccountMessages,
 		listArchiveJobs: mocks.listArchiveJobs,
+		listDrafts: mocks.listDrafts,
+		getDraft: mocks.getDraft,
 		createAccount: mocks.createAccount,
 		deleteAccount: mocks.deleteAccount,
 		testAccount: mocks.testAccount,
@@ -130,6 +134,26 @@ describe('MailModuleView', () => {
 		mocks.listFolders.mockResolvedValue([]);
 		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
 		mocks.listArchiveJobs.mockResolvedValue([]);
+		mocks.listDrafts.mockResolvedValue([]);
+		mocks.getDraft.mockResolvedValue({
+			message: {
+				id: 'draft-1',
+				account_id: 'acct-1',
+				subject: 'Draft subject',
+				from_address: 'alice@example.com',
+				from_name: 'Alice',
+				to_addresses: ['bob@example.com'],
+				cc_addresses: [],
+				bcc_addresses: [],
+				sent_at: null,
+				imported_at: '2026-07-01T12:00:00Z',
+				size_bytes: 0,
+				has_attachments: false,
+				source_mode: 'draft'
+			},
+			body: 'Draft body',
+			attachments: []
+		});
 		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
 		mocks.sendMessage.mockResolvedValue({ ok: true });
 		mocks.sendOutboundMail.mockResolvedValue({ message_id: 'outbound-1' });
@@ -180,6 +204,15 @@ describe('MailModuleView', () => {
 
 		const emptyTitle = await screen.findByText('No imported mail yet');
 		expect(emptyTitle).toBeTruthy();
+	});
+
+	it('renders empty drafts state', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.listDrafts.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByText('No drafts')).toBeTruthy();
 	});
 
 	it('renders accounts, folders, and mailbox messages', async () => {
@@ -293,5 +326,38 @@ describe('MailModuleView', () => {
 				in_reply_to_msg_id: null
 			});
 		});
+	});
+
+	it('opens an existing draft into compose', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.listDrafts.mockResolvedValueOnce([
+			{
+				id: 'draft-1',
+				account_id: 'acct-1',
+				subject: 'Draft subject',
+				from_address: 'alice@example.com',
+				from_name: 'Alice',
+				to_addresses: ['bob@example.com'],
+				cc_addresses: [],
+				bcc_addresses: [],
+				sent_at: null,
+				imported_at: '2026-07-01T12:00:00Z',
+				size_bytes: 0,
+				has_attachments: false,
+				source_mode: 'draft'
+			}
+		]);
+
+		render(MailModuleView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText('Draft subject'));
+
+		await waitFor(() => {
+			expect(mocks.getDraft).toHaveBeenCalledWith('acct-1', 'draft-1');
+		});
+		const toInput = await screen.findByPlaceholderText('To');
+		const subjectInput = await screen.findByPlaceholderText('Subject');
+		expect((toInput as HTMLInputElement).value).toBe('bob@example.com');
+		expect((subjectInput as HTMLInputElement).value).toBe('Draft subject');
 	});
 });
