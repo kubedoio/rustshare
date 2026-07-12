@@ -63,9 +63,9 @@
 			class="input-bordered input w-full pr-8"
 			{placeholder}
 			value={query}
-			on:input={handleInput}
-			on:blur={handleBlur}
-			on:focus={() => results.length > 0 && (open = true)}
+			oninput={handleInput}
+			onblur={handleBlur}
+			onfocus={() => results.length > 0 && (open = true)}
 		/>
 		{#if loading}
 			<span class="loading absolute top-1/2 right-3 loading-xs -translate-y-1/2 loading-spinner"
@@ -82,7 +82,7 @@
 					<button
 						type="button"
 						class="flex w-full flex-col px-3 py-2 text-left transition-colors hover:bg-base-200"
-						on:mousedown={() => handleSelect(user)}
+						onmousedown={() => handleSelect(user)}
 					>
 						<span class="text-sm font-medium">{user.username}</span>
 						<span class="text-xs text-base-content/60">{user.email}</span>

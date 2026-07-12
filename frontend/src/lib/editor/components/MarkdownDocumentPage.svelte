@@ -767,16 +767,16 @@
 
 		<!-- Side Panel -->
 		{#if isEditing || (isAttachmentsOpen && attachments.length > 0)}
-			<AttachmentPanel
-				{attachments}
-				{permissions}
-				open={isAttachmentsOpen}
-				editable={isEditing}
-				on:upload={handleAttachmentUpload}
-				on:insert={handleAttachmentInsert}
-				on:delete={handleAttachmentDelete}
-				on:close={() => (isAttachmentsOpen = false)}
-			/>
+				<AttachmentPanel
+					{attachments}
+					{permissions}
+					open={isAttachmentsOpen}
+					editable={isEditing}
+					on:upload={handleAttachmentUpload}
+					on:insert={handleAttachmentInsert}
+					on:delete={handleAttachmentDelete}
+					on:close={() => (isAttachmentsOpen = false)}
+				/>
 		{/if}
 	</div>
 
