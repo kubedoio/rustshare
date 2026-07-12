@@ -153,6 +153,13 @@ fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError
     Ok(())
 }
 
+fn validate_imap_uid(uid: i64) -> Result<u32, AppError> {
+    if uid <= 0 || uid > u32::MAX as i64 {
+        return Err(AppError::bad_request("Invalid IMAP UID"));
+    }
+    Ok(uid as u32)
+}
+
 #[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateMailImportJobRequest {
     #[validate(length(min = 1, max = 512))]
@@ -1106,6 +1113,7 @@ pub async fn mark_mail_message_read(
     Json(req): Json<MailMessageActionRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .mark_imap_message_seen(
@@ -1113,7 +1121,7 @@ pub async fn mark_mail_message_read(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
             true,
         )
         .await?;
@@ -1135,6 +1143,7 @@ pub async fn mark_mail_message_unread(
     Json(req): Json<MailMessageActionRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .mark_imap_message_seen(
@@ -1142,7 +1151,7 @@ pub async fn mark_mail_message_unread(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
             false,
         )
         .await?;
@@ -1164,6 +1173,7 @@ pub async fn move_mail_message(
     Json(req): Json<MailMessageMoveRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .move_imap_message(
@@ -1171,7 +1181,7 @@ pub async fn move_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
             &req.destination_folder,
         )
         .await?;
@@ -1193,6 +1203,7 @@ pub async fn archive_mail_message(
     Json(req): Json<MailMessageActionRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .move_imap_message(
@@ -1200,7 +1211,7 @@ pub async fn archive_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
             "Archive",
         )
         .await?;
@@ -1222,6 +1233,7 @@ pub async fn trash_mail_message(
     Json(req): Json<MailMessageActionRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .move_imap_message(
@@ -1229,7 +1241,7 @@ pub async fn trash_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
             "Trash",
         )
         .await?;
@@ -1251,6 +1263,7 @@ pub async fn delete_mail_message(
     Json(req): Json<MailMessageActionRequest>,
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
     state
         .mail_service
         .delete_imap_message(
@@ -1258,7 +1271,7 @@ pub async fn delete_mail_message(
             auth.user_id,
             account_id,
             &req.folder,
-            uid as u32,
+            uid,
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)

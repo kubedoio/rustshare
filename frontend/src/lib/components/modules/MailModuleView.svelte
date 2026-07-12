@@ -59,6 +59,10 @@
 	let composeReplyTo = $state<string | null>(null);
 	let composeSaveError = $state('');
 
+	function hasMailSeenState(message: { is_seen?: boolean }): message is { is_seen: boolean } {
+		return typeof message.is_seen === 'boolean';
+	}
+
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
@@ -662,9 +666,9 @@
 												<span class="block truncate text-sm font-medium"
 													>{message.subject || '(no subject)'}</span
 												>
-												{#if message.is_seen}
+												{#if hasMailSeenState(message) && message.is_seen}
 													<span class="badge badge-ghost badge-xs">read</span>
-												{:else}
+												{:else if hasMailSeenState(message)}
 													<span class="badge badge-primary badge-xs">unread</span>
 												{/if}
 											</span>
@@ -951,9 +955,9 @@
 												<span class="badge badge-ghost badge-xs">
 													{formatSourceMode(message.source_mode)}
 												</span>
-												{#if message.is_seen}
+												{#if hasMailSeenState(message) && message.is_seen}
 													<span class="badge badge-ghost badge-xs">read</span>
-												{:else}
+												{:else if hasMailSeenState(message)}
 													<span class="badge badge-primary badge-xs">unread</span>
 												{/if}
 											</div>

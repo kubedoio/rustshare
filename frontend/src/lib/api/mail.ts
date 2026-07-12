@@ -238,11 +238,13 @@ export const mailApi = {
 	},
 
 	markMessageRead: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, { folder });
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, { folder });
 	},
 
 	markMessageUnread: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/mark-unread`, { folder });
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-unread`, {
+			folder
+		});
 	},
 
 	moveMessage: async (
@@ -251,18 +253,18 @@ export const mailApi = {
 		folder: string,
 		destination_folder: string
 	): Promise<void> => {
-		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/move`, {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/move`, {
 			folder,
 			destination_folder
 		});
 	},
 
 	archiveMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/archive`, { folder });
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/archive`, { folder });
 	},
 
 	trashMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
-		await apiClient.post(`/mail/accounts/${accountId}/messages/${uid}/trash`, { folder });
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/trash`, { folder });
 	},
 
 	deleteMessage: async (accountId: string, uid: number, folder: string): Promise<void> => {
