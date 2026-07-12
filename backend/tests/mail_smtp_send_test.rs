@@ -225,6 +225,7 @@ async fn test_outbound_mail_send_flow() {
         .unwrap();
 
     // 3. Send outbound mail
+    std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
     let outbound_msg = mail_service
         .send_outbound_mail(
             ctx.tenant_id,
@@ -241,6 +242,7 @@ async fn test_outbound_mail_send_flow() {
         )
         .await
         .unwrap();
+    std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS");
 
     // 4. Verify DB mail message is saved as outbound
     assert_eq!(outbound_msg.source_mode, "outbound");

@@ -323,6 +323,12 @@ impl EmailService {
 }
 
 async fn validate_smtp_host(host: &str, port: u16) -> Result<(), EmailError> {
+    if cfg!(debug_assertions)
+        && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true")
+    {
+        return Ok(());
+    }
+
     resolve_public_socket_addrs(host, port).await.map_err(|e| {
         EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
     })?;
