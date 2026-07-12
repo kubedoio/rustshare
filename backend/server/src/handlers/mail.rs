@@ -1266,13 +1266,7 @@ pub async fn delete_mail_message(
     let uid = validate_imap_uid(uid)?;
     state
         .mail_service
-        .delete_imap_message(
-            auth.tenant_id,
-            auth.user_id,
-            account_id,
-            &req.folder,
-            uid,
-        )
+        .delete_imap_message(auth.tenant_id, auth.user_id, account_id, &req.folder, uid)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
