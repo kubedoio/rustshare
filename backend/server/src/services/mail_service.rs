@@ -2586,7 +2586,7 @@ impl MailService {
             .send_user_email_via_smtp(
                 &settings,
                 OutboundMailMessage {
-                    recipients: &["test-connection@rustshare.local".to_string()],
+                    recipients: std::slice::from_ref(&settings.from_address),
                     cc: &[],
                     bcc: &[],
                     subject: "SMTP Connection Test",
@@ -2702,6 +2702,8 @@ impl MailService {
                     refs.push(msg_id.clone());
                     references = Some(refs.join(" "));
                 }
+            } else {
+                return Err(MailError::NotFound(reply_to_id));
             }
         }
 
