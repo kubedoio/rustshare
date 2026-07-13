@@ -1130,12 +1130,14 @@ impl MailService {
         Ok(result)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn mark_imap_message_seen(
         &self,
         tenant_id: Uuid,
         owner_id: UserId,
         account_id: MailAccountId,
         folder: &str,
+        expected_uidvalidity: Option<i64>,
         uid: u32,
         seen: bool,
     ) -> Result<(), MailError> {
@@ -1143,6 +1145,24 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
         session
             .mark_seen(folder, uid, seen)
             .await
@@ -1151,6 +1171,7 @@ impl MailService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn move_imap_message(
         &self,
         tenant_id: Uuid,

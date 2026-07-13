@@ -472,7 +472,12 @@ export const mailApi = {
 		try {
 			return await apiClient.get<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`);
 		} catch (err: unknown) {
-			if (typeof err === 'object' && err !== null && 'status' in err && (err as { status?: number }).status === 404) {
+			if (
+				typeof err === 'object' &&
+				err !== null &&
+				'status' in err &&
+				(err as { status?: number }).status === 404
+			) {
 				return null;
 			}
 			throw err;

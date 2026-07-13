@@ -1123,6 +1123,7 @@ pub async fn mark_mail_message_read(
             auth.user_id,
             account_id,
             &req.folder,
+            req.source_uidvalidity,
             uid,
             true,
         )
@@ -1153,6 +1154,7 @@ pub async fn mark_mail_message_unread(
             auth.user_id,
             account_id,
             &req.folder,
+            req.source_uidvalidity,
             uid,
             false,
         )
