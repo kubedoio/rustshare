@@ -64,6 +64,19 @@
 		return typeof message.is_seen === 'boolean';
 	}
 
+	function folderNamed(names: string[]): string | undefined {
+		const folders = $foldersQuery.data ?? [];
+		return folders.find((folder) => names.includes(folder.name.toLowerCase()))?.name;
+	}
+
+	function archiveFolder(): string {
+		return folderNamed(['archive', 'all mail', '[gmail]/all mail']) ?? 'Archive';
+	}
+
+	function trashFolder(): string {
+		return folderNamed(['trash', 'deleted items', '[gmail]/trash']) ?? 'Trash';
+	}
+
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
@@ -723,7 +736,8 @@
 																	selectedAccountId!,
 																	message.uid,
 																	selectedFolder!,
-																	uidvalidity
+																	uidvalidity,
+																	archiveFolder()
 																),
 															'Archived message',
 															'Failed to archive message'
@@ -743,7 +757,8 @@
 																	selectedAccountId!,
 																	message.uid,
 																	selectedFolder!,
-																	uidvalidity
+																	uidvalidity,
+																	trashFolder()
 																),
 															'Moved to trash',
 															'Failed to trash message'
@@ -784,7 +799,7 @@
 																	selectedAccountId!,
 																	message.uid,
 																	selectedFolder!,
-																	'Archive',
+																	archiveFolder(),
 																	uidvalidity
 																),
 															'Moved message',

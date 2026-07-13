@@ -389,15 +389,11 @@
 
 	function getMailAccountStatus(account: MailAccount) {
 		if (!account.is_enabled) return ['Disabled'];
-		if (account.last_error)
-			return [
-				`IMAP error`,
-				selectedMailAccountId === account.id && selectedMailAccountSmtp ? 'SMTP OK' : 'SMTP missing'
-			];
-		return [
-			'IMAP OK',
-			selectedMailAccountId === account.id && selectedMailAccountSmtp ? 'SMTP OK' : 'SMTP missing'
-		];
+		const status = [account.last_error ? 'IMAP error' : 'IMAP OK'];
+		if (selectedMailAccountId === account.id) {
+			status.push(selectedMailAccountSmtp ? 'SMTP OK' : 'SMTP missing');
+		}
+		return status;
 	}
 
 	$effect(() => {
@@ -1758,6 +1754,13 @@
 										</label>
 										<div class="flex justify-end gap-2">
 											{#if selectedMailAccountSmtp}
+												<button
+													type="button"
+													class="btn btn-sm btn-outline btn-error"
+													onclick={() => handleDeleteSmtp(selectedMailAccountId!)}
+												>
+													Delete SMTP settings
+												</button>
 												<button
 													type="button"
 													class="btn btn-sm btn-outline"

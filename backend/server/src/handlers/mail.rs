@@ -1091,6 +1091,7 @@ pub async fn list_mail_account_messages(
 pub struct MailMessageActionRequest {
     pub folder: String,
     pub source_uidvalidity: Option<i64>,
+    pub destination_folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -1218,7 +1219,7 @@ pub async fn archive_mail_message(
             &req.folder,
             req.source_uidvalidity,
             uid,
-            "Archive",
+            req.destination_folder.as_deref().unwrap_or("Archive"),
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1249,7 +1250,7 @@ pub async fn trash_mail_message(
             &req.folder,
             req.source_uidvalidity,
             uid,
-            "Trash",
+            req.destination_folder.as_deref().unwrap_or("Trash"),
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)

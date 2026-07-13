@@ -18326,6 +18326,12 @@
           "folder"
         ],
         "properties": {
+          "destination_folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "folder": {
             "type": "string"
           },

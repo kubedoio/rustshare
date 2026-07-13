@@ -130,6 +130,7 @@ export interface ListMailAccountMessagesResponse {
 export interface MailFolderActionRequest {
 	folder: string;
 	source_uidvalidity?: number | null;
+	destination_folder?: string;
 }
 
 export interface MailFolderMoveRequest extends MailFolderActionRequest {
@@ -295,11 +296,13 @@ export const mailApi = {
 		accountId: string,
 		uid: number,
 		folder: string,
-		source_uidvalidity?: number | null
+		source_uidvalidity?: number | null,
+		destination_folder?: string
 	): Promise<void> => {
 		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/archive`, {
 			folder,
-			source_uidvalidity
+			source_uidvalidity,
+			destination_folder
 		});
 	},
 
@@ -307,11 +310,13 @@ export const mailApi = {
 		accountId: string,
 		uid: number,
 		folder: string,
-		source_uidvalidity?: number | null
+		source_uidvalidity?: number | null,
+		destination_folder?: string
 	): Promise<void> => {
 		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/trash`, {
 			folder,
-			source_uidvalidity
+			source_uidvalidity,
+			destination_folder
 		});
 	},
 
