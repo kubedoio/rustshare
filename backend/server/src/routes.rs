@@ -369,6 +369,30 @@ pub fn mail_routes() -> Router<AppState> {
             get(crate::handlers::mail::list_mail_account_messages),
         )
         .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/mark-read",
+            post(crate::handlers::mail::mark_mail_message_read),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/mark-unread",
+            post(crate::handlers::mail::mark_mail_message_unread),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/move",
+            post(crate::handlers::mail::move_mail_message),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/archive",
+            post(crate::handlers::mail::archive_mail_message),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/trash",
+            post(crate::handlers::mail::trash_mail_message),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}",
+            delete(crate::handlers::mail::delete_mail_message),
+        )
+        .route(
             "/api/v1/mail/accounts/{id}/import",
             post(crate::handlers::mail::create_mail_import_job),
         )

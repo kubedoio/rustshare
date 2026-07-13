@@ -108,6 +108,7 @@ pub struct ImapMessageSummary {
     pub from_name: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
     pub size_bytes: i64,
+    pub is_seen: bool,
 }
 
 pub struct ImapClient;
@@ -194,9 +195,38 @@ impl ImapClient {
                     })??;
                 Ok(async_imap::Client::new(ImapStream::Plain(tcp_stream)))
             }
-            MailTlsMode::StartTls => Err(ImapError::Tls(
-                "STARTTLS not supported in this phase".to_string(),
-            )),
+            MailTlsMode::StartTls => {
+                let tcp_stream = tokio::time::timeout(DEFAULT_TIMEOUT, TcpStream::connect(addr))
+                    .await
+                    .map_err(|_| {
+                        ImapError::ConnectionFailed("operation timed out".to_string())
+                    })??;
+                let mut client = async_imap::Client::new(ImapStream::Plain(tcp_stream));
+                tokio::time::timeout(
+                    DEFAULT_TIMEOUT,
+                    client.run_command_and_check_ok("STARTTLS", None),
+                )
+                .await
+                .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))??;
+                let stream = client.into_inner();
+                let ImapStream::Plain(tcp_stream) = stream else {
+                    return Err(ImapError::Tls(
+                        "unexpected IMAP stream state after STARTTLS".to_string(),
+                    ));
+                };
+                let connector = build_tls_connector()?;
+                let server_name = host
+                    .to_string()
+                    .try_into()
+                    .map_err(|e| ImapError::Tls(format!("invalid server name: {e}")))?;
+                let tls_stream = tokio::time::timeout(
+                    DEFAULT_TIMEOUT,
+                    connector.connect(server_name, tcp_stream),
+                )
+                .await
+                .map_err(|_| ImapError::ConnectionFailed("operation timed out".to_string()))??;
+                Ok(async_imap::Client::new(ImapStream::Tls(tls_stream)))
+            }
         }
     }
 }
@@ -245,6 +275,7 @@ impl ImapSession {
         &mut self,
         folder: &str,
         limit: usize,
+        before_uid: Option<u32>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), ImapError> {
         let uidvalidity = self.select_folder(folder).await?;
 
@@ -255,7 +286,11 @@ impl ImapSession {
         // deterministic slice instead of an arbitrary HashSet subset.
         let mut all_uids: Vec<u32> = uids.into_iter().collect();
         all_uids.sort_unstable_by(|a, b| b.cmp(a));
-        let limited: Vec<u32> = all_uids.into_iter().take(limit).collect();
+        let limited: Vec<u32> = all_uids
+            .into_iter()
+            .filter(|uid| before_uid.map(|cursor| *uid < cursor).unwrap_or(true))
+            .take(limit)
+            .collect();
         if limited.is_empty() {
             return Ok((uidvalidity, Vec::new()));
         }
@@ -268,7 +303,7 @@ impl ImapSession {
 
         let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
             self.session
-                .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE)")
+                .uid_fetch(uid_set, "(UID ENVELOPE RFC822.SIZE FLAGS)")
                 .await?
                 .try_collect::<Vec<Fetch>>()
                 .await
@@ -390,6 +425,99 @@ impl ImapSession {
         )
         .await
         .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
+    pub async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        let query = if seen {
+            "+FLAGS.SILENT (\\Seen)"
+        } else {
+            "-FLAGS.SILENT (\\Seen)"
+        };
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_store(uid.to_string(), query),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+        .try_collect::<Vec<Fetch>>()
+        .await
+        .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn copy_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_copy(uid.to_string(), destination_folder),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
+    pub async fn supports_uidplus(&mut self) -> Result<bool, ImapError> {
+        let caps = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.capabilities())
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
+            .map_err(|e| ImapError::CommandFailed(format!("CAPABILITY failed: {e}")))?;
+        Ok(caps.has_str("UIDPLUS"))
+    }
+
+    pub async fn supports_move(&mut self) -> Result<bool, ImapError> {
+        let caps = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.capabilities())
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
+            .map_err(|e| ImapError::CommandFailed(format!("CAPABILITY failed: {e}")))?;
+        Ok(caps.has_str("MOVE"))
+    }
+
+    pub async fn move_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_mv(uid.to_string(), destination_folder),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
+    pub async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        if !self.supports_uidplus().await? {
+            return Err(ImapError::CommandFailed(
+                "Server does not support UIDPLUS; refusing unsafe mailbox-wide EXPUNGE".to_string(),
+            ));
+        }
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session
+                .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)"),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+        .try_collect::<Vec<Fetch>>()
+        .await
+        .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_expunge(uid.to_string()))
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| ImapError::CommandFailed(format!("UID EXPUNGE failed: {e}")))?;
         Ok(())
     }
 
@@ -523,6 +651,9 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
         .and_then(|d| parse_imap_date(&d));
 
     let size_bytes = i64::from(fetch.size.unwrap_or(0));
+    let is_seen = fetch
+        .flags()
+        .any(|flag| flag == async_imap::types::Flag::Seen);
 
     Some(ImapMessageSummary {
         uid,
@@ -531,6 +662,7 @@ fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
         from_name,
         sent_at,
         size_bytes,
+        is_seen,
     })
 }
 

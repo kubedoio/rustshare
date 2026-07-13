@@ -37,7 +37,7 @@
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },
 		{ id: 'activity', label: 'Activity', icon: Activity },
 		{ id: 'modules', label: 'Modules', icon: LayoutGrid },
-		{ id: 'mail', label: 'Mail accounts', icon: Mail }
+		{ id: 'mail', label: 'Mail', icon: Mail }
 	];
 
 	function handleTabClick(tabId: TabId) {
@@ -51,7 +51,7 @@
 		{#each tabs as tab}
 			<button
 				type="button"
-				class="flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors
+				class="flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors
 					{activeTab === tab.id
 					? 'border-brand-500 text-brand-400'
 					: 'border-transparent text-base-content/60 hover:border-base-300 hover:text-base-content'}"

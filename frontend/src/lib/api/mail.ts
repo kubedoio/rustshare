@@ -13,6 +13,7 @@ export interface MailMessage {
 	imported_at: string;
 	size_bytes: number;
 	has_attachments: boolean;
+	is_seen?: boolean;
 	source_mode: MailSourceMode;
 	in_reply_to?: string | null;
 }
@@ -71,6 +72,7 @@ export interface MailAccountMessage {
 	from_name: string | null;
 	sent_at: string | null;
 	size_bytes: number;
+	is_seen?: boolean;
 }
 
 export interface MailImportJob {
@@ -123,6 +125,16 @@ export interface ListMailFoldersResponse {
 export interface ListMailAccountMessagesResponse {
 	uidvalidity: number | null;
 	messages: MailAccountMessage[];
+}
+
+export interface MailFolderActionRequest {
+	folder: string;
+	source_uidvalidity?: number | null;
+	destination_folder?: string;
+}
+
+export interface MailFolderMoveRequest extends MailFolderActionRequest {
+	destination_folder: string;
 }
 
 export interface ListMailArchiveJobsResponse {
@@ -210,6 +222,13 @@ export const mailApi = {
 		return apiClient.post<MailAccount>('/mail/accounts', input);
 	},
 
+	updateAccount: async (
+		accountId: string,
+		input: Partial<CreateMailAccountRequest> & { is_enabled?: boolean }
+	): Promise<MailAccount> => {
+		return apiClient.patch<MailAccount>(`/mail/accounts/${accountId}`, input);
+	},
+
 	deleteAccount: async (accountId: string): Promise<void> => {
 		await apiClient.delete(`/mail/accounts/${accountId}`);
 	},
@@ -226,11 +245,91 @@ export const mailApi = {
 	listAccountMessages: async (
 		accountId: string,
 		folder: string,
-		limit = 100
+		limit = 100,
+		cursor?: number | null
 	): Promise<ListMailAccountMessagesResponse> => {
+		const cursorParam = cursor ? `&cursor=${cursor}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}`
 		);
+	},
+
+	markMessageRead: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-read`, {
+			folder,
+			source_uidvalidity
+		});
+	},
+
+	markMessageUnread: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/mark-unread`, {
+			folder,
+			source_uidvalidity
+		});
+	},
+
+	moveMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		destination_folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/move`, {
+			folder,
+			destination_folder,
+			source_uidvalidity
+		});
+	},
+
+	archiveMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null,
+		destination_folder?: string
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/archive`, {
+			folder,
+			source_uidvalidity,
+			destination_folder
+		});
+	},
+
+	trashMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null,
+		destination_folder?: string
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/trash`, {
+			folder,
+			source_uidvalidity,
+			destination_folder
+		});
+	},
+
+	deleteMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.delete(`/mail/accounts/${accountId}/messages/${uid}`, {
+			folder,
+			source_uidvalidity
+		});
 	},
 
 	createImportJob: async (
@@ -377,8 +476,13 @@ export const mailApi = {
 	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {
 		try {
 			return await apiClient.get<MailSmtpSettings>(`/mail/accounts/${accountId}/smtp`);
-		} catch (err: any) {
-			if (err?.status === 404) {
+		} catch (err: unknown) {
+			if (
+				typeof err === 'object' &&
+				err !== null &&
+				'status' in err &&
+				(err as { status?: number }).status === 404
+			) {
 				return null;
 			}
 			throw err;

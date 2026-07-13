@@ -145,9 +145,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Run security audit
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories
-          manifest-path: backend/Cargo.toml
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny --manifest-path backend/Cargo.toml check advisories

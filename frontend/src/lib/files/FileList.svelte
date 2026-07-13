@@ -245,7 +245,7 @@
 								type="checkbox"
 								class="h-4 w-4 rounded border-base-300 bg-base-100 text-brand-500 focus:ring-brand-500"
 								checked={allSelected}
-								on:change={handleSelectAll}
+								onchange={handleSelectAll}
 							/>
 						{/if}
 					</th>

@@ -108,6 +108,13 @@
 	let selectedMailAccountSmtp = $state<MailSmtpSettings | null>(null);
 	let testingImapId = $state<string | null>(null);
 	let testingSmtpId = $state<string | null>(null);
+	let folderMappingForm = $state({
+		inbox_folder: 'Inbox',
+		sent_folder: 'Sent',
+		archive_folder: 'Archive',
+		drafts_folder: 'Drafts',
+		trash_folder: 'Trash'
+	});
 
 	// IMAP Form
 	let imapForm = $state({
@@ -119,6 +126,7 @@
 		tls_mode: 'tls' as 'none' | 'starttls' | 'tls'
 	});
 	let addingMailAccount = $state(false);
+	let savingImapAccount = $state(false);
 	let showAddAccountForm = $state(false);
 
 	// SMTP Form
@@ -152,6 +160,17 @@
 
 	async function selectMailAccount(id: string) {
 		selectedMailAccountId = id;
+		const account = mailAccounts.find((a) => a.id === id);
+		if (account) {
+			imapForm = {
+				name: account.name,
+				host: account.host,
+				port: account.port,
+				username: account.username,
+				password: '',
+				tls_mode: account.tls_mode as 'none' | 'starttls' | 'tls'
+			};
+		}
 		selectedMailAccountSmtp = null;
 		try {
 			const smtp = await mailApi.getSmtpSettings(id);
@@ -169,6 +188,13 @@
 					sent_folder: smtp.sent_folder ?? '',
 					is_enabled: smtp.is_enabled
 				};
+				folderMappingForm = {
+					inbox_folder: 'Inbox',
+					sent_folder: smtp.sent_folder ?? 'Sent',
+					archive_folder: 'Archive',
+					drafts_folder: 'Drafts',
+					trash_folder: 'Trash'
+				};
 			} else {
 				smtpForm = {
 					host: '',
@@ -181,6 +207,13 @@
 					reply_to: '',
 					sent_folder: '',
 					is_enabled: true
+				};
+				folderMappingForm = {
+					inbox_folder: 'Inbox',
+					sent_folder: 'Sent',
+					archive_folder: 'Archive',
+					drafts_folder: 'Drafts',
+					trash_folder: 'Trash'
 				};
 			}
 		} catch (err) {
@@ -215,6 +248,36 @@
 			showNotification(error instanceof Error ? error.message : 'Failed to add account', 'error');
 		} finally {
 			addingMailAccount = false;
+		}
+	}
+
+	async function handleSaveImapAccount() {
+		if (!selectedMailAccountId) return;
+		savingImapAccount = true;
+		try {
+			const account = await mailApi.updateAccount(selectedMailAccountId, {
+				name: imapForm.name.trim(),
+				host: imapForm.host.trim(),
+				port: Number(imapForm.port),
+				username: imapForm.username.trim(),
+				password: imapForm.password ? imapForm.password : undefined,
+				tls_mode: imapForm.tls_mode
+			});
+			imapForm.password = '';
+			imapForm.name = account.name;
+			imapForm.host = account.host;
+			imapForm.port = account.port;
+			imapForm.username = account.username;
+			imapForm.tls_mode = account.tls_mode as 'none' | 'starttls' | 'tls';
+			showNotification('IMAP settings saved successfully', 'success');
+			await loadMailAccounts();
+		} catch (error) {
+			showNotification(
+				error instanceof Error ? error.message : 'Failed to save IMAP settings',
+				'error'
+			);
+		} finally {
+			savingImapAccount = false;
 		}
 	}
 
@@ -322,6 +385,15 @@
 				'error'
 			);
 		}
+	}
+
+	function getMailAccountStatus(account: MailAccount) {
+		if (!account.is_enabled) return ['Disabled'];
+		const status = [account.last_error ? 'IMAP error' : 'IMAP OK'];
+		if (selectedMailAccountId === account.id) {
+			status.push(selectedMailAccountSmtp ? 'SMTP OK' : 'SMTP missing');
+		}
+		return status;
 	}
 
 	$effect(() => {
@@ -1186,7 +1258,12 @@
 				</div>
 			</div>
 		{:else if activeTab === 'mail'}
-			<!-- Mail Accounts Tab -->
+			<div class="mb-4 space-y-1">
+				<h2 class="text-lg font-semibold text-base-content">Mail settings</h2>
+				<p class="text-sm text-base-content/60">
+					Manage your incoming IMAP and outgoing SMTP accounts.
+				</p>
+			</div>
 			<div class="grid grid-cols-1 gap-6 md:grid-cols-[280px_1fr]">
 				<!-- Left Column: Accounts List -->
 				<div class="flex flex-col gap-4 rounded-xl border border-base-300 bg-base-200 p-4 h-fit">
@@ -1209,13 +1286,13 @@
 							<span class="loading loading-spinner loading-sm text-brand-500"></span>
 						</div>
 					{:else if mailAccounts.length === 0}
-						<p class="py-4 text-center text-xs text-base-content/50">No accounts configured.</p>
+						<p class="py-4 text-center text-xs text-base-content/50">No mail account configured.</p>
 					{:else}
 						<div class="flex flex-col gap-2">
 							{#each mailAccounts as account}
 								<button
 									type="button"
-									class="w-full text-left rounded-lg p-3 border transition-all text-xs
+									class="w-full min-w-0 rounded-lg border p-3 text-left text-xs transition-all
 										{selectedMailAccountId === account.id
 										? 'border-brand-500 bg-brand-500/10 text-base-content'
 										: 'border-base-300 bg-base-100 text-base-content/70 hover:bg-base-200'}"
@@ -1229,6 +1306,21 @@
 									<p class="text-[10px] text-base-content/50 truncate">
 										{account.host}:{account.port}
 									</p>
+									<div class="mt-2 flex flex-wrap gap-1">
+										{#each getMailAccountStatus(account) as status}
+											<span
+												class="badge badge-xs {status === 'IMAP OK' || status === 'SMTP OK'
+													? 'badge-success'
+													: status === 'IMAP error'
+														? 'badge-error'
+														: status === 'Disabled'
+															? 'badge-ghost'
+															: 'badge-warning'}"
+											>
+												{status}
+											</span>
+										{/each}
+									</div>
 									{#if account.last_error}
 										<p class="text-[10px] text-error truncate mt-1">{account.last_error}</p>
 									{/if}
@@ -1355,68 +1447,189 @@
 							</SettingsSection>
 						</div>
 					{:else if selectedMailAccountId}
-						<!-- Account Management & SMTP -->
 						{@const account = mailAccounts.find((a) => a.id === selectedMailAccountId)}
 						{#if account}
-							<!-- IMAP Detail and Test -->
 							<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200 p-6">
-								<div class="flex items-center justify-between border-b border-base-300 pb-3 mb-4">
-									<div>
-										<h2 class="text-md font-semibold text-base-content">{account.name}</h2>
-										<p class="text-xs text-base-content/60">IMAP account details</p>
-									</div>
-									<div class="flex gap-2">
-										<button
-											type="button"
-											class="btn btn-sm btn-outline text-xs"
-											onclick={() => handleTestImap(account.id)}
-											disabled={testingImapId === account.id}
-										>
-											{#if testingImapId === account.id}
-												<span class="loading loading-spinner loading-xs mr-1"></span>
-											{/if}
-											Test IMAP
-										</button>
-										<button
-											type="button"
-											class="btn btn-sm btn-error btn-outline"
-											onclick={() => handleDeleteMailAccount(account.id)}
-										>
-											<Trash2 size={14} />
-										</button>
-									</div>
+								<div class="space-y-1">
+									<p class="text-xs uppercase tracking-wide text-base-content/50">
+										Selected account
+									</p>
+									<h2 class="text-xl font-semibold text-base-content">{account.name}</h2>
+									<p class="truncate text-sm text-base-content/60">{account.username}</p>
 								</div>
-
-								<div class="grid grid-cols-2 gap-4 text-xs">
-									<div>
-										<span class="text-base-content/50">IMAP Host:</span>
-										<span class="ml-1 font-medium"
-											>{account.host}:{account.port} ({account.tls_mode})</span
+								<div class="mt-3 flex flex-wrap gap-2">
+									{#each getMailAccountStatus(account) as status}
+										<span
+											class="badge badge-sm {status === 'IMAP OK' || status === 'SMTP OK'
+												? 'badge-success'
+												: status === 'IMAP error'
+													? 'badge-error'
+													: status === 'Disabled'
+														? 'badge-ghost'
+														: 'badge-warning'}"
 										>
-									</div>
-									<div>
-										<span class="text-base-content/50">Username:</span>
-										<span class="ml-1 font-medium">{account.username}</span>
-									</div>
+											{status}
+										</span>
+									{/each}
 								</div>
 							</div>
 
-							<!-- SMTP Form Section -->
-							<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200 p-6">
+							<div class="space-y-4">
 								<SettingsSection
-									title="Outgoing SMTP Configuration"
-									description="Set up SMTP configuration to allow composing and replying to mail"
+									title="General"
+									description="Account identity and default behavior"
+								>
+									<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="mail-account-name">
+												Account name
+											</label>
+											<input
+												id="mail-account-name"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={imapForm.name}
+											/>
+										</div>
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="mail-account-email">
+												Email address
+											</label>
+											<input
+												id="mail-account-email"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={imapForm.username}
+											/>
+										</div>
+									</div>
+									<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="mail-account-display">
+												Display name
+											</label>
+											<input
+												id="mail-account-display"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={smtpForm.from_name}
+											/>
+										</div>
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="mail-account-default">
+												Default account
+											</label>
+											<label class="label cursor-pointer justify-start gap-2 px-0">
+												<input
+													id="mail-account-default"
+													type="checkbox"
+													class="checkbox checkbox-sm"
+													disabled
+												/>
+												<span class="text-xs text-base-content/50">Managed elsewhere</span>
+											</label>
+										</div>
+									</div>
+								</SettingsSection>
+
+								<SettingsSection
+									title="Incoming mail / IMAP"
+									description="Connection settings for incoming mail"
+								>
+									<div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="imap-host">IMAP host</label>
+											<input
+												id="imap-host"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={imapForm.host}
+											/>
+										</div>
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="imap-port">IMAP port</label>
+											<input
+												id="imap-port"
+												type="number"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={imapForm.port}
+											/>
+										</div>
+									</div>
+									<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="imap-security"
+												>Security mode</label
+											>
+											<select
+												id="imap-security"
+												class="select select-sm select-bordered bg-base-100"
+												bind:value={imapForm.tls_mode}
+											>
+												<option value="tls">TLS (SSL)</option>
+												<option value="starttls">STARTTLS</option>
+												<option value="none">Plain / None</option>
+											</select>
+										</div>
+										<div class="form-control">
+											<label class="label text-xs font-semibold" for="imap-username"
+												>IMAP username</label
+											>
+											<input
+												id="imap-username"
+												class="input input-sm input-bordered bg-base-100"
+												bind:value={imapForm.username}
+											/>
+										</div>
+									</div>
+									<div class="form-control">
+										<label class="label text-xs font-semibold" for="imap-password"
+											>IMAP password / token</label
+										>
+										<input
+											id="imap-password"
+											type="password"
+											class="input input-sm input-bordered bg-base-100"
+											placeholder="Password saved. Enter a new password only if you want to change it."
+											bind:value={imapForm.password}
+										/>
+									</div>
+									<div class="flex justify-end gap-2">
+										<button
+											type="button"
+											class="btn btn-sm btn-outline"
+											onclick={() => handleTestImap(account.id)}
+											disabled={testingImapId === account.id}
+										>
+											{#if testingImapId === account.id}<span
+													class="loading loading-spinner loading-xs mr-1"
+												></span>{/if}
+											Test IMAP connection
+										</button>
+										<button
+											type="button"
+											class="btn btn-sm btn-primary"
+											onclick={() => handleSaveImapAccount()}
+											disabled={savingImapAccount}
+										>
+											{#if savingImapAccount}
+												<span class="loading loading-spinner loading-xs mr-1"></span>
+											{/if}
+											Save IMAP settings
+										</button>
+									</div>
+								</SettingsSection>
+
+								<SettingsSection
+									title="Outgoing mail / SMTP"
+									description="Connection settings for outgoing mail"
 								>
 									<form
-										class="flex flex-col gap-4 py-4"
+										class="space-y-4"
 										onsubmit={(event) => {
 											event.preventDefault();
 											handleSaveSmtp();
 										}}
 									>
 										<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-											<div class="form-control col-span-2">
-												<label class="label text-xs font-semibold" for="smtp-host">SMTP Host</label>
+											<div class="form-control md:col-span-2">
+												<label class="label text-xs font-semibold" for="smtp-host">SMTP host</label>
 												<input
 													id="smtp-host"
 													class="input input-sm input-bordered bg-base-100"
@@ -1426,7 +1639,7 @@
 												/>
 											</div>
 											<div class="form-control">
-												<label class="label text-xs font-semibold" for="smtp-port">SMTP Port</label>
+												<label class="label text-xs font-semibold" for="smtp-port">SMTP port</label>
 												<input
 													id="smtp-port"
 													type="number"
@@ -1436,11 +1649,10 @@
 												/>
 											</div>
 										</div>
-
 										<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-username"
-													>SMTP Username</label
+													>SMTP username</label
 												>
 												<input
 													id="smtp-username"
@@ -1452,7 +1664,7 @@
 											</div>
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-tls"
-													>Security Mode</label
+													>Security mode</label
 												>
 												<select
 													id="smtp-tls"
@@ -1465,16 +1677,13 @@
 												</select>
 											</div>
 										</div>
-
 										<div class="form-control">
-											<label class="label text-xs font-semibold" for="smtp-password">
-												SMTP Password / Token
-												{#if selectedMailAccountSmtp}
-													<span class="text-base-content/40 font-normal ml-1"
+											<label class="label text-xs font-semibold" for="smtp-password"
+												>SMTP password / token {#if selectedMailAccountSmtp}<span
+														class="ml-1 font-normal text-base-content/40"
 														>(Leave blank to keep unchanged)</span
-													>
-												{/if}
-											</label>
+													>{/if}</label
+											>
 											<input
 												id="smtp-password"
 												type="password"
@@ -1484,11 +1693,10 @@
 												required={!selectedMailAccountSmtp}
 											/>
 										</div>
-
 										<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-from"
-													>From Address</label
+													>From address</label
 												>
 												<input
 													id="smtp-from"
@@ -1501,7 +1709,7 @@
 											</div>
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-from-name"
-													>From Name</label
+													>From name</label
 												>
 												<input
 													id="smtp-from-name"
@@ -1511,11 +1719,10 @@
 												/>
 											</div>
 										</div>
-
 										<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-replyto"
-													>Reply-To Address (Optional)</label
+													>Reply-To address</label
 												>
 												<input
 													id="smtp-replyto"
@@ -1527,7 +1734,7 @@
 											</div>
 											<div class="form-control">
 												<label class="label text-xs font-semibold" for="smtp-sent-folder"
-													>Sent Folder Name (Optional)</label
+													>Sent folder</label
 												>
 												<input
 													id="smtp-sent-folder"
@@ -1537,24 +1744,22 @@
 												/>
 											</div>
 										</div>
-
-										<label class="label cursor-pointer justify-start gap-2 py-1">
+										<label class="flex items-center gap-2">
 											<input
 												type="checkbox"
-												class="checkbox checkbox-xs"
+												class="checkbox checkbox-sm"
 												bind:checked={smtpForm.is_enabled}
 											/>
-											<span class="label-text text-xs">Enable Outgoing SMTP for this account</span>
+											<span class="text-xs">Enable outgoing SMTP for this account</span>
 										</label>
-
-										<div class="flex justify-end gap-2 mt-4 border-t border-base-300 pt-3">
+										<div class="flex justify-end gap-2">
 											{#if selectedMailAccountSmtp}
 												<button
 													type="button"
-													class="btn btn-sm btn-error btn-outline"
+													class="btn btn-sm btn-outline btn-error"
 													onclick={() => handleDeleteSmtp(selectedMailAccountId!)}
 												>
-													Delete SMTP
+													Delete SMTP settings
 												</button>
 												<button
 													type="button"
@@ -1562,39 +1767,76 @@
 													onclick={() => handleTestSmtp(selectedMailAccountId!)}
 													disabled={testingSmtpId === selectedMailAccountId}
 												>
-													{#if testingSmtpId === selectedMailAccountId}
-														<span class="loading loading-spinner loading-xs mr-1"></span>
-													{/if}
-													Test Connection
+													{#if testingSmtpId === selectedMailAccountId}<span
+															class="loading loading-spinner loading-xs mr-1"
+														></span>{/if}
+													Test SMTP connection
 												</button>
 											{/if}
 											<button type="submit" class="btn btn-sm btn-primary" disabled={savingSmtp}>
-												{#if savingSmtp}
-													<span class="loading loading-spinner loading-xs mr-1"></span>
-												{/if}
-												Save SMTP Settings
+												{#if savingSmtp}<span class="loading loading-spinner loading-xs mr-1"
+													></span>{/if}
+												Save SMTP settings
 											</button>
 										</div>
 									</form>
 								</SettingsSection>
+
+								<SettingsSection
+									title="Folder mapping"
+									description="Prepared defaults for upcoming Mail folder operations"
+								>
+									<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+										{#each [['Inbox folder', 'folder-inbox', folderMappingForm.inbox_folder], ['Sent folder', 'folder-sent', folderMappingForm.sent_folder], ['Archive folder', 'folder-archive', folderMappingForm.archive_folder], ['Drafts folder', 'folder-drafts', folderMappingForm.drafts_folder], ['Trash folder', 'folder-trash', folderMappingForm.trash_folder]] as [label, id, value]}
+											<div class="form-control">
+												<label class="label text-xs font-semibold" for={id}>{label}</label>
+												<input
+													{id}
+													class="input input-sm input-bordered bg-base-100"
+													{value}
+													disabled
+												/>
+											</div>
+										{/each}
+									</div>
+									<p class="text-xs text-base-content/50">
+										Folder mapping is prepared here for Mail operations; the live folder behavior
+										still comes from the Mail module and account settings.
+									</p>
+								</SettingsSection>
+
+								<SettingsSection
+									title="Danger zone"
+									description="Remove this mail account from RustShare"
+								>
+									<div class="flex justify-end">
+										<button
+											type="button"
+											class="btn btn-sm btn-error"
+											onclick={() => handleDeleteMailAccount(account.id)}
+										>
+											<Trash2 size={14} />
+											Delete this mail account
+										</button>
+									</div>
+								</SettingsSection>
 							</div>
 						{/if}
 					{:else}
-						<!-- Empty Detail state -->
 						<div
 							class="overflow-hidden rounded-xl border border-base-300 bg-base-200 p-8 text-center"
 						>
 							<Mail size={32} class="mx-auto mb-2 text-base-content/20" />
-							<p class="text-sm font-medium text-base-content">No account selected</p>
-							<p class="text-xs text-base-content/60 mt-1">
-								Select an existing account from the list or add a new one.
+							<p class="text-sm font-medium text-base-content">No mail account configured</p>
+							<p class="mt-1 text-xs text-base-content/60">
+								Add an IMAP account to use RustShare Mail.
 							</p>
 							<button
 								type="button"
 								class="btn btn-sm btn-primary mt-4"
 								onclick={() => (showAddAccountForm = true)}
 							>
-								Add Mail Account
+								Add mail account
 							</button>
 						</div>
 					{/if}

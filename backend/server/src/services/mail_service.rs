@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
@@ -1115,17 +1116,145 @@ impl MailService {
         account_id: MailAccountId,
         folder: &str,
         limit: usize,
+        before_uid: Option<u32>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
         let result = session
-            .fetch_message_summaries(folder, limit)
+            .fetch_message_summaries(folder, limit, before_uid)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
         Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn mark_imap_message_seen(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        expected_uidvalidity: Option<i64>,
+        uid: u32,
+        seen: bool,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
+        session
+            .mark_seen(folder, uid, seen)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn move_imap_message(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        expected_uidvalidity: Option<i64>,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
+        if !session.supports_move().await.map_err(imap_to_mail_error)? {
+            let _ = session.logout().await;
+            return Err(MailError::InvalidSource(
+                "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
+            ));
+        }
+        session
+            .move_message(folder, uid, destination_folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
+    }
+
+    pub async fn delete_imap_message(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        expected_uidvalidity: Option<i64>,
+        uid: u32,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let actual_uidvalidity = session
+            .select_folder(folder)
+            .await
+            .map_err(imap_to_mail_error)?;
+        if let Some(expected_uidvalidity) = expected_uidvalidity {
+            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+                MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+                ))
+            })?;
+            if actual_uidvalidity != Some(expected_uidvalidity) {
+                let _ = session.logout().await;
+                return Err(MailError::InvalidSource(format!(
+                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                    actual_uidvalidity
+                )));
+            }
+        }
+        session
+            .delete_message(folder, uid)
+            .await
+            .map_err(imap_to_mail_error)?;
+        let _ = session.logout().await;
+        Ok(())
     }
 
     // ============================================================================

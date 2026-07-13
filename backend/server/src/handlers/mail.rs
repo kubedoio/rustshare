@@ -110,6 +110,7 @@ pub struct MailMessageSummaryResponse {
     pub from_name: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
     pub size_bytes: i64,
+    pub is_seen: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -150,6 +151,13 @@ fn validate_selected_uids(uids: &[i64]) -> Result<(), validator::ValidationError
         return Err(validator::ValidationError::new("invalid_uid"));
     }
     Ok(())
+}
+
+fn validate_imap_uid(uid: i64) -> Result<u32, AppError> {
+    if uid <= 0 || uid > u32::MAX as i64 {
+        return Err(AppError::bad_request("Invalid IMAP UID"));
+    }
+    Ok(uid as u32)
 }
 
 #[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
@@ -705,6 +713,7 @@ fn summary_to_response(
         from_name: summary.from_name,
         sent_at: summary.sent_at,
         size_bytes: summary.size_bytes,
+        is_seen: summary.is_seen,
     }
 }
 
@@ -755,6 +764,7 @@ pub struct ListMailMessagesQuery {
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
+    cursor: Option<i64>,
 }
 
 fn default_message_limit() -> i64 {
@@ -1067,6 +1077,7 @@ pub async fn list_mail_account_messages(
             account_id,
             &query.folder,
             query.limit as usize,
+            query.cursor.and_then(|value| u32::try_from(value).ok()),
         )
         .await?;
 
@@ -1074,6 +1085,205 @@ pub async fn list_mail_account_messages(
         uidvalidity: uidvalidity.map(i64::from),
         messages: messages.into_iter().map(summary_to_response).collect(),
     }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MailMessageActionRequest {
+    pub folder: String,
+    pub source_uidvalidity: Option<i64>,
+    pub destination_folder: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MailMessageMoveRequest {
+    pub folder: String,
+    pub destination_folder: String,
+    pub source_uidvalidity: Option<i64>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/mark-read",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message marked read")),
+)]
+pub async fn mark_mail_message_read(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .mark_imap_message_seen(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            true,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/mark-unread",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message marked unread")),
+)]
+pub async fn mark_mail_message_unread(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .mark_imap_message_seen(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            false,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/move",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageMoveRequest,
+    responses((status = 204, description = "Message moved")),
+)]
+pub async fn move_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageMoveRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .move_imap_message(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            &req.destination_folder,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/archive",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message archived")),
+)]
+pub async fn archive_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .move_imap_message(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            req.destination_folder.as_deref().unwrap_or("Archive"),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/trash",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message trashed")),
+)]
+pub async fn trash_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .move_imap_message(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            req.destination_folder.as_deref().unwrap_or("Trash"),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message deleted")),
+)]
+pub async fn delete_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .delete_imap_message(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Create a job to import selected messages from an IMAP folder.
