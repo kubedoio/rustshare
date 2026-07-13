@@ -471,6 +471,30 @@ impl ImapSession {
         Ok(caps.has_str("UIDPLUS"))
     }
 
+    pub async fn supports_move(&mut self) -> Result<bool, ImapError> {
+        let caps = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.capabilities())
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))?
+            .map_err(|e| ImapError::CommandFailed(format!("CAPABILITY failed: {e}")))?;
+        Ok(caps.has_str("MOVE"))
+    }
+
+    pub async fn move_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_mv(uid.to_string(), destination_folder),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(())
+    }
+
     pub async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
         self.select_folder(folder).await?;
         if !self.supports_uidplus().await? {

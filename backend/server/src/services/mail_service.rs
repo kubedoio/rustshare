@@ -1204,22 +1204,14 @@ impl MailService {
                 )));
             }
         }
-        if !session
-            .supports_uidplus()
-            .await
-            .map_err(imap_to_mail_error)?
-        {
+        if !session.supports_move().await.map_err(imap_to_mail_error)? {
             let _ = session.logout().await;
             return Err(MailError::InvalidSource(
-                "Server does not support UIDPLUS; refusing unsafe mailbox move".to_string(),
+                "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
             ));
         }
         session
-            .copy_message(folder, uid, destination_folder)
-            .await
-            .map_err(imap_to_mail_error)?;
-        session
-            .delete_message(folder, uid)
+            .move_message(folder, uid, destination_folder)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;

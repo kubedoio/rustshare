@@ -1509,7 +1509,7 @@
 											<input
 												id="mail-account-display"
 												class="input input-sm input-bordered bg-base-100"
-												bind:value={imapForm.name}
+												bind:value={smtpForm.from_name}
 											/>
 										</div>
 										<div class="form-control">
