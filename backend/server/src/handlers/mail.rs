@@ -1588,9 +1588,13 @@ fn sanitize_email_html(html: &str) -> String {
     ammonia::Builder::default()
         .url_schemes(schemes)
         .attribute_filter(|element, attribute, value| {
+            let source = value.trim_start();
             if element == "img"
                 && attribute == "src"
-                && (value.starts_with("http://") || value.starts_with("https://"))
+                && (source.starts_with("//")
+                    || source.split_once(':').is_some_and(|(scheme, _)| {
+                        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+                    }))
             {
                 return None;
             }
@@ -2609,10 +2613,13 @@ mod tests {
 
     #[test]
     fn sanitize_email_html_blocks_remote_images() {
-        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img src="cid:inline">"#;
+        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img alt="upper" src="HTTPS://tracker.example/upper.gif"><img src="//tracker.example/relative.gif"><img src="cid:inline">"#;
         let clean = sanitize_email_html(raw);
         assert!(!clean.contains("https://tracker.example"));
+        assert!(!clean.contains("HTTPS://tracker.example"));
+        assert!(!clean.contains("//tracker.example"));
         assert!(clean.contains(r#"<img alt="tracker">"#));
+        assert!(clean.contains(r#"<img alt="upper">"#));
         assert!(clean.contains(r#"<img src="cid:inline">"#));
     }
 

@@ -4023,21 +4023,13 @@ impl MetadataStore {
         Ok(result.rows_affected())
     }
 
-    /// Return queued objects that are no longer referenced by any durable owner.
-    pub async fn list_unreferenced_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
+    /// Return queued objects whose grace period has elapsed.
+    pub async fn list_ready_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
         let keys = sqlx::query_scalar::<_, String>(
             r#"
             SELECT q.object_key
             FROM object_gc_queue q
             WHERE q.not_before <= NOW()
-              AND NOT EXISTS (SELECT 1 FROM files f WHERE f.storage_key = q.object_key)
-              AND NOT EXISTS (SELECT 1 FROM file_versions fv WHERE fv.storage_key = q.object_key)
-              AND NOT EXISTS (
-                  SELECT 1 FROM mail_messages m
-                  WHERE m.blob_key = q.object_key OR m.object_key = q.object_key
-              )
-              AND NOT EXISTS (SELECT 1 FROM mail_message_parts p WHERE p.blob_key = q.object_key)
-              AND NOT EXISTS (SELECT 1 FROM mail_attachments a WHERE a.blob_key = q.object_key)
             ORDER BY q.not_before
             LIMIT $1
             "#,
@@ -4046,6 +4038,36 @@ impl MetadataStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(keys)
+    }
+
+    /// Check every durable reference immediately before deleting an object.
+    pub async fn is_unreferenced_object_gc_candidate(&self, object_key: &str) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM object_gc_queue q
+                WHERE q.object_key = $1
+                  AND q.not_before <= NOW()
+                  AND NOT EXISTS (SELECT 1 FROM files f WHERE f.storage_key = q.object_key)
+                  AND NOT EXISTS (SELECT 1 FROM file_versions fv WHERE fv.storage_key = q.object_key)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_messages m
+                      WHERE m.blob_key = q.object_key OR m.object_key = q.object_key
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_message_parts p WHERE p.blob_key = q.object_key
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_attachments a WHERE a.blob_key = q.object_key
+                  )
+            )
+            "#,
+        )
+        .bind(object_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     pub async fn remove_object_gc_candidate(&self, object_key: &str) -> Result<()> {

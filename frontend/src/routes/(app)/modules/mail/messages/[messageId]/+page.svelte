@@ -97,6 +97,18 @@
 	});
 
 	let previewAttachment = $state<MailAttachment | null>(null);
+	type MailLinkTargetType =
+		'file' | 'folder' | 'note' | 'meeting' | 'kanban_board' | 'kanban_card' | 'mail_message';
+	const linkTargetTypes: { value: MailLinkTargetType; label: string }[] = [
+		{ value: 'file', label: 'File' },
+		{ value: 'folder', label: 'Folder' },
+		{ value: 'note', label: 'Note' },
+		{ value: 'meeting', label: 'Meeting' },
+		{ value: 'kanban_board', label: 'Kanban board' },
+		{ value: 'kanban_card', label: 'Kanban card' },
+		{ value: 'mail_message', label: 'Mail message' }
+	];
+	let linkTargetType = $state<MailLinkTargetType>('file');
 	let linkTargetId = $state('');
 	let composeOpen = $state(false);
 	let composeTo = $state('');
@@ -120,7 +132,7 @@
 	const createLinkMutation = createMutation({
 		mutationFn: () =>
 			mailApi.createLink(messageId!, {
-				target_type: 'file',
+				target_type: linkTargetType,
 				target_id: linkTargetId.trim()
 			}),
 		onSuccess: async () => {
@@ -377,18 +389,36 @@
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
 				<h3 class="mb-3 flex items-center gap-2 font-semibold"><Link2 size={16} /> Links</h3>
 				<form
-					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto]"
+					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto]"
 					onsubmit={(event) => {
 						event.preventDefault();
 						createLinkMutation.mutate();
 					}}
 				>
-					<select class="select select-sm select-bordered" bind:value={linkTargetId} required>
-						<option value="">Select a file</option>
-						{#each $filesQuery.data ?? [] as file}
-							<option value={file.id}>{file.name}</option>
+					<select
+						class="select select-sm select-bordered"
+						bind:value={linkTargetType}
+						onchange={() => (linkTargetId = '')}
+					>
+						{#each linkTargetTypes as targetType}
+							<option value={targetType.value}>{targetType.label}</option>
 						{/each}
 					</select>
+					{#if linkTargetType === 'file'}
+						<select class="select select-sm select-bordered" bind:value={linkTargetId} required>
+							<option value="">Select a file</option>
+							{#each $filesQuery.data ?? [] as file}
+								<option value={file.id}>{file.name}</option>
+							{/each}
+						</select>
+					{:else}
+						<input
+							class="input input-sm input-bordered"
+							bind:value={linkTargetId}
+							placeholder="Artifact UUID"
+							required
+						/>
+					{/if}
 					<button
 						class="btn btn-sm btn-primary"
 						type="submit"
@@ -415,8 +445,11 @@
 							>
 								<div class="min-w-0">
 									<div class="text-sm font-medium">
-										{($filesQuery.data ?? []).find((file) => file.id === link.target_id)?.name ??
-											'Linked file'}
+										{link.target_type === 'file'
+											? (($filesQuery.data ?? []).find((file) => file.id === link.target_id)
+													?.name ?? 'Linked file')
+											: (linkTargetTypes.find((type) => type.value === link.target_type)?.label ??
+												link.target_type)}
 									</div>
 									<div class="truncate font-mono text-xs text-base-content/60">
 										{link.target_id}

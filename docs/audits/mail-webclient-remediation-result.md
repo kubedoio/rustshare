@@ -13,21 +13,22 @@
 - M-P2-3: send responses no longer return phantom ids; storage failure is represented as `stored: false` and `message_id: null`.
 - M-P2-4/5: remote images remain blocked and plaintext per-user SMTP remains rejected.
 - M-P2-6/7/8: modified UTF-7 display names, special-use roles, explicit archive/trash destinations, and newest-first pages.
-- M-P2-9/10: durable polled import-job status and a discoverable file-link picker instead of raw UUID entry.
+- M-P2-9/10: durable polled import-job status, a discoverable file-link picker, and preserved non-file artifact linking.
 - M-P2-12/13: replaced/sent draft artifact cleanup and authenticated CID image rewriting.
 - M-P2-14/15/16: working import CTA, draft-path validation, and missing attachment rejection.
 - M-P2-17: durable per-user/account idempotency keys plus a per-draft advisory send lock.
 - M-P2-18/19/21: cursor mailbox pagination, removal of duplicate account/folder fetches, and sent-list refresh.
 - M-P2-20/22/23: reader module guard, visible Sent-append warning, and warning for unavailable forwarded attachments.
 - M-P2-25/26/27: drafts excluded from imported mail, generated Message-ID headers, and create-before-delete draft replacement.
-- M-P2-11/24: delayed reference-aware object reclamation and deterministic selected-import retry safety tests.
+- M-P2-24: deterministic selected-import retry safety tests.
 - Audit payloads for send outcomes no longer include subjects or raw provider errors.
 - User SMTP From addresses are constrained to the selected account identity, and SMTP delivery has a 30-second network timeout.
 - Send idempotency keys are claimed only after settings, identity, attachment, and reply preflight validation, so correctable failures can be retried with the same key.
 
 ## Findings deferred
 
-- No P1 or P2 audit findings remain deferred. Live provider tests remain environment-gated and are not counted as passed; the corrective migration was validated on isolated PostgreSQL 16.
+- M-P2-11 content-addressed blob deletion remains deferred. Removed keys are queued, but `blobs/<sha256>` objects are retained until object writers and GC share a cross-process lease; deleting them after a database-only reference check can race a concurrent writer.
+- Live provider tests remain environment-gated and are not counted as passed; the corrective migration was validated on isolated PostgreSQL 16.
 
 ## Refactors and cleanup
 
@@ -85,14 +86,15 @@ The 25-step live IMAP/SMTP acceptance flow was not executed because no dedicated
 
 ## Known limitations
 
-- Object reclamation is intentionally delayed by 24 hours and runs in batches of 100 on each retention tick.
-- Reference checks and object deletion are separate operations; the 24-hour grace sharply narrows but does not mathematically eliminate a concurrent writer/GC race. Independent storage-lifecycle review remains required.
+- Unique-object reclamation is delayed by 24 hours and runs in batches of 100 on each retention tick.
+- Content-addressed `blobs/<sha256>` remain queued but are not physically deleted, preventing the concurrent writer/GC data-loss race until a cross-process lease protocol is implemented.
 - The live selected-import test still requires a configured IMAP server, PostgreSQL, and object storage.
 - Additional verified sender aliases are not supported; the From address must match the selected account username case-insensitively.
 - The current link picker links files; other backend-supported target types are not exposed by this mail UI.
 
 ## Remaining follow-up issues
 
+- Add a cross-process lease shared by content-addressed object writers and GC, then enable physical deletion of queued `blobs/<sha256>` objects.
 - Run the documented live acceptance flow and independent security validation before release approval.
 
-Webmail remediation complete: ready for independent validation
+Webmail remediation incomplete: blockers remain

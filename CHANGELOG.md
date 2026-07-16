@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Hardened RustShare Mail daily-use workflows with idempotent outbound sends, account-bound sender identities, SMTP timeouts, durable import status, bounded classic search, IMAP special-use folders, modified UTF-7 labels, inline-image rendering, explicit partial-send warnings, safer draft replacement/cleanup, and reference-aware blob reclamation.
+- Hardened RustShare Mail daily-use workflows with idempotent outbound sends, account-bound sender identities, SMTP timeouts, durable import status, bounded classic search, IMAP special-use folders, modified UTF-7 labels, inline-image rendering, explicit partial-send warnings, safer draft replacement/cleanup, and reference-aware object cleanup queueing.
 
 ## [0.6.0] - 2026-06-29
 

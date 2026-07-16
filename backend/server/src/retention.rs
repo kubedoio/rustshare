@@ -225,9 +225,18 @@ async fn tick_retention_cleanup(
         }
     }
 
-    match store.list_unreferenced_object_gc_candidates(100).await {
+    match store.list_ready_object_gc_candidates(100).await {
         Ok(keys) => {
             for key in keys {
+                // Content-addressed blobs can be reused by a writer between the
+                // database reference check and the external object deletion.
+                // Keep them queued until writers and GC share a cross-process lease.
+                if is_content_addressed_blob_key(&key) {
+                    continue;
+                }
+                if !store.is_unreferenced_object_gc_candidate(&key).await? {
+                    continue;
+                }
                 match object_store.delete(&key).await {
                     Ok(()) => {
                         store.remove_object_gc_candidate(&key).await?;
@@ -247,4 +256,28 @@ async fn tick_retention_cleanup(
     }
 
     Ok(())
+}
+
+fn is_content_addressed_blob_key(key: &str) -> bool {
+    key.strip_prefix("blobs/").is_some_and(|digest| {
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_content_addressed_blob_key;
+
+    #[test]
+    fn recognizes_only_content_addressed_blob_keys() {
+        assert!(is_content_addressed_blob_key(&format!(
+            "blobs/{}",
+            "a".repeat(64)
+        )));
+        assert!(!is_content_addressed_blob_key("blobs/not-a-sha256"));
+        assert!(!is_content_addressed_blob_key(&format!(
+            "mail/{}",
+            "a".repeat(64)
+        )));
+    }
 }
