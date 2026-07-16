@@ -25,6 +25,27 @@ describe('mailApi', () => {
 		expect(apiClient.get).toHaveBeenCalledWith('/mail/messages');
 	});
 
+	it('paginates classic mail search', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({
+			messages: [],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+
+		await mailApi.listMessagesPage('quarterly update', '2026-07-01T00:00:00Z', 'msg-1');
+
+		expect(apiClient.get).toHaveBeenCalledWith(
+			'/mail/messages?limit=50&search=quarterly+update&cursor_at=2026-07-01T00%3A00%3A00Z&cursor_id=msg-1'
+		);
+	});
+
+	it('lists durable import jobs', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({ jobs: [{ id: 'job-1' }] });
+
+		await expect(mailApi.listImportJobs()).resolves.toEqual([{ id: 'job-1' }]);
+		expect(apiClient.get).toHaveBeenCalledWith('/mail/import-jobs');
+	});
+
 	it('fetches part content as text', async () => {
 		vi.mocked(apiClient.requestText).mockResolvedValueOnce('hello');
 		const result = await mailApi.getPartContent('msg-1', 'part-1');

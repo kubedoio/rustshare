@@ -388,6 +388,7 @@ fn build_outbound_message(
     let envelope_from = from_mailbox.email.clone();
     let mut builder = Message::builder()
         .from(from_mailbox.clone())
+        .message_id(None)
         .subject(email.subject);
 
     if let Some(ref reply_to_addr) = smtp.reply_to {
@@ -572,6 +573,7 @@ mod tests {
 
         let raw = String::from_utf8(msg.formatted()).expect("message is utf8");
         assert!(!raw.contains("Bcc:"));
+        assert!(raw.contains("Message-ID:"));
         assert!(!raw.contains("blind@example.com"));
         assert!(msg.envelope().to().iter().any(|addr| {
             let value: &str = addr.as_ref();

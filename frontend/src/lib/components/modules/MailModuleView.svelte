@@ -9,6 +9,7 @@
 		type MailImportJob,
 		type MailFolder,
 		type ListMailAccountMessagesResponse,
+		type ListMailMessagesResponse,
 		type MailMessage,
 		type MailSmtpSettings,
 		type SaveDraftRequest,
@@ -41,9 +42,15 @@
 	let selectedFolder = $state<string | null>(null);
 	let selectedUids = $state<number[]>([]);
 	let uidvalidity = $state<number | null>(null);
-	let recentImportJobs = $state<MailImportJob[]>([]);
 	let mailboxExtraMessages = $state<MailAccountMessage[]>([]);
 	let mailboxNextCursor = $state<number | null>(null);
+	let mailboxSearchInput = $state('');
+	let mailboxSearch = $state('');
+	let importedSearchInput = $state('');
+	let importedSearch = $state('');
+	let importedExtraMessages = $state<MailMessage[]>([]);
+	let importedNextCursorAt = $state<string | null>(null);
+	let importedNextCursorId = $state<string | null>(null);
 
 	let archiveSince = $state('');
 	let archiveBefore = $state('');
@@ -64,17 +71,20 @@
 		return typeof message.is_seen === 'boolean';
 	}
 
-	function folderNamed(names: string[]): string | undefined {
+	function folderNamed(role: MailFolder['role'], names: string[]): string | undefined {
 		const folders = $foldersQuery.data ?? [];
-		return folders.find((folder) => names.includes(folder.name.toLowerCase()))?.name;
+		return (
+			folders.find((folder) => folder.role === role) ??
+			folders.find((folder) => names.includes(folder.display_name.toLowerCase()))
+		)?.name;
 	}
 
-	function archiveFolder(): string {
-		return folderNamed(['archive', 'all mail', '[gmail]/all mail']) ?? 'Archive';
+	function archiveFolder(): string | undefined {
+		return folderNamed('archive', ['archive', 'all mail', '[gmail]/all mail']);
 	}
 
-	function trashFolder(): string {
-		return folderNamed(['trash', 'deleted items', '[gmail]/trash']) ?? 'Trash';
+	function trashFolder(): string | undefined {
+		return folderNamed('trash', ['trash', 'deleted items', '[gmail]/trash']);
 	}
 
 	const accountsQuery = createQuery({
@@ -104,9 +114,39 @@
 		enabled: false
 	});
 
-	const importedMessagesQuery = createQuery({
-		queryKey: ['mail-messages'],
-		queryFn: () => mailApi.listMessages()
+	const importJobsQuery = createQuery<MailImportJob[]>({
+		queryKey: ['mail-import-jobs'],
+		queryFn: () => mailApi.listImportJobs(),
+		refetchInterval: 3000
+	});
+	let recentImportJobs = $derived(($importJobsQuery.data ?? []).slice(0, 5));
+
+	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
+		queryKey: ['mail-messages', ''],
+		queryFn: () => mailApi.listMessagesPage()
+	});
+	let importedMessages = $derived.by(() => {
+		const messages = new Map<string, MailMessage>();
+		for (const message of [
+			...($importedMessagesQuery.data?.messages ?? []),
+			...importedExtraMessages
+		]) {
+			if (!messages.has(message.id)) messages.set(message.id, message);
+		}
+		return [...messages.values()];
+	});
+
+	$effect(() => {
+		importedExtraMessages = [];
+		importedMessagesQuery.setOptions({
+			queryKey: ['mail-messages', importedSearch],
+			queryFn: () => mailApi.listMessagesPage(importedSearch)
+		});
+	});
+
+	$effect(() => {
+		importedNextCursorAt = $importedMessagesQuery.data?.next_cursor_at ?? null;
+		importedNextCursorId = $importedMessagesQuery.data?.next_cursor_id ?? null;
 	});
 
 	const draftsQuery = createQuery<MailMessage[]>({
@@ -155,16 +195,11 @@
 		mailboxExtraMessages = [];
 		mailboxNextCursor = null;
 		accountMessagesQuery.setOptions({
-			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder],
-			queryFn: () => mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100),
+			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, mailboxSearch],
+			queryFn: () =>
+				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100, null, mailboxSearch),
 			enabled: !!selectedAccountId && !!selectedFolder
 		});
-	});
-
-	$effect(() => {
-		if (selectedAccountId && selectedFolder) {
-			accountMessagesQuery.refetch();
-		}
 	});
 
 	$effect(() => {
@@ -180,12 +215,9 @@
 				source_uidvalidity: uidvalidity,
 				selected_uids: selectedUids
 			}),
-		onSuccess: async (job) => {
+		onSuccess: async () => {
 			selectedUids = [];
-			recentImportJobs = [job, ...recentImportJobs.filter((item) => item.id !== job.id)].slice(
-				0,
-				5
-			);
+			await $importJobsQuery.refetch();
 			await $importedMessagesQuery.refetch();
 			toastStore.show('Import job queued', 'success');
 		},
@@ -195,9 +227,7 @@
 
 	const refreshImportJobMutation = createMutation({
 		mutationFn: (jobId: string) => mailApi.getImportJob(jobId),
-		onSuccess: (job) => {
-			recentImportJobs = recentImportJobs.map((item) => (item.id === job.id ? job : item));
-		},
+		onSuccess: async () => $importJobsQuery.refetch(),
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Refresh failed', 'error')
 	});
@@ -250,9 +280,17 @@
 			}
 			return mailApi.sendOutboundMail(selectedAccountId, input);
 		},
-		onSuccess: () => {
+		onSuccess: async (result) => {
 			composeOpen = false;
-			toastStore.show('Mail sent', 'success');
+			await $importedMessagesQuery.refetch();
+			toastStore.show(
+				!result.stored
+					? 'Mail sent, but the RustShare copy could not be saved'
+					: result.append_failed
+						? 'Mail sent, but not saved to the Sent folder'
+						: 'Mail sent',
+				!result.stored || result.append_failed ? 'info' : 'success'
+			);
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
@@ -282,12 +320,19 @@
 			if (!selectedAccountId) throw new Error('Select a mail account to send a draft.');
 			return mailApi.sendDraft(selectedAccountId, draftId);
 		},
-		onSuccess: async () => {
+		onSuccess: async (result) => {
 			composeOpen = false;
 			composeDraftId = null;
 			await $draftsQuery.refetch();
 			await $importedMessagesQuery.refetch();
-			toastStore.show('Draft sent', 'success');
+			toastStore.show(
+				!result.stored
+					? 'Draft sent, but the RustShare copy could not be saved'
+					: result.append_failed
+						? 'Draft sent, but not saved to the Sent folder'
+						: 'Draft sent',
+				!result.stored || result.append_failed ? 'info' : 'success'
+			);
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Draft send failed', 'error')
@@ -438,7 +483,8 @@
 			selectedAccountId,
 			selectedFolder,
 			100,
-			mailboxNextCursor
+			mailboxNextCursor,
+			mailboxSearch
 		);
 		const known = new Set(mailboxMessages.map((message) => message.uid));
 		mailboxExtraMessages = [
@@ -446,6 +492,22 @@
 			...page.messages.filter((message) => !known.has(message.uid))
 		];
 		mailboxNextCursor = page.next_cursor;
+	}
+
+	async function loadMoreImportedMessages() {
+		if (!importedNextCursorAt || !importedNextCursorId) return;
+		const page = await mailApi.listMessagesPage(
+			importedSearch,
+			importedNextCursorAt,
+			importedNextCursorId
+		);
+		const seen = new Set(importedMessages.map((message) => message.id));
+		importedExtraMessages = [
+			...importedExtraMessages,
+			...page.messages.filter((message) => !seen.has(message.id))
+		];
+		importedNextCursorAt = page.next_cursor_at;
+		importedNextCursorId = page.next_cursor_id;
 	}
 
 	async function runMailboxAction(action: () => Promise<void>, success: string, failure: string) {
@@ -584,10 +646,10 @@
 									folder.name
 										? 'bg-primary text-primary-content'
 										: 'hover:bg-base-200'}"
-									title={folder.name}
+									title={folder.display_name}
 									onclick={() => (selectedFolder = folder.name)}
 								>
-									{folder.name}
+									{folder.display_name}
 								</button>
 							{/each}
 						</div>
@@ -660,6 +722,30 @@
 								</button>
 							</div>
 						</div>
+						<form
+							class="mb-3 flex gap-2"
+							onsubmit={(event) => {
+								event.preventDefault();
+								mailboxSearch = mailboxSearchInput.trim();
+							}}
+						>
+							<input
+								class="input input-sm input-bordered min-w-0 flex-1"
+								placeholder="Search this folder"
+								bind:value={mailboxSearchInput}
+							/>
+							<button class="btn btn-sm btn-outline" type="submit">Search</button>
+							{#if mailboxSearch}
+								<button
+									class="btn btn-sm btn-ghost"
+									type="button"
+									onclick={() => {
+										mailboxSearchInput = '';
+										mailboxSearch = '';
+									}}>Clear</button
+								>
+							{/if}
+						</form>
 						{#if !selectedFolder}
 							<EmptyState
 								icon="📬"
@@ -716,6 +802,8 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
+													disabled={!archiveFolder()}
+													title={archiveFolder() ? 'Archive' : 'No archive folder is configured'}
 													onclick={(event) => {
 														event.stopPropagation();
 														runMailboxAction(
@@ -747,6 +835,8 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
+													disabled={!trashFolder()}
+													title={trashFolder() ? 'Move to trash' : 'No trash folder is configured'}
 													onclick={(event) => {
 														event.stopPropagation();
 														runMailboxAction(
@@ -935,6 +1025,30 @@
 						<h2 class="mb-3 flex items-center gap-2 text-sm font-semibold">
 							<Inbox size={15} /> Imported RustShare mail
 						</h2>
+						<form
+							class="mb-3 flex gap-2"
+							onsubmit={(event) => {
+								event.preventDefault();
+								importedSearch = importedSearchInput.trim();
+							}}
+						>
+							<input
+								class="input input-sm input-bordered min-w-0 flex-1"
+								placeholder="Search subject, sender, or recipient"
+								bind:value={importedSearchInput}
+							/>
+							<button type="submit" class="btn btn-sm btn-outline">Search</button>
+							{#if importedSearch}
+								<button
+									type="button"
+									class="btn btn-sm btn-ghost"
+									onclick={() => {
+										importedSearchInput = '';
+										importedSearch = '';
+									}}>Clear</button
+								>
+							{/if}
+						</form>
 						{#if $importedMessagesQuery.isLoading}
 							<ModulePageSkeleton />
 						{:else if $importedMessagesQuery.isError}
@@ -943,7 +1057,7 @@
 								message={$importedMessagesQuery.error?.message || 'Unknown error'}
 								onRetry={() => $importedMessagesQuery.refetch()}
 							/>
-						{:else if !$importedMessagesQuery.data || $importedMessagesQuery.data.length === 0}
+						{:else if importedMessages.length === 0}
 							<EmptyState
 								icon={'✉️'}
 								title={module.ui.page.emptyStateTitle}
@@ -953,7 +1067,7 @@
 							/>
 						{:else}
 							<div class="flex flex-col gap-2">
-								{#each $importedMessagesQuery.data as message}
+								{#each importedMessages as message}
 									<button
 										type="button"
 										class="flex items-center gap-4 rounded-lg border border-base-300/70 p-3 text-left hover:border-primary/40"
@@ -992,6 +1106,11 @@
 										{/if}
 									</button>
 								{/each}
+								{#if importedNextCursorAt && importedNextCursorId}
+									<button class="btn btn-sm btn-outline" onclick={loadMoreImportedMessages}>
+										Load more
+									</button>
+								{/if}
 							</div>
 						{/if}
 					</div>

@@ -62,7 +62,9 @@ export interface CreateMailAccountRequest {
 
 export interface MailFolder {
 	name: string;
+	display_name: string;
 	delimiter: string | null;
+	role: 'archive' | 'drafts' | 'sent' | 'trash' | null;
 }
 
 export interface MailAccountMessage {
@@ -89,6 +91,12 @@ export interface MailImportJob {
 	created_at: string;
 }
 
+export interface SendMailResponse {
+	message_id: string | null;
+	stored: boolean;
+	append_failed: boolean;
+}
+
 export interface MailArchiveJob extends MailImportJob {
 	source_mode: string;
 	archive_since: string | null;
@@ -112,6 +120,8 @@ export interface MailLink {
 
 export interface ListMailMessagesResponse {
 	messages: MailMessage[];
+	next_cursor_at: string | null;
+	next_cursor_id: string | null;
 }
 
 export interface ListMailAccountsResponse {
@@ -203,6 +213,7 @@ export interface SendOutboundMailRequest {
 	body: string;
 	attachments?: string[];
 	in_reply_to_msg_id?: string | null;
+	idempotency_key?: string;
 }
 
 export type SaveDraftRequest = SendOutboundMailRequest;
@@ -247,11 +258,13 @@ export const mailApi = {
 		accountId: string,
 		folder: string,
 		limit = 100,
-		cursor?: number | null
+		cursor?: number | null,
+		search = ''
 	): Promise<ListMailAccountMessagesResponse> => {
 		const cursorParam = cursor ? `&cursor=${cursor}` : '';
+		const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}`
 		);
 	},
 
@@ -344,6 +357,11 @@ export const mailApi = {
 		return apiClient.get<MailImportJob>(`/mail/import-jobs/${jobId}`);
 	},
 
+	listImportJobs: async (): Promise<MailImportJob[]> => {
+		const res = await apiClient.get<{ jobs: MailImportJob[] }>('/mail/import-jobs');
+		return res.jobs;
+	},
+
 	listArchiveJobs: async (accountId: string): Promise<MailArchiveJob[]> => {
 		const res = await apiClient.get<ListMailArchiveJobsResponse>(
 			`/mail/accounts/${accountId}/archive-jobs`
@@ -383,6 +401,20 @@ export const mailApi = {
 		return res.messages;
 	},
 
+	listMessagesPage: async (
+		search = '',
+		cursorAt?: string | null,
+		cursorId?: string | null
+	): Promise<ListMailMessagesResponse> => {
+		const params = new URLSearchParams({ limit: '50' });
+		if (search) params.set('search', search);
+		if (cursorAt && cursorId) {
+			params.set('cursor_at', cursorAt);
+			params.set('cursor_id', cursorId);
+		}
+		return apiClient.get<ListMailMessagesResponse>(`/mail/messages?${params}`);
+	},
+
 	listDrafts: async (accountId: string): Promise<MailMessage[]> => {
 		const res = await apiClient.get<ListMailMessagesResponse>(`/mail/accounts/${accountId}/drafts`);
 		return res.messages;
@@ -404,8 +436,8 @@ export const mailApi = {
 		await apiClient.delete(`/mail/accounts/${accountId}/drafts/${draftId}`);
 	},
 
-	sendDraft: async (accountId: string, draftId: string): Promise<{ message_id: string }> => {
-		return apiClient.post<{ message_id: string }>(
+	sendDraft: async (accountId: string, draftId: string): Promise<SendMailResponse> => {
+		return apiClient.post<SendMailResponse>(
 			`/mail/accounts/${accountId}/drafts/${draftId}/send`,
 			{}
 		);
@@ -508,28 +540,28 @@ export const mailApi = {
 	sendOutboundMail: async (
 		accountId: string,
 		input: SendOutboundMailRequest
-	): Promise<{ message_id: string }> => {
-		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/send`, input);
+	): Promise<SendMailResponse> => {
+		return apiClient.post<SendMailResponse>(`/mail/accounts/${accountId}/send`, input);
 	},
 
 	replyMail: async (
 		accountId: string,
 		input: SendOutboundMailRequest
-	): Promise<{ message_id: string }> => {
-		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply`, input);
+	): Promise<SendMailResponse> => {
+		return apiClient.post<SendMailResponse>(`/mail/accounts/${accountId}/reply`, input);
 	},
 
 	replyAllMail: async (
 		accountId: string,
 		input: SendOutboundMailRequest
-	): Promise<{ message_id: string }> => {
-		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/reply-all`, input);
+	): Promise<SendMailResponse> => {
+		return apiClient.post<SendMailResponse>(`/mail/accounts/${accountId}/reply-all`, input);
 	},
 
 	forwardMail: async (
 		accountId: string,
 		input: SendOutboundMailRequest
-	): Promise<{ message_id: string }> => {
-		return apiClient.post<{ message_id: string }>(`/mail/accounts/${accountId}/forward`, input);
+	): Promise<SendMailResponse> => {
+		return apiClient.post<SendMailResponse>(`/mail/accounts/${accountId}/forward`, input);
 	}
 };

@@ -57,3 +57,17 @@ fn parses_email_with_attachment() {
     assert_eq!(att.mime_type, "text/plain");
     assert_eq!(String::from_utf8_lossy(&att.data), "attachment content");
 }
+
+#[test]
+fn parses_unnamed_inline_content_id_part_as_attachment() {
+    let raw = concat!(
+        "MIME-Version: 1.0\r\n",
+        "Content-Type: multipart/related; boundary=parts\r\n\r\n",
+        "--parts\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo\">\r\n",
+        "--parts\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\naW1hZ2U=\r\n--parts--\r\n"
+    );
+    let parsed = EmlParser::parse(raw.as_bytes()).unwrap();
+
+    assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+}

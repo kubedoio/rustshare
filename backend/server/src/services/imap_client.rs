@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use async_imap::types::{Fetch, Name};
+use async_imap::types::{Fetch, Name, NameAttribute};
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
@@ -97,7 +98,9 @@ impl From<async_imap::error::Error> for ImapError {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MailFolder {
     pub name: String,
+    pub display_name: String,
     pub delimiter: Option<String>,
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -257,9 +260,14 @@ impl ImapSession {
 
         Ok(names
             .into_iter()
-            .map(|name| MailFolder {
-                name: name.name().to_string(),
-                delimiter: name.delimiter().map(|d| d.to_string()),
+            .map(|name| {
+                let raw_name = name.name().to_string();
+                MailFolder {
+                    display_name: decode_modified_utf7(&raw_name),
+                    role: folder_role(name.attributes()).map(str::to_string),
+                    name: raw_name,
+                    delimiter: name.delimiter().map(str::to_string),
+                }
             })
             .collect())
     }
@@ -276,10 +284,12 @@ impl ImapSession {
         folder: &str,
         limit: usize,
         before_uid: Option<u32>,
+        search: Option<&str>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), ImapError> {
         let uidvalidity = self.select_folder(folder).await?;
 
-        let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search("ALL"))
+        let criteria = search.map_or_else(|| "ALL".to_string(), build_text_search_query);
+        let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(criteria))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
         // Sort newest-first (highest UID) so the limit returns a stable,
@@ -529,6 +539,61 @@ impl ImapSession {
     }
 }
 
+fn build_text_search_query(search: &str) -> String {
+    let escaped = search
+        .replace(['\r', '\n'], " ")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!("TEXT \"{escaped}\"")
+}
+
+fn folder_role(attributes: &[NameAttribute<'_>]) -> Option<&'static str> {
+    attributes.iter().find_map(|attribute| match attribute {
+        NameAttribute::Archive => Some("archive"),
+        NameAttribute::Drafts => Some("drafts"),
+        NameAttribute::Sent => Some("sent"),
+        NameAttribute::Trash => Some("trash"),
+        _ => None,
+    })
+}
+
+fn decode_modified_utf7(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        rest = &rest[start + 1..];
+        let Some(end) = rest.find('-') else {
+            decoded.push('&');
+            decoded.push_str(rest);
+            return decoded;
+        };
+        let encoded = &rest[..end];
+        if encoded.is_empty() {
+            decoded.push('&');
+        } else {
+            let base64 = encoded.replace(',', "/");
+            let segment = base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(base64)
+                .ok()
+                .filter(|bytes| bytes.len() % 2 == 0)
+                .and_then(|bytes| {
+                    String::from_utf16(
+                        &bytes
+                            .chunks_exact(2)
+                            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                            .collect::<Vec<_>>(),
+                    )
+                    .ok()
+                });
+            decoded.push_str(segment.as_deref().unwrap_or(&rest[..=end]));
+        }
+        rest = &rest[end + 1..];
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
 /// Trait abstracting the IMAP operations required by archive jobs.
 ///
 /// This allows archive job processing to be tested without a real IMAP server.
@@ -745,6 +810,26 @@ fn address_to_bytes(addr: &async_imap::imap_proto::types::Address<'_>) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modified_utf7_folder_name_decodes_without_changing_ascii() {
+        assert_eq!(decode_modified_utf7("Entw&APw-rfe"), "Entwürfe");
+        assert_eq!(decode_modified_utf7("Inbox &- Archive"), "Inbox & Archive");
+    }
+
+    #[test]
+    fn special_use_folder_role_prefers_server_attributes() {
+        assert_eq!(folder_role(&[NameAttribute::Archive]), Some("archive"));
+        assert_eq!(folder_role(&[NameAttribute::Trash]), Some("trash"));
+    }
+
+    #[test]
+    fn text_search_query_escapes_imap_quoted_strings() {
+        assert_eq!(
+            build_text_search_query("quarter \\\"report\"\r\n"),
+            r#"TEXT "quarter \\\"report\"  ""#
+        );
+    }
 
     #[test]
     fn decode_plain_ascii_subject() {

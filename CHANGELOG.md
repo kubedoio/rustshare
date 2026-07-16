@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added RustShare Mail Phase 4: archive jobs. Users can create folder/date-range IMAP archive jobs that incrementally copy messages into RustShare, resume from the last imported UID, apply optional retention soft-deletion, and retry failed runs with exponential backoff. Includes audit events and REST endpoints under `/api/v1/mail/accounts/{id}/archive-jobs` and `/api/v1/mail/archive-jobs/{id}`. Refs #147.
 - Added RustShare Mail Phase 5 WebUI client. Users can manage IMAP accounts, browse folders and message summaries, queue selected imports, view archive/import status, read imported mail with sanitized HTML, inspect attachments, and manage links to RustShare objects.
 
+### Changed
+
+- Hardened RustShare Mail daily-use workflows with idempotent outbound sends, durable import status, bounded classic search, IMAP special-use folders, modified UTF-7 labels, inline-image rendering, explicit partial-send warnings, and safer draft replacement/cleanup.
+
 ## [0.6.0] - 2026-06-29
 
 ### Added

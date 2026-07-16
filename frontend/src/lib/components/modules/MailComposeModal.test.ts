@@ -52,15 +52,18 @@ describe('MailComposeModal', () => {
 		);
 
 		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
-		expect(onSend).toHaveBeenCalledWith({
-			to: ['bob@example.com'],
-			cc: [],
-			bcc: [],
-			subject: 'Hello',
-			body: 'Hi Bob',
-			attachments: [],
-			in_reply_to_msg_id: null
-		});
+		expect(onSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: ['bob@example.com'],
+				cc: [],
+				bcc: [],
+				subject: 'Hello',
+				body: 'Hi Bob',
+				attachments: [],
+				in_reply_to_msg_id: null,
+				idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/)
+			})
+		);
 	});
 
 	it('shows draft-edit actions for an existing draft', async () => {

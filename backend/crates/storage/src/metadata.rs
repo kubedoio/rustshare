@@ -307,7 +307,7 @@ impl MetadataStore {
             WHERE id = $1 AND deleted_at IS NULL
             "#,
             id,
-            folder_id
+            folder_id,
         )
         .execute(&self.pool)
         .await?;
@@ -392,26 +392,27 @@ impl MetadataStore {
     }
 
     pub async fn create_mail_attachment(&self, attachment: &MailAttachment) -> Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO mail_attachments (
                 id, tenant_id, message_id, file_id, filename, mime_type,
-                size_bytes, part_index, content_disposition, blob_key, created_at
+                size_bytes, part_index, content_disposition, content_id, blob_key, created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
-            attachment.id,
-            attachment.tenant_id,
-            attachment.message_id,
-            attachment.file_id,
-            attachment.filename,
-            attachment.mime_type,
-            attachment.size_bytes,
-            attachment.part_index,
-            attachment.content_disposition,
-            attachment.blob_key,
-            attachment.created_at,
         )
+        .bind(attachment.id)
+        .bind(attachment.tenant_id)
+        .bind(attachment.message_id)
+        .bind(attachment.file_id)
+        .bind(&attachment.filename)
+        .bind(&attachment.mime_type)
+        .bind(attachment.size_bytes)
+        .bind(attachment.part_index)
+        .bind(&attachment.content_disposition)
+        .bind(&attachment.content_id)
+        .bind(&attachment.blob_key)
+        .bind(attachment.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -494,21 +495,20 @@ impl MetadataStore {
         tenant_id: Uuid,
         owner_id: Uuid,
     ) -> Result<Vec<MailAttachment>> {
-        let rows = sqlx::query_as!(
-            MailAttachment,
+        let rows = sqlx::query_as::<_, MailAttachment>(
             r#"
             SELECT
                 a.id, a.tenant_id, a.message_id, a.file_id, a.filename, a.mime_type,
-                a.size_bytes, a.part_index, a.content_disposition, a.blob_key, a.created_at
+                a.size_bytes, a.part_index, a.content_disposition, a.content_id, a.blob_key, a.created_at
             FROM mail_attachments a
             JOIN mail_messages m ON m.id = a.message_id
             WHERE a.message_id = $1 AND m.tenant_id = $2 AND m.owner_id = $3
             ORDER BY a.filename
             "#,
-            message_id,
-            tenant_id,
-            owner_id
         )
+        .bind(message_id)
+        .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -729,6 +729,77 @@ impl MetadataStore {
             tenant_id,
             owner_id
         )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_mail_messages_page(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        search: Option<&str>,
+        cursor: Option<(DateTime<Utc>, Uuid)>,
+        limit: i64,
+    ) -> Result<Vec<MailMessage>> {
+        let (cursor_at, cursor_id) = cursor.unzip();
+        let rows = sqlx::query_as::<_, MailMessage>(
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                archive_job_id, deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND source_mode <> 'draft'
+              AND ($3::text IS NULL OR subject ILIKE '%' || $3 || '%'
+                   OR from_address ILIKE '%' || $3 || '%'
+                   OR from_name ILIKE '%' || $3 || '%'
+                   OR to_addresses::text ILIKE '%' || $3 || '%')
+              AND ($4::timestamptz IS NULL OR (imported_at, id) < ($4, $5))
+            ORDER BY imported_at DESC, id DESC
+            LIMIT $6
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(search)
+        .bind(cursor_at)
+        .bind(cursor_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_mail_drafts(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        account_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<MailMessage>> {
+        let rows = sqlx::query_as::<_, MailMessage>(
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                archive_job_id, deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+              AND source_mode = 'draft' AND deleted_at IS NULL
+            ORDER BY imported_at DESC, id DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)

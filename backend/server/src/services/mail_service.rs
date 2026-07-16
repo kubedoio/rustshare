@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::sync::Arc;
 
-use chrono::{NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSmtpSettings,
@@ -102,10 +102,6 @@ fn draft_attachment_file_ids(attachments: Vec<MailAttachment>) -> Result<Vec<Uui
         .collect()
 }
 
-fn visible_in_imported_mail_list(msg: &MailMessage) -> bool {
-    msg.source_mode != "draft"
-}
-
 enum MailboxMutation<'a> {
     MarkSeen(bool),
     Move(&'a str),
@@ -159,6 +155,11 @@ pub struct MailService {
     event_store: Arc<EventStore>,
     broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
     secret_key: Arc<SecretEncryptionKey>,
+}
+
+pub struct SentMail {
+    pub message: Option<MailMessage>,
+    pub append_failed: bool,
 }
 
 impl MailService {
@@ -406,6 +407,7 @@ impl MailService {
                     size_bytes: Some(att.size_bytes as i64),
                     part_index: None,
                     content_disposition: att.content_disposition,
+                    content_id: att.content_id,
                     blob_key: Some(key),
                     created_at: Utc::now(),
                 };
@@ -812,15 +814,14 @@ impl MailService {
         &self,
         tenant_id: Uuid,
         owner_id: Uuid,
+        search: Option<&str>,
+        cursor: Option<(DateTime<Utc>, Uuid)>,
+        limit: i64,
     ) -> Result<Vec<MailMessage>, MailError> {
-        Ok(self
-            .metadata_store
-            .list_mail_messages(tenant_id, owner_id)
+        self.metadata_store
+            .list_mail_messages_page(tenant_id, owner_id, search, cursor, limit)
             .await
-            .map_err(|e| MailError::Database(e.to_string()))?
-            .into_iter()
-            .filter(visible_in_imported_mail_list)
-            .collect())
+            .map_err(|e| MailError::Database(e.to_string()))
     }
 
     pub async fn list_drafts(
@@ -830,14 +831,10 @@ impl MailService {
         account_id: MailAccountId,
     ) -> Result<Vec<MailMessage>, MailError> {
         self.get_account(tenant_id, owner_id, account_id).await?;
-        Ok(self
-            .metadata_store
-            .list_mail_messages(tenant_id, owner_id)
+        self.metadata_store
+            .list_mail_drafts(tenant_id, owner_id, account_id, 100)
             .await
-            .map_err(|e| MailError::Database(e.to_string()))?
-            .into_iter()
-            .filter(|msg| msg.account_id == Some(account_id) && msg.source_mode == "draft")
-            .collect())
+            .map_err(|e| MailError::Database(e.to_string()))
     }
 
     pub async fn get_draft(
@@ -1194,6 +1191,7 @@ impl MailService {
 
     /// List message summaries in an IMAP folder, along with the folder's
     /// UIDVALIDITY so callers can submit stable UID selections.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_imap_messages(
         &self,
         tenant_id: Uuid,
@@ -1202,13 +1200,14 @@ impl MailService {
         folder: &str,
         limit: usize,
         before_uid: Option<u32>,
+        search: Option<&str>,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
         let result = session
-            .fetch_message_summaries(folder, limit, before_uid)
+            .fetch_message_summaries(folder, limit, before_uid, search)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
@@ -2837,10 +2836,64 @@ impl MailService {
         attachment_ids: Vec<Uuid>,
         in_reply_to_msg_id: Option<Uuid>,
         is_forward: bool,
-    ) -> Result<MailMessage, MailError> {
+        idempotency_key: Option<Uuid>,
+    ) -> Result<SentMail, MailError> {
         validate_outbound_mail(&to, &cc, &bcc, &subject, &body, attachment_ids.len())?;
 
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
+
+        if let Some(key) = idempotency_key {
+            let inserted = sqlx::query(
+                r#"INSERT INTO mail_send_idempotency
+                   (tenant_id, owner_id, account_id, idempotency_key, status)
+                   VALUES ($1, $2, $3, $4, 'pending')
+                   ON CONFLICT DO NOTHING"#,
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(account_id)
+            .bind(key)
+            .execute(self.metadata_store.pool())
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .rows_affected();
+            if inserted == 0 {
+                let (status, message_id, append_failed) =
+                    sqlx::query_as::<_, (String, Option<Uuid>, bool)>(
+                        r#"SELECT status, message_id, append_failed
+                           FROM mail_send_idempotency
+                           WHERE tenant_id = $1 AND owner_id = $2
+                             AND account_id = $3 AND idempotency_key = $4"#,
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(account_id)
+                    .bind(key)
+                    .fetch_one(self.metadata_store.pool())
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if status == "pending" {
+                    return Err(MailError::InvalidSource(
+                        "This message is already being sent".to_string(),
+                    ));
+                }
+                let message = match message_id {
+                    Some(id) => self
+                        .metadata_store
+                        .find_mail_message_by_id(id)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?
+                        .filter(|message| {
+                            message.tenant_id == tenant_id && message.owner_id == owner_id
+                        }),
+                    None => None,
+                };
+                return Ok(SentMail {
+                    message,
+                    append_failed,
+                });
+            }
+        }
 
         let smtp = self
             .metadata_store
@@ -2933,29 +2986,37 @@ impl MailService {
             attachments: smtp_attachments,
         };
 
-        let raw_eml = email_service
-            .send_user_email_via_smtp(&smtp, email)
-            .await
-            .map_err(|e| {
+        let raw_eml = match email_service.send_user_email_via_smtp(&smtp, email).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                if let Some(key) = idempotency_key {
+                    let _ = sqlx::query(
+                        r#"DELETE FROM mail_send_idempotency
+                           WHERE tenant_id = $1 AND owner_id = $2
+                             AND account_id = $3 AND idempotency_key = $4
+                             AND status = 'pending'"#,
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(account_id)
+                    .bind(key)
+                    .execute(self.metadata_store.pool())
+                    .await;
+                }
                 let event = Event::new(
                     EventType::MailSendFailed,
                     account_id,
                     AggregateType::MailAccount,
                     serde_json::json!({
                         "mail_account_id": account_id,
-                        "error": e.to_string(),
+                        "error": "smtp delivery failed",
                     }),
                     owner_id,
                 );
-                drop(tokio::spawn({
-                    let event_store = self.event_store.clone();
-                    let broadcaster = self.broadcaster.clone();
-                    async move {
-                        let _ = event_store.append(&event, &broadcaster).await;
-                    }
-                }));
-                MailError::Smtp
-            })?;
+                let _ = self.event_store.append(&event, &self.broadcaster).await;
+                return Err(MailError::Smtp);
+            }
+        };
 
         let mail_message = match self
             .import_raw_source(
@@ -2974,29 +3035,13 @@ impl MailService {
             )
             .await
         {
-            Ok(msg) => msg,
+            Ok(msg) => Some(msg),
             Err(e) => {
                 tracing::error!(
                     "Outbound mail sent via SMTP, but local import/storage failed: {:?}",
                     e
                 );
-                // Fallback: construct in-memory MailMessage to prevent API retry
-                let parsed = EmlParser::parse(&raw_eml).map_err(|pe| {
-                    MailError::InvalidSource(format!("Failed to parse raw sent EML fallback: {pe}"))
-                })?;
-                let mut fallback_msg =
-                    MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::Outbound);
-                fallback_msg.account_id = Some(account_id);
-                fallback_msg.subject = parsed.subject;
-                fallback_msg.from_address = parsed.from.as_ref().map(|a| a.address.clone());
-                fallback_msg.from_name = parsed.from.as_ref().and_then(|a| a.name.clone());
-                fallback_msg.to_addresses = addresses_to_json(&parsed.to);
-                fallback_msg.cc_addresses = addresses_to_json(&parsed.cc);
-                fallback_msg.bcc_addresses = addresses_to_json(&parsed.bcc);
-                fallback_msg.sent_at = parsed.sent_at;
-                fallback_msg.has_attachments = !parsed.attachments.is_empty();
-                fallback_msg.visibility = MailVisibility::Private.into();
-                fallback_msg
+                None
             }
         };
 
@@ -3031,11 +3076,15 @@ impl MailService {
                                     );
                                     let event = Event::new(
                                         EventType::MailSentFolderAppendFailed,
-                                        mail_message.id,
-                                        AggregateType::MailMessage,
+                                        mail_message.as_ref().map_or(account_id, |msg| msg.id),
+                                        mail_message
+                                            .as_ref()
+                                            .map_or(AggregateType::MailAccount, |_| {
+                                                AggregateType::MailMessage
+                                            }),
                                         serde_json::json!({
-                                            "mail_message_id": mail_message.id,
-                                            "error": e.to_string(),
+                                            "mail_message_id": mail_message.as_ref().map(|msg| msg.id),
+                                            "error": "sent folder append failed",
                                         }),
                                         owner_id,
                                     );
@@ -3071,12 +3120,13 @@ impl MailService {
 
         let event = Event::new(
             event_type,
-            mail_message.id,
-            AggregateType::MailMessage,
+            mail_message.as_ref().map_or(account_id, |msg| msg.id),
+            mail_message
+                .as_ref()
+                .map_or(AggregateType::MailAccount, |_| AggregateType::MailMessage),
             serde_json::json!({
-                "mail_message_id": mail_message.id,
+                "mail_message_id": mail_message.as_ref().map(|msg| msg.id),
                 "sent_by": owner_id,
-                "subject": subject,
                 "to_count": to.len(),
                 "cc_count": cc.len(),
                 "bcc_count": bcc.len(),
@@ -3086,7 +3136,30 @@ impl MailService {
         );
         let _ = self.event_store.append(&event, &self.broadcaster).await;
 
-        Ok(mail_message)
+        if let Some(key) = idempotency_key {
+            if let Err(error) = sqlx::query(
+                r#"UPDATE mail_send_idempotency
+                   SET status = 'completed', message_id = $5, append_failed = $6
+                   WHERE tenant_id = $1 AND owner_id = $2
+                     AND account_id = $3 AND idempotency_key = $4"#,
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(account_id)
+            .bind(key)
+            .bind(mail_message.as_ref().map(|message| message.id))
+            .bind(append_failed)
+            .execute(self.metadata_store.pool())
+            .await
+            {
+                tracing::error!(%error, "failed to complete mail send idempotency claim");
+            }
+        }
+
+        Ok(SentMail {
+            message: mail_message,
+            append_failed,
+        })
     }
     async fn create_message_folder(
         &self,
@@ -3175,7 +3248,7 @@ impl MailService {
             .build_raw_draft_eml(&smtp, email)
             .map_err(|e| MailError::InvalidSource(e.to_string()))?;
 
-        let target_id = if let Some(did) = draft_id {
+        let previous_draft = if let Some(did) = draft_id {
             if let Some(existing) = self
                 .metadata_store
                 .find_mail_message_by_id(did)
@@ -3189,15 +3262,14 @@ impl MailService {
                 {
                     return Err(MailError::PermissionDenied);
                 }
-                self.metadata_store
-                    .delete_mail_message(did, owner_id)
-                    .await
-                    .map_err(|e| MailError::Database(e.to_string()))?;
+                Some(existing)
+            } else {
+                return Err(MailError::NotFound(did));
             }
-            did
         } else {
-            Uuid::new_v4()
+            None
         };
+        let target_id = Uuid::new_v4();
 
         let mut msg = self
             .import_raw_source(
@@ -3237,6 +3309,7 @@ impl MailService {
                 size_bytes: Some(file.size),
                 part_index: None,
                 content_disposition: None,
+                content_id: None,
                 blob_key: None,
                 created_at: Utc::now(),
             };
@@ -3246,6 +3319,18 @@ impl MailService {
                 .map_err(|e| MailError::Database(e.to_string()))?;
         }
         msg.has_attachments = !attachment_ids.is_empty();
+
+        if let Some(previous) = previous_draft {
+            self.metadata_store
+                .delete_mail_message(previous.id, owner_id)
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+            if let Some(folder_id) = previous.folder_id {
+                if let Err(error) = self.folder_service.delete_folder(folder_id, owner_id).await {
+                    tracing::warn!(%folder_id, %error, "failed to remove replaced draft folder");
+                }
+            }
+        }
 
         let event = Event::new(
             EventType::MailMessageDraftCreated,
@@ -3305,7 +3390,26 @@ impl MailService {
         owner_id: UserId,
         account_id: MailAccountId,
         draft_id: Uuid,
-    ) -> Result<MailMessage, MailError> {
+    ) -> Result<SentMail, MailError> {
+        let mut send_guard = self
+            .metadata_store
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+        let locked = sqlx::query_scalar::<_, bool>(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+        )
+        .bind(draft_id.to_string())
+        .fetch_one(&mut *send_guard)
+        .await
+        .map_err(|e| MailError::Database(e.to_string()))?;
+        if !locked {
+            return Err(MailError::InvalidSource(
+                "This draft is already being sent".to_string(),
+            ));
+        }
+
         let draft = self
             .get_draft(tenant_id, owner_id, account_id, draft_id)
             .await?;
@@ -3350,6 +3454,7 @@ impl MailService {
                     .in_reply_to
                     .and_then(|id_str| Uuid::parse_str(&id_str).ok()),
                 false,
+                Some(draft_id),
             )
             .await?;
 
@@ -3357,6 +3462,17 @@ impl MailService {
             .delete_mail_message(draft_id, owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
+
+        send_guard
+            .commit()
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?;
+
+        if let Some(folder_id) = draft.folder_id {
+            if let Err(error) = self.folder_service.delete_folder(folder_id, owner_id).await {
+                tracing::warn!(%folder_id, %error, "failed to remove sent draft folder");
+            }
+        }
 
         Ok(sent_msg)
     }
@@ -4495,6 +4611,7 @@ mod link_tests {
             size_bytes: Some(10),
             part_index: None,
             content_disposition: None,
+            content_id: None,
             blob_key: None,
             created_at: Utc::now(),
         }];
@@ -4517,6 +4634,7 @@ mod link_tests {
             size_bytes: Some(10),
             part_index: None,
             content_disposition: None,
+            content_id: None,
             blob_key: None,
             created_at: Utc::now(),
         }];
@@ -4525,16 +4643,5 @@ mod link_tests {
             .expect_err("missing draft attachment file id should fail before SMTP");
 
         assert!(err.to_string().contains("lost.pdf"));
-    }
-
-    #[test]
-    fn imported_mail_list_excludes_drafts() {
-        let tenant_id = Uuid::new_v4();
-        let owner_id = Uuid::new_v4();
-        let draft = MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::Draft);
-        let imported = MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::EmlUpload);
-
-        assert!(!visible_in_imported_mail_list(&draft));
-        assert!(visible_in_imported_mail_list(&imported));
     }
 }

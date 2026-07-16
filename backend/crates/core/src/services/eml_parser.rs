@@ -27,6 +27,7 @@ pub struct ParsedAttachment {
     pub mime_type: String,
     pub size_bytes: usize,
     pub content_disposition: Option<String>,
+    pub content_id: Option<String>,
     pub data: Vec<u8>,
 }
 
@@ -175,9 +176,11 @@ fn process_leaf_part(
     attachments: &mut Vec<ParsedAttachment>,
 ) -> Result<(), EmlParseError> {
     let cd = part.get_content_disposition();
+    let content_id = header_value(part, "Content-ID").map(trim_angle_brackets);
     let is_attachment = cd.disposition == DispositionType::Attachment
         || cd.params.contains_key("filename")
-        || part.ctype.params.contains_key("name");
+        || part.ctype.params.contains_key("name")
+        || content_id.is_some();
 
     if is_attachment {
         let filename = cd
@@ -194,6 +197,7 @@ fn process_leaf_part(
             mime_type: part.ctype.mimetype.clone(),
             size_bytes: data.len(),
             content_disposition,
+            content_id,
             data,
         });
         return Ok(());

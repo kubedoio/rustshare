@@ -2,6 +2,7 @@
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 use rustshare_core::domain::MailTlsMode;
 mod contracts;
@@ -226,6 +227,7 @@ async fn test_outbound_mail_send_flow() {
 
     // 3. Send outbound mail
     std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
+    let idempotency_key = Uuid::new_v4();
     let outbound_msg = mail_service
         .send_outbound_mail(
             ctx.tenant_id,
@@ -239,12 +241,37 @@ async fn test_outbound_mail_send_flow() {
             vec![], // No attachments
             None,   // Not a reply
             false,
+            Some(idempotency_key),
+        )
+        .await
+        .unwrap();
+    let repeated = mail_service
+        .send_outbound_mail(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            vec!["recipient@example.com".to_string()],
+            vec![],
+            vec![],
+            "Test Subject".to_string(),
+            "Test body content".to_string(),
+            vec![],
+            None,
+            false,
+            Some(idempotency_key),
         )
         .await
         .unwrap();
     std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS");
 
     // 4. Verify DB mail message is saved as outbound
+    let outbound_msg = outbound_msg
+        .message
+        .expect("sent artifact should be stored");
+    assert_eq!(
+        repeated.message.map(|message| message.id),
+        Some(outbound_msg.id)
+    );
     assert_eq!(outbound_msg.source_mode, "outbound");
     assert_eq!(outbound_msg.subject, Some("Test Subject".to_string()));
 

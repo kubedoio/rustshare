@@ -99,7 +99,9 @@ pub struct MailFolderListResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailFolderResponse {
     pub name: String,
+    pub display_name: String,
     pub delimiter: Option<String>,
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -159,6 +161,12 @@ fn validate_imap_uid(uid: i64) -> Result<u32, AppError> {
         return Err(AppError::bad_request("Invalid IMAP UID"));
     }
     Ok(uid as u32)
+}
+
+fn require_destination_folder(destination: Option<&str>) -> Result<&str, AppError> {
+    destination
+        .filter(|folder| !folder.trim().is_empty())
+        .ok_or_else(|| AppError::bad_request("A destination folder is required"))
 }
 
 #[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
@@ -333,18 +341,48 @@ pub async fn upload_mail(
 pub async fn list_mail_messages(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
+    Query(query): Query<ListImportedMailMessagesQuery>,
 ) -> Result<Json<ListMailMessagesResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
 
-    let messages = state
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let cursor = match (query.cursor_at, query.cursor_id) {
+        (Some(at), Some(id)) => Some((at, id)),
+        (None, None) => None,
+        _ => {
+            return Err(AppError::bad_request(
+                "Both cursor_at and cursor_id are required",
+            ))
+        }
+    };
+
+    let page = state
         .mail_service
-        .list_messages(auth.tenant_id, auth.user_id)
-        .await?
+        .list_messages(
+            auth.tenant_id,
+            auth.user_id,
+            query
+                .search
+                .as_deref()
+                .filter(|value| !value.trim().is_empty()),
+            cursor,
+            limit + 1,
+        )
+        .await?;
+    let has_more = page.len() > limit as usize;
+    let messages: Vec<_> = page
         .into_iter()
+        .take(limit as usize)
         .map(MailMessageResponse::from)
         .collect();
 
-    Ok(Json(ListMailMessagesResponse { messages }))
+    let next_cursor = has_more.then(|| messages.last()).flatten();
+
+    Ok(Json(ListMailMessagesResponse {
+        next_cursor_at: next_cursor.map(|message| message.imported_at),
+        next_cursor_id: next_cursor.map(|message| message.id),
+        messages,
+    }))
 }
 
 /// List draft mail messages for an account.
@@ -372,7 +410,11 @@ pub async fn list_drafts_handler(
         .map(MailMessageResponse::from)
         .collect();
 
-    Ok(Json(ListMailMessagesResponse { messages }))
+    Ok(Json(ListMailMessagesResponse {
+        messages,
+        next_cursor_at: None,
+        next_cursor_id: None,
+    }))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -396,6 +438,16 @@ pub struct MailMessageResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListMailMessagesResponse {
     pub messages: Vec<MailMessageResponse>,
+    pub next_cursor_at: Option<DateTime<Utc>>,
+    pub next_cursor_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct ListImportedMailMessagesQuery {
+    pub search: Option<String>,
+    pub limit: Option<i64>,
+    pub cursor_at: Option<DateTime<Utc>>,
+    pub cursor_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -700,7 +752,9 @@ fn account_to_response(account: rustshare_core::domain::MailAccount) -> MailAcco
 fn folder_to_response(folder: crate::services::imap_client::MailFolder) -> MailFolderResponse {
     MailFolderResponse {
         name: folder.name,
+        display_name: folder.display_name,
         delimiter: folder.delimiter,
+        role: folder.role,
     }
 }
 
@@ -766,6 +820,7 @@ pub struct ListMailMessagesQuery {
     #[serde(default = "default_message_limit")]
     limit: i64,
     cursor: Option<i64>,
+    search: Option<String>,
 }
 
 fn default_message_limit() -> i64 {
@@ -1079,6 +1134,10 @@ pub async fn list_mail_account_messages(
             &query.folder,
             query.limit as usize,
             query.cursor.and_then(|value| u32::try_from(value).ok()),
+            query
+                .search
+                .as_deref()
+                .filter(|value| !value.trim().is_empty()),
         )
         .await?;
 
@@ -1219,6 +1278,7 @@ pub async fn archive_mail_message(
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     let uid = validate_imap_uid(uid)?;
+    let destination = require_destination_folder(req.destination_folder.as_deref())?;
     state
         .mail_service
         .move_imap_message(
@@ -1228,7 +1288,7 @@ pub async fn archive_mail_message(
             &req.folder,
             req.source_uidvalidity,
             uid,
-            req.destination_folder.as_deref().unwrap_or("Archive"),
+            destination,
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1250,6 +1310,7 @@ pub async fn trash_mail_message(
 ) -> Result<StatusCode, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     let uid = validate_imap_uid(uid)?;
+    let destination = require_destination_folder(req.destination_folder.as_deref())?;
     state
         .mail_service
         .move_imap_message(
@@ -1259,7 +1320,7 @@ pub async fn trash_mail_message(
             &req.folder,
             req.source_uidvalidity,
             uid,
-            req.destination_folder.as_deref().unwrap_or("Trash"),
+            destination,
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1355,6 +1416,29 @@ pub async fn get_mail_import_job(
         .await?;
 
     Ok(Json(job_to_response(job)))
+}
+
+/// List import jobs owned by the current user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/import-jobs",
+    tag = "Mail",
+    responses(
+        (status = 200, description = "Import jobs", body = MailImportJobListResponse),
+    ),
+)]
+pub async fn list_mail_import_jobs(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<MailImportJobListResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let jobs = state
+        .mail_service
+        .list_import_jobs(auth.tenant_id, auth.user_id, None)
+        .await?;
+    Ok(Json(MailImportJobListResponse {
+        jobs: jobs.into_iter().map(job_to_response).collect(),
+    }))
 }
 
 /// Create a recurring IMAP archive job for a folder and optional date range.
@@ -1516,6 +1600,20 @@ fn sanitize_email_html(html: &str) -> String {
         .to_string()
 }
 
+fn rewrite_cid_urls(html: &str, attachments: &[rustshare_core::domain::MailAttachment]) -> String {
+    attachments
+        .iter()
+        .fold(html.to_string(), |html, attachment| {
+            match (&attachment.content_id, attachment.file_id) {
+                (Some(content_id), Some(file_id)) => html.replace(
+                    &format!("cid:{}", content_id.trim_matches(['<', '>'])),
+                    &format!("/api/v1/files/{file_id}/preview"),
+                ),
+                _ => html,
+            }
+        })
+}
+
 /// List body parts for an imported mail message.
 #[utoipa::path(
     get,
@@ -1575,7 +1673,11 @@ pub async fn get_mail_message_part(
     let content_type = if part.content_type.eq_ignore_ascii_case("text/html") {
         let html = std::str::from_utf8(&bytes)
             .map_err(|_| AppError::internal("HTML part is not valid UTF-8"))?;
-        let sanitized = sanitize_email_html(html);
+        let attachments = state
+            .mail_service
+            .list_attachments(auth.tenant_id, auth.user_id, message_id)
+            .await?;
+        let sanitized = sanitize_email_html(&rewrite_cid_urls(html, &attachments));
         emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1836,11 +1938,24 @@ pub struct SendOutboundMailRequest {
     #[serde(default)]
     pub attachments: Vec<Uuid>,
     pub in_reply_to_msg_id: Option<Uuid>,
+    pub idempotency_key: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SendMailResponse {
-    pub message_id: Uuid,
+    pub message_id: Option<Uuid>,
+    pub stored: bool,
+    pub append_failed: bool,
+}
+
+impl From<crate::services::mail_service::SentMail> for SendMailResponse {
+    fn from(sent: crate::services::mail_service::SentMail) -> Self {
+        Self {
+            message_id: sent.message.as_ref().map(|message| message.id),
+            stored: sent.message.is_some(),
+            append_failed: sent.append_failed,
+        }
+    }
 }
 
 fn validate_send_outbound_mail_request(req: &SendOutboundMailRequest) -> Result<(), AppError> {
@@ -2079,10 +2194,11 @@ pub async fn send_outbound_mail_handler(
             req.attachments,
             req.in_reply_to_msg_id,
             false,
+            req.idempotency_key,
         )
         .await?;
 
-    Ok(Json(SendMailResponse { message_id: msg.id }))
+    Ok(Json(msg.into()))
 }
 
 /// Reply to mail.
@@ -2118,10 +2234,11 @@ pub async fn reply_mail_handler(
             req.attachments,
             req.in_reply_to_msg_id,
             false,
+            req.idempotency_key,
         )
         .await?;
 
-    Ok(Json(SendMailResponse { message_id: msg.id }))
+    Ok(Json(msg.into()))
 }
 
 /// Reply all to mail.
@@ -2164,10 +2281,11 @@ pub async fn reply_all_mail_handler(
             req.attachments,
             req.in_reply_to_msg_id,
             false,
+            req.idempotency_key,
         )
         .await?;
 
-    Ok(Json(SendMailResponse { message_id: msg.id }))
+    Ok(Json(msg.into()))
 }
 
 /// Forward mail.
@@ -2203,10 +2321,11 @@ pub async fn forward_mail_handler(
             req.attachments,
             None,
             true,
+            req.idempotency_key,
         )
         .await?;
 
-    Ok(Json(SendMailResponse { message_id: msg.id }))
+    Ok(Json(msg.into()))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -2336,16 +2455,28 @@ pub async fn send_draft_handler(
         .mail_service
         .send_draft(auth.tenant_id, auth.user_id, account_id, draft_id)
         .await?;
-    Ok(Json(SendMailResponse { message_id: msg.id }))
+    Ok(Json(msg.into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        remove_reply_all_sender, sanitize_email_html, CreateMailImportJobRequest,
-        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+        remove_reply_all_sender, require_destination_folder, rewrite_cid_urls, sanitize_email_html,
+        CreateMailImportJobRequest, CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
     };
+    use chrono::Utc;
+    use uuid::Uuid;
     use validator::Validate;
+
+    #[test]
+    fn archive_and_trash_require_an_explicit_destination() {
+        assert!(require_destination_folder(None).is_err());
+        assert!(require_destination_folder(Some("  ")).is_err());
+        assert_eq!(
+            require_destination_folder(Some("[Gmail]/All Mail")).unwrap(),
+            "[Gmail]/All Mail"
+        );
+    }
 
     #[test]
     fn smtp_settings_request_rejects_plaintext_tls_mode() {
@@ -2386,6 +2517,7 @@ mod tests {
             body: "hello".to_string(),
             attachments: Vec::new(),
             in_reply_to_msg_id: None,
+            idempotency_key: None,
         };
 
         remove_reply_all_sender(&mut req, "alice@example.com");
@@ -2482,5 +2614,29 @@ mod tests {
         assert!(!clean.contains("https://tracker.example"));
         assert!(clean.contains(r#"<img alt="tracker">"#));
         assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn cid_urls_rewrite_to_authenticated_file_preview() {
+        let file_id = Uuid::new_v4();
+        let attachment = rustshare_core::domain::MailAttachment {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            message_id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            filename: "logo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            size_bytes: Some(5),
+            part_index: None,
+            content_disposition: Some("inline".to_string()),
+            content_id: Some("logo".to_string()),
+            blob_key: None,
+            created_at: Utc::now(),
+        };
+
+        assert_eq!(
+            rewrite_cid_urls(r#"<img src="cid:logo">"#, &[attachment]),
+            format!(r#"<img src="/api/v1/files/{file_id}/preview">"#)
+        );
     }
 }

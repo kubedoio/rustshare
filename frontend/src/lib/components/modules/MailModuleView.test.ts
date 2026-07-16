@@ -6,10 +6,12 @@ import MailModuleView from './MailModuleView.svelte';
 const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
 	listMessages: vi.fn(),
+	listMessagesPage: vi.fn(),
 	listAccounts: vi.fn(),
 	listFolders: vi.fn(),
 	listAccountMessages: vi.fn(),
 	listArchiveJobs: vi.fn(),
+	listImportJobs: vi.fn(),
 	listDrafts: vi.fn(),
 	getDraft: vi.fn(),
 	createAccount: vi.fn(),
@@ -38,10 +40,12 @@ vi.mock('$lib/api/files', () => ({
 vi.mock('$lib/api/mail', () => ({
 	mailApi: {
 		listMessages: mocks.listMessages,
+		listMessagesPage: mocks.listMessagesPage,
 		listAccounts: mocks.listAccounts,
 		listFolders: mocks.listFolders,
 		listAccountMessages: mocks.listAccountMessages,
 		listArchiveJobs: mocks.listArchiveJobs,
+		listImportJobs: mocks.listImportJobs,
 		listDrafts: mocks.listDrafts,
 		getDraft: mocks.getDraft,
 		createAccount: mocks.createAccount,
@@ -117,6 +121,11 @@ describe('MailModuleView', () => {
 		vi.clearAllMocks();
 		queryClient.clear();
 		mocks.listMessages.mockResolvedValue([]);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
 		mocks.listAccounts.mockResolvedValue([
 			{
 				id: 'acct-1',
@@ -156,7 +165,12 @@ describe('MailModuleView', () => {
 		});
 		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
 		mocks.sendMessage.mockResolvedValue({ ok: true });
-		mocks.sendOutboundMail.mockResolvedValue({ message_id: 'outbound-1' });
+		mocks.listImportJobs.mockResolvedValue([]);
+		mocks.sendOutboundMail.mockResolvedValue({
+			message_id: 'outbound-1',
+			stored: true,
+			append_failed: false
+		});
 		mocks.getSmtpSettings.mockResolvedValue({
 			id: 'smtp-1',
 			host: 'smtp.example.com',
@@ -169,21 +183,25 @@ describe('MailModuleView', () => {
 	});
 
 	it('renders message subject rows and navigates on click', async () => {
-		mocks.listMessages.mockResolvedValueOnce([
-			{
-				id: 'msg-1',
-				subject: 'Quarterly update',
-				from_address: 'alice@example.com',
-				from_name: 'Alice',
-				to_addresses: ['bob@example.com'],
-				cc_addresses: [],
-				bcc_addresses: [],
-				sent_at: '2026-07-01T10:00:00Z',
-				imported_at: '2026-07-01T12:00:00Z',
-				size_bytes: 1024,
-				has_attachments: false
-			}
-		]);
+		mocks.listMessagesPage.mockResolvedValueOnce({
+			messages: [
+				{
+					id: 'msg-1',
+					subject: 'Quarterly update',
+					from_address: 'alice@example.com',
+					from_name: 'Alice',
+					to_addresses: ['bob@example.com'],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: '2026-07-01T10:00:00Z',
+					imported_at: '2026-07-01T12:00:00Z',
+					size_bytes: 1024,
+					has_attachments: false
+				}
+			],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
 
 		render(MailModuleView, { module: testModule });
 
@@ -230,7 +248,9 @@ describe('MailModuleView', () => {
 				created_at: '2026-07-01T00:00:00Z'
 			}
 		]);
-		mocks.listFolders.mockResolvedValue([{ name: 'INBOX', delimiter: '/' }]);
+		mocks.listFolders.mockResolvedValue([
+			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null }
+		]);
 		mocks.listAccountMessages.mockResolvedValue({
 			uidvalidity: 7,
 			messages: [
@@ -267,7 +287,7 @@ describe('MailModuleView', () => {
 
 		await waitFor(() => {
 			expect(mocks.uploadMessage).toHaveBeenCalledWith(file);
-			expect(mocks.listMessages).toHaveBeenCalledTimes(2);
+			expect(mocks.listMessagesPage).toHaveBeenCalledTimes(2);
 		});
 	});
 
@@ -316,15 +336,19 @@ describe('MailModuleView', () => {
 		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
 
 		await waitFor(() => {
-			expect(mocks.sendOutboundMail.mock.calls[0][1]).toEqual({
-				to: ['bob@example.com'],
-				cc: [],
-				bcc: [],
-				subject: 'Hello',
-				body: 'Hi Bob',
-				attachments: [],
-				in_reply_to_msg_id: null
-			});
+			expect(mocks.sendOutboundMail.mock.calls[0][1]).toEqual(
+				expect.objectContaining({
+					to: ['bob@example.com'],
+					cc: [],
+					bcc: [],
+					subject: 'Hello',
+					body: 'Hi Bob',
+					attachments: [],
+					in_reply_to_msg_id: null
+				})
+			);
+			expect(mocks.sendOutboundMail.mock.calls[0][1].idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
+			expect(mocks.listMessagesPage).toHaveBeenCalledTimes(2);
 		});
 	});
 

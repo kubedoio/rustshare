@@ -17,8 +17,10 @@
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
+	import { getModuleByKey } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { listAllFiles } from '$lib/api/files';
 	import {
 		ArrowLeft,
 		Download,
@@ -31,6 +33,7 @@
 	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
+	let mailEnabled = $derived(getModuleByKey('mail')?.enabled !== false);
 
 	const messageQuery = createQuery<MailMessage>({
 		queryKey: ['mail-message', null],
@@ -61,22 +64,22 @@
 		messageQuery.setOptions({
 			queryKey: ['mail-message', id],
 			queryFn: () => mailApi.getMessage(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		partsQuery.setOptions({
 			queryKey: ['mail-message-parts', id],
 			queryFn: () => mailApi.listParts(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		attachmentsQuery.setOptions({
 			queryKey: ['mail-message-attachments', id],
 			queryFn: () => mailApi.listAttachments(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		linksQuery.setOptions({
 			queryKey: ['mail-message-links', id],
 			queryFn: () => mailApi.listLinks(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 	});
 
@@ -94,7 +97,6 @@
 	});
 
 	let previewAttachment = $state<MailAttachment | null>(null);
-	let linkTargetType = $state('file');
 	let linkTargetId = $state('');
 	let composeOpen = $state(false);
 	let composeTo = $state('');
@@ -110,10 +112,15 @@
 		queryFn: () => mailApi.listAccounts()
 	});
 
+	const filesQuery = createQuery({
+		queryKey: ['mail-link-files'],
+		queryFn: () => listAllFiles()
+	});
+
 	const createLinkMutation = createMutation({
 		mutationFn: () =>
 			mailApi.createLink(messageId!, {
-				target_type: linkTargetType,
+				target_type: 'file',
 				target_id: linkTargetId.trim()
 			}),
 		onSuccess: async () => {
@@ -240,12 +247,20 @@
 		// Copy attachments if any
 		const attachments = $attachmentsQuery.data ?? [];
 		composeAttachments = attachments.map((a) => a.file_id).filter((id): id is string => !!id);
+		if (composeAttachments.length !== attachments.length) {
+			toastStore.show('Some attachments are unavailable and were not added to the forward', 'info');
+		}
 
 		composeOpen = true;
 	}
 </script>
 
-{#if $messageQuery.isLoading || $partsQuery.isLoading}
+{#if !mailEnabled}
+	<ErrorState
+		title="Mail is disabled"
+		message="Enable the Mail module before opening imported messages."
+	/>
+{:else if $messageQuery.isLoading || $partsQuery.isLoading}
 	<ModulePageSkeleton />
 {:else if $messageQuery.isError}
 	<ErrorState
@@ -362,27 +377,18 @@
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
 				<h3 class="mb-3 flex items-center gap-2 font-semibold"><Link2 size={16} /> Links</h3>
 				<form
-					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[160px_minmax(0,1fr)_auto]"
+					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto]"
 					onsubmit={(event) => {
 						event.preventDefault();
 						createLinkMutation.mutate();
 					}}
 				>
-					<select class="select select-sm select-bordered" bind:value={linkTargetType}>
-						<option value="file">File</option>
-						<option value="folder">Folder</option>
-						<option value="note">Note</option>
-						<option value="kanban_card">Kanban card</option>
-						<option value="kanban_board">Kanban board</option>
-						<option value="meeting">Meeting</option>
-						<option value="mail_message">Mail message</option>
+					<select class="select select-sm select-bordered" bind:value={linkTargetId} required>
+						<option value="">Select a file</option>
+						{#each $filesQuery.data ?? [] as file}
+							<option value={file.id}>{file.name}</option>
+						{/each}
 					</select>
-					<input
-						class="input input-sm input-bordered"
-						placeholder="Target object ID"
-						bind:value={linkTargetId}
-						required
-					/>
 					<button
 						class="btn btn-sm btn-primary"
 						type="submit"
@@ -408,7 +414,10 @@
 								class="flex items-center justify-between gap-3 rounded-lg border border-base-300 p-3"
 							>
 								<div class="min-w-0">
-									<div class="text-sm font-medium">{link.target_type}</div>
+									<div class="text-sm font-medium">
+										{($filesQuery.data ?? []).find((file) => file.id === link.target_id)?.name ??
+											'Linked file'}
+									</div>
 									<div class="truncate font-mono text-xs text-base-content/60">
 										{link.target_id}
 									</div>

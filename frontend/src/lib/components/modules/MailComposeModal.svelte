@@ -70,6 +70,7 @@
 	let lastOpen = $state(false);
 	let saved = $state(false);
 	let baseline = $state('');
+	let idempotencyKey = $state('');
 
 	onMount(async () => {
 		try {
@@ -81,6 +82,7 @@
 
 	$effect(() => {
 		if (open && !lastOpen) {
+			idempotencyKey = crypto.randomUUID();
 			draft = {
 				to: initialTo,
 				cc: initialCc,
@@ -121,7 +123,7 @@
 			.filter(Boolean);
 	}
 
-	function payload(): SendOutboundMailRequest {
+	function draftPayload(): SaveDraftRequest {
 		return {
 			to: splitAddresses(draft.to),
 			cc: splitAddresses(draft.cc),
@@ -134,11 +136,11 @@
 	}
 
 	function handleSubmit() {
-		onSend(payload());
+		onSend({ ...draftPayload(), idempotency_key: idempotencyKey });
 	}
 
 	function handleSave() {
-		onSave(payload(), draftId);
+		onSave(draftPayload(), draftId);
 		saved = true;
 		baseline = JSON.stringify(draft);
 	}
