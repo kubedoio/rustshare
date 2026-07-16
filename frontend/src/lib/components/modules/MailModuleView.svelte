@@ -31,7 +31,6 @@
 		CheckSquare,
 		Eye,
 		EyeOff,
-		MoveRight,
 		Trash
 	} from 'lucide-svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
@@ -43,7 +42,8 @@
 	let selectedUids = $state<number[]>([]);
 	let uidvalidity = $state<number | null>(null);
 	let recentImportJobs = $state<MailImportJob[]>([]);
-	let mailboxPageSize = $state(100);
+	let mailboxExtraMessages = $state<MailAccountMessage[]>([]);
+	let mailboxNextCursor = $state<number | null>(null);
 
 	let archiveSince = $state('');
 	let archiveBefore = $state('');
@@ -90,9 +90,13 @@
 
 	const accountMessagesQuery = createQuery<ListMailAccountMessagesResponse>({
 		queryKey: ['mail-account-messages', null, null],
-		queryFn: () => Promise.resolve({ uidvalidity: null, messages: [] }),
+		queryFn: () => Promise.resolve({ uidvalidity: null, next_cursor: null, messages: [] }),
 		enabled: false
 	});
+	let mailboxMessages = $derived([
+		...($accountMessagesQuery.data?.messages ?? []),
+		...mailboxExtraMessages
+	]);
 
 	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
 		queryKey: ['mail-archive-jobs', null],
@@ -148,11 +152,11 @@
 
 	$effect(() => {
 		selectedUids = [];
-		mailboxPageSize = 100;
+		mailboxExtraMessages = [];
+		mailboxNextCursor = null;
 		accountMessagesQuery.setOptions({
 			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder],
-			queryFn: () =>
-				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, mailboxPageSize),
+			queryFn: () => mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100),
 			enabled: !!selectedAccountId && !!selectedFolder
 		});
 	});
@@ -164,7 +168,9 @@
 	});
 
 	$effect(() => {
-		uidvalidity = $accountMessagesQuery.data?.uidvalidity ?? null;
+		const data = $accountMessagesQuery.data;
+		uidvalidity = data?.uidvalidity ?? null;
+		mailboxNextCursor = data?.next_cursor ?? null;
 	});
 
 	const importMutation = createMutation({
@@ -421,12 +427,25 @@
 	}
 
 	async function refreshMailbox() {
+		mailboxExtraMessages = [];
+		mailboxNextCursor = null;
 		await $accountMessagesQuery.refetch();
 	}
 
 	async function loadMoreMessages() {
-		mailboxPageSize += 100;
-		await refreshMailbox();
+		if (!selectedAccountId || !selectedFolder || !mailboxNextCursor) return;
+		const page = await mailApi.listAccountMessages(
+			selectedAccountId,
+			selectedFolder,
+			100,
+			mailboxNextCursor
+		);
+		const known = new Set(mailboxMessages.map((message) => message.uid));
+		mailboxExtraMessages = [
+			...mailboxExtraMessages,
+			...page.messages.filter((message) => !known.has(message.uid))
+		];
+		mailboxNextCursor = page.next_cursor;
 	}
 
 	async function runMailboxAction(action: () => Promise<void>, success: string, failure: string) {
@@ -627,8 +646,8 @@
 							<div class="flex gap-2">
 								<button
 									class="btn btn-sm btn-outline"
-									disabled={!$accountMessagesQuery.data?.messages?.length}
-									onclick={() => selectAllVisible($accountMessagesQuery.data!.messages)}
+									disabled={!mailboxMessages.length}
+									onclick={() => selectAllVisible(mailboxMessages)}
 								>
 									<CheckSquare size={14} /> Select visible
 								</button>
@@ -655,7 +674,7 @@
 								message={$accountMessagesQuery.error?.message || 'Unknown error'}
 								onRetry={() => $accountMessagesQuery.refetch()}
 							/>
-						{:else if ($accountMessagesQuery.data?.messages ?? []).length === 0}
+						{:else if mailboxMessages.length === 0}
 							<EmptyState
 								icon="📭"
 								title="Empty folder"
@@ -663,7 +682,7 @@
 							/>
 						{:else}
 							<div class="max-h-[520px] divide-y divide-base-300 overflow-auto">
-								{#each $accountMessagesQuery.data?.messages ?? [] as message}
+								{#each mailboxMessages as message}
 									<label class="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] gap-3 py-3">
 										<input
 											class="checkbox checkbox-sm mt-1"
@@ -788,27 +807,6 @@
 												>
 													<Trash size={12} />
 												</button>
-												<button
-													type="button"
-													class="btn btn-xs btn-ghost"
-													onclick={(event) => {
-														event.stopPropagation();
-														runMailboxAction(
-															() =>
-																mailApi.moveMessage(
-																	selectedAccountId!,
-																	message.uid,
-																	selectedFolder!,
-																	archiveFolder(),
-																	uidvalidity
-																),
-															'Moved message',
-															'Failed to move message'
-														);
-													}}
-												>
-													<MoveRight size={12} />
-												</button>
 											</div>
 										</div>
 									</label>
@@ -816,9 +814,14 @@
 							</div>
 							<div class="mt-2 flex items-center justify-between gap-2">
 								<p class="text-xs text-base-content/50">
-									Showing the newest {mailboxPageSize} messages.
+									Showing {mailboxMessages.length} messages.
 								</p>
-								<button type="button" class="btn btn-xs btn-outline" onclick={loadMoreMessages}>
+								<button
+									type="button"
+									class="btn btn-xs btn-outline"
+									disabled={!mailboxNextCursor}
+									onclick={loadMoreMessages}
+								>
 									Load more
 								</button>
 							</div>
@@ -946,7 +949,7 @@
 								title={module.ui.page.emptyStateTitle}
 								description={module.ui.page.emptyStateDescription}
 								actionLabel={module.ui.page.primaryAction?.label}
-								onAction={() => goto('/files')}
+								onAction={() => uploadInput?.click()}
 							/>
 						{:else}
 							<div class="flex flex-col gap-2">

@@ -243,7 +243,7 @@ impl EmailService {
         smtp: &crate::domain::MailSmtpSettings,
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
-        let msg = build_outbound_message(smtp, email, true)?;
+        let msg = build_outbound_message(smtp, email, true, false)?;
         Ok(msg.formatted())
     }
 
@@ -252,8 +252,9 @@ impl EmailService {
         smtp: &crate::domain::MailSmtpSettings,
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
-        let msg = build_outbound_message(smtp, email, false)?;
-        Ok(msg.formatted())
+        let bcc = email.bcc;
+        let msg = build_outbound_message(smtp, email, false, true)?;
+        insert_draft_bcc_header(msg.formatted(), bcc)
     }
 
     async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
@@ -372,13 +373,14 @@ fn build_outbound_smtp_message(
     smtp: &crate::domain::MailSmtpSettings,
     email: OutboundMailMessage<'_>,
 ) -> Result<Message, EmailError> {
-    build_outbound_message(smtp, email, true)
+    build_outbound_message(smtp, email, true, false)
 }
 
 fn build_outbound_message(
     smtp: &crate::domain::MailSmtpSettings,
     email: OutboundMailMessage<'_>,
     require_recipients: bool,
+    include_bcc_header: bool,
 ) -> Result<Message, EmailError> {
     let from_mailbox: Mailbox =
         format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
@@ -417,7 +419,11 @@ fn build_outbound_message(
         builder = builder.cc(mailbox);
     }
     for recipient in email.bcc {
-        envelope_to.push(parse_mailbox(recipient)?.email);
+        let mailbox = parse_mailbox(recipient)?;
+        envelope_to.push(mailbox.email.clone());
+        if include_bcc_header {
+            builder = builder.bcc(mailbox);
+        }
     }
 
     if require_recipients || !envelope_to.is_empty() {
@@ -449,6 +455,32 @@ fn build_outbound_message(
         builder.multipart(multipart)
     }
     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))
+}
+
+fn insert_draft_bcc_header(raw: Vec<u8>, bcc: &[String]) -> Result<Vec<u8>, EmailError> {
+    if bcc.is_empty() {
+        return Ok(raw);
+    }
+    for recipient in bcc {
+        if recipient.contains(['\r', '\n']) {
+            return Err(EmailError::SmtpSendFailed(
+                "Invalid Bcc address header".to_string(),
+            ));
+        }
+        parse_mailbox(recipient)?;
+    }
+    let raw = String::from_utf8(raw)
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid message encoding: {e}")))?;
+    let header = format!("Bcc: {}\r\n", bcc.join(", "));
+    if let Some(index) = raw.find("\r\nSubject:") {
+        let insert_at = index + 2;
+        let mut out = String::with_capacity(raw.len() + header.len());
+        out.push_str(&raw[..insert_at]);
+        out.push_str(&header);
+        out.push_str(&raw[insert_at..]);
+        return Ok(out.into_bytes());
+    }
+    Ok(format!("{header}{raw}").into_bytes())
 }
 
 fn parse_mailbox(address: &str) -> Result<Mailbox, EmailError> {
@@ -545,6 +577,35 @@ mod tests {
             let value: &str = addr.as_ref();
             value == "blind@example.com"
         }));
+    }
+
+    #[test]
+    fn outbound_draft_message_preserves_bcc_header() {
+        let smtp = smtp_settings();
+        let bcc = ["blind@example.com".to_string()];
+        let to = ["to@example.com".to_string()];
+        let msg = build_outbound_message(
+            &smtp,
+            OutboundMailMessage {
+                recipients: &to,
+                cc: &[],
+                bcc: &bcc,
+                subject: "Draft",
+                body: "Body",
+                in_reply_to: None,
+                references: None,
+                attachments: vec![],
+            },
+            false,
+            true,
+        )
+        .expect("message should build");
+
+        let raw = String::from_utf8(
+            insert_draft_bcc_header(msg.formatted(), &bcc).expect("Bcc header should insert"),
+        )
+        .expect("message is utf8");
+        assert!(raw.contains("Bcc: blind@example.com"));
     }
 
     #[tokio::test]

@@ -70,7 +70,19 @@ const SANITIZE_CONFIG = {
  * Sanitizes an HTML string using DOMPurify.
  */
 export function sanitizeHtml(html: string): string {
-	return DOMPurify.sanitize(html, SANITIZE_CONFIG) as unknown as string;
+	const sanitized = DOMPurify.sanitize(html, SANITIZE_CONFIG) as unknown as string;
+	if (typeof document === 'undefined') {
+		return sanitized.replace(/(<img\b[^>]*?)\s+src=(["'])https?:\/\/[^"']*\2/gi, '$1');
+	}
+	const template = document.createElement('template');
+	template.innerHTML = sanitized;
+	for (const img of template.content.querySelectorAll('img')) {
+		const src = img.getAttribute('src') ?? '';
+		if (src.startsWith('http://') || src.startsWith('https://')) {
+			img.removeAttribute('src');
+		}
+	}
+	return template.innerHTML;
 }
 
 /**

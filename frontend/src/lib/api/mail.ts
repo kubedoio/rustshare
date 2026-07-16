@@ -124,6 +124,7 @@ export interface ListMailFoldersResponse {
 
 export interface ListMailAccountMessagesResponse {
 	uidvalidity: number | null;
+	next_cursor: number | null;
 	messages: MailAccountMessage[];
 }
 
@@ -173,7 +174,7 @@ export interface MailSmtpSettings {
 	host: string;
 	port: number;
 	username: string;
-	tls_mode: 'tls' | 'starttls' | 'none';
+	tls_mode: 'tls' | 'starttls';
 	from_address: string;
 	from_name?: string | null;
 	reply_to?: string | null;
@@ -186,7 +187,7 @@ export interface CreateOrUpdateSmtpSettingsRequest {
 	port: number;
 	username: string;
 	password?: string | null;
-	tls_mode: 'tls' | 'starttls' | 'none';
+	tls_mode: 'tls' | 'starttls';
 	from_address: string;
 	from_name?: string | null;
 	reply_to?: string | null;

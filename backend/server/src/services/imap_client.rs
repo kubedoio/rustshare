@@ -570,6 +570,53 @@ impl ImapArchiveSession for ImapSession {
     }
 }
 
+#[async_trait]
+pub trait ImapMailboxSession: Send {
+    async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError>;
+    async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError>;
+    async fn supports_move(&mut self) -> Result<bool, ImapError>;
+    async fn move_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError>;
+    async fn supports_uidplus(&mut self) -> Result<bool, ImapError>;
+    async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError>;
+}
+
+#[async_trait]
+impl ImapMailboxSession for ImapSession {
+    async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError> {
+        ImapSession::select_folder(self, folder).await
+    }
+
+    async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
+        ImapSession::mark_seen(self, folder, uid, seen).await
+    }
+
+    async fn supports_move(&mut self) -> Result<bool, ImapError> {
+        ImapSession::supports_move(self).await
+    }
+
+    async fn move_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        ImapSession::move_message(self, folder, uid, destination_folder).await
+    }
+
+    async fn supports_uidplus(&mut self) -> Result<bool, ImapError> {
+        ImapSession::supports_uidplus(self).await
+    }
+
+    async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
+        ImapSession::delete_message(self, folder, uid).await
+    }
+}
+
 fn build_archive_search_query(since: Option<NaiveDate>, before: Option<NaiveDate>) -> String {
     let mut criteria = vec!["ALL".to_string()];
     if let Some(since) = since {
@@ -698,7 +745,6 @@ fn address_to_bytes(addr: &async_imap::imap_proto::types::Address<'_>) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     #[test]
     fn decode_plain_ascii_subject() {

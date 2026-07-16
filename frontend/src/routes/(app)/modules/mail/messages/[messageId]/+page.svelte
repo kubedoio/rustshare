@@ -16,6 +16,7 @@
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
+	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
 	import {
@@ -188,7 +189,8 @@
 		return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value : `${prefix} ${value}`;
 	}
 
-	function openReply(message: MailMessage) {
+	async function openReply(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
 		composeMode = 'reply';
 		composeTo = message.from_address ?? '';
 		composeCc = '';
@@ -196,27 +198,34 @@
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
-		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
 	}
 
-	function openReplyAll(message: MailMessage) {
+	async function openReplyAll(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
+		const account = ($accountsQuery.data ?? []).find((item) => item.id === message.account_id);
+		const excluded = account?.username ? [account.username] : [];
+		const to = uniqueMailAddresses(
+			[message.from_address ?? '', ...addressStrings(message.to_addresses)],
+			excluded
+		);
+		const cc = uniqueMailAddresses(addressStrings(message.cc_addresses), [...excluded, ...to]);
 		composeMode = 'reply-all';
-		composeTo = [message.from_address, ...addressStrings(message.to_addresses)]
-			.filter(Boolean)
-			.join(', ');
-		composeCc = formatAddresses(message.cc_addresses);
+		composeTo = to.join(', ');
+		composeCc = cc.join(', ');
 		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
-		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
 	}
 
-	function openForward(message: MailMessage) {
+	async function openForward(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
 		composeMode = 'forward';
 		composeTo = '';
 		composeCc = '';
@@ -226,7 +235,7 @@
 			[message.from_name, message.from_address].filter(Boolean)
 		)}\nDate: ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
-		}\nSubject: ${message.subject || '(no subject)'}\n`;
+		}\nSubject: ${message.subject || '(no subject)'}\n\n${original}`;
 
 		// Copy attachments if any
 		const attachments = $attachmentsQuery.data ?? [];

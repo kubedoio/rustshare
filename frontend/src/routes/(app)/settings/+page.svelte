@@ -135,7 +135,7 @@
 		port: 587,
 		username: '',
 		password: '',
-		tls_mode: 'tls' as 'none' | 'starttls' | 'tls',
+		tls_mode: 'tls' as 'starttls' | 'tls',
 		from_address: '',
 		from_name: '',
 		reply_to: '',
@@ -1673,7 +1673,6 @@
 												>
 													<option value="tls">TLS</option>
 													<option value="starttls">STARTTLS</option>
-													<option value="none">Plain / None</option>
 												</select>
 											</div>
 										</div>

@@ -116,6 +116,7 @@ pub struct MailMessageSummaryResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MailMessageSummaryListResponse {
     pub uidvalidity: Option<i64>,
+    pub next_cursor: Option<i64>,
     pub messages: Vec<MailMessageSummaryResponse>,
 }
 
@@ -1081,9 +1082,17 @@ pub async fn list_mail_account_messages(
         )
         .await?;
 
+    let messages: Vec<_> = messages.into_iter().map(summary_to_response).collect();
+    let next_cursor = messages
+        .iter()
+        .map(|message| message.uid)
+        .min()
+        .map(i64::from);
+
     Ok(Json(MailMessageSummaryListResponse {
         uidvalidity: uidvalidity.map(i64::from),
-        messages: messages.into_iter().map(summary_to_response).collect(),
+        next_cursor,
+        messages,
     }))
 }
 
@@ -1489,10 +1498,20 @@ pub async fn delete_mail_archive_job(
 }
 
 fn sanitize_email_html(html: &str) -> String {
-    let schemes: std::collections::HashSet<&str> =
-        ["http", "https", "mailto"].into_iter().collect();
+    let schemes: std::collections::HashSet<&str> = ["http", "https", "mailto", "cid", "data"]
+        .into_iter()
+        .collect();
     ammonia::Builder::default()
         .url_schemes(schemes)
+        .attribute_filter(|element, attribute, value| {
+            if element == "img"
+                && attribute == "src"
+                && (value.starts_with("http://") || value.starts_with("https://"))
+            {
+                return None;
+            }
+            Some(value.into())
+        })
         .clean(html)
         .to_string()
 }
@@ -1558,14 +1577,16 @@ pub async fn get_mail_message_part(
             .map_err(|_| AppError::internal("HTML part is not valid UTF-8"))?;
         let sanitized = sanitize_email_html(html);
         emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
-        return Ok((
-            [(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/html; charset=utf-8"),
-            )],
-            sanitized,
-        )
-            .into_response());
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox"),
+        );
+        return Ok((StatusCode::OK, headers, sanitized).into_response());
     } else if let Some(charset) = &part.charset {
         format!("{}; charset={}", part.content_type, charset)
     } else {
@@ -1765,6 +1786,7 @@ pub struct CreateOrUpdateSmtpSettingsRequest {
     #[validate(length(min = 1, max = 512))]
     pub username: String,
     pub password: Option<String>,
+    #[validate(custom(function = "validate_smtp_tls_mode"))]
     pub tls_mode: MailTlsMode,
     #[validate(email)]
     pub from_address: String,
@@ -1772,6 +1794,13 @@ pub struct CreateOrUpdateSmtpSettingsRequest {
     pub reply_to: Option<String>,
     pub sent_folder: Option<String>,
     pub is_enabled: bool,
+}
+
+fn validate_smtp_tls_mode(tls_mode: &MailTlsMode) -> Result<(), validator::ValidationError> {
+    if *tls_mode == MailTlsMode::None {
+        return Err(validator::ValidationError::new("plaintext_smtp_disallowed"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1851,6 +1880,28 @@ fn validate_send_outbound_mail_request(req: &SendOutboundMailRequest) -> Result<
         return Err(AppError::bad_request("Recipient addresses are invalid"));
     }
     Ok(())
+}
+
+fn remove_reply_all_sender(req: &mut SendOutboundMailRequest, from_address: &str) {
+    let from = from_address.trim().to_ascii_lowercase();
+    if from.is_empty() {
+        return;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut clean = |addresses: Vec<String>| {
+        addresses
+            .into_iter()
+            .filter(|address| {
+                let normalized = address.trim().to_ascii_lowercase();
+                normalized != from && seen.insert(normalized)
+            })
+            .collect()
+    };
+
+    req.to = clean(std::mem::take(&mut req.to));
+    req.cc = clean(std::mem::take(&mut req.cc));
+    req.bcc = clean(std::mem::take(&mut req.bcc));
 }
 
 /// Get SMTP settings for a mail account.
@@ -2087,9 +2138,16 @@ pub async fn reply_all_mail_handler(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(account_id): Path<Uuid>,
-    Json(req): Json<SendOutboundMailRequest>,
+    Json(mut req): Json<SendOutboundMailRequest>,
 ) -> Result<Json<SendMailResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    if let Some(settings) = state
+        .mail_service
+        .get_smtp_settings(auth.tenant_id, auth.user_id, account_id)
+        .await?
+    {
+        remove_reply_all_sender(&mut req, &settings.from_address);
+    }
     validate_send_outbound_mail_request(&req)?;
 
     let msg = state
@@ -2283,8 +2341,59 @@ pub async fn send_draft_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_email_html, CreateMailImportJobRequest};
+    use super::{
+        remove_reply_all_sender, sanitize_email_html, CreateMailImportJobRequest,
+        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+    };
     use validator::Validate;
+
+    #[test]
+    fn smtp_settings_request_rejects_plaintext_tls_mode() {
+        let req: CreateOrUpdateSmtpSettingsRequest = serde_json::from_value(serde_json::json!({
+            "host": "smtp.example.com",
+            "port": 587,
+            "username": "alice@example.com",
+            "password": "secret",
+            "tls_mode": "none",
+            "from_address": "alice@example.com",
+            "is_enabled": true
+        }))
+        .expect("request should deserialize");
+
+        let err = req
+            .validate()
+            .expect_err("plaintext SMTP should fail validation");
+        assert!(err.field_errors().contains_key("tls_mode"));
+    }
+
+    #[test]
+    fn reply_all_removes_authoritative_sender_and_duplicates() {
+        let mut req = SendOutboundMailRequest {
+            to: vec![
+                "alice@example.com".to_string(),
+                "BOB@example.com".to_string(),
+                "bob@example.com".to_string(),
+            ],
+            cc: vec![
+                "Alice@Example.com".to_string(),
+                "carol@example.com".to_string(),
+            ],
+            bcc: vec![
+                "carol@example.com".to_string(),
+                "dave@example.com".to_string(),
+            ],
+            subject: "Re: hello".to_string(),
+            body: "hello".to_string(),
+            attachments: Vec::new(),
+            in_reply_to_msg_id: None,
+        };
+
+        remove_reply_all_sender(&mut req, "alice@example.com");
+
+        assert_eq!(req.to, vec!["BOB@example.com"]);
+        assert_eq!(req.cc, vec!["carol@example.com"]);
+        assert_eq!(req.bcc, vec!["dave@example.com"]);
+    }
 
     #[test]
     fn import_job_request_allows_null_uidvalidity() {
@@ -2364,5 +2473,14 @@ mod tests {
         assert!(!clean.contains("<script>"));
         assert!(!clean.contains("javascript:"));
         assert!(clean.contains("<p>Hello</p>"));
+    }
+
+    #[test]
+    fn sanitize_email_html_blocks_remote_images() {
+        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img src="cid:inline">"#;
+        let clean = sanitize_email_html(raw);
+        assert!(!clean.contains("https://tracker.example"));
+        assert!(clean.contains(r#"<img alt="tracker">"#));
+        assert!(clean.contains(r#"<img src="cid:inline">"#));
     }
 }

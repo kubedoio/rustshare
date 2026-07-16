@@ -26,12 +26,91 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use super::imap_client::{
-    ImapArchiveSession, ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder,
+    ImapArchiveSession, ImapClient, ImapError, ImapMailboxSession, ImapMessageSummary, ImapSession,
+    MailFolder,
 };
 
 const MAX_MAIL_ARTIFACT_NAME_LEN: usize = 200;
 const MAX_MAIL_FOLDER_SUBJECT_SLUG_LEN: usize = 200;
 const MAX_OUTBOUND_MAIL_ATTACHMENT_BYTES: i64 = 25 * 1024 * 1024;
+const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
+const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
+const MAX_MAIL_SEND_ATTACHMENTS: usize = 20;
+
+fn validate_outbound_mail(
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+    subject: &str,
+    body: &str,
+    attachment_count: usize,
+) -> Result<(), MailError> {
+    let recipient_count = to.len() + cc.len() + bcc.len();
+    if recipient_count == 0 {
+        return Err(MailError::InvalidSource(
+            "At least one recipient is required".to_string(),
+        ));
+    }
+    if recipient_count > MAX_MAIL_SEND_RECIPIENTS {
+        return Err(MailError::InvalidSource(format!(
+            "At most {MAX_MAIL_SEND_RECIPIENTS} recipients are allowed"
+        )));
+    }
+    if subject.trim().is_empty() {
+        return Err(MailError::InvalidSource("Subject is required".to_string()));
+    }
+    if subject.len() > 998 {
+        return Err(MailError::InvalidSource("Subject is too long".to_string()));
+    }
+    if body.trim().is_empty() {
+        return Err(MailError::InvalidSource("Body is required".to_string()));
+    }
+    if body.len() > MAX_MAIL_SEND_BODY_BYTES {
+        return Err(MailError::InvalidSource(
+            "Message body is too large".to_string(),
+        ));
+    }
+    if attachment_count > MAX_MAIL_SEND_ATTACHMENTS {
+        return Err(MailError::InvalidSource(format!(
+            "At most {MAX_MAIL_SEND_ATTACHMENTS} attachments are allowed"
+        )));
+    }
+    if to
+        .iter()
+        .chain(cc.iter())
+        .chain(bcc.iter())
+        .any(|address| address.trim().is_empty() || address.len() > 512)
+    {
+        return Err(MailError::InvalidSource(
+            "Recipient addresses are invalid".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn draft_attachment_file_ids(attachments: Vec<MailAttachment>) -> Result<Vec<Uuid>, MailError> {
+    attachments
+        .into_iter()
+        .map(|attachment| {
+            attachment.file_id.ok_or_else(|| {
+                MailError::InvalidSource(format!(
+                    "Draft attachment '{}' is no longer available",
+                    attachment.filename
+                ))
+            })
+        })
+        .collect()
+}
+
+fn visible_in_imported_mail_list(msg: &MailMessage) -> bool {
+    msg.source_mode != "draft"
+}
+
+enum MailboxMutation<'a> {
+    MarkSeen(bool),
+    Move(&'a str),
+    Delete,
+}
 
 // ============================================================================
 // Errors
@@ -734,10 +813,14 @@ impl MailService {
         tenant_id: Uuid,
         owner_id: Uuid,
     ) -> Result<Vec<MailMessage>, MailError> {
-        self.metadata_store
+        Ok(self
+            .metadata_store
             .list_mail_messages(tenant_id, owner_id)
             .await
-            .map_err(|e| MailError::Database(e.to_string()))
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .into_iter()
+            .filter(visible_in_imported_mail_list)
+            .collect())
     }
 
     pub async fn list_drafts(
@@ -748,8 +831,10 @@ impl MailService {
     ) -> Result<Vec<MailMessage>, MailError> {
         self.get_account(tenant_id, owner_id, account_id).await?;
         Ok(self
-            .list_messages(tenant_id, owner_id)
-            .await?
+            .metadata_store
+            .list_mail_messages(tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
             .into_iter()
             .filter(|msg| msg.account_id == Some(account_id) && msg.source_mode == "draft")
             .collect())
@@ -1145,30 +1230,16 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
-        let actual_uidvalidity = session
-            .select_folder(folder)
-            .await
-            .map_err(imap_to_mail_error)?;
-        if let Some(expected_uidvalidity) = expected_uidvalidity {
-            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
-                MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
-                ))
-            })?;
-            if actual_uidvalidity != Some(expected_uidvalidity) {
-                let _ = session.logout().await;
-                return Err(MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
-                    actual_uidvalidity
-                )));
-            }
-        }
-        session
-            .mark_seen(folder, uid, seen)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let result = run_imap_mailbox_mutation(
+            &mut session,
+            folder,
+            expected_uidvalidity,
+            uid,
+            MailboxMutation::MarkSeen(seen),
+        )
+        .await;
         let _ = session.logout().await;
-        Ok(())
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1186,36 +1257,16 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
-        let actual_uidvalidity = session
-            .select_folder(folder)
-            .await
-            .map_err(imap_to_mail_error)?;
-        if let Some(expected_uidvalidity) = expected_uidvalidity {
-            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
-                MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
-                ))
-            })?;
-            if actual_uidvalidity != Some(expected_uidvalidity) {
-                let _ = session.logout().await;
-                return Err(MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
-                    actual_uidvalidity
-                )));
-            }
-        }
-        if !session.supports_move().await.map_err(imap_to_mail_error)? {
-            let _ = session.logout().await;
-            return Err(MailError::InvalidSource(
-                "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
-            ));
-        }
-        session
-            .move_message(folder, uid, destination_folder)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let result = run_imap_mailbox_mutation(
+            &mut session,
+            folder,
+            expected_uidvalidity,
+            uid,
+            MailboxMutation::Move(destination_folder),
+        )
+        .await;
         let _ = session.logout().await;
-        Ok(())
+        result
     }
 
     pub async fn delete_imap_message(
@@ -1231,30 +1282,16 @@ impl MailService {
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
-        let actual_uidvalidity = session
-            .select_folder(folder)
-            .await
-            .map_err(imap_to_mail_error)?;
-        if let Some(expected_uidvalidity) = expected_uidvalidity {
-            let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
-                MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
-                ))
-            })?;
-            if actual_uidvalidity != Some(expected_uidvalidity) {
-                let _ = session.logout().await;
-                return Err(MailError::InvalidSource(format!(
-                    "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
-                    actual_uidvalidity
-                )));
-            }
-        }
-        session
-            .delete_message(folder, uid)
-            .await
-            .map_err(imap_to_mail_error)?;
+        let result = run_imap_mailbox_mutation(
+            &mut session,
+            folder,
+            expected_uidvalidity,
+            uid,
+            MailboxMutation::Delete,
+        )
+        .await;
         let _ = session.logout().await;
-        Ok(())
+        result
     }
 
     // ============================================================================
@@ -2620,6 +2657,11 @@ impl MailService {
         is_enabled: bool,
     ) -> Result<MailSmtpSettings, MailError> {
         self.get_account(tenant_id, owner_id, account_id).await?;
+        if tls_mode == MailTlsMode::None {
+            return Err(MailError::InvalidSource(
+                "plaintext SMTP (tls_mode: none) is not allowed; use tls or starttls".to_string(),
+            ));
+        }
 
         let existing = self
             .metadata_store
@@ -2796,6 +2838,8 @@ impl MailService {
         in_reply_to_msg_id: Option<Uuid>,
         is_forward: bool,
     ) -> Result<MailMessage, MailError> {
+        validate_outbound_mail(&to, &cc, &bcc, &subject, &body, attachment_ids.len())?;
+
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
         let smtp = self
@@ -3284,7 +3328,7 @@ impl MailService {
             .list_mail_attachments_by_message_id(draft_id, tenant_id, owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))?;
-        let attachment_ids: Vec<Uuid> = attachments.iter().filter_map(|a| a.file_id).collect();
+        let attachment_ids = draft_attachment_file_ids(attachments)?;
 
         let to = mail_address_strings(&draft.to_addresses);
         let cc = mail_address_strings(&draft.cc_addresses);
@@ -3320,6 +3364,67 @@ impl MailService {
 
 fn imap_to_mail_error(err: ImapError) -> MailError {
     MailError::Imap(err.to_string())
+}
+
+async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
+    session: &mut S,
+    folder: &str,
+    expected_uidvalidity: Option<i64>,
+    uid: u32,
+    mutation: MailboxMutation<'_>,
+) -> Result<(), MailError> {
+    let actual_uidvalidity = session
+        .select_folder(folder)
+        .await
+        .map_err(imap_to_mail_error)?;
+
+    if let Some(expected_uidvalidity) = expected_uidvalidity {
+        let expected_uidvalidity = u32::try_from(expected_uidvalidity).map_err(|_| {
+            MailError::InvalidSource(format!(
+                "Folder UIDVALIDITY is out of range for {folder}: {expected_uidvalidity}"
+            ))
+        })?;
+        if actual_uidvalidity != Some(expected_uidvalidity) {
+            return Err(MailError::InvalidSource(format!(
+                "Folder UIDVALIDITY changed for {folder}: expected {expected_uidvalidity}, got {:?}",
+                actual_uidvalidity
+            )));
+        }
+    }
+
+    match mutation {
+        MailboxMutation::MarkSeen(seen) => session
+            .mark_seen(folder, uid, seen)
+            .await
+            .map_err(imap_to_mail_error),
+        MailboxMutation::Move(destination_folder) => {
+            if !session.supports_move().await.map_err(imap_to_mail_error)? {
+                return Err(MailError::InvalidSource(
+                    "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
+                ));
+            }
+            session
+                .move_message(folder, uid, destination_folder)
+                .await
+                .map_err(imap_to_mail_error)
+        }
+        MailboxMutation::Delete => {
+            if !session
+                .supports_uidplus()
+                .await
+                .map_err(imap_to_mail_error)?
+            {
+                return Err(MailError::InvalidSource(
+                    "Server does not support UIDPLUS; refusing unsafe mailbox-wide EXPUNGE"
+                        .to_string(),
+                ));
+            }
+            session
+                .delete_message(folder, uid)
+                .await
+                .map_err(imap_to_mail_error)
+        }
+    }
 }
 
 fn mail_account_db_error(name: &str, err: anyhow::Error) -> MailError {
@@ -3455,6 +3560,216 @@ mod tests {
     use rustshare_core::domain::MailSourceMode;
     use rustshare_core::services::eml_parser::{EmlParser, ParsedAddress};
     use serde_json::json;
+
+    #[derive(Default)]
+    struct MockMailboxSession {
+        uidvalidity: Option<u32>,
+        supports_move: bool,
+        supports_uidplus: bool,
+        calls: Vec<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl ImapMailboxSession for MockMailboxSession {
+        async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError> {
+            self.calls.push(format!("select:{folder}"));
+            Ok(self.uidvalidity)
+        }
+
+        async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
+            self.calls.push(format!("mark_seen:{folder}:{uid}:{seen}"));
+            Ok(())
+        }
+
+        async fn supports_move(&mut self) -> Result<bool, ImapError> {
+            self.calls.push("supports_move".to_string());
+            Ok(self.supports_move)
+        }
+
+        async fn move_message(
+            &mut self,
+            folder: &str,
+            uid: u32,
+            destination_folder: &str,
+        ) -> Result<(), ImapError> {
+            self.calls
+                .push(format!("move:{folder}:{uid}:{destination_folder}"));
+            Ok(())
+        }
+
+        async fn supports_uidplus(&mut self) -> Result<bool, ImapError> {
+            self.calls.push("supports_uidplus".to_string());
+            Ok(self.supports_uidplus)
+        }
+
+        async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
+            self.calls.push(format!("delete:{folder}:{uid}"));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_rejects_uidvalidity_mismatch_before_mutating() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: true,
+            calls: Vec::new(),
+        };
+
+        let err = run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(8),
+            42,
+            MailboxMutation::MarkSeen(true),
+        )
+        .await
+        .expect_err("stale UIDVALIDITY should fail");
+
+        assert!(err.to_string().contains("UIDVALIDITY changed"));
+        assert_eq!(session.calls, vec!["select:Inbox"]);
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_marks_read_and_unread() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: true,
+            calls: Vec::new(),
+        };
+
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::MarkSeen(true),
+        )
+        .await
+        .expect("mark read should succeed");
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::MarkSeen(false),
+        )
+        .await
+        .expect("mark unread should succeed");
+
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "mark_seen:Inbox:42:true",
+                "select:Inbox",
+                "mark_seen:Inbox:42:false",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_rejects_move_without_move_capability() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: false,
+            supports_uidplus: true,
+            calls: Vec::new(),
+        };
+
+        let err = run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect_err("MOVE-less server should fail");
+
+        assert!(err.to_string().contains("does not support MOVE"));
+        assert_eq!(session.calls, vec!["select:Inbox", "supports_move"]);
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_moves_to_archive_or_trash_destination() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: true,
+            calls: Vec::new(),
+        };
+
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect("archive move should succeed");
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            43,
+            MailboxMutation::Move("Trash"),
+        )
+        .await
+        .expect("trash move should succeed");
+
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "supports_move",
+                "move:Inbox:42:Archive",
+                "select:Inbox",
+                "supports_move",
+                "move:Inbox:43:Trash",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_rejects_delete_without_uidplus() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: false,
+            calls: Vec::new(),
+        };
+
+        let err =
+            run_imap_mailbox_mutation(&mut session, "Trash", Some(9), 42, MailboxMutation::Delete)
+                .await
+                .expect_err("UIDPLUS-less delete should fail");
+
+        assert!(err.to_string().contains("does not support UIDPLUS"));
+        assert_eq!(session.calls, vec!["select:Trash", "supports_uidplus"]);
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_deletes_with_uidplus() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: true,
+            calls: Vec::new(),
+        };
+
+        run_imap_mailbox_mutation(&mut session, "Trash", Some(9), 42, MailboxMutation::Delete)
+            .await
+            .expect("UIDPLUS delete should succeed");
+
+        assert_eq!(
+            session.calls,
+            vec!["select:Trash", "supports_uidplus", "delete:Trash:42"]
+        );
+    }
 
     #[test]
     fn addresses_to_json_maps_name_and_address() {
@@ -4146,5 +4461,80 @@ mod link_tests {
         assert!(row.deleted_at.is_some(), "link should remain soft-deleted");
 
         cleanup_link_test(&pool, tenant_id, user.id, message.id).await;
+    }
+
+    #[test]
+    fn outbound_mail_validation_accepts_normal_message() {
+        let to = vec!["to@example.com".to_string()];
+        let cc = Vec::new();
+        let bcc = vec!["blind@example.com".to_string()];
+
+        validate_outbound_mail(&to, &cc, &bcc, "Subject", "Body", 0)
+            .expect("normal outbound mail should validate");
+    }
+
+    #[test]
+    fn outbound_mail_validation_rejects_invalid_draft_send() {
+        let empty = Vec::new();
+        let err = validate_outbound_mail(&empty, &empty, &empty, "", "", 0)
+            .expect_err("draft send without recipients should fail before SMTP");
+
+        assert!(err.to_string().contains("At least one recipient"));
+    }
+
+    #[test]
+    fn draft_attachment_file_ids_preserves_backing_files() {
+        let file_id = Uuid::new_v4();
+        let attachments = vec![MailAttachment {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            message_id: Uuid::new_v4(),
+            file_id: Some(file_id),
+            filename: "report.pdf".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            size_bytes: Some(10),
+            part_index: None,
+            content_disposition: None,
+            blob_key: None,
+            created_at: Utc::now(),
+        }];
+
+        assert_eq!(
+            draft_attachment_file_ids(attachments).unwrap(),
+            vec![file_id]
+        );
+    }
+
+    #[test]
+    fn draft_attachment_file_ids_rejects_missing_backing_file() {
+        let attachments = vec![MailAttachment {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            message_id: Uuid::new_v4(),
+            file_id: None,
+            filename: "lost.pdf".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            size_bytes: Some(10),
+            part_index: None,
+            content_disposition: None,
+            blob_key: None,
+            created_at: Utc::now(),
+        }];
+
+        let err = draft_attachment_file_ids(attachments)
+            .expect_err("missing draft attachment file id should fail before SMTP");
+
+        assert!(err.to_string().contains("lost.pdf"));
+    }
+
+    #[test]
+    fn imported_mail_list_excludes_drafts() {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let draft = MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::Draft);
+        let imported = MailMessage::new(tenant_id, owner_id, owner_id, MailSourceMode::EmlUpload);
+
+        assert!(!visible_in_imported_mail_list(&draft));
+        assert!(visible_in_imported_mail_list(&imported));
     }
 }
