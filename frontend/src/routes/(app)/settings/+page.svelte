@@ -182,7 +182,7 @@
 					username: smtp.username,
 					password: '',
 					tls_mode: smtp.tls_mode,
-					from_address: smtp.from_address,
+					from_address: account?.username ?? smtp.from_address,
 					from_name: smtp.from_name ?? '',
 					reply_to: smtp.reply_to ?? '',
 					sent_folder: smtp.sent_folder ?? '',
@@ -202,7 +202,7 @@
 					username: '',
 					password: '',
 					tls_mode: 'tls',
-					from_address: '',
+					from_address: account?.username ?? '',
 					from_name: '',
 					reply_to: '',
 					sent_folder: '',
@@ -372,7 +372,7 @@
 				username: '',
 				password: '',
 				tls_mode: 'tls',
-				from_address: '',
+				from_address: mailAccounts.find((account) => account.id === id)?.username ?? '',
 				from_name: '',
 				reply_to: '',
 				sent_folder: '',
@@ -1703,6 +1703,7 @@
 													class="input input-sm input-bordered bg-base-100"
 													placeholder="me@example.com"
 													bind:value={smtpForm.from_address}
+													readonly
 													required
 												/>
 											</div>

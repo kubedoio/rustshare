@@ -2688,10 +2688,20 @@ impl MailService {
         sent_folder: Option<String>,
         is_enabled: bool,
     ) -> Result<MailSmtpSettings, MailError> {
-        self.get_account(tenant_id, owner_id, account_id).await?;
-        if tls_mode == MailTlsMode::None {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let allow_plaintext_test_smtp = cfg!(debug_assertions)
+            && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true");
+        if tls_mode == MailTlsMode::None && !allow_plaintext_test_smtp {
             return Err(MailError::InvalidSource(
                 "plaintext SMTP (tls_mode: none) is not allowed; use tls or starttls".to_string(),
+            ));
+        }
+        if !from_address
+            .trim()
+            .eq_ignore_ascii_case(account.username.trim())
+        {
+            return Err(MailError::InvalidSource(
+                "From address must match the mail account identity".to_string(),
             ));
         }
 
@@ -2875,59 +2885,6 @@ impl MailService {
 
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
-        if let Some(key) = idempotency_key {
-            let inserted = sqlx::query(
-                r#"INSERT INTO mail_send_idempotency
-                   (tenant_id, owner_id, account_id, idempotency_key, status)
-                   VALUES ($1, $2, $3, $4, 'pending')
-                   ON CONFLICT DO NOTHING"#,
-            )
-            .bind(tenant_id)
-            .bind(owner_id)
-            .bind(account_id)
-            .bind(key)
-            .execute(self.metadata_store.pool())
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?
-            .rows_affected();
-            if inserted == 0 {
-                let (status, message_id, append_failed) =
-                    sqlx::query_as::<_, (String, Option<Uuid>, bool)>(
-                        r#"SELECT status, message_id, append_failed
-                           FROM mail_send_idempotency
-                           WHERE tenant_id = $1 AND owner_id = $2
-                             AND account_id = $3 AND idempotency_key = $4"#,
-                    )
-                    .bind(tenant_id)
-                    .bind(owner_id)
-                    .bind(account_id)
-                    .bind(key)
-                    .fetch_one(self.metadata_store.pool())
-                    .await
-                    .map_err(|e| MailError::Database(e.to_string()))?;
-                if status == "pending" {
-                    return Err(MailError::InvalidSource(
-                        "This message is already being sent".to_string(),
-                    ));
-                }
-                let message = match message_id {
-                    Some(id) => self
-                        .metadata_store
-                        .find_mail_message_by_id(id)
-                        .await
-                        .map_err(|e| MailError::Database(e.to_string()))?
-                        .filter(|message| {
-                            message.tenant_id == tenant_id && message.owner_id == owner_id
-                        }),
-                    None => None,
-                };
-                return Ok(SentMail {
-                    message,
-                    append_failed,
-                });
-            }
-        }
-
         let smtp = self
             .metadata_store
             .get_mail_smtp_settings(account_id, owner_id)
@@ -2942,6 +2899,15 @@ impl MailService {
         if !smtp.is_enabled {
             return Err(MailError::InvalidSource(
                 "SMTP settings are disabled".to_string(),
+            ));
+        }
+        if !smtp
+            .from_address
+            .trim()
+            .eq_ignore_ascii_case(account.username.trim())
+        {
+            return Err(MailError::InvalidSource(
+                "From address is not authorized for this mail account".to_string(),
             ));
         }
 
@@ -3018,6 +2984,61 @@ impl MailService {
             references,
             attachments: smtp_attachments,
         };
+
+        // Claim only after all local validation and attachment reads succeed. A
+        // pre-delivery error must remain retryable with the same client key.
+        if let Some(key) = idempotency_key {
+            let inserted = sqlx::query(
+                r#"INSERT INTO mail_send_idempotency
+                   (tenant_id, owner_id, account_id, idempotency_key, status)
+                   VALUES ($1, $2, $3, $4, 'pending')
+                   ON CONFLICT DO NOTHING"#,
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(account_id)
+            .bind(key)
+            .execute(self.metadata_store.pool())
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .rows_affected();
+            if inserted == 0 {
+                let (status, message_id, append_failed) =
+                    sqlx::query_as::<_, (String, Option<Uuid>, bool)>(
+                        r#"SELECT status, message_id, append_failed
+                           FROM mail_send_idempotency
+                           WHERE tenant_id = $1 AND owner_id = $2
+                             AND account_id = $3 AND idempotency_key = $4"#,
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(account_id)
+                    .bind(key)
+                    .fetch_one(self.metadata_store.pool())
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?;
+                if status == "pending" {
+                    return Err(MailError::InvalidSource(
+                        "This message is already being sent".to_string(),
+                    ));
+                }
+                let message = match message_id {
+                    Some(id) => self
+                        .metadata_store
+                        .find_mail_message_by_id(id)
+                        .await
+                        .map_err(|e| MailError::Database(e.to_string()))?
+                        .filter(|message| {
+                            message.tenant_id == tenant_id && message.owner_id == owner_id
+                        }),
+                    None => None,
+                };
+                return Ok(SentMail {
+                    message,
+                    append_failed,
+                });
+            }
+        }
 
         let raw_eml = match email_service.send_user_email_via_smtp(&smtp, email).await {
             Ok(raw) => raw,

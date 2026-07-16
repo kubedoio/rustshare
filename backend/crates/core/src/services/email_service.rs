@@ -13,7 +13,10 @@ use lettre::{
 };
 use rustshare_crypto::{decrypt_secret, SecretEncryptionKey};
 use sqlx::PgPool;
+use std::time::Duration;
 use thiserror::Error;
+
+const SMTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum EmailError {
@@ -243,7 +246,7 @@ impl EmailService {
         smtp: &crate::domain::MailSmtpSettings,
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
-        let msg = build_outbound_message(smtp, email, true, false)?;
+        let msg = build_outbound_message(smtp, email, true)?;
         Ok(msg.formatted())
     }
 
@@ -253,7 +256,7 @@ impl EmailService {
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
         let bcc = email.bcc;
-        let msg = build_outbound_message(smtp, email, false, true)?;
+        let msg = build_outbound_message(smtp, email, false)?;
         insert_draft_bcc_header(msg.formatted(), bcc)
     }
 
@@ -349,7 +352,7 @@ impl EmailService {
             }
         };
 
-        Ok(builder.build())
+        Ok(builder.timeout(Some(SMTP_TIMEOUT)).build())
     }
 }
 
@@ -373,14 +376,13 @@ fn build_outbound_smtp_message(
     smtp: &crate::domain::MailSmtpSettings,
     email: OutboundMailMessage<'_>,
 ) -> Result<Message, EmailError> {
-    build_outbound_message(smtp, email, true, false)
+    build_outbound_message(smtp, email, true)
 }
 
 fn build_outbound_message(
     smtp: &crate::domain::MailSmtpSettings,
     email: OutboundMailMessage<'_>,
     require_recipients: bool,
-    include_bcc_header: bool,
 ) -> Result<Message, EmailError> {
     let from_mailbox: Mailbox =
         format_mailbox(smtp.from_name.as_deref().unwrap_or(""), &smtp.from_address)?;
@@ -420,11 +422,7 @@ fn build_outbound_message(
         builder = builder.cc(mailbox);
     }
     for recipient in email.bcc {
-        let mailbox = parse_mailbox(recipient)?;
-        envelope_to.push(mailbox.email.clone());
-        if include_bcc_header {
-            builder = builder.bcc(mailbox);
-        }
+        envelope_to.push(parse_mailbox(recipient)?.email);
     }
 
     if require_recipients || !envelope_to.is_empty() {
@@ -599,7 +597,6 @@ mod tests {
                 attachments: vec![],
             },
             false,
-            true,
         )
         .expect("message should build");
 
@@ -608,6 +605,7 @@ mod tests {
         )
         .expect("message is utf8");
         assert!(raw.contains("Bcc: blind@example.com"));
+        assert_eq!(raw.matches("Bcc:").count(), 1);
     }
 
     #[tokio::test]

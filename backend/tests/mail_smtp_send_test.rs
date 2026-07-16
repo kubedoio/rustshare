@@ -26,7 +26,7 @@ async fn test_smtp_settings_crud_and_isolation() {
             "User A IMAP".to_string(),
             "imap.a.com".to_string(),
             993,
-            "usera".to_string(),
+            "usera@a.com".to_string(),
             "passa".to_string(),
             MailTlsMode::Tls,
         )
@@ -58,7 +58,7 @@ async fn test_smtp_settings_crud_and_isolation() {
             587,
             "smtp_user_a".to_string(),
             Some("smtp_pass_a".to_string()),
-            MailTlsMode::None,
+            MailTlsMode::StartTls,
             "usera@a.com".to_string(),
             Some("User A Name".to_string()),
             None,
@@ -67,6 +67,28 @@ async fn test_smtp_settings_crud_and_isolation() {
         )
         .await
         .unwrap();
+
+    let unauthorized_from = mail_service
+        .create_or_update_smtp_settings(
+            ctx.tenant_id,
+            user_a.id,
+            account_a.id,
+            "smtp.a.com".to_string(),
+            587,
+            "smtp_user_a".to_string(),
+            Some("smtp_pass_a".to_string()),
+            MailTlsMode::StartTls,
+            "spoofed@example.com".to_string(),
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
+        .expect_err("unverified From identity must be rejected");
+    assert!(unauthorized_from
+        .to_string()
+        .contains("mail account identity"));
 
     assert_eq!(smtp_a.host, "smtp.a.com");
     assert_eq!(smtp_a.port, 587);
@@ -134,6 +156,7 @@ async fn test_smtp_settings_crud_and_isolation() {
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn test_outbound_mail_send_flow() {
     let ctx = setup_test_env().await;
+    std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
     let mail_service = ctx.mail_service();
     let user = ctx.create_test_user("smtp_sender").await;
 
@@ -199,7 +222,7 @@ async fn test_outbound_mail_send_flow() {
             "IMAP".to_string(),
             "127.0.0.1".to_string(),
             993,
-            "smtpuser".to_string(),
+            "sender@example.com".to_string(),
             "imappass".to_string(),
             MailTlsMode::Tls,
         )
@@ -226,8 +249,32 @@ async fn test_outbound_mail_send_flow() {
         .unwrap();
 
     // 3. Send outbound mail
-    std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
     let idempotency_key = Uuid::new_v4();
+    let preflight_result = mail_service
+        .send_outbound_mail(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            vec!["recipient@example.com".to_string()],
+            vec![],
+            vec![],
+            "Test Subject".to_string(),
+            "Test body content".to_string(),
+            vec![Uuid::new_v4()],
+            None,
+            false,
+            Some(idempotency_key),
+        )
+        .await;
+    let preflight_error = match preflight_result {
+        Ok(_) => panic!("missing attachment should fail before claiming the send key"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        preflight_error,
+        rustshare_server::services::mail_service::MailError::PermissionDenied
+    ));
+
     let outbound_msg = mail_service
         .send_outbound_mail(
             ctx.tenant_id,

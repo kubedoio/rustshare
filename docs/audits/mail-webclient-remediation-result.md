@@ -22,6 +22,8 @@
 - M-P2-25/26/27: drafts excluded from imported mail, generated Message-ID headers, and create-before-delete draft replacement.
 - M-P2-11/24: delayed reference-aware object reclamation and deterministic selected-import retry safety tests.
 - Audit payloads for send outcomes no longer include subjects or raw provider errors.
+- User SMTP From addresses are constrained to the selected account identity, and SMTP delivery has a 30-second network timeout.
+- Send idempotency keys are claimed only after settings, identity, attachment, and reply preflight validation, so correctable failures can be retried with the same key.
 
 ## Findings deferred
 
@@ -43,6 +45,7 @@
 - API contracts for imported-mail cursor search and durable import-job listing.
 - Mailbox component coverage for search/pagination, send refresh, and current workflows.
 - SMTP wire assertion for Message-ID and repeated idempotency-key behavior.
+- SMTP integration coverage for account ownership, unauthorized From rejection, and retry after failed attachment preflight.
 - Selected-import UIDVALIDITY and complete/in-flight/abandoned deduplication-row decisions.
 
 ## Exact test results
@@ -60,21 +63,21 @@ Passed in this remediation pass:
 - `cd frontend && npm run test -- --run src/lib/api/mail.test.ts src/lib/components/modules/MailModuleView.test.ts src/lib/mail/compose.test.ts src/lib/editor/adapter/security.test.ts` - 36 passed.
 - `cd frontend && npm run check` - 0 errors, 79 pre-existing warnings.
 - `cd backend && SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings`.
+- `cd backend && SQLX_OFFLINE=true cargo check --workspace`.
 - `cd backend && SQLX_OFFLINE=true cargo test --all-features --lib` - 733 passed, 31 environment-gated tests ignored.
+- `cd backend && SQLX_OFFLINE=true cargo build --release --all-features` - production build succeeded.
 - `SQLX_OFFLINE=true cargo check --workspace`.
 - `SQLX_OFFLINE=true cargo test --workspace --lib` - passed across backend, desktop/shared, and sync crates; environment-gated tests ignored.
 - `cd backend && cargo sqlx migrate run && cargo sqlx prepare --workspace --check` against an isolated PostgreSQL 16 database - passed; SQLx reported potentially unused existing metadata.
+- `cd backend && SQLX_OFFLINE=true cargo test --all-features --test mail_smtp_send_test -- --ignored --test-threads=1` against isolated PostgreSQL 16 and local S3-compatible storage - 10 passed, including both SMTP tests and shared contract tests.
+- `cd frontend && npm ci` - completed; 0 vulnerabilities, with existing Excalidraw/Radix React peer-dependency warnings.
 - `cd frontend && npm run lint` - 0 errors, 162 pre-existing warnings.
 - `cd frontend && npm run test` - 86 files passed; 902 passed, 5 skipped.
 - `cd frontend && npm run build` - production static build succeeded.
 
-Compiled only:
-
-- `cd backend && SQLX_OFFLINE=true cargo test -p rustshare-server --test mail_smtp_send_test` - compiled; 10 ignored, 0 executed because database/object storage were not configured for ignored integration tests.
-
 Skipped or blocked by environment:
 
-- Ignored database/object-storage SMTP and selected-import integration tests - compiled only; required services were not configured.
+- Live selected-import integration against an external IMAP provider - not run because no dedicated provider account was configured.
 
 ## Manual test results
 
@@ -83,7 +86,9 @@ The 25-step live IMAP/SMTP acceptance flow was not executed because no dedicated
 ## Known limitations
 
 - Object reclamation is intentionally delayed by 24 hours and runs in batches of 100 on each retention tick.
+- Reference checks and object deletion are separate operations; the 24-hour grace sharply narrows but does not mathematically eliminate a concurrent writer/GC race. Independent storage-lifecycle review remains required.
 - The live selected-import test still requires a configured IMAP server, PostgreSQL, and object storage.
+- Additional verified sender aliases are not supported; the From address must match the selected account username case-insensitively.
 - The current link picker links files; other backend-supported target types are not exposed by this mail UI.
 
 ## Remaining follow-up issues
