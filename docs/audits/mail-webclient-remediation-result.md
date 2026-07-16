@@ -2,7 +2,7 @@
 
 ## Files changed
 
-- Backend mail domain, MIME parser, SMTP construction, metadata queries, handlers, routes, OpenAPI, IMAP client, mail service, migration, and mail integration tests.
+- Backend mail domain, MIME parser, SMTP construction, metadata queries, handlers, routes, OpenAPI, IMAP client, mail service, retention worker, migrations, and mail integration tests.
 - Frontend mail API/tests, compose modal, mailbox module/tests, and message reader.
 - `CHANGELOG.md` and `docs/plans/mail-webclient-remediation-plan.md`.
 
@@ -20,12 +20,12 @@
 - M-P2-18/19/21: cursor mailbox pagination, removal of duplicate account/folder fetches, and sent-list refresh.
 - M-P2-20/22/23: reader module guard, visible Sent-append warning, and warning for unavailable forwarded attachments.
 - M-P2-25/26/27: drafts excluded from imported mail, generated Message-ID headers, and create-before-delete draft replacement.
+- M-P2-11/24: delayed reference-aware object reclamation and deterministic selected-import retry safety tests.
 - Audit payloads for send outcomes no longer include subjects or raw provider errors.
 
 ## Findings deferred
 
-- M-P2-11: content-addressed mail blobs share keys with promoted files and file versions. A mail-only delete can destroy live data. This requires reference-aware repository-wide blob garbage collection, a corrective migration, and lifecycle tests.
-- M-P2-24: the selected-import worker still lacks a mockable session/storage integration boundary. The public-host integration test remains ignored and is not counted as validation.
+- No P1 or P2 audit findings remain deferred. Live provider tests remain environment-gated and are not counted as passed; the corrective migration was validated on isolated PostgreSQL 16.
 
 ## Refactors and cleanup
 
@@ -43,21 +43,27 @@
 - API contracts for imported-mail cursor search and durable import-job listing.
 - Mailbox component coverage for search/pagination, send refresh, and current workflows.
 - SMTP wire assertion for Message-ID and repeated idempotency-key behavior.
+- Selected-import UIDVALIDITY and complete/in-flight/abandoned deduplication-row decisions.
 
 ## Exact test results
 
 Passed in this remediation pass:
 
 - `cd backend && cargo fmt --check`.
+- `cd backend && SQLX_OFFLINE=true cargo check -p rustshare-server`.
+- `cd backend && SQLX_OFFLINE=true cargo test -p rustshare-server services::mail_service::tests::selected_import --lib` - 2 passed.
+- `cd backend && SQLX_OFFLINE=true cargo clippy -p rustshare-server --all-features -- -D warnings`.
+- Isolated PostgreSQL 16 migration test for shared-reference queueing, insertion cancellation, and final unreferenced eligibility - passed.
 - `cd backend && SQLX_OFFLINE=true cargo test -p rustshare-server handlers::mail::tests --lib` - 11 passed.
 - `cd backend && SQLX_OFFLINE=true cargo test -p rustshare-server services::imap_client::tests --lib` - 14 passed.
 - `cd backend && SQLX_OFFLINE=true cargo test -p rustshare-core --test eml_parser_test` - 4 passed.
 - `cd frontend && npm run test -- --run src/lib/api/mail.test.ts src/lib/components/modules/MailModuleView.test.ts src/lib/mail/compose.test.ts src/lib/editor/adapter/security.test.ts` - 36 passed.
 - `cd frontend && npm run check` - 0 errors, 79 pre-existing warnings.
 - `cd backend && SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings`.
-- `cd backend && SQLX_OFFLINE=true cargo test --all-features --lib` - 731 passed, 31 environment-gated tests ignored.
+- `cd backend && SQLX_OFFLINE=true cargo test --all-features --lib` - 733 passed, 31 environment-gated tests ignored.
 - `SQLX_OFFLINE=true cargo check --workspace`.
 - `SQLX_OFFLINE=true cargo test --workspace --lib` - passed across backend, desktop/shared, and sync crates; environment-gated tests ignored.
+- `cd backend && cargo sqlx migrate run && cargo sqlx prepare --workspace --check` against an isolated PostgreSQL 16 database - passed; SQLx reported potentially unused existing metadata.
 - `cd frontend && npm run lint` - 0 errors, 162 pre-existing warnings.
 - `cd frontend && npm run test` - 86 files passed; 902 passed, 5 skipped.
 - `cd frontend && npm run build` - production static build succeeded.
@@ -68,7 +74,6 @@ Compiled only:
 
 Skipped or blocked by environment:
 
-- `cd backend && cargo sqlx prepare --workspace --check` - skipped because `DATABASE_URL` is not set.
 - Ignored database/object-storage SMTP and selected-import integration tests - compiled only; required services were not configured.
 
 ## Manual test results
@@ -77,14 +82,12 @@ The 25-step live IMAP/SMTP acceptance flow was not executed because no dedicated
 
 ## Known limitations
 
-- Blob reclamation requires reference-aware garbage collection across mail, files, and file versions.
-- Selected-import UIDVALIDITY/dedup/partial-row recovery still needs a deterministic worker-level mock test.
+- Object reclamation is intentionally delayed by 24 hours and runs in batches of 100 on each retention tick.
+- The live selected-import test still requires a configured IMAP server, PostgreSQL, and object storage.
 - The current link picker links files; other backend-supported target types are not exposed by this mail UI.
 
 ## Remaining follow-up issues
 
-- Design and implement shared-blob reference accounting and garbage collection.
-- Extract a selected-import worker boundary and replace the public-host ignored test with deterministic mock tests.
 - Run the documented live acceptance flow and independent security validation before release approval.
 
-Webmail remediation incomplete: blockers remain
+Webmail remediation complete: ready for independent validation

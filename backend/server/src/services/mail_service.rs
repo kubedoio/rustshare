@@ -37,6 +37,39 @@ const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
 const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
 const MAX_MAIL_SEND_ATTACHMENTS: usize = 20;
 
+#[derive(Debug, PartialEq, Eq)]
+enum SelectedImportRowAction {
+    CountAsProcessed,
+    Defer,
+    Reclaim,
+}
+
+fn validate_selected_import_uidvalidity(
+    expected: Option<i64>,
+    actual: Option<i64>,
+) -> Result<(), MailError> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(MailError::Imap(format!(
+            "UIDVALIDITY changed from {expected:?} to {actual:?}; selected UIDs are stale"
+        )))
+    }
+}
+
+fn selected_import_row_action(
+    has_artifact_folder: bool,
+    owned_by_running_job: bool,
+) -> SelectedImportRowAction {
+    if has_artifact_folder {
+        SelectedImportRowAction::CountAsProcessed
+    } else if owned_by_running_job {
+        SelectedImportRowAction::Defer
+    } else {
+        SelectedImportRowAction::Reclaim
+    }
+}
+
 fn validate_outbound_mail(
     to: &[String],
     cc: &[String],
@@ -1475,11 +1508,9 @@ impl MailService {
             }
         };
 
-        if source_uidvalidity != job.source_uidvalidity {
-            let error = format!(
-                "UIDVALIDITY changed from {:?} to {:?}; selected UIDs are stale",
-                job.source_uidvalidity, source_uidvalidity
-            );
+        if let Err(MailError::Imap(error)) =
+            validate_selected_import_uidvalidity(job.source_uidvalidity, source_uidvalidity)
+        {
             let marked = self
                 .metadata_store
                 .mark_mail_import_job_failed(job.id, &error)
@@ -1536,7 +1567,9 @@ impl MailService {
                 .await
                 .map_err(|e| MailError::Database(e.to_string()))?
             {
-                if existing.folder_id.is_some() {
+                if selected_import_row_action(existing.folder_id.is_some(), false)
+                    == SelectedImportRowAction::CountAsProcessed
+                {
                     processed += 1;
                     self.metadata_store
                         .update_mail_import_job_progress(
@@ -1561,7 +1594,7 @@ impl MailService {
                     )
                     .await
                     .map_err(|e| MailError::Database(e.to_string()))?;
-                if in_flight {
+                if selected_import_row_action(false, in_flight) == SelectedImportRowAction::Defer {
                     tracing::info!(
                         job_id = %job.id,
                         message_id = %existing.id,
@@ -3676,6 +3709,29 @@ mod tests {
     use rustshare_core::domain::MailSourceMode;
     use rustshare_core::services::eml_parser::{EmlParser, ParsedAddress};
     use serde_json::json;
+
+    #[test]
+    fn selected_import_rejects_stale_uidvalidity() {
+        validate_selected_import_uidvalidity(Some(10), Some(10)).unwrap();
+        let error = validate_selected_import_uidvalidity(Some(10), Some(11)).unwrap_err();
+        assert!(error.to_string().contains("selected UIDs are stale"));
+    }
+
+    #[test]
+    fn selected_import_handles_complete_and_partial_rows() {
+        assert_eq!(
+            selected_import_row_action(true, false),
+            SelectedImportRowAction::CountAsProcessed
+        );
+        assert_eq!(
+            selected_import_row_action(false, true),
+            SelectedImportRowAction::Defer
+        );
+        assert_eq!(
+            selected_import_row_action(false, false),
+            SelectedImportRowAction::Reclaim
+        );
+    }
 
     #[derive(Default)]
     struct MockMailboxSession {

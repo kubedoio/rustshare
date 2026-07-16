@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use rustshare_storage::MetadataStore;
+use rustshare_storage::{MetadataStore, ObjectStore};
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -59,6 +59,7 @@ fn env_i64(name: &str, default: i64) -> i64 {
 
 pub fn spawn_retention_cleanup_worker(
     metadata_store: Arc<MetadataStore>,
+    object_store: Arc<ObjectStore>,
     config: RetentionConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
@@ -80,7 +81,7 @@ pub fn spawn_retention_cleanup_worker(
                     break;
                 }
                 _ = tokio::time::sleep(config.interval) => {
-                    if let Err(error) = tick_retention_cleanup(&metadata_store, &config).await {
+                    if let Err(error) = tick_retention_cleanup(&metadata_store, &object_store, &config).await {
                         error!(error = %error, "Retention cleanup tick failed");
                     }
                 }
@@ -91,6 +92,7 @@ pub fn spawn_retention_cleanup_worker(
 
 async fn tick_retention_cleanup(
     store: &MetadataStore,
+    object_store: &ObjectStore,
     config: &RetentionConfig,
 ) -> anyhow::Result<()> {
     let mut total_cleaned = 0u64;
@@ -221,6 +223,23 @@ async fn tick_retention_cleanup(
         Err(e) => {
             warn!(error = %e, category = "webhook_logs", "Retention cleanup failed");
         }
+    }
+
+    match store.list_unreferenced_object_gc_candidates(100).await {
+        Ok(keys) => {
+            for key in keys {
+                match object_store.delete(&key).await {
+                    Ok(()) => {
+                        store.remove_object_gc_candidate(&key).await?;
+                        total_cleaned += 1;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, object_key = %key, "Object garbage collection failed")
+                    }
+                }
+            }
+        }
+        Err(e) => warn!(error = %e, category = "object_gc", "Retention cleanup failed"),
     }
 
     if total_cleaned > 0 {
