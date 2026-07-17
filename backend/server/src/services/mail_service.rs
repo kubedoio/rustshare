@@ -36,6 +36,9 @@ const MAX_OUTBOUND_MAIL_ATTACHMENT_BYTES: i64 = 25 * 1024 * 1024;
 const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
 const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
 const MAX_MAIL_SEND_ATTACHMENTS: usize = 20;
+/// How long a send idempotency claim may stay `pending` before a retry may
+/// reclaim it; a crashed send must not block the key forever.
+const SEND_CLAIM_PENDING_TTL_SECS: i64 = 600;
 
 #[derive(Debug, PartialEq, Eq)]
 enum SelectedImportRowAction {
@@ -68,6 +71,22 @@ fn selected_import_row_action(
     } else {
         SelectedImportRowAction::Reclaim
     }
+}
+
+fn plaintext_smtp_allowed_for_tests() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true")
+}
+
+/// Persisted settings can predate the plaintext-SMTP ban, so the mode is
+/// re-checked wherever settings are used, not only where they are written.
+fn ensure_smtp_tls_allowed(tls_mode: MailTlsMode) -> Result<(), MailError> {
+    if tls_mode == MailTlsMode::None && !plaintext_smtp_allowed_for_tests() {
+        return Err(MailError::InvalidSource(
+            "plaintext SMTP (tls_mode: none) is not allowed; use tls or starttls".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_outbound_mail(
@@ -2691,13 +2710,7 @@ impl MailService {
         is_enabled: bool,
     ) -> Result<MailSmtpSettings, MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
-        let allow_plaintext_test_smtp = cfg!(debug_assertions)
-            && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true");
-        if tls_mode == MailTlsMode::None && !allow_plaintext_test_smtp {
-            return Err(MailError::InvalidSource(
-                "plaintext SMTP (tls_mode: none) is not allowed; use tls or starttls".to_string(),
-            ));
-        }
+        ensure_smtp_tls_allowed(tls_mode)?;
         if !from_address
             .trim()
             .eq_ignore_ascii_case(account.username.trim())
@@ -2830,6 +2843,9 @@ impl MailService {
             .get_smtp_settings(tenant_id, owner_id, account_id)
             .await?
             .ok_or_else(|| MailError::InvalidSource("SMTP settings not configured".to_string()))?;
+        ensure_smtp_tls_allowed(
+            MailTlsMode::from_str(&settings.tls_mode).unwrap_or(MailTlsMode::Tls),
+        )?;
 
         let email_service = EmailService::new(
             self.metadata_store.pool().clone(),
@@ -2906,6 +2922,7 @@ impl MailService {
                 "SMTP settings are disabled".to_string(),
             ));
         }
+        ensure_smtp_tls_allowed(MailTlsMode::from_str(&smtp.tls_mode).unwrap_or(MailTlsMode::Tls))?;
         if !smtp
             .from_address
             .trim()
@@ -2992,17 +3009,25 @@ impl MailService {
 
         // Claim only after all local validation and attachment reads succeed. A
         // pre-delivery error must remain retryable with the same client key.
+        // Claims left pending by a crashed send are reclaimed once they age
+        // past SEND_CLAIM_PENDING_TTL_SECS.
         if let Some(key) = idempotency_key {
             let inserted = sqlx::query(
                 r#"INSERT INTO mail_send_idempotency
                    (tenant_id, owner_id, account_id, idempotency_key, status)
                    VALUES ($1, $2, $3, $4, 'pending')
-                   ON CONFLICT DO NOTHING"#,
+                   ON CONFLICT (tenant_id, owner_id, account_id, idempotency_key)
+                   DO UPDATE SET status = 'pending', message_id = NULL,
+                       append_failed = false, created_at = NOW()
+                   WHERE mail_send_idempotency.status = 'pending'
+                     AND mail_send_idempotency.created_at
+                         < NOW() - $5 * INTERVAL '1 second'"#,
             )
             .bind(tenant_id)
             .bind(owner_id)
             .bind(account_id)
             .bind(key)
+            .bind(SEND_CLAIM_PENDING_TTL_SECS)
             .execute(self.metadata_store.pool())
             .await
             .map_err(|e| MailError::Database(e.to_string()))?
@@ -3963,6 +3988,13 @@ mod tests {
                 "move:Inbox:43:Trash",
             ]
         );
+    }
+
+    #[test]
+    fn smtp_tls_guard_rejects_plaintext_without_test_opt_in() {
+        assert!(ensure_smtp_tls_allowed(MailTlsMode::None).is_err());
+        assert!(ensure_smtp_tls_allowed(MailTlsMode::Tls).is_ok());
+        assert!(ensure_smtp_tls_allowed(MailTlsMode::StartTls).is_ok());
     }
 
     #[test]

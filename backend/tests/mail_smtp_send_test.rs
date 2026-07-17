@@ -333,3 +333,115 @@ async fn test_outbound_mail_send_flow() {
     cleanup_user(&ctx.pool, user.id).await;
     cleanup_tenant(&ctx.pool, ctx.tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn stale_pending_send_claim_is_reclaimed() {
+    let ctx = setup_test_env().await;
+    std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
+    let mail_service = ctx.mail_service();
+    let user = ctx.create_test_user("smtp_stale_claim").await;
+
+    // Minimal mock SMTP server that accepts one message.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let smtp_port = listener.local_addr().unwrap().port() as i32;
+    let server_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 4096];
+        stream.write_all(b"220 localhost ESMTP\r\n").await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream
+            .write_all(b"250-localhost\r\n250 AUTH PLAIN\r\n")
+            .await
+            .unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream
+            .write_all(b"235 Authentication successful\r\n")
+            .await
+            .unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"250 Ok\r\n").await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"250 Ok\r\n").await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"354 Start mail input\r\n").await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream
+            .write_all(b"250 Ok: queued as 12345\r\n")
+            .await
+            .unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
+        stream.write_all(b"221 Bye\r\n").await.unwrap();
+    });
+
+    let account = mail_service
+        .create_account(
+            ctx.tenant_id,
+            user.id,
+            "IMAP".to_string(),
+            "127.0.0.1".to_string(),
+            993,
+            "sender@example.com".to_string(),
+            "imappass".to_string(),
+            MailTlsMode::Tls,
+        )
+        .await
+        .unwrap();
+    mail_service
+        .create_or_update_smtp_settings(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            "127.0.0.1".to_string(),
+            smtp_port,
+            "smtpuser".to_string(),
+            Some("smtppass".to_string()),
+            MailTlsMode::None,
+            "sender@example.com".to_string(),
+            Some("Sender Name".to_string()),
+            None,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+
+    // Simulate a crashed send: a pending claim from an hour ago.
+    let idempotency_key = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO mail_send_idempotency
+         (tenant_id, owner_id, account_id, idempotency_key, status, created_at)
+         VALUES ($1, $2, $3, $4, 'pending', NOW() - INTERVAL '1 hour')",
+    )
+    .bind(ctx.tenant_id)
+    .bind(user.id)
+    .bind(account.id)
+    .bind(idempotency_key)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    let sent = mail_service
+        .send_outbound_mail(
+            ctx.tenant_id,
+            user.id,
+            account.id,
+            vec!["recipient@example.com".to_string()],
+            vec![],
+            vec![],
+            "Reclaimed Subject".to_string(),
+            "Body".to_string(),
+            vec![],
+            None,
+            false,
+            Some(idempotency_key),
+        )
+        .await
+        .expect("stale pending claim should be reclaimed and the send retried");
+    std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS");
+
+    assert!(sent.message.is_some());
+    server_task.await.unwrap();
+
+    ctx.cleanup().await;
+}
