@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
 	createImportJob: vi.fn(),
 	uploadMessage: vi.fn(),
 	sendOutboundMail: vi.fn(),
+	updateDraft: vi.fn(),
+	sendDraft: vi.fn(),
 	getSmtpSettings: vi.fn(),
 	listAllFiles: vi.fn()
 }));
@@ -54,6 +56,8 @@ vi.mock('$lib/api/mail', () => ({
 		createImportJob: mocks.createImportJob,
 		uploadMessage: mocks.uploadMessage,
 		sendOutboundMail: mocks.sendOutboundMail,
+		updateDraft: mocks.updateDraft,
+		sendDraft: mocks.sendDraft,
 		getSmtpSettings: mocks.getSmtpSettings,
 		downloadSourceUrl: (id: string) => `/api/mail/messages/${id}/source`
 	}
@@ -174,6 +178,12 @@ describe('MailModuleView workspace', () => {
 		mocks.uploadMessage.mockResolvedValue(importedMessage);
 		mocks.sendOutboundMail.mockResolvedValue({
 			message_id: 'outbound-1',
+			stored: true,
+			append_failed: false
+		});
+		mocks.updateDraft.mockResolvedValue({ ...importedMessage, id: 'draft-2' });
+		mocks.sendDraft.mockResolvedValue({
+			message_id: 'outbound-2',
 			stored: true,
 			append_failed: false
 		});
@@ -333,6 +343,36 @@ describe('MailModuleView workspace', () => {
 					body: 'Hi Bob'
 				})
 			);
+		});
+	});
+
+	it('sends an edited draft via the draft id returned by the save', async () => {
+		// The backend replaces the draft row on update, so the send must use
+		// the id returned by updateDraft ('draft-2'), not the opened id.
+		mocks.listDrafts.mockResolvedValue([
+			{
+				...importedMessage,
+				id: 'draft-1',
+				subject: 'Draft subject',
+				source_mode: 'draft'
+			}
+		]);
+
+		render(MailModuleView, { module: testModule });
+
+		await fireEvent.click(await screen.findByRole('option', { name: /Drafts/ }));
+		await fireEvent.click(await screen.findByText('Draft subject'));
+		await screen.findByDisplayValue('Draft subject');
+
+		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
+
+		await waitFor(() => {
+			expect(mocks.updateDraft).toHaveBeenCalledWith(
+				'acct-1',
+				'draft-1',
+				expect.objectContaining({ subject: 'Draft subject' })
+			);
+			expect(mocks.sendDraft).toHaveBeenCalledWith('acct-1', 'draft-2');
 		});
 	});
 });

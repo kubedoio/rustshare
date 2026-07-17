@@ -313,6 +313,7 @@ impl EmailService {
             Some("tls") => {
                 let tls = TlsParameters::builder(host.to_string())
                     .dangerous_accept_invalid_certs(validated.accept_invalid_certs)
+                    .dangerous_accept_invalid_hostnames(validated.accept_invalid_certs)
                     .build()
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
@@ -328,6 +329,7 @@ impl EmailService {
             Some("starttls") => {
                 let tls = TlsParameters::builder(host.to_string())
                     .dangerous_accept_invalid_certs(validated.accept_invalid_certs)
+                    .dangerous_accept_invalid_hostnames(validated.accept_invalid_certs)
                     .build()
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(

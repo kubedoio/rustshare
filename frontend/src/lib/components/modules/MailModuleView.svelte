@@ -631,8 +631,10 @@
 			await sendMutation.mutate(message);
 			return;
 		}
-		await saveDraftMutation.mutate({ message, draftId: composeDraftId });
-		await sendDraftMutation.mutate(composeDraftId);
+		// The backend replaces the draft row on update, so wait for the save
+		// and send the returned (current) draft id — never the stale one.
+		const saved = await saveDraftMutation.mutateAsync({ message, draftId: composeDraftId });
+		await sendDraftMutation.mutate(saved.id);
 	}
 
 	function handleUploadChange(event: Event) {
