@@ -59,6 +59,14 @@ use utoipa::OpenApi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // rustls 0.23 requires an explicit CryptoProvider when more than one
+    // provider feature is present in the dependency graph. Mail (IMAP/SMTP)
+    // and OIDC both use rustls for TLS; selecting aws-lc-rs at startup
+    // prevents a panic on the first remote TLS handshake.
+    tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .ok();
+
     let state = bootstrap::init_app().await?;
 
     // Build router.
