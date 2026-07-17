@@ -4840,130 +4840,6 @@
         }
       }
     },
-    "/api/v1/mail/accounts/{account_id}/archive-jobs": {
-      "get": {
-        "tags": [
-          "Mail"
-        ],
-        "summary": "List active archive jobs for a mail account.",
-        "operationId": "list_mail_archive_jobs",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Mail account ID",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Archive jobs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailArchiveJobListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Mail"
-        ],
-        "summary": "Create a recurring IMAP archive job for a folder and optional date range.",
-        "operationId": "create_mail_archive_job",
-        "parameters": [
-          {
-            "name": "account_id",
-            "in": "path",
-            "description": "Mail account ID",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMailArchiveJobRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Archive job created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailArchiveJobResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/mail/accounts/{id}": {
       "get": {
         "tags": [
@@ -5100,6 +4976,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MailAccountResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/accounts/{id}/archive-jobs": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "List active archive jobs for a mail account.",
+        "operationId": "list_mail_archive_jobs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archive jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailArchiveJobListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Create a recurring IMAP archive job for a folder and optional date range.",
+        "operationId": "create_mail_archive_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMailArchiveJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Archive job created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailArchiveJobResponse"
                 }
               }
             }
@@ -5502,6 +5502,17 @@
                 "null"
               ],
               "format": "int64"
+            }
+          },
+          {
+            "name": "search",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -6204,6 +6215,27 @@
         }
       }
     },
+    "/api/v1/mail/import-jobs": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "List import jobs owned by the current user.",
+        "operationId": "list_mail_import_jobs",
+        "responses": {
+          "200": {
+            "description": "Import jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailImportJobListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/import-jobs/{id}": {
       "get": {
         "tags": [
@@ -6264,6 +6296,55 @@
         ],
         "summary": "List imported mail messages.",
         "operationId": "list_mail_messages",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor_at",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "cursor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Mail messages",
@@ -17529,6 +17610,20 @@
             "items": {
               "$ref": "#/components/schemas/MailMessageResponse"
             }
+          },
+          "next_cursor_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_cursor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -18146,7 +18241,8 @@
       "MailFolderResponse": {
         "type": "object",
         "required": [
-          "name"
+          "name",
+          "display_name"
         ],
         "properties": {
           "delimiter": {
@@ -18155,8 +18251,17 @@
               "null"
             ]
           },
+          "display_name": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -18484,8 +18589,7 @@
           "sent_by",
           "to_count",
           "cc_count",
-          "bcc_count",
-          "subject"
+          "bcc_count"
         ],
         "properties": {
           "bcc_count": {
@@ -18499,9 +18603,6 @@
           "sent_by": {
             "type": "string",
             "format": "uuid"
-          },
-          "subject": {
-            "type": "string"
           },
           "to_count": {
             "type": "integer",
@@ -18520,6 +18621,13 @@
             "items": {
               "$ref": "#/components/schemas/MailMessageSummaryResponse"
             }
+          },
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           },
           "uidvalidity": {
             "type": [
@@ -20765,12 +20873,22 @@
       "SendMailResponse": {
         "type": "object",
         "required": [
-          "message_id"
+          "stored",
+          "append_failed"
         ],
         "properties": {
+          "append_failed": {
+            "type": "boolean"
+          },
           "message_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
+          },
+          "stored": {
+            "type": "boolean"
           }
         }
       },
@@ -20803,6 +20921,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "in_reply_to_msg_id": {
             "type": [

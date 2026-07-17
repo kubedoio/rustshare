@@ -72,13 +72,13 @@ const SANITIZE_CONFIG = {
 export function sanitizeHtml(html: string): string {
 	const sanitized = DOMPurify.sanitize(html, SANITIZE_CONFIG) as unknown as string;
 	if (typeof document === 'undefined') {
-		return sanitized.replace(/(<img\b[^>]*?)\s+src=(["'])https?:\/\/[^"']*\2/gi, '$1');
+		return sanitized.replace(/(<img\b[^>]*?)\s+src=(["'])(?:https?:)?\/\/[^"']*\2/gi, '$1');
 	}
 	const template = document.createElement('template');
 	template.innerHTML = sanitized;
 	for (const img of template.content.querySelectorAll('img')) {
-		const src = img.getAttribute('src') ?? '';
-		if (src.startsWith('http://') || src.startsWith('https://')) {
+		const src = (img.getAttribute('src') ?? '').trim().toLowerCase();
+		if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('//')) {
 			img.removeAttribute('src');
 		}
 	}

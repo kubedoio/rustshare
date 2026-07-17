@@ -23,6 +23,20 @@ describe('Sanitization', () => {
 		expect(safe).not.toContain('https://tracker.example');
 	});
 
+	it('removes scheme-relative image sources', () => {
+		const unsafe = '<p>Hi</p><img alt="tracker" src="//tracker.example/pixel.gif">';
+		const safe = sanitizeHtml(unsafe);
+		expect(safe).toBe('<p>Hi</p><img alt="tracker">');
+		expect(safe).not.toContain('tracker.example');
+	});
+
+	it('removes image sources with uppercase schemes', () => {
+		const unsafe = '<p>Hi</p><img alt="tracker" src="HTTPS://tracker.example/pixel.gif">';
+		const safe = sanitizeHtml(unsafe);
+		expect(safe).toBe('<p>Hi</p><img alt="tracker">');
+		expect(safe).not.toContain('tracker.example');
+	});
+
 	it('removes style attributes', () => {
 		const unsafe = '<p style="color: red; position: fixed; top: 0">Text</p>';
 		const safe = sanitizeHtml(unsafe);

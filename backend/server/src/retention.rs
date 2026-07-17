@@ -228,9 +228,11 @@ async fn tick_retention_cleanup(
     match store.list_ready_object_gc_candidates(100).await {
         Ok(keys) => {
             for key in keys {
-                // Content-addressed blobs can be reused by a writer between the
-                // database reference check and the external object deletion.
-                // Keep them queued until writers and GC share a cross-process lease.
+                // Backstop: the ready-candidate query already excludes
+                // content-addressed blobs. They can be reused by a writer
+                // between the database reference check and the external
+                // object deletion, so keep them queued until writers and GC
+                // share a cross-process lease.
                 if is_content_addressed_blob_key(&key) {
                     continue;
                 }

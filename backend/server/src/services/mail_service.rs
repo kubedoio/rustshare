@@ -2957,12 +2957,12 @@ impl MailService {
                 }
 
                 if let Some(ref msg_id) = orig_msg.message_id {
-                    in_reply_to = Some(msg_id.clone());
+                    in_reply_to = Some(bracket_message_id(msg_id));
                     let mut refs = Vec::new();
                     if let Some(ref orig_refs) = orig_msg.references {
-                        refs.extend(orig_refs.clone());
+                        refs.extend(orig_refs.iter().map(|r| bracket_message_id(r)));
                     }
-                    refs.push(msg_id.clone());
+                    refs.push(bracket_message_id(msg_id));
                     references = Some(refs.join(" "));
                 }
             } else {
@@ -3089,7 +3089,29 @@ impl MailService {
             )
             .await
         {
-            Ok(msg) => Some(msg),
+            Ok(mut msg) => {
+                // The transmitted EML omits the Bcc header; keep the
+                // recipients on the local artifact for the owner's own record.
+                if !bcc.is_empty() {
+                    let bcc_json = serde_json::Value::Array(
+                        bcc.iter()
+                            .map(|address| serde_json::json!({ "name": null, "address": address }))
+                            .collect(),
+                    );
+                    match self
+                        .metadata_store
+                        .set_mail_message_bcc_addresses(msg.id, &bcc_json)
+                        .await
+                    {
+                        Ok(()) => msg.bcc_addresses = bcc_json,
+                        Err(e) => tracing::warn!(
+                            "sent mail imported, but storing Bcc on the local copy failed: {:?}",
+                            e
+                        ),
+                    }
+                }
+                Some(msg)
+            }
             Err(e) => {
                 tracing::error!(
                     "Outbound mail sent via SMTP, but local import/storage failed: {:?}",
@@ -3623,6 +3645,17 @@ fn addresses_to_json(
     )
 }
 
+/// Stored message ids are kept without angle brackets; restore them for the
+/// wire so strict servers thread replies correctly (RFC 5322 msg-id syntax).
+fn bracket_message_id(id: &str) -> String {
+    let trimmed = id.trim();
+    if trimmed.starts_with('<') && trimmed.ends_with('>') {
+        trimmed.to_string()
+    } else {
+        format!("<{trimmed}>")
+    }
+}
+
 fn mail_address_strings(value: &serde_json::Value) -> Vec<String> {
     value
         .as_array()
@@ -3925,6 +3958,13 @@ mod tests {
                 "move:Inbox:43:Trash",
             ]
         );
+    }
+
+    #[test]
+    fn bracket_message_id_wraps_bare_ids_and_keeps_bracketed() {
+        assert_eq!(bracket_message_id("abc@host"), "<abc@host>");
+        assert_eq!(bracket_message_id("<abc@host>"), "<abc@host>");
+        assert_eq!(bracket_message_id("  abc@host  "), "<abc@host>");
     }
 
     #[tokio::test]

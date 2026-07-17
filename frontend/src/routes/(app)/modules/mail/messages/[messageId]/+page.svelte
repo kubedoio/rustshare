@@ -8,6 +8,7 @@
 		type MailLink,
 		type MailMessage,
 		type MailMessagePart,
+		type MailSmtpSettings,
 		type SaveDraftRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
@@ -118,6 +119,9 @@
 	let composeBody = $state('');
 	let composeAttachments = $state<string[]>([]);
 	let composeMode = $state<'new' | 'reply' | 'reply-all' | 'forward'>('new');
+	let composeDraftId = $state<string | null>(null);
+	let composeSaveError = $state('');
+	let smtpSettings = $state<MailSmtpSettings | null>(null);
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -127,6 +131,16 @@
 	const filesQuery = createQuery({
 		queryKey: ['mail-link-files'],
 		queryFn: () => listAllFiles()
+	});
+
+	$effect(() => {
+		const accountId = $messageQuery.data?.account_id ?? $accountsQuery.data?.[0]?.id;
+		smtpSettings = null;
+		if (!accountId) return;
+		mailApi
+			.getSmtpSettings(accountId)
+			.then((settings) => (smtpSettings = settings))
+			.catch(() => (smtpSettings = null));
 	});
 
 	const createLinkMutation = createMutation({
@@ -171,27 +185,57 @@
 				return mailApi.sendOutboundMail(accountId, input);
 			}
 		},
-		onSuccess: () => {
+		onSuccess: async (result) => {
 			composeOpen = false;
-			toastStore.show('Mail sent', 'success');
+			if (composeDraftId) {
+				const accountId = $messageQuery.data?.account_id || $accountsQuery.data?.[0]?.id;
+				const draftId = composeDraftId;
+				composeDraftId = null;
+				if (accountId) {
+					try {
+						await mailApi.discardDraft(accountId, draftId);
+					} catch {
+						toastStore.show('Sent, but the saved draft could not be removed', 'info');
+					}
+				}
+			}
+			toastStore.show(
+				!result.stored
+					? 'Mail sent, but the RustShare copy could not be saved'
+					: result.append_failed
+						? 'Mail sent, but not saved to the Sent folder'
+						: 'Mail sent',
+				!result.stored || result.append_failed ? 'info' : 'success'
+			);
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
 	});
 
 	const saveDraftMutation = createMutation({
-		mutationFn: async (input: SaveDraftRequest) => {
-			const message = $messageQuery.data;
-			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+		mutationFn: async ({
+			message,
+			draftId
+		}: {
+			message: SaveDraftRequest;
+			draftId: string | null;
+		}) => {
+			const current = $messageQuery.data;
+			const accountId = current?.account_id || $accountsQuery.data?.[0]?.id;
 			if (!accountId) throw new Error('No mail account configured to save a draft.');
-			return mailApi.saveDraft(accountId, input);
+			return draftId
+				? mailApi.updateDraft(accountId, draftId, message)
+				: mailApi.saveDraft(accountId, message);
 		},
-		onSuccess: () => {
-			composeOpen = false;
+		onSuccess: (draft) => {
+			composeDraftId = draft.id;
+			composeSaveError = '';
 			toastStore.show('Draft saved', 'success');
 		},
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Draft save failed', 'error')
+		onError: (error) => {
+			composeSaveError = error instanceof Error ? error.message : 'Draft save failed';
+			toastStore.show(composeSaveError, 'error');
+		}
 	});
 
 	function formatAddresses(value: unknown): string {
@@ -211,6 +255,8 @@
 	async function openReply(message: MailMessage) {
 		const original = mailBodyText(await bodyContent);
 		composeMode = 'reply';
+		composeDraftId = null;
+		composeSaveError = '';
 		composeTo = message.from_address ?? '';
 		composeCc = '';
 		composeBcc = '';
@@ -232,6 +278,8 @@
 		);
 		const cc = uniqueMailAddresses(addressStrings(message.cc_addresses), [...excluded, ...to]);
 		composeMode = 'reply-all';
+		composeDraftId = null;
+		composeSaveError = '';
 		composeTo = to.join(', ');
 		composeCc = cc.join(', ');
 		composeBcc = '';
@@ -246,6 +294,8 @@
 	async function openForward(message: MailMessage) {
 		const original = mailBodyText(await bodyContent);
 		composeMode = 'forward';
+		composeDraftId = null;
+		composeSaveError = '';
 		composeTo = '';
 		composeCc = '';
 		composeBcc = '';
@@ -256,8 +306,8 @@
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
 		}\nSubject: ${message.subject || '(no subject)'}\n\n${original}`;
 
-		// Copy attachments if any
-		const attachments = $attachmentsQuery.data ?? [];
+		// Copy attachments if any; await the query so early clicks cannot drop them
+		const attachments = (await $attachmentsQuery.refetch()).data ?? [];
 		composeAttachments = attachments.map((a) => a.file_id).filter((id): id is string => !!id);
 		if (composeAttachments.length !== attachments.length) {
 			toastStore.show('Some attachments are unavailable and were not added to the forward', 'info');
@@ -486,6 +536,7 @@
 
 	<MailComposeModal
 		open={composeOpen}
+		draftId={composeDraftId}
 		initialTo={composeTo}
 		initialCc={composeCc}
 		initialBcc={composeBcc}
@@ -496,8 +547,11 @@
 		mode={composeMode}
 		sending={$sendMutation.isPending}
 		saving={$saveDraftMutation.isPending}
+		hasSmtp={!!smtpSettings && smtpSettings.is_enabled}
+		saveError={composeSaveError}
 		onClose={() => (composeOpen = false)}
 		onSend={(message) => sendMutation.mutate(message)}
-		onSave={(message) => saveDraftMutation.mutate(message)}
+		onSave={(message, draftId) =>
+			saveDraftMutation.mutateAsync({ message, draftId }).then(() => undefined)}
 	/>
 {/if}

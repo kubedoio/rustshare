@@ -273,6 +273,64 @@ describe('MailModuleView', () => {
 		expect(await screen.findByText('Server alert')).toBeTruthy();
 	});
 
+	it('gates archive and trash actions on their own folders', async () => {
+		mocks.listFolders.mockResolvedValue([
+			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null },
+			{ name: 'Archive', display_name: 'Archive', delimiter: '/', role: 'archive' }
+		]);
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			messages: [
+				{
+					uid: 12,
+					subject: 'Server alert',
+					from_address: 'ops@example.com',
+					from_name: 'Ops',
+					sent_at: '2026-07-01T10:00:00Z',
+					size_bytes: 2048
+				}
+			]
+		});
+
+		render(MailModuleView, { module: testModule });
+
+		const archiveButton = (await screen.findByTitle('Archive')) as HTMLButtonElement;
+		expect(archiveButton.disabled).toBe(false);
+		const trashButton = (await screen.findByTitle(
+			'No trash folder is configured'
+		)) as HTMLButtonElement;
+		expect(trashButton.disabled).toBe(true);
+	});
+
+	it('disables archive and enables trash when only a trash folder exists', async () => {
+		mocks.listFolders.mockResolvedValue([
+			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null },
+			{ name: 'Trash', display_name: 'Trash', delimiter: '/', role: 'trash' }
+		]);
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			messages: [
+				{
+					uid: 12,
+					subject: 'Server alert',
+					from_address: 'ops@example.com',
+					from_name: 'Ops',
+					sent_at: '2026-07-01T10:00:00Z',
+					size_bytes: 2048
+				}
+			]
+		});
+
+		render(MailModuleView, { module: testModule });
+
+		const archiveButton = (await screen.findByTitle(
+			'No archive folder is configured'
+		)) as HTMLButtonElement;
+		expect(archiveButton.disabled).toBe(true);
+		const trashButton = (await screen.findByTitle('Move to trash')) as HTMLButtonElement;
+		expect(trashButton.disabled).toBe(false);
+	});
+
 	it('uploads .eml files through the mail import endpoint', async () => {
 		mocks.listMessages.mockResolvedValueOnce([]);
 

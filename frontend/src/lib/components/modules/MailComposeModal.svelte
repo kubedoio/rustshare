@@ -52,7 +52,7 @@
 		saveError?: string;
 		onClose: () => void;
 		onSend: (message: SendOutboundMailRequest) => void;
-		onSave: (message: SaveDraftRequest, draftId: string | null) => void;
+		onSave: (message: SaveDraftRequest, draftId: string | null) => void | Promise<void>;
 		onDiscard?: (draftId: string) => void;
 	} = $props();
 
@@ -139,10 +139,14 @@
 		onSend({ ...draftPayload(), idempotency_key: idempotencyKey });
 	}
 
-	function handleSave() {
-		onSave(draftPayload(), draftId);
-		saved = true;
-		baseline = JSON.stringify(draft);
+	async function handleSave() {
+		try {
+			await onSave(draftPayload(), draftId);
+			saved = true;
+			baseline = JSON.stringify(draft);
+		} catch {
+			// Save failed; the parent surfaces the error and the draft stays unsaved.
+		}
 	}
 
 	function handleClose() {
@@ -284,7 +288,9 @@
 								type="button"
 								class="btn btn-error btn-outline gap-2"
 								disabled={discarding || sending || saving}
-								onclick={() => onDiscard?.(draftId)}
+								onclick={() => {
+									if (confirm('Discard this draft permanently?')) onDiscard?.(draftId);
+								}}
 							>
 								<Trash2 size={16} />
 								{discarding ? 'Discarding...' : 'Discard'}

@@ -333,6 +333,7 @@ pub async fn upload_mail(
     get,
     path = "/api/v1/mail/messages",
     tag = "Mail",
+    params(ListImportedMailMessagesQuery),
     responses(
         (status = 200, description = "Mail messages", body = ListMailMessagesResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -1444,9 +1445,9 @@ pub async fn list_mail_import_jobs(
 /// Create a recurring IMAP archive job for a folder and optional date range.
 #[utoipa::path(
     post,
-    path = "/api/v1/mail/accounts/{account_id}/archive-jobs",
+    path = "/api/v1/mail/accounts/{id}/archive-jobs",
     tag = "Mail",
-    params(("account_id" = Uuid, Path, description = "Mail account ID")),
+    params(("id" = Uuid, Path, description = "Mail account ID")),
     request_body = CreateMailArchiveJobRequest,
     responses(
         (status = 202, description = "Archive job created", body = MailArchiveJobResponse),
@@ -1481,9 +1482,9 @@ pub async fn create_mail_archive_job(
 /// List active archive jobs for a mail account.
 #[utoipa::path(
     get,
-    path = "/api/v1/mail/accounts/{account_id}/archive-jobs",
+    path = "/api/v1/mail/accounts/{id}/archive-jobs",
     tag = "Mail",
-    params(("account_id" = Uuid, Path, description = "Mail account ID")),
+    params(("id" = Uuid, Path, description = "Mail account ID")),
     responses(
         (status = 200, description = "Archive jobs", body = MailArchiveJobListResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -1682,7 +1683,9 @@ pub async fn get_mail_message_part(
             .list_attachments(auth.tenant_id, auth.user_id, message_id)
             .await?;
         let sanitized = sanitize_email_html(&rewrite_cid_urls(html, &attachments));
-        emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
+        if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await {
+            tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
+        }
         let mut headers = HeaderMap::new();
         headers.insert(
             header::CONTENT_TYPE,
@@ -1699,7 +1702,9 @@ pub async fn get_mail_message_part(
         part.content_type.clone()
     };
 
-    emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await?;
+    if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await {
+        tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -1732,7 +1737,9 @@ pub async fn download_mail_message_source(
         .mail_service
         .download_message_source(auth.tenant_id, auth.user_id, message_id)
         .await?;
-    emit_mail_message_viewed(&state, message_id, auth.user_id, "source").await?;
+    if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "source").await {
+        tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
+    }
 
     let content_disposition = super::public_shares::build_content_disposition(&filename);
     let mut headers = HeaderMap::new();
@@ -1866,7 +1873,6 @@ async fn emit_mail_message_sent(
         to_count: req.to.len(),
         cc_count: req.cc.len(),
         bcc_count: req.bcc.len(),
-        subject: req.subject.trim().to_string(),
     };
     let event = Event::new(
         EventType::MailMessageSent,

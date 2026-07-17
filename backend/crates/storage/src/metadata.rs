@@ -1285,6 +1285,7 @@ impl MetadataStore {
                 WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
                   AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
+                LIMIT 50
                 "#,
                 tenant_id,
                 owner_id,
@@ -1309,6 +1310,7 @@ impl MetadataStore {
                 WHERE tenant_id = $1 AND owner_id = $2
                   AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
+                LIMIT 50
                 "#,
                 tenant_id,
                 owner_id
@@ -4024,12 +4026,18 @@ impl MetadataStore {
     }
 
     /// Return queued objects whose grace period has elapsed.
+    ///
+    /// Content-addressed `blobs/<sha256>` keys stay queued but are never
+    /// returned: deleting them can race a concurrent writer until object
+    /// writers and GC share a cross-process lease, and returning them would
+    /// starve every other candidate behind a permanently skipped batch.
     pub async fn list_ready_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
         let keys = sqlx::query_scalar::<_, String>(
             r#"
             SELECT q.object_key
             FROM object_gc_queue q
             WHERE q.not_before <= NOW()
+              AND q.object_key !~ '^blobs/[0-9a-fA-F]{64}$'
             ORDER BY q.not_before
             LIMIT $1
             "#,
@@ -4073,6 +4081,22 @@ impl MetadataStore {
     pub async fn remove_object_gc_candidate(&self, object_key: &str) -> Result<()> {
         sqlx::query("DELETE FROM object_gc_queue WHERE object_key = $1")
             .bind(object_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Record the Bcc recipients of an outbound message on its local artifact.
+    /// The transmitted EML correctly omits the Bcc header, so the recipients
+    /// from the send request are stored here for the owner's own record.
+    pub async fn set_mail_message_bcc_addresses(
+        &self,
+        message_id: Uuid,
+        bcc_addresses: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query("UPDATE mail_messages SET bcc_addresses = $2 WHERE id = $1")
+            .bind(message_id)
+            .bind(bcc_addresses)
             .execute(&self.pool)
             .await?;
         Ok(())

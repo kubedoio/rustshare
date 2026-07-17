@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Hardened RustShare Mail daily-use workflows with idempotent outbound sends, account-bound sender identities, SMTP timeouts, durable import status, bounded classic search, IMAP special-use folders, modified UTF-7 labels, inline-image rendering, explicit partial-send warnings, safer draft replacement/cleanup, and reference-aware object cleanup queueing.
+- Fixed RustShare Mail mailbox action gating so read/unread, archive, and trash buttons each key on their own folder availability, blocked scheme-relative and uppercase-scheme remote images in sanitized HTML, and kept deferred content-addressed blob keys from starving the object cleanup queue.
+- Polished RustShare Mail release readiness: the local copy of sent mail now retains its Bcc recipients, reply headers emit RFC 5322 angle-bracketed message ids, mail view events no longer fail reads, import-job listings are bounded, the message-page composer tracks drafts end-to-end (update on re-save, discard after send, SMTP guard, forward attachment race), saving a draft reflects the real save result, the dead folder-mapping settings section and unreachable IMAP TLS options were removed, and the published OpenAPI contract was refreshed with a CI freshness check.
 
 ## [0.6.0] - 2026-06-29
 

@@ -19,7 +19,6 @@
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -417,7 +416,7 @@
 	}
 
 	async function saveComposeDraft(message: SaveDraftRequest, draftId: string | null) {
-		await saveDraftMutation.mutate({ message, draftId });
+		await saveDraftMutation.mutateAsync({ message, draftId });
 	}
 
 	async function sendCompose(message: SaveDraftRequest) {
@@ -802,8 +801,8 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
-													disabled={!archiveFolder()}
-													title={archiveFolder() ? 'Archive' : 'No archive folder is configured'}
+													title={message.is_seen ? 'Mark as unread' : 'Mark as read'}
+													aria-label={message.is_seen ? 'Mark as unread' : 'Mark as read'}
 													onclick={(event) => {
 														event.stopPropagation();
 														runMailboxAction(
@@ -835,8 +834,11 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
-													disabled={!trashFolder()}
-													title={trashFolder() ? 'Move to trash' : 'No trash folder is configured'}
+													disabled={!archiveFolder()}
+													title={archiveFolder() ? 'Archive' : 'No archive folder is configured'}
+													aria-label={archiveFolder()
+														? 'Archive'
+														: 'No archive folder is configured'}
 													onclick={(event) => {
 														event.stopPropagation();
 														runMailboxAction(
@@ -858,6 +860,11 @@
 												<button
 													type="button"
 													class="btn btn-xs btn-ghost"
+													disabled={!trashFolder()}
+													title={trashFolder() ? 'Move to trash' : 'No trash folder is configured'}
+													aria-label={trashFolder()
+														? 'Move to trash'
+														: 'No trash folder is configured'}
 													onclick={(event) => {
 														event.stopPropagation();
 														runMailboxAction(
