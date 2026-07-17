@@ -167,8 +167,18 @@ pub fn calculate_sha256(content: &Bytes) -> String {
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate the process-global
+    /// `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` variable; Cargo runs unit tests
+    /// in parallel threads, so unsynchronized set/remove races make them flaky.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
     #[test]
     fn allow_internal_mail_servers_defaults_to_false() {
+        let _guard = env_lock();
         // The variable is not set in unit-test runs, so the guard must be off.
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(!allow_internal_mail_servers());
@@ -176,6 +186,7 @@ mod tests {
 
     #[test]
     fn allow_internal_mail_servers_activates_with_true() {
+        let _guard = env_lock();
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
         assert!(allow_internal_mail_servers());
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
@@ -190,6 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_allows_private_ip_when_enabled() {
+        let _guard = env_lock();
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
         let result = resolve_mail_server_socket_addrs("10.0.0.1", 993).await;
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
@@ -202,6 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_rejects_localhost_even_when_enabled() {
+        let _guard = env_lock();
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
         let result = resolve_mail_server_socket_addrs("localhost", 993).await;
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
