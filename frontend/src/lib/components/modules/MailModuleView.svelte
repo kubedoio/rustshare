@@ -399,16 +399,28 @@
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
 	$effect(() => {
 		smtpSettings = null;
-		if (!selectedAccountId) return;
+		const accountId = selectedAccountId;
+		if (!accountId) return;
+		let cancelled = false;
 		mailApi
-			.getSmtpSettings(selectedAccountId)
-			.then((settings) => (smtpSettings = settings))
-			.catch(() => (smtpSettings = null));
+			.getSmtpSettings(accountId)
+			.then((settings) => {
+				if (!cancelled) smtpSettings = settings;
+			})
+			.catch(() => {
+				if (!cancelled) smtpSettings = null;
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	// ------------------------------------------------------------- handlers
 	function handleSelectAccount(accountId: string) {
 		selectedAccountId = accountId;
+		// Reset to the local folder so a stale IMAP selection on the previous
+		// account cannot produce a confusing error list.
+		selection = { kind: 'imported' };
 		viewerTarget = null;
 		checkedUids = [];
 	}
@@ -524,6 +536,16 @@
 			if (
 				viewerTarget?.kind === 'imap' &&
 				viewerTarget.message.uid === uid &&
+				(action === 'read' || action === 'unread')
+			) {
+				// Keep the open viewer in sync with the flag we just changed.
+				viewerTarget = {
+					kind: 'imap',
+					message: { ...viewerTarget.message, is_seen: action === 'read' }
+				};
+			} else if (
+				viewerTarget?.kind === 'imap' &&
+				viewerTarget.message.uid === uid &&
 				action !== 'read' &&
 				action !== 'unread'
 			) {
@@ -627,14 +649,20 @@
 	}
 
 	async function sendCompose(message: SaveDraftRequest) {
-		if (!composeDraftId) {
-			await sendMutation.mutate(message);
-			return;
+		try {
+			if (!composeDraftId) {
+				await sendMutation.mutate(message);
+				return;
+			}
+			// The backend replaces the draft row on update, so wait for the save
+			// and send the returned (current) draft id — never the stale one.
+			const saved = await saveDraftMutation.mutateAsync({ message, draftId: composeDraftId });
+			await sendDraftMutation.mutate(saved.id);
+		} catch {
+			// Failures are surfaced via the mutations' onError toasts; swallowing
+			// here keeps the modal's fire-and-forget onSend free of unhandled
+			// promise rejections.
 		}
-		// The backend replaces the draft row on update, so wait for the save
-		// and send the returned (current) draft id — never the stale one.
-		const saved = await saveDraftMutation.mutateAsync({ message, draftId: composeDraftId });
-		await sendDraftMutation.mutate(saved.id);
 	}
 
 	function handleUploadChange(event: Event) {
@@ -749,6 +777,8 @@
 					searchActive={!!search}
 					{selectedKey}
 					{checkedUids}
+					archiveAvailable={!!archiveFolderName}
+					trashAvailable={!!trashFolderName}
 					hasMore={listHasMore}
 					{loadingMore}
 					onOpen={handleOpenItem}

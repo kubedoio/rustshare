@@ -20,6 +20,8 @@
 		searchActive,
 		selectedKey,
 		checkedUids,
+		archiveAvailable = true,
+		trashAvailable = true,
 		hasMore,
 		loadingMore,
 		onOpen,
@@ -41,6 +43,8 @@
 		searchActive: boolean;
 		selectedKey: string | null;
 		checkedUids: number[];
+		archiveAvailable?: boolean;
+		trashAvailable?: boolean;
 		hasMore: boolean;
 		loadingMore: boolean;
 		onOpen: (item: MailListItem) => void;
@@ -105,8 +109,9 @@
 				<button
 					type="button"
 					class="btn btn-xs btn-ghost btn-square"
-					title="Archive selected"
-					aria-label="Archive selected"
+					disabled={!archiveAvailable}
+					title={archiveAvailable ? 'Archive selected' : 'No archive folder is configured'}
+					aria-label={archiveAvailable ? 'Archive selected' : 'No archive folder is configured'}
 					onclick={onArchiveSelected}
 				>
 					<Archive size={13} />
@@ -114,8 +119,9 @@
 				<button
 					type="button"
 					class="btn btn-xs btn-ghost btn-square"
-					title="Move selected to trash"
-					aria-label="Move selected to trash"
+					disabled={!trashAvailable}
+					title={trashAvailable ? 'Move selected to trash' : 'No trash folder is configured'}
+					aria-label={trashAvailable ? 'Move selected to trash' : 'No trash folder is configured'}
 					onclick={onTrashSelected}
 				>
 					<Trash2 size={13} />

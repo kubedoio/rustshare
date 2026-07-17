@@ -315,9 +315,13 @@
 										: 'Save draft'}</span
 							>
 						</button>
-						<button type="submit" class="btn btn-primary gap-2" disabled={sending}>
+						<button
+							type="submit"
+							class="btn btn-primary gap-2"
+							disabled={sending || saving || discarding}
+						>
 							<Send size={16} />
-							<span>{sending ? 'Sending...' : 'Send'}</span>
+							<span>{sending ? 'Sending...' : saving ? 'Saving...' : 'Send'}</span>
 						</button>
 					</div>
 				</form>

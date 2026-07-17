@@ -260,18 +260,33 @@
 				is_enabled: imapForm.is_enabled
 			});
 			if (smtpForm.host.trim()) {
-				selectedSmtp = await mailApi.updateSmtpSettings(selectedMailAccountId, {
-					host: smtpForm.host.trim(),
-					port: Number(smtpForm.port),
-					username: smtpForm.username.trim(),
-					password: replaceSmtpPassword && smtpForm.password ? smtpForm.password : null,
-					tls_mode: smtpForm.tls_mode,
-					from_address: smtpForm.from_address.trim(),
-					from_name: smtpForm.from_name.trim() || null,
-					reply_to: smtpForm.reply_to.trim() || null,
-					sent_folder: smtpForm.sent_folder.trim() || null,
-					is_enabled: smtpForm.is_enabled
-				});
+				try {
+					selectedSmtp = await mailApi.updateSmtpSettings(selectedMailAccountId, {
+						host: smtpForm.host.trim(),
+						port: Number(smtpForm.port),
+						username: smtpForm.username.trim(),
+						password: replaceSmtpPassword && smtpForm.password ? smtpForm.password : null,
+						tls_mode: smtpForm.tls_mode,
+						from_address: smtpForm.from_address.trim(),
+						from_name: smtpForm.from_name.trim() || null,
+						reply_to: smtpForm.reply_to.trim() || null,
+						sent_folder: smtpForm.sent_folder.trim() || null,
+						is_enabled: smtpForm.is_enabled
+					});
+				} catch (error) {
+					// The IMAP changes already persisted — say so instead of implying
+					// a total failure.
+					imapForm.password = '';
+					replaceImapPassword = false;
+					await loadMailAccounts();
+					toastStore.show(
+						`Account saved, but SMTP settings failed: ${
+							error instanceof Error ? error.message : 'unknown error'
+						}`,
+						'error'
+					);
+					return;
+				}
 			}
 			imapForm.password = '';
 			smtpForm.password = '';

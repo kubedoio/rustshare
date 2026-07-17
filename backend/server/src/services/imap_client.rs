@@ -144,6 +144,13 @@ impl ImapClient {
         // internal/private destinations (e.g. self-signed intranet servers
         // reached by IP); public hosts always get full verification.
         let accept_invalid_certs = should_accept_invalid_certs(&addrs);
+        if accept_invalid_certs {
+            tracing::warn!(
+                host = %host,
+                port = %port,
+                "accepting invalid TLS certificates for internal mail server connection"
+            );
+        }
 
         let mut last_error = None;
         for addr in addrs {
@@ -765,7 +772,6 @@ fn build_tls_connector(
         .with_root_certificates(root_store)
         .with_no_client_auth();
     if accept_invalid_certs {
-        tracing::warn!("accepting invalid TLS certificates for internal mail server connection");
         config
             .dangerous()
             .set_certificate_verifier(Arc::new(NoCertVerifier));

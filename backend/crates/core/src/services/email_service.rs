@@ -384,7 +384,11 @@ async fn validate_smtp_host(host: &str, port: u16) -> Result<ValidatedSmtpHost, 
     // by IP); public hosts always get full verification.
     let accept_invalid_certs = should_accept_invalid_certs(&addrs);
     if accept_invalid_certs {
-        tracing::warn!("accepting invalid TLS certificates for internal SMTP server");
+        tracing::warn!(
+            host = %host,
+            port = %port,
+            "accepting invalid TLS certificates for internal SMTP server"
+        );
     }
     Ok(ValidatedSmtpHost {
         connection_host,

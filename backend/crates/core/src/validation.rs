@@ -242,4 +242,27 @@ mod tests {
         assert!(!all_addrs_internal(&[private, public]));
         assert!(!all_addrs_internal(&[]));
     }
+
+    #[test]
+    fn should_accept_invalid_certs_composes_all_gates() {
+        let _guard = env_lock();
+        let private: SocketAddr = "10.5.199.84:993".parse().unwrap();
+        let public: SocketAddr = "142.250.74.5:993".parse().unwrap();
+
+        // Internal servers enabled + default setting: private relaxes, public
+        // never does.
+        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
+        assert!(should_accept_invalid_certs(&[private]));
+        assert!(!should_accept_invalid_certs(&[public]));
+        assert!(!should_accept_invalid_certs(&[private, public]));
+
+        // Explicit "never" restores strict verification even for private hosts.
+        std::env::set_var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS", "never");
+        assert!(!should_accept_invalid_certs(&[private]));
+
+        // Without the internal-servers opt-in, nothing relaxes.
+        std::env::remove_var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS");
+        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
+        assert!(!should_accept_invalid_certs(&[private]));
+    }
 }
