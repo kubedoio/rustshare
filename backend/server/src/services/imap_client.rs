@@ -635,6 +635,8 @@ impl ImapArchiveSession for ImapSession {
     }
 }
 
+/// Minimal IMAP session surface for guarded mailbox mutations, abstracted so
+/// operations can be unit-tested with a mock session.
 #[async_trait]
 pub trait ImapMailboxSession: Send {
     async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError>;

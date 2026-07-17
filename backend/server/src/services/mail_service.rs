@@ -190,6 +190,8 @@ pub struct MailService {
     secret_key: Arc<SecretEncryptionKey>,
 }
 
+/// Result of an outbound send: the locally stored artifact when the
+/// RustShare copy succeeded, plus whether the IMAP Sent-folder append failed.
 pub struct SentMail {
     pub message: Option<MailMessage>,
     pub append_failed: bool,
@@ -2865,7 +2867,10 @@ impl MailService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "outbound send orchestration needs the full recipient/attachment/threading context"
+    )]
     pub async fn send_outbound_mail(
         &self,
         tenant_id: Uuid,
