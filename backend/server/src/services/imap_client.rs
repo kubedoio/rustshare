@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
-use rustshare_core::validation::resolve_mail_server_socket_addrs;
+use rustshare_core::validation::{resolve_mail_server_socket_addrs, should_accept_invalid_certs};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
@@ -140,10 +140,14 @@ impl ImapClient {
                 "no addresses for IMAP host".to_string(),
             ));
         }
+        // Relaxed certificate verification is only ever enabled for
+        // internal/private destinations (e.g. self-signed intranet servers
+        // reached by IP); public hosts always get full verification.
+        let accept_invalid_certs = should_accept_invalid_certs(&addrs);
 
         let mut last_error = None;
         for addr in addrs {
-            match Self::connect_addr(host, port, addr, tls_mode).await {
+            match Self::connect_addr(host, port, addr, tls_mode, accept_invalid_certs).await {
                 Ok(client) => return Ok(client),
                 Err(e) => {
                     tracing::warn!(
@@ -167,6 +171,7 @@ impl ImapClient {
         _port: u16,
         addr: std::net::SocketAddr,
         tls_mode: MailTlsMode,
+        accept_invalid_certs: bool,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
         match tls_mode {
             MailTlsMode::Tls => {
@@ -176,7 +181,7 @@ impl ImapClient {
                         ImapError::ConnectionFailed("operation timed out".to_string())
                     })??;
 
-                let connector = build_tls_connector()?;
+                let connector = build_tls_connector(accept_invalid_certs)?;
                 // Keep the original hostname for TLS certificate verification.
                 let server_name = host
                     .to_string()
@@ -221,7 +226,7 @@ impl ImapClient {
                         "unexpected IMAP stream state after STARTTLS".to_string(),
                     ));
                 };
-                let connector = build_tls_connector()?;
+                let connector = build_tls_connector(accept_invalid_certs)?;
                 let server_name = host
                     .to_string()
                     .try_into()
@@ -699,13 +704,72 @@ fn build_archive_search_query(since: Option<NaiveDate>, before: Option<NaiveDate
     criteria.join(" ")
 }
 
-fn build_tls_connector() -> Result<tokio_rustls::TlsConnector, ImapError> {
+/// Certificate verifier that accepts any certificate. Only used for
+/// internal/private mail servers, where self-signed certificates and
+/// hostname mismatches (connecting by IP address) are common. Never used for
+/// public destinations — see [`should_accept_invalid_certs`].
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &tokio_rustls::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error>
+    {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+fn build_tls_connector(
+    accept_invalid_certs: bool,
+) -> Result<tokio_rustls::TlsConnector, ImapError> {
     let root_store = tokio_rustls::rustls::RootCertStore::from_iter(
         webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
     );
-    let config = tokio_rustls::rustls::ClientConfig::builder()
+    let mut config = tokio_rustls::rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
+    if accept_invalid_certs {
+        tracing::warn!("accepting invalid TLS certificates for internal mail server connection");
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertVerifier));
+    }
     Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }
 

@@ -47,6 +47,38 @@ pub fn allow_internal_mail_servers() -> bool {
     std::env::var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS").as_deref() == Ok("true")
 }
 
+/// Parse the `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` setting. Anything other
+/// than `never` keeps the default of accepting invalid certificates for
+/// internal mail servers; `never` enforces strict verification everywhere
+/// (e.g. deployments with an internal CA that should still be validated).
+fn invalid_cert_setting_allows(raw: Option<String>) -> bool {
+    !matches!(raw.as_deref(), Some("never"))
+}
+
+/// Returns true when invalid (self-signed, expired, or hostname-mismatched)
+/// certificates may be accepted for internal/private mail servers. Internal
+/// mail servers are frequently self-signed or reached by IP address, so this
+/// defaults to true; set `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS=never` to
+/// require valid certificates even internally.
+pub fn accept_invalid_certs_for_internal_servers() -> bool {
+    invalid_cert_setting_allows(std::env::var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS").ok())
+}
+
+/// Returns true when every resolved address is internal/private.
+pub fn all_addrs_internal(addrs: &[SocketAddr]) -> bool {
+    !addrs.is_empty() && addrs.iter().all(|addr| is_internal_ip(&addr.ip()))
+}
+
+/// Decide whether certificate verification may be relaxed for a mail server
+/// connection. Relaxed verification is only ever allowed when internal mail
+/// servers are explicitly enabled and every resolved address is
+/// internal/private — public destinations always get full verification.
+pub fn should_accept_invalid_certs(addrs: &[SocketAddr]) -> bool {
+    allow_internal_mail_servers()
+        && accept_invalid_certs_for_internal_servers()
+        && all_addrs_internal(addrs)
+}
+
 async fn resolve_socket_addrs_internal(
     host: &str,
     port: u16,
@@ -175,5 +207,26 @@ mod tests {
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("localhost"));
+    }
+
+    #[test]
+    fn invalid_cert_setting_defaults_to_allow_and_honors_never() {
+        assert!(invalid_cert_setting_allows(None));
+        assert!(invalid_cert_setting_allows(Some("internal".to_string())));
+        assert!(invalid_cert_setting_allows(Some("unexpected".to_string())));
+        assert!(!invalid_cert_setting_allows(Some("never".to_string())));
+    }
+
+    #[test]
+    fn all_addrs_internal_requires_non_empty_and_all_private() {
+        let private: SocketAddr = "10.5.199.84:993".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:993".parse().unwrap();
+        let public: SocketAddr = "142.250.74.5:993".parse().unwrap();
+
+        assert!(all_addrs_internal(&[private]));
+        assert!(all_addrs_internal(&[private, loopback]));
+        assert!(!all_addrs_internal(&[public]));
+        assert!(!all_addrs_internal(&[private, public]));
+        assert!(!all_addrs_internal(&[]));
     }
 }
