@@ -1,4 +1,4 @@
-use crate::validation::resolve_public_socket_addrs;
+use crate::validation::resolve_mail_server_socket_addrs;
 use lettre::{
     address::Envelope,
     message::{
@@ -357,15 +357,11 @@ impl EmailService {
 }
 
 async fn validate_smtp_host(host: &str, port: u16) -> Result<String, EmailError> {
-    if cfg!(debug_assertions)
-        && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true")
-    {
-        return Ok(host.to_string());
-    }
-
-    let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
-        EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
-    })?;
+    let addrs = resolve_mail_server_socket_addrs(host, port)
+        .await
+        .map_err(|e| {
+            EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
+        })?;
     addrs
         .first()
         .map(|addr| addr.ip().to_string())

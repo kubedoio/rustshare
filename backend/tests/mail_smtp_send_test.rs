@@ -8,16 +8,18 @@ use rustshare_core::domain::MailTlsMode;
 mod contracts;
 use contracts::common::{cleanup_tenant, cleanup_user, setup_test_env};
 
-/// The production mail stack rejects plaintext SMTP unless an environment
-/// override is set. These integration tests spin up a plaintext mock SMTP
-/// server on a localhost port, so the override must be enabled. Because
-/// `std::env::set_var`/`remove_var` are not thread-safe, multiple tests that
-/// toggle the same variable concurrently race and can unset it mid-send. We
-/// set it once per integration-test binary and never remove it.
-fn enable_plaintext_smtp_for_tests() {
+/// The production mail stack rejects plaintext SMTP and internal/private
+/// mail-server destinations unless environment overrides are set. These
+/// integration tests spin up a plaintext mock SMTP server on a localhost port,
+/// so both overrides must be enabled. Because `std::env::set_var`/`remove_var`
+/// are not thread-safe, multiple tests that toggle the same variable
+/// concurrently race and can unset it mid-send. We set them once per
+/// integration-test binary and never remove them.
+fn enable_internal_smtp_for_tests() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS", "true");
+        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
     });
 }
 
@@ -169,7 +171,7 @@ async fn test_smtp_settings_crud_and_isolation() {
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn test_outbound_mail_send_flow() {
     let ctx = setup_test_env().await;
-    enable_plaintext_smtp_for_tests();
+    enable_internal_smtp_for_tests();
     let mail_service = ctx.mail_service();
     let user = ctx.create_test_user("smtp_sender").await;
 
@@ -350,7 +352,7 @@ async fn test_outbound_mail_send_flow() {
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn stale_pending_send_claim_is_reclaimed() {
     let ctx = setup_test_env().await;
-    enable_plaintext_smtp_for_tests();
+    enable_internal_smtp_for_tests();
     let mail_service = ctx.mail_service();
     let user = ctx.create_test_user("smtp_stale_claim").await;
 

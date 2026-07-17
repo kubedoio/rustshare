@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, parse_header, MailAddr};
 use rustshare_core::domain::MailTlsMode;
-use rustshare_core::validation::resolve_public_socket_addrs;
+use rustshare_core::validation::resolve_mail_server_socket_addrs;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
@@ -126,11 +126,15 @@ impl ImapClient {
         port: u16,
         tls_mode: MailTlsMode,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
-        // Reject internal/private destinations and pin the resolved addresses so
-        // a second DNS lookup cannot rebind to an internal address.
-        let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
-            ImapError::ConnectionFailed(format!("IMAP host failed SSRF validation: {e}"))
-        })?;
+        // Reject internal/private destinations unless the operator explicitly
+        // opted in (e.g. self-hosted or air-gapped mail servers). Pin the
+        // resolved addresses so a second DNS lookup cannot rebind to an
+        // internal address.
+        let addrs = resolve_mail_server_socket_addrs(host, port)
+            .await
+            .map_err(|e| {
+                ImapError::ConnectionFailed(format!("IMAP host failed SSRF validation: {e}"))
+            })?;
         if addrs.is_empty() {
             return Err(ImapError::ConnectionFailed(
                 "no addresses for IMAP host".to_string(),
