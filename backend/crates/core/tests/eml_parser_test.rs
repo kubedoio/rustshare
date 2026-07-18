@@ -71,3 +71,24 @@ fn parses_unnamed_inline_content_id_part_as_attachment() {
 
     assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
 }
+
+#[test]
+fn keeps_body_part_that_also_has_content_id() {
+    // multipart/related with a `start` Content-ID on the root body part: the
+    // body must not be misclassified as an attachment.
+    let raw = concat!(
+        "MIME-Version: 1.0\r\n",
+        "Content-Type: multipart/related; boundary=parts; start=<root>\r\n\r\n",
+        "--parts\r\nContent-Type: text/html\r\nContent-ID: <root>\r\n\r\n<p>Hello</p>\r\n",
+        "--parts\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\naW1hZ2U=\r\n--parts--\r\n"
+    );
+    let parsed = EmlParser::parse(raw.as_bytes()).unwrap();
+
+    assert_eq!(
+        parsed.body_html.as_deref().map(str::trim_end),
+        Some("<p>Hello</p>")
+    );
+    assert_eq!(parsed.attachments.len(), 1);
+    assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+}
