@@ -20627,6 +20627,12 @@
           "body": {
             "type": "string"
           },
+          "body_html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "cc": {
             "type": "array",
             "items": {
@@ -20915,6 +20921,12 @@
           },
           "body": {
             "type": "string"
+          },
+          "body_html": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "cc": {
             "type": "array",
