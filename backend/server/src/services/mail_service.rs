@@ -95,6 +95,7 @@ fn validate_outbound_mail(
     bcc: &[String],
     subject: &str,
     body: &str,
+    body_html: Option<&str>,
     attachment_count: usize,
 ) -> Result<(), MailError> {
     let recipient_count = to.len() + cc.len() + bcc.len();
@@ -121,6 +122,13 @@ fn validate_outbound_mail(
         return Err(MailError::InvalidSource(
             "Message body is too large".to_string(),
         ));
+    }
+    if let Some(html) = body_html {
+        if html.len() > MAX_MAIL_SEND_BODY_BYTES {
+            return Err(MailError::InvalidSource(
+                "HTML message body is too large".to_string(),
+            ));
+        }
     }
     if attachment_count > MAX_MAIL_SEND_ATTACHMENTS {
         return Err(MailError::InvalidSource(format!(
@@ -2904,7 +2912,15 @@ impl MailService {
         is_forward: bool,
         idempotency_key: Option<Uuid>,
     ) -> Result<SentMail, MailError> {
-        validate_outbound_mail(&to, &cc, &bcc, &subject, &body, attachment_ids.len())?;
+        validate_outbound_mail(
+            &to,
+            &cc,
+            &bcc,
+            &subject,
+            &body,
+            body_html.as_deref(),
+            attachment_ids.len(),
+        )?;
 
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
@@ -3308,6 +3324,16 @@ impl MailService {
         in_reply_to_msg_id: Option<Uuid>,
     ) -> Result<MailMessage, MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
+
+        // Drafts bypass validate_outbound_mail when sent later, so cap the
+        // HTML body here at write time.
+        if let Some(html) = &body_html {
+            if html.len() > MAX_MAIL_SEND_BODY_BYTES {
+                return Err(MailError::InvalidSource(
+                    "HTML message body is too large".to_string(),
+                ));
+            }
+        }
 
         for file_id in &attachment_ids {
             let file = self
@@ -4761,14 +4787,14 @@ mod link_tests {
         let cc = Vec::new();
         let bcc = vec!["blind@example.com".to_string()];
 
-        validate_outbound_mail(&to, &cc, &bcc, "Subject", "Body", 0)
+        validate_outbound_mail(&to, &cc, &bcc, "Subject", "Body", None, 0)
             .expect("normal outbound mail should validate");
     }
 
     #[test]
     fn outbound_mail_validation_rejects_invalid_draft_send() {
         let empty = Vec::new();
-        let err = validate_outbound_mail(&empty, &empty, &empty, "", "", 0)
+        let err = validate_outbound_mail(&empty, &empty, &empty, "", "", None, 0)
             .expect_err("draft send without recipients should fail before SMTP");
 
         assert!(err.to_string().contains("At least one recipient"));
