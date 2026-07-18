@@ -307,7 +307,7 @@ impl MetadataStore {
             WHERE id = $1 AND deleted_at IS NULL
             "#,
             id,
-            folder_id
+            folder_id,
         )
         .execute(&self.pool)
         .await?;
@@ -392,26 +392,27 @@ impl MetadataStore {
     }
 
     pub async fn create_mail_attachment(&self, attachment: &MailAttachment) -> Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO mail_attachments (
                 id, tenant_id, message_id, file_id, filename, mime_type,
-                size_bytes, part_index, content_disposition, blob_key, created_at
+                size_bytes, part_index, content_disposition, content_id, blob_key, created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
-            attachment.id,
-            attachment.tenant_id,
-            attachment.message_id,
-            attachment.file_id,
-            attachment.filename,
-            attachment.mime_type,
-            attachment.size_bytes,
-            attachment.part_index,
-            attachment.content_disposition,
-            attachment.blob_key,
-            attachment.created_at,
         )
+        .bind(attachment.id)
+        .bind(attachment.tenant_id)
+        .bind(attachment.message_id)
+        .bind(attachment.file_id)
+        .bind(&attachment.filename)
+        .bind(&attachment.mime_type)
+        .bind(attachment.size_bytes)
+        .bind(attachment.part_index)
+        .bind(&attachment.content_disposition)
+        .bind(&attachment.content_id)
+        .bind(&attachment.blob_key)
+        .bind(attachment.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -494,21 +495,20 @@ impl MetadataStore {
         tenant_id: Uuid,
         owner_id: Uuid,
     ) -> Result<Vec<MailAttachment>> {
-        let rows = sqlx::query_as!(
-            MailAttachment,
+        let rows = sqlx::query_as::<_, MailAttachment>(
             r#"
             SELECT
                 a.id, a.tenant_id, a.message_id, a.file_id, a.filename, a.mime_type,
-                a.size_bytes, a.part_index, a.content_disposition, a.blob_key, a.created_at
+                a.size_bytes, a.part_index, a.content_disposition, a.content_id, a.blob_key, a.created_at
             FROM mail_attachments a
             JOIN mail_messages m ON m.id = a.message_id
             WHERE a.message_id = $1 AND m.tenant_id = $2 AND m.owner_id = $3
             ORDER BY a.filename
             "#,
-            message_id,
-            tenant_id,
-            owner_id
         )
+        .bind(message_id)
+        .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -729,6 +729,77 @@ impl MetadataStore {
             tenant_id,
             owner_id
         )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_mail_messages_page(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        search: Option<&str>,
+        cursor: Option<(DateTime<Utc>, Uuid)>,
+        limit: i64,
+    ) -> Result<Vec<MailMessage>> {
+        let (cursor_at, cursor_id) = cursor.unzip();
+        let rows = sqlx::query_as::<_, MailMessage>(
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                archive_job_id, deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+              AND source_mode <> 'draft'
+              AND ($3::text IS NULL OR subject ILIKE '%' || $3 || '%'
+                   OR from_address ILIKE '%' || $3 || '%'
+                   OR from_name ILIKE '%' || $3 || '%'
+                   OR to_addresses::text ILIKE '%' || $3 || '%')
+              AND ($4::timestamptz IS NULL OR (imported_at, id) < ($4, $5))
+            ORDER BY imported_at DESC, id DESC
+            LIMIT $6
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(search)
+        .bind(cursor_at)
+        .bind(cursor_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_mail_drafts(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        account_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<MailMessage>> {
+        let rows = sqlx::query_as::<_, MailMessage>(
+            r#"
+            SELECT
+                id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
+                to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
+                visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
+                archive_job_id, deleted_at, created_at, updated_at
+            FROM mail_messages
+            WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
+              AND source_mode = 'draft' AND deleted_at IS NULL
+            ORDER BY imported_at DESC, id DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(account_id)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -1214,6 +1285,7 @@ impl MetadataStore {
                 WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3
                   AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
+                LIMIT 50
                 "#,
                 tenant_id,
                 owner_id,
@@ -1238,6 +1310,7 @@ impl MetadataStore {
                 WHERE tenant_id = $1 AND owner_id = $2
                   AND source_mode = 'imap_selected' AND deleted_at IS NULL
                 ORDER BY created_at DESC
+                LIMIT 50
                 "#,
                 tenant_id,
                 owner_id
@@ -3950,6 +4023,83 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    /// Return queued objects whose grace period has elapsed.
+    ///
+    /// Content-addressed `blobs/<sha256>` keys stay queued but are never
+    /// returned: deleting them can race a concurrent writer until object
+    /// writers and GC share a cross-process lease, and returning them would
+    /// starve every other candidate behind a permanently skipped batch.
+    pub async fn list_ready_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
+        let keys = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT q.object_key
+            FROM object_gc_queue q
+            WHERE q.not_before <= NOW()
+              AND q.object_key !~ '^blobs/[0-9a-fA-F]{64}$'
+            ORDER BY q.not_before
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(keys)
+    }
+
+    /// Check every durable reference immediately before deleting an object.
+    pub async fn is_unreferenced_object_gc_candidate(&self, object_key: &str) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM object_gc_queue q
+                WHERE q.object_key = $1
+                  AND q.not_before <= NOW()
+                  AND NOT EXISTS (SELECT 1 FROM files f WHERE f.storage_key = q.object_key)
+                  AND NOT EXISTS (SELECT 1 FROM file_versions fv WHERE fv.storage_key = q.object_key)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_messages m
+                      WHERE m.blob_key = q.object_key OR m.object_key = q.object_key
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_message_parts p WHERE p.blob_key = q.object_key
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mail_attachments a WHERE a.blob_key = q.object_key
+                  )
+            )
+            "#,
+        )
+        .bind(object_key)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn remove_object_gc_candidate(&self, object_key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM object_gc_queue WHERE object_key = $1")
+            .bind(object_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Record the Bcc recipients of an outbound message on its local artifact.
+    /// The transmitted EML correctly omits the Bcc header, so the recipients
+    /// from the send request are stored here for the owner's own record.
+    pub async fn set_mail_message_bcc_addresses(
+        &self,
+        message_id: Uuid,
+        bcc_addresses: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query("UPDATE mail_messages SET bcc_addresses = $2 WHERE id = $1")
+            .bind(message_id)
+            .bind(bcc_addresses)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// Find all descendant folders of a given folder using recursive CTE

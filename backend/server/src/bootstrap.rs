@@ -581,6 +581,7 @@ pub async fn init_app() -> Result<AppState> {
     let retention_config = RetentionConfig::from_env();
     spawn_retention_cleanup_worker(
         Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
         retention_config,
         shutdown_tx.subscribe(),
     );

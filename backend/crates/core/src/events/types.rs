@@ -618,7 +618,6 @@ pub struct MailMessageSentPayload {
     pub to_count: usize,
     pub cc_count: usize,
     pub bcc_count: usize,
-    pub subject: String,
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ pub struct ParsedAttachment {
     pub mime_type: String,
     pub size_bytes: usize,
     pub content_disposition: Option<String>,
+    pub content_id: Option<String>,
     pub data: Vec<u8>,
 }
 
@@ -175,9 +176,19 @@ fn process_leaf_part(
     attachments: &mut Vec<ParsedAttachment>,
 ) -> Result<(), EmlParseError> {
     let cd = part.get_content_disposition();
+    let content_id = header_value(part, "Content-ID").map(trim_angle_brackets);
+    // A Content-ID alone does not make a part an attachment: multipart/related
+    // messages may mark the root body part with a `start` Content-ID. Treat a
+    // Content-ID part as an attachment only when it cannot fill the body slot
+    // for its MIME type; otherwise the message would import with no readable
+    // body and the body part would show up only as an attachment.
+    let mimetype = part.ctype.mimetype.as_str();
+    let body_slot_open = (mimetype == "text/plain" && body_text.is_none())
+        || (mimetype == "text/html" && body_html.is_none());
     let is_attachment = cd.disposition == DispositionType::Attachment
         || cd.params.contains_key("filename")
-        || part.ctype.params.contains_key("name");
+        || part.ctype.params.contains_key("name")
+        || (content_id.is_some() && !body_slot_open);
 
     if is_attachment {
         let filename = cd
@@ -194,6 +205,7 @@ fn process_leaf_part(
             mime_type: part.ctype.mimetype.clone(),
             size_bytes: data.len(),
             content_disposition,
+            content_id,
             data,
         });
         return Ok(());

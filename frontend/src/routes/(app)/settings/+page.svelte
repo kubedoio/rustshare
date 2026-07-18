@@ -108,13 +108,6 @@
 	let selectedMailAccountSmtp = $state<MailSmtpSettings | null>(null);
 	let testingImapId = $state<string | null>(null);
 	let testingSmtpId = $state<string | null>(null);
-	let folderMappingForm = $state({
-		inbox_folder: 'Inbox',
-		sent_folder: 'Sent',
-		archive_folder: 'Archive',
-		drafts_folder: 'Drafts',
-		trash_folder: 'Trash'
-	});
 
 	// IMAP Form
 	let imapForm = $state({
@@ -135,7 +128,7 @@
 		port: 587,
 		username: '',
 		password: '',
-		tls_mode: 'tls' as 'none' | 'starttls' | 'tls',
+		tls_mode: 'tls' as 'starttls' | 'tls',
 		from_address: '',
 		from_name: '',
 		reply_to: '',
@@ -182,18 +175,11 @@
 					username: smtp.username,
 					password: '',
 					tls_mode: smtp.tls_mode,
-					from_address: smtp.from_address,
+					from_address: account?.username ?? smtp.from_address,
 					from_name: smtp.from_name ?? '',
 					reply_to: smtp.reply_to ?? '',
 					sent_folder: smtp.sent_folder ?? '',
 					is_enabled: smtp.is_enabled
-				};
-				folderMappingForm = {
-					inbox_folder: 'Inbox',
-					sent_folder: smtp.sent_folder ?? 'Sent',
-					archive_folder: 'Archive',
-					drafts_folder: 'Drafts',
-					trash_folder: 'Trash'
 				};
 			} else {
 				smtpForm = {
@@ -202,18 +188,11 @@
 					username: '',
 					password: '',
 					tls_mode: 'tls',
-					from_address: '',
+					from_address: account?.username ?? '',
 					from_name: '',
 					reply_to: '',
 					sent_folder: '',
 					is_enabled: true
-				};
-				folderMappingForm = {
-					inbox_folder: 'Inbox',
-					sent_folder: 'Sent',
-					archive_folder: 'Archive',
-					drafts_folder: 'Drafts',
-					trash_folder: 'Trash'
 				};
 			}
 		} catch (err) {
@@ -372,7 +351,7 @@
 				username: '',
 				password: '',
 				tls_mode: 'tls',
-				from_address: '',
+				from_address: mailAccounts.find((account) => account.id === id)?.username ?? '',
 				from_name: '',
 				reply_to: '',
 				sent_folder: '',
@@ -1418,8 +1397,6 @@
 												bind:value={imapForm.tls_mode}
 											>
 												<option value="tls">TLS (SSL)</option>
-												<option value="starttls">STARTTLS</option>
-												<option value="none">Plain / None</option>
 											</select>
 										</div>
 									</div>
@@ -1563,8 +1540,6 @@
 												bind:value={imapForm.tls_mode}
 											>
 												<option value="tls">TLS (SSL)</option>
-												<option value="starttls">STARTTLS</option>
-												<option value="none">Plain / None</option>
 											</select>
 										</div>
 										<div class="form-control">
@@ -1673,7 +1648,6 @@
 												>
 													<option value="tls">TLS</option>
 													<option value="starttls">STARTTLS</option>
-													<option value="none">Plain / None</option>
 												</select>
 											</div>
 										</div>
@@ -1704,6 +1678,7 @@
 													class="input input-sm input-bordered bg-base-100"
 													placeholder="me@example.com"
 													bind:value={smtpForm.from_address}
+													readonly
 													required
 												/>
 											</div>
@@ -1780,29 +1755,6 @@
 											</button>
 										</div>
 									</form>
-								</SettingsSection>
-
-								<SettingsSection
-									title="Folder mapping"
-									description="Prepared defaults for upcoming Mail folder operations"
-								>
-									<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-										{#each [['Inbox folder', 'folder-inbox', folderMappingForm.inbox_folder], ['Sent folder', 'folder-sent', folderMappingForm.sent_folder], ['Archive folder', 'folder-archive', folderMappingForm.archive_folder], ['Drafts folder', 'folder-drafts', folderMappingForm.drafts_folder], ['Trash folder', 'folder-trash', folderMappingForm.trash_folder]] as [label, id, value]}
-											<div class="form-control">
-												<label class="label text-xs font-semibold" for={id}>{label}</label>
-												<input
-													{id}
-													class="input input-sm input-bordered bg-base-100"
-													{value}
-													disabled
-												/>
-											</div>
-										{/each}
-									</div>
-									<p class="text-xs text-base-content/50">
-										Folder mapping is prepared here for Mail operations; the live folder behavior
-										still comes from the Mail module and account settings.
-									</p>
 								</SettingsSection>
 
 								<SettingsSection

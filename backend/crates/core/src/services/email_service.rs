@@ -1,4 +1,4 @@
-use crate::validation::resolve_public_socket_addrs;
+use crate::validation::resolve_mail_server_socket_addrs;
 use lettre::{
     address::Envelope,
     message::{
@@ -13,7 +13,10 @@ use lettre::{
 };
 use rustshare_crypto::{decrypt_secret, SecretEncryptionKey};
 use sqlx::PgPool;
+use std::time::Duration;
 use thiserror::Error;
+
+const SMTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum EmailError {
@@ -252,8 +255,9 @@ impl EmailService {
         smtp: &crate::domain::MailSmtpSettings,
         email: OutboundMailMessage<'_>,
     ) -> Result<Vec<u8>, EmailError> {
+        let bcc = email.bcc;
         let msg = build_outbound_message(smtp, email, false)?;
-        Ok(msg.formatted())
+        insert_draft_bcc_header(msg.formatted(), bcc)
     }
 
     async fn load_config(&self) -> Result<SmtpConfigRow, EmailError> {
@@ -348,20 +352,16 @@ impl EmailService {
             }
         };
 
-        Ok(builder.build())
+        Ok(builder.timeout(Some(SMTP_TIMEOUT)).build())
     }
 }
 
 async fn validate_smtp_host(host: &str, port: u16) -> Result<String, EmailError> {
-    if cfg!(debug_assertions)
-        && std::env::var("RUSTSHARE_ALLOW_INTERNAL_SMTP_FOR_TESTS").as_deref() == Ok("true")
-    {
-        return Ok(host.to_string());
-    }
-
-    let addrs = resolve_public_socket_addrs(host, port).await.map_err(|e| {
-        EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
-    })?;
+    let addrs = resolve_mail_server_socket_addrs(host, port)
+        .await
+        .map_err(|e| {
+            EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
+        })?;
     addrs
         .first()
         .map(|addr| addr.ip().to_string())
@@ -386,6 +386,7 @@ fn build_outbound_message(
     let envelope_from = from_mailbox.email.clone();
     let mut builder = Message::builder()
         .from(from_mailbox.clone())
+        .message_id(None)
         .subject(email.subject);
 
     if let Some(ref reply_to_addr) = smtp.reply_to {
@@ -449,6 +450,32 @@ fn build_outbound_message(
         builder.multipart(multipart)
     }
     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))
+}
+
+fn insert_draft_bcc_header(raw: Vec<u8>, bcc: &[String]) -> Result<Vec<u8>, EmailError> {
+    if bcc.is_empty() {
+        return Ok(raw);
+    }
+    for recipient in bcc {
+        if recipient.contains(['\r', '\n']) {
+            return Err(EmailError::SmtpSendFailed(
+                "Invalid Bcc address header".to_string(),
+            ));
+        }
+        parse_mailbox(recipient)?;
+    }
+    let raw = String::from_utf8(raw)
+        .map_err(|e| EmailError::SmtpSendFailed(format!("Invalid message encoding: {e}")))?;
+    let header = format!("Bcc: {}\r\n", bcc.join(", "));
+    if let Some(index) = raw.find("\r\nSubject:") {
+        let insert_at = index + 2;
+        let mut out = String::with_capacity(raw.len() + header.len());
+        out.push_str(&raw[..insert_at]);
+        out.push_str(&header);
+        out.push_str(&raw[insert_at..]);
+        return Ok(out.into_bytes());
+    }
+    Ok(format!("{header}{raw}").into_bytes())
 }
 
 fn parse_mailbox(address: &str) -> Result<Mailbox, EmailError> {
@@ -540,11 +567,41 @@ mod tests {
 
         let raw = String::from_utf8(msg.formatted()).expect("message is utf8");
         assert!(!raw.contains("Bcc:"));
+        assert!(raw.contains("Message-ID:"));
         assert!(!raw.contains("blind@example.com"));
         assert!(msg.envelope().to().iter().any(|addr| {
             let value: &str = addr.as_ref();
             value == "blind@example.com"
         }));
+    }
+
+    #[test]
+    fn outbound_draft_message_preserves_bcc_header() {
+        let smtp = smtp_settings();
+        let bcc = ["blind@example.com".to_string()];
+        let to = ["to@example.com".to_string()];
+        let msg = build_outbound_message(
+            &smtp,
+            OutboundMailMessage {
+                recipients: &to,
+                cc: &[],
+                bcc: &bcc,
+                subject: "Draft",
+                body: "Body",
+                in_reply_to: None,
+                references: None,
+                attachments: vec![],
+            },
+            false,
+        )
+        .expect("message should build");
+
+        let raw = String::from_utf8(
+            insert_draft_bcc_header(msg.formatted(), &bcc).expect("Bcc header should insert"),
+        )
+        .expect("message is utf8");
+        assert!(raw.contains("Bcc: blind@example.com"));
+        assert_eq!(raw.matches("Bcc:").count(), 1);
     }
 
     #[tokio::test]

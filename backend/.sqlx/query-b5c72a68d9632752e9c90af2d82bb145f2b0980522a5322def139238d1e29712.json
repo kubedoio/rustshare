@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    source_uidvalidity,\n                    archive_since, archive_before, last_uid_validity, last_imported_uid,\n                    retention_days, retry_count, max_retries,\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3\n                  AND source_mode = 'imap_selected' AND deleted_at IS NULL\n                ORDER BY created_at DESC\n                ",
+  "query": "\n                SELECT\n                    id, tenant_id, owner_id, account_id, source_mode, folder_name,\n                    selected_uids AS \"selected_uids: _\",\n                    source_uidvalidity,\n                    archive_since, archive_before, last_uid_validity, last_imported_uid,\n                    retention_days, retry_count, max_retries,\n                    status, total_messages, processed_messages, failed_messages,\n                    last_error, started_at, completed_at, deleted_at, created_at, updated_at\n                FROM mail_import_jobs\n                WHERE tenant_id = $1 AND owner_id = $2 AND account_id = $3\n                  AND source_mode = 'imap_selected' AND deleted_at IS NULL\n                ORDER BY created_at DESC\n                LIMIT 50\n                ",
   "describe": {
     "columns": [
       {
@@ -164,5 +164,5 @@
       false
     ]
   },
-  "hash": "3ec961229714f37934f477d57de9825fed72ff1ec534a39bdc1ddf9dfdaeef27"
+  "hash": "b5c72a68d9632752e9c90af2d82bb145f2b0980522a5322def139238d1e29712"
 }

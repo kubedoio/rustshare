@@ -397,6 +397,10 @@ pub fn mail_routes() -> Router<AppState> {
             post(crate::handlers::mail::create_mail_import_job),
         )
         .route(
+            "/api/v1/mail/import-jobs",
+            get(crate::handlers::mail::list_mail_import_jobs),
+        )
+        .route(
             "/api/v1/mail/import-jobs/{id}",
             get(crate::handlers::mail::get_mail_import_job),
         )

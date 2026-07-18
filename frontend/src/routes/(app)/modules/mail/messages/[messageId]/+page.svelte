@@ -8,6 +8,7 @@
 		type MailLink,
 		type MailMessage,
 		type MailMessagePart,
+		type MailSmtpSettings,
 		type SaveDraftRequest
 	} from '$lib/api/mail';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
@@ -16,8 +17,11 @@
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
+	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
+	import { getModuleByKey } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { listAllFiles } from '$lib/api/files';
 	import {
 		ArrowLeft,
 		Download,
@@ -30,6 +34,7 @@
 	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
+	let mailEnabled = $derived(getModuleByKey('mail')?.enabled !== false);
 
 	const messageQuery = createQuery<MailMessage>({
 		queryKey: ['mail-message', null],
@@ -60,22 +65,22 @@
 		messageQuery.setOptions({
 			queryKey: ['mail-message', id],
 			queryFn: () => mailApi.getMessage(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		partsQuery.setOptions({
 			queryKey: ['mail-message-parts', id],
 			queryFn: () => mailApi.listParts(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		attachmentsQuery.setOptions({
 			queryKey: ['mail-message-attachments', id],
 			queryFn: () => mailApi.listAttachments(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 		linksQuery.setOptions({
 			queryKey: ['mail-message-links', id],
 			queryFn: () => mailApi.listLinks(messageId!),
-			enabled: !!messageId
+			enabled: mailEnabled && !!messageId
 		});
 	});
 
@@ -93,7 +98,18 @@
 	});
 
 	let previewAttachment = $state<MailAttachment | null>(null);
-	let linkTargetType = $state('file');
+	type MailLinkTargetType =
+		'file' | 'folder' | 'note' | 'meeting' | 'kanban_board' | 'kanban_card' | 'mail_message';
+	const linkTargetTypes: { value: MailLinkTargetType; label: string }[] = [
+		{ value: 'file', label: 'File' },
+		{ value: 'folder', label: 'Folder' },
+		{ value: 'note', label: 'Note' },
+		{ value: 'meeting', label: 'Meeting' },
+		{ value: 'kanban_board', label: 'Kanban board' },
+		{ value: 'kanban_card', label: 'Kanban card' },
+		{ value: 'mail_message', label: 'Mail message' }
+	];
+	let linkTargetType = $state<MailLinkTargetType>('file');
 	let linkTargetId = $state('');
 	let composeOpen = $state(false);
 	let composeTo = $state('');
@@ -103,10 +119,28 @@
 	let composeBody = $state('');
 	let composeAttachments = $state<string[]>([]);
 	let composeMode = $state<'new' | 'reply' | 'reply-all' | 'forward'>('new');
+	let composeDraftId = $state<string | null>(null);
+	let composeSaveError = $state('');
+	let smtpSettings = $state<MailSmtpSettings | null>(null);
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
+	});
+
+	const filesQuery = createQuery({
+		queryKey: ['mail-link-files'],
+		queryFn: () => listAllFiles()
+	});
+
+	$effect(() => {
+		const accountId = $messageQuery.data?.account_id ?? $accountsQuery.data?.[0]?.id;
+		smtpSettings = null;
+		if (!accountId) return;
+		mailApi
+			.getSmtpSettings(accountId)
+			.then((settings) => (smtpSettings = settings))
+			.catch(() => (smtpSettings = null));
 	});
 
 	const createLinkMutation = createMutation({
@@ -151,27 +185,57 @@
 				return mailApi.sendOutboundMail(accountId, input);
 			}
 		},
-		onSuccess: () => {
+		onSuccess: async (result) => {
 			composeOpen = false;
-			toastStore.show('Mail sent', 'success');
+			if (composeDraftId) {
+				const accountId = $messageQuery.data?.account_id || $accountsQuery.data?.[0]?.id;
+				const draftId = composeDraftId;
+				composeDraftId = null;
+				if (accountId) {
+					try {
+						await mailApi.discardDraft(accountId, draftId);
+					} catch {
+						toastStore.show('Sent, but the saved draft could not be removed', 'info');
+					}
+				}
+			}
+			toastStore.show(
+				!result.stored
+					? 'Mail sent, but the RustShare copy could not be saved'
+					: result.append_failed
+						? 'Mail sent, but not saved to the Sent folder'
+						: 'Mail sent',
+				!result.stored || result.append_failed ? 'info' : 'success'
+			);
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
 	});
 
 	const saveDraftMutation = createMutation({
-		mutationFn: async (input: SaveDraftRequest) => {
-			const message = $messageQuery.data;
-			const accountId = message?.account_id || $accountsQuery.data?.[0]?.id;
+		mutationFn: async ({
+			message,
+			draftId
+		}: {
+			message: SaveDraftRequest;
+			draftId: string | null;
+		}) => {
+			const current = $messageQuery.data;
+			const accountId = current?.account_id || $accountsQuery.data?.[0]?.id;
 			if (!accountId) throw new Error('No mail account configured to save a draft.');
-			return mailApi.saveDraft(accountId, input);
+			return draftId
+				? mailApi.updateDraft(accountId, draftId, message)
+				: mailApi.saveDraft(accountId, message);
 		},
-		onSuccess: () => {
-			composeOpen = false;
+		onSuccess: (draft) => {
+			composeDraftId = draft.id;
+			composeSaveError = '';
 			toastStore.show('Draft saved', 'success');
 		},
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Draft save failed', 'error')
+		onError: (error) => {
+			composeSaveError = error instanceof Error ? error.message : 'Draft save failed';
+			toastStore.show(composeSaveError, 'error');
+		}
 	});
 
 	function formatAddresses(value: unknown): string {
@@ -188,36 +252,50 @@
 		return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value : `${prefix} ${value}`;
 	}
 
-	function openReply(message: MailMessage) {
+	async function openReply(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
 		composeMode = 'reply';
+		composeDraftId = null;
+		composeSaveError = '';
 		composeTo = message.from_address ?? '';
 		composeCc = '';
 		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
-		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
 	}
 
-	function openReplyAll(message: MailMessage) {
+	async function openReplyAll(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
+		const account = ($accountsQuery.data ?? []).find((item) => item.id === message.account_id);
+		const excluded = account?.username ? [account.username] : [];
+		const to = uniqueMailAddresses(
+			[message.from_address ?? '', ...addressStrings(message.to_addresses)],
+			excluded
+		);
+		const cc = uniqueMailAddresses(addressStrings(message.cc_addresses), [...excluded, ...to]);
 		composeMode = 'reply-all';
-		composeTo = [message.from_address, ...addressStrings(message.to_addresses)]
-			.filter(Boolean)
-			.join(', ');
-		composeCc = formatAddresses(message.cc_addresses);
+		composeDraftId = null;
+		composeSaveError = '';
+		composeTo = to.join(', ');
+		composeCc = cc.join(', ');
 		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
-		}, ${message.from_name || message.from_address || 'sender'} wrote:\n> `;
+		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
 	}
 
-	function openForward(message: MailMessage) {
+	async function openForward(message: MailMessage) {
+		const original = mailBodyText(await bodyContent);
 		composeMode = 'forward';
+		composeDraftId = null;
+		composeSaveError = '';
 		composeTo = '';
 		composeCc = '';
 		composeBcc = '';
@@ -226,17 +304,25 @@
 			[message.from_name, message.from_address].filter(Boolean)
 		)}\nDate: ${
 			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
-		}\nSubject: ${message.subject || '(no subject)'}\n`;
+		}\nSubject: ${message.subject || '(no subject)'}\n\n${original}`;
 
-		// Copy attachments if any
-		const attachments = $attachmentsQuery.data ?? [];
+		// Copy attachments if any; await the query so early clicks cannot drop them
+		const attachments = (await $attachmentsQuery.refetch()).data ?? [];
 		composeAttachments = attachments.map((a) => a.file_id).filter((id): id is string => !!id);
+		if (composeAttachments.length !== attachments.length) {
+			toastStore.show('Some attachments are unavailable and were not added to the forward', 'info');
+		}
 
 		composeOpen = true;
 	}
 </script>
 
-{#if $messageQuery.isLoading || $partsQuery.isLoading}
+{#if !mailEnabled}
+	<ErrorState
+		title="Mail is disabled"
+		message="Enable the Mail module before opening imported messages."
+	/>
+{:else if $messageQuery.isLoading || $partsQuery.isLoading}
 	<ModulePageSkeleton />
 {:else if $messageQuery.isError}
 	<ErrorState
@@ -353,27 +439,36 @@
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
 				<h3 class="mb-3 flex items-center gap-2 font-semibold"><Link2 size={16} /> Links</h3>
 				<form
-					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[160px_minmax(0,1fr)_auto]"
+					class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto]"
 					onsubmit={(event) => {
 						event.preventDefault();
 						createLinkMutation.mutate();
 					}}
 				>
-					<select class="select select-sm select-bordered" bind:value={linkTargetType}>
-						<option value="file">File</option>
-						<option value="folder">Folder</option>
-						<option value="note">Note</option>
-						<option value="kanban_card">Kanban card</option>
-						<option value="kanban_board">Kanban board</option>
-						<option value="meeting">Meeting</option>
-						<option value="mail_message">Mail message</option>
+					<select
+						class="select select-sm select-bordered"
+						bind:value={linkTargetType}
+						onchange={() => (linkTargetId = '')}
+					>
+						{#each linkTargetTypes as targetType}
+							<option value={targetType.value}>{targetType.label}</option>
+						{/each}
 					</select>
-					<input
-						class="input input-sm input-bordered"
-						placeholder="Target object ID"
-						bind:value={linkTargetId}
-						required
-					/>
+					{#if linkTargetType === 'file'}
+						<select class="select select-sm select-bordered" bind:value={linkTargetId} required>
+							<option value="">Select a file</option>
+							{#each $filesQuery.data ?? [] as file}
+								<option value={file.id}>{file.name}</option>
+							{/each}
+						</select>
+					{:else}
+						<input
+							class="input input-sm input-bordered"
+							bind:value={linkTargetId}
+							placeholder="Artifact UUID"
+							required
+						/>
+					{/if}
 					<button
 						class="btn btn-sm btn-primary"
 						type="submit"
@@ -399,7 +494,13 @@
 								class="flex items-center justify-between gap-3 rounded-lg border border-base-300 p-3"
 							>
 								<div class="min-w-0">
-									<div class="text-sm font-medium">{link.target_type}</div>
+									<div class="text-sm font-medium">
+										{link.target_type === 'file'
+											? (($filesQuery.data ?? []).find((file) => file.id === link.target_id)
+													?.name ?? 'Linked file')
+											: (linkTargetTypes.find((type) => type.value === link.target_type)?.label ??
+												link.target_type)}
+									</div>
 									<div class="truncate font-mono text-xs text-base-content/60">
 										{link.target_id}
 									</div>
@@ -435,6 +536,7 @@
 
 	<MailComposeModal
 		open={composeOpen}
+		draftId={composeDraftId}
 		initialTo={composeTo}
 		initialCc={composeCc}
 		initialBcc={composeBcc}
@@ -445,8 +547,11 @@
 		mode={composeMode}
 		sending={$sendMutation.isPending}
 		saving={$saveDraftMutation.isPending}
+		hasSmtp={!!smtpSettings && smtpSettings.is_enabled}
+		saveError={composeSaveError}
 		onClose={() => (composeOpen = false)}
 		onSend={(message) => sendMutation.mutate(message)}
-		onSave={(message) => saveDraftMutation.mutate(message)}
+		onSave={(message, draftId) =>
+			saveDraftMutation.mutateAsync({ message, draftId }).then(() => undefined)}
 	/>
 {/if}

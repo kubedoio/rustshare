@@ -52,15 +52,18 @@ describe('MailComposeModal', () => {
 		);
 
 		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
-		expect(onSend).toHaveBeenCalledWith({
-			to: ['bob@example.com'],
-			cc: [],
-			bcc: [],
-			subject: 'Hello',
-			body: 'Hi Bob',
-			attachments: [],
-			in_reply_to_msg_id: null
-		});
+		expect(onSend).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: ['bob@example.com'],
+				cc: [],
+				bcc: [],
+				subject: 'Hello',
+				body: 'Hi Bob',
+				attachments: [],
+				in_reply_to_msg_id: null,
+				idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/)
+			})
+		);
 	});
 
 	it('shows draft-edit actions for an existing draft', async () => {
@@ -82,6 +85,10 @@ describe('MailComposeModal', () => {
 		expect(await screen.findByRole('button', { name: /discard/i })).toBeTruthy();
 		await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 		expect(screen.getByText('Saved draft')).toBeTruthy();
+		vi.stubGlobal(
+			'confirm',
+			vi.fn(() => true)
+		);
 		await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
 		await waitFor(() => {
 			expect(onDiscard).toHaveBeenCalledWith('draft-1');

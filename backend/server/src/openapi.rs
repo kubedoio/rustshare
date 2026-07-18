@@ -202,6 +202,7 @@ use utoipa::OpenApi;
         crate::handlers::mail::get_mail_account,
         crate::handlers::mail::get_mail_archive_job,
         crate::handlers::mail::get_mail_import_job,
+        crate::handlers::mail::list_mail_import_jobs,
         crate::handlers::mail::get_draft_handler,
         crate::handlers::mail::get_mail_message,
         crate::handlers::mail::mark_mail_message_read,

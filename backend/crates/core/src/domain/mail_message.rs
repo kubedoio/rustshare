@@ -178,6 +178,7 @@ pub struct MailAttachment {
     pub size_bytes: Option<i64>,
     pub part_index: Option<i32>,
     pub content_disposition: Option<String>,
+    pub content_id: Option<String>,
     pub blob_key: Option<String>,
     pub created_at: DateTime<Utc>,
 }

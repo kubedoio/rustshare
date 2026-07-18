@@ -52,7 +52,7 @@
 		saveError?: string;
 		onClose: () => void;
 		onSend: (message: SendOutboundMailRequest) => void;
-		onSave: (message: SaveDraftRequest, draftId: string | null) => void;
+		onSave: (message: SaveDraftRequest, draftId: string | null) => void | Promise<void>;
 		onDiscard?: (draftId: string) => void;
 	} = $props();
 
@@ -70,6 +70,7 @@
 	let lastOpen = $state(false);
 	let saved = $state(false);
 	let baseline = $state('');
+	let idempotencyKey = $state('');
 
 	onMount(async () => {
 		try {
@@ -81,6 +82,7 @@
 
 	$effect(() => {
 		if (open && !lastOpen) {
+			idempotencyKey = crypto.randomUUID();
 			draft = {
 				to: initialTo,
 				cc: initialCc,
@@ -121,7 +123,7 @@
 			.filter(Boolean);
 	}
 
-	function payload(): SendOutboundMailRequest {
+	function draftPayload(): SaveDraftRequest {
 		return {
 			to: splitAddresses(draft.to),
 			cc: splitAddresses(draft.cc),
@@ -129,18 +131,25 @@
 			subject: draft.subject.trim(),
 			body: draft.body,
 			attachments: draft.attachments,
-			in_reply_to_msg_id: inReplyToMsgId
+			// Forward drafts must not persist the original as in_reply_to: the
+			// send path would then emit In-Reply-To/References and thread the
+			// forward as a reply in recipients' clients.
+			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId
 		};
 	}
 
 	function handleSubmit() {
-		onSend(payload());
+		onSend({ ...draftPayload(), idempotency_key: idempotencyKey });
 	}
 
-	function handleSave() {
-		onSave(payload(), draftId);
-		saved = true;
-		baseline = JSON.stringify(draft);
+	async function handleSave() {
+		try {
+			await onSave(draftPayload(), draftId);
+			saved = true;
+			baseline = JSON.stringify(draft);
+		} catch {
+			// Save failed; the parent surfaces the error and the draft stays unsaved.
+		}
 	}
 
 	function handleClose() {
@@ -282,7 +291,9 @@
 								type="button"
 								class="btn btn-error btn-outline gap-2"
 								disabled={discarding || sending || saving}
-								onclick={() => onDiscard?.(draftId)}
+								onclick={() => {
+									if (confirm('Discard this draft permanently?')) onDiscard?.(draftId);
+								}}
 							>
 								<Trash2 size={16} />
 								{discarding ? 'Discarding...' : 'Discard'}

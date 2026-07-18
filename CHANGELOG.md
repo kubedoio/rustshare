@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added RustShare Mail Phase 4: archive jobs. Users can create folder/date-range IMAP archive jobs that incrementally copy messages into RustShare, resume from the last imported UID, apply optional retention soft-deletion, and retry failed runs with exponential backoff. Includes audit events and REST endpoints under `/api/v1/mail/accounts/{id}/archive-jobs` and `/api/v1/mail/archive-jobs/{id}`. Refs #147.
 - Added RustShare Mail Phase 5 WebUI client. Users can manage IMAP accounts, browse folders and message summaries, queue selected imports, view archive/import status, read imported mail with sanitized HTML, inspect attachments, and manage links to RustShare objects.
 
+### Changed
+
+- Hardened RustShare Mail daily-use workflows with idempotent outbound sends, account-bound sender identities, SMTP timeouts, durable import status, bounded classic search, IMAP special-use folders, modified UTF-7 labels, inline-image rendering, explicit partial-send warnings, safer draft replacement/cleanup, and reference-aware object cleanup queueing.
+- Fixed RustShare Mail mailbox action gating so read/unread, archive, and trash buttons each key on their own folder availability, blocked scheme-relative and uppercase-scheme remote images in sanitized HTML, and kept deferred content-addressed blob keys from starving the object cleanup queue.
+- Polished RustShare Mail release readiness: the local copy of sent mail now retains its Bcc recipients, reply headers emit RFC 5322 angle-bracketed message ids, mail view events no longer fail reads, import-job listings are bounded, the message-page composer tracks drafts end-to-end (update on re-save, discard after send, SMTP guard, forward attachment race), saving a draft reflects the real save result, the dead folder-mapping settings section and unreachable IMAP TLS options were removed, and the published OpenAPI contract was refreshed with a CI freshness check.
+- Hardened RustShare Mail outbound safety: plaintext SMTP modes persisted before the ban are now rejected at send and test time, and send idempotency claims left pending by a crashed send are reclaimed after ten minutes so retries with the same key are never blocked forever. Fixed the integration-test environment-variable toggle so concurrent plaintext-SMTP tests no longer race and unset the override mid-send.
+- Fixed a rustls 0.23 startup panic that blocked Gmail/real-provider IMAP and SMTP tests: the server now explicitly installs the `aws-lc-rs` CryptoProvider before any TLS handshake.
+- Added an operator opt-in (`RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS=true`) for self-hosted or air-gapped deployments to use internal/private IMAP and SMTP servers; `localhost` remains rejected for SSRF safety.
+
 ## [0.6.0] - 2026-06-29
 
 ### Added
