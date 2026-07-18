@@ -1946,6 +1946,8 @@ pub struct SendOutboundMailRequest {
     pub subject: String,
     pub body: String,
     #[serde(default)]
+    pub body_html: Option<String>,
+    #[serde(default)]
     pub attachments: Vec<Uuid>,
     pub in_reply_to_msg_id: Option<Uuid>,
     pub idempotency_key: Option<Uuid>,
@@ -2201,6 +2203,7 @@ pub async fn send_outbound_mail_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
             false,
@@ -2241,6 +2244,7 @@ pub async fn reply_mail_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
             false,
@@ -2288,6 +2292,7 @@ pub async fn reply_all_mail_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
             false,
@@ -2328,6 +2333,7 @@ pub async fn forward_mail_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             None,
             true,
@@ -2347,6 +2353,8 @@ pub struct SaveDraftRequest {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub body_html: Option<String>,
     #[serde(default)]
     pub attachments: Vec<Uuid>,
     pub in_reply_to_msg_id: Option<Uuid>,
@@ -2381,6 +2389,7 @@ pub async fn create_draft_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
         )
@@ -2417,6 +2426,7 @@ pub async fn update_draft_handler(
             req.bcc,
             req.subject,
             req.body,
+            req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
         )
@@ -2525,6 +2535,7 @@ mod tests {
             ],
             subject: "Re: hello".to_string(),
             body: "hello".to_string(),
+            body_html: None,
             attachments: Vec::new(),
             in_reply_to_msg_id: None,
             idempotency_key: None,

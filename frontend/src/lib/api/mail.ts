@@ -211,6 +211,8 @@ export interface SendOutboundMailRequest {
 	bcc?: string[];
 	subject: string;
 	body: string;
+	/** Sanitized HTML alternative for the body, generated from the rich-text editor. */
+	body_html?: string | null;
 	attachments?: string[];
 	in_reply_to_msg_id?: string | null;
 	idempotency_key?: string;

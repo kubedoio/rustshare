@@ -747,7 +747,7 @@ impl MetadataStore {
             r#"
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
-                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 archive_job_id, deleted_at, created_at, updated_at
@@ -785,7 +785,7 @@ impl MetadataStore {
             r#"
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
-                message_id, in_reply_to, reference_ids AS references, subject, from_address, from_name,
+                message_id, in_reply_to, reference_ids, subject, from_address, from_name,
                 to_addresses, cc_addresses, bcc_addresses, sent_at, imported_at, imported_by,
                 visibility, folder_id, object_key, blob_key, blob_sha256, size_bytes, has_attachments,
                 archive_job_id, deleted_at, created_at, updated_at

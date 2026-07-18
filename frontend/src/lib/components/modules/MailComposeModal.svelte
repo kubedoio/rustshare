@@ -4,6 +4,9 @@
 	import type { SaveDraftRequest, SendOutboundMailRequest } from '$lib/api/mail';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File as WorkspaceFile } from '$lib/api/types';
+	import MailBodyEditor from '$lib/components/modules/mail/MailBodyEditor.svelte';
+	import { markdownToHtml } from '$lib/editor/adapter/markdown';
+	import { sanitizeHtml } from '$lib/editor/adapter/security';
 
 	type Draft = {
 		to: string;
@@ -71,6 +74,8 @@
 	let saved = $state(false);
 	let baseline = $state('');
 	let idempotencyKey = $state('');
+	let showCc = $state(false);
+	let showBcc = $state(false);
 
 	onMount(async () => {
 		try {
@@ -91,6 +96,8 @@
 				body: initialBody,
 				attachments: [...initialAttachments]
 			};
+			showCc = initialCc.trim().length > 0;
+			showBcc = initialBcc.trim().length > 0;
 			saved = false;
 			baseline = JSON.stringify(draft);
 		}
@@ -123,6 +130,14 @@
 			.filter(Boolean);
 	}
 
+	/** Render the Markdown body to sanitized HTML for the multipart/alternative part. */
+	function bodyHtml(): string | null {
+		if (!draft.body.trim()) return null;
+		const rendered = markdownToHtml(draft.body);
+		if (!rendered.success || !rendered.html.trim()) return null;
+		return sanitizeHtml(rendered.html);
+	}
+
 	function draftPayload(): SaveDraftRequest {
 		return {
 			to: splitAddresses(draft.to),
@@ -130,6 +145,7 @@
 			bcc: splitAddresses(draft.bcc),
 			subject: draft.subject.trim(),
 			body: draft.body,
+			body_html: bodyHtml(),
 			attachments: draft.attachments,
 			// Forward drafts must not persist the original as in_reply_to: the
 			// send path would then emit In-Reply-To/References and thread the
@@ -139,6 +155,7 @@
 	}
 
 	function handleSubmit() {
+		if (!draft.body.trim()) return;
 		onSend({ ...draftPayload(), idempotency_key: idempotencyKey });
 	}
 
@@ -211,28 +228,53 @@
 								aria-label="To"
 								bind:value={draft.to}
 								required
+								autofocus
 							/>
+							<span class="flex shrink-0 gap-1">
+								{#if !showCc}
+									<button
+										type="button"
+										class="rounded px-1.5 py-0.5 text-xs text-base-content/50 hover:bg-base-200 hover:text-base-content"
+										onclick={() => (showCc = true)}
+									>
+										Cc
+									</button>
+								{/if}
+								{#if !showBcc}
+									<button
+										type="button"
+										class="rounded px-1.5 py-0.5 text-xs text-base-content/50 hover:bg-base-200 hover:text-base-content"
+										onclick={() => (showBcc = true)}
+									>
+										Bcc
+									</button>
+								{/if}
+							</span>
 						</div>
-						<div class="flex items-center gap-3 px-4">
-							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Cc</span>
-							<input
-								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
-								type="text"
-								placeholder="Cc"
-								aria-label="Cc"
-								bind:value={draft.cc}
-							/>
-						</div>
-						<div class="flex items-center gap-3 px-4">
-							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Bcc</span>
-							<input
-								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
-								type="text"
-								placeholder="Bcc"
-								aria-label="Bcc"
-								bind:value={draft.bcc}
-							/>
-						</div>
+						{#if showCc}
+							<div class="flex items-center gap-3 px-4">
+								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Cc</span>
+								<input
+									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									type="text"
+									placeholder="Cc"
+									aria-label="Cc"
+									bind:value={draft.cc}
+								/>
+							</div>
+						{/if}
+						{#if showBcc}
+							<div class="flex items-center gap-3 px-4">
+								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Bcc</span>
+								<input
+									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									type="text"
+									placeholder="Bcc"
+									aria-label="Bcc"
+									bind:value={draft.bcc}
+								/>
+							</div>
+						{/if}
 						<div class="flex items-center gap-3 px-4">
 							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">
 								Subject
@@ -294,12 +336,13 @@
 						</div>
 					</div>
 
-					<textarea
-						class="textarea min-h-56 w-full resize-y rounded-none border-0 px-4 py-3 text-sm focus:outline-none"
-						placeholder="Message"
-						aria-label="Message body"
-						bind:value={draft.body}
-						required></textarea>
+					<div class="px-4 py-3">
+						<MailBodyEditor
+							content={draft.body}
+							placeholder="Message"
+							onChange={(markdown) => (draft.body = markdown)}
+						/>
+					</div>
 
 					<!-- Status + actions -->
 					<div

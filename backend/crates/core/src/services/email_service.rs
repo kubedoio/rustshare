@@ -58,6 +58,7 @@ pub struct OutboundMailMessage<'a> {
     pub bcc: &'a [String],
     pub subject: &'a str,
     pub body: &'a str,
+    pub body_html: Option<&'a str>,
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<SmtpAttachment>,
@@ -455,12 +456,16 @@ fn build_outbound_message(
         builder = builder.envelope(envelope);
     }
 
-    let alternative = MultiPart::alternative()
-        .singlepart(SinglePart::plain(email.body.to_string()))
-        .singlepart(SinglePart::html(format!(
+    let html_part = match email.body_html {
+        Some(html) if !html.trim().is_empty() => SinglePart::html(html.to_string()),
+        _ => SinglePart::html(format!(
             "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
             html_escape(email.body)
-        )));
+        )),
+    };
+    let alternative = MultiPart::alternative()
+        .singlepart(SinglePart::plain(email.body.to_string()))
+        .singlepart(html_part);
 
     if email.attachments.is_empty() {
         builder.multipart(alternative)
@@ -586,6 +591,7 @@ mod tests {
                 bcc: &bcc,
                 subject: "Subject",
                 body: "Body",
+                body_html: None,
                 in_reply_to: None,
                 references: None,
                 attachments: vec![],
@@ -616,6 +622,7 @@ mod tests {
                 bcc: &bcc,
                 subject: "Draft",
                 body: "Body",
+                body_html: None,
                 in_reply_to: None,
                 references: None,
                 attachments: vec![],
@@ -630,6 +637,31 @@ mod tests {
         .expect("message is utf8");
         assert!(raw.contains("Bcc: blind@example.com"));
         assert_eq!(raw.matches("Bcc:").count(), 1);
+    }
+
+    #[test]
+    fn outbound_message_uses_provided_html_body() {
+        let smtp = smtp_settings();
+        let to = ["to@example.com".to_string()];
+        let msg = build_outbound_smtp_message(
+            &smtp,
+            OutboundMailMessage {
+                recipients: &to,
+                cc: &[],
+                bcc: &[],
+                subject: "Rich",
+                body: "Hello World",
+                body_html: Some("<p>Hello <b>World</b></p>"),
+                in_reply_to: None,
+                references: None,
+                attachments: vec![],
+            },
+        )
+        .expect("message should build");
+
+        let raw = String::from_utf8(msg.formatted()).expect("message is utf8");
+        assert!(raw.contains("<p>Hello <b>World</b></p>"));
+        assert!(!raw.contains("<pre style=\"white-space:pre-wrap"));
     }
 
     #[tokio::test]

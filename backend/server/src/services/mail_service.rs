@@ -2860,6 +2860,7 @@ impl MailService {
                     bcc: &[],
                     subject: "SMTP Connection Test",
                     body: "This is a test message to verify your SMTP settings.",
+                    body_html: None,
                     in_reply_to: None,
                     references: None,
                     attachments: vec![],
@@ -2897,6 +2898,7 @@ impl MailService {
         bcc: Vec<String>,
         subject: String,
         body: String,
+        body_html: Option<String>,
         attachment_ids: Vec<Uuid>,
         in_reply_to_msg_id: Option<Uuid>,
         is_forward: bool,
@@ -3007,6 +3009,7 @@ impl MailService {
             bcc: &bcc,
             subject: &subject,
             body: &body,
+            body_html: body_html.as_deref(),
             in_reply_to,
             references,
             attachments: smtp_attachments,
@@ -3300,6 +3303,7 @@ impl MailService {
         bcc: Vec<String>,
         subject: String,
         body: String,
+        body_html: Option<String>,
         attachment_ids: Vec<Uuid>,
         in_reply_to_msg_id: Option<Uuid>,
     ) -> Result<MailMessage, MailError> {
@@ -3346,6 +3350,7 @@ impl MailService {
             bcc: &bcc,
             subject: &subject,
             body: &body,
+            body_html: body_html.as_deref(),
             in_reply_to: None,
             references: None,
             attachments: Vec::new(),
@@ -3538,6 +3543,17 @@ impl MailService {
         let body = String::from_utf8(body_bytes.to_vec())
             .map_err(|e| MailError::InvalidSource(format!("Invalid draft body encoding: {e}")))?;
 
+        let mut body_html = None;
+        if let Some(html_part) = parts
+            .iter()
+            .find(|p| p.content_type.starts_with("text/html"))
+        {
+            let (_, html_bytes) = self
+                .get_message_part(tenant_id, owner_id, draft_id, html_part.id)
+                .await?;
+            body_html = Some(String::from_utf8_lossy(&html_bytes).into_owned());
+        }
+
         let attachments = self
             .metadata_store
             .list_mail_attachments_by_message_id(draft_id, tenant_id, owner_id)
@@ -3560,6 +3576,7 @@ impl MailService {
                 bcc,
                 subject,
                 body,
+                body_html,
                 attachment_ids,
                 draft
                     .in_reply_to

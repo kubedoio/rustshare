@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IMAP and SMTP connections to internal/private mail servers (opted in via `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS=true`) now accept invalid or hostname-mismatched TLS certificates by default, since internal servers are commonly self-signed or reached by IP address. Public destinations always keep full verification, and `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS=never` restores strict verification for internal servers.
 - Fixed IMAP message listing against servers that return raw UTF-8 in ENVELOPE responses (e.g. Stalwart with UTF8=ACCEPT): message summaries are now fetched via `BODY.PEEK[HEADER]` and parsed with mailparse, which handles both RFC 2047 encoded-words and raw UTF-8.
 - The compose dialog was rebuilt to match the mail workspace: compact labeled To/Cc/Bcc/Subject rows, an inline attachment strip, and a compact action footer. Forwards no longer emit `In-Reply-To`/`References` headers, and forward drafts no longer persist the original message as a reply target, so forwarded mail starts a fresh thread in recipients' clients.
+- Compose now has a rich-text body editor (the same TipTap stack as the note editor) with a compact formatting toolbar; Cc/Bcc fields reveal on demand. Outbound mail and drafts carry a real `text/html` alternative part rendered from sanitized Markdown, so sent mail renders as formatted HTML in recipients' clients instead of wrapped plain text.
+- Fixed imported mail and draft listings returning 500: the `mail_messages.reference_ids` column aliasing broke the runtime row mapping in the paginated message and draft queries after a struct rename, which also made imported mail invisible in the workspace.
 
 ## [0.6.0] - 2026-06-29
 

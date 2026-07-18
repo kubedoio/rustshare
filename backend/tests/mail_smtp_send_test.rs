@@ -275,6 +275,7 @@ async fn test_outbound_mail_send_flow() {
             vec![],
             "Test Subject".to_string(),
             "Test body content".to_string(),
+            None,
             vec![Uuid::new_v4()],
             None,
             false,
@@ -300,6 +301,7 @@ async fn test_outbound_mail_send_flow() {
             vec![],
             "Test Subject".to_string(),
             "Test body content".to_string(),
+            None,
             vec![], // No attachments
             None,   // Not a reply
             false,
@@ -317,6 +319,7 @@ async fn test_outbound_mail_send_flow() {
             vec![],
             "Test Subject".to_string(),
             "Test body content".to_string(),
+            None,
             vec![],
             None,
             false,
@@ -445,6 +448,7 @@ async fn stale_pending_send_claim_is_reclaimed() {
             vec![],
             "Reclaimed Subject".to_string(),
             "Body".to_string(),
+            None,
             vec![],
             None,
             false,

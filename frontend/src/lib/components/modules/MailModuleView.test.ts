@@ -330,17 +330,20 @@ describe('MailModuleView workspace', () => {
 		await fireEvent.input(screen.getByPlaceholderText('Subject'), {
 			target: { value: 'Hello' }
 		});
-		await fireEvent.input(screen.getByPlaceholderText('Message'), {
-			target: { value: 'Hi Bob' }
-		});
-		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
+		// The body is a rich-text (ProseMirror) editor; seed its DOM and let the
+		// editor's mutation observer sync it back to the draft.
+		const editorEl = document.querySelector('.ProseMirror') as HTMLElement;
+		editorEl.innerHTML = '<p>Hi Bob</p>';
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await fireEvent.submit(document.querySelector('.mail-body-editor')!.closest('form')!);
 
 		await waitFor(() => {
 			expect(mocks.sendOutboundMail.mock.calls[0][1]).toEqual(
 				expect.objectContaining({
 					to: ['bob@example.com'],
 					subject: 'Hello',
-					body: 'Hi Bob'
+					body: 'Hi Bob',
+					body_html: '<p>Hi Bob</p>'
 				})
 			);
 		});
@@ -364,7 +367,9 @@ describe('MailModuleView workspace', () => {
 		await fireEvent.click(await screen.findByText('Draft subject'));
 		await screen.findByDisplayValue('Draft subject');
 
-		await fireEvent.submit(screen.getByPlaceholderText('Message').closest('form')!);
+		await fireEvent.submit(
+			screen.getByRole('button', { name: 'Send' }).closest('form')!
+		);
 
 		await waitFor(() => {
 			expect(mocks.updateDraft).toHaveBeenCalledWith(
