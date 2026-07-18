@@ -2967,28 +2967,33 @@ impl MailService {
 
         let mut in_reply_to = None;
         let mut references = None;
-        if let Some(reply_to_id) = in_reply_to_msg_id {
-            if let Some(orig_msg) = self
-                .metadata_store
-                .find_mail_message_by_id(reply_to_id)
-                .await
-                .map_err(|e| MailError::Database(e.to_string()))?
-            {
-                if orig_msg.tenant_id != tenant_id || orig_msg.owner_id != owner_id {
-                    return Err(MailError::PermissionDenied);
-                }
-
-                if let Some(ref msg_id) = orig_msg.message_id {
-                    in_reply_to = Some(bracket_message_id(msg_id));
-                    let mut refs = Vec::new();
-                    if let Some(ref orig_refs) = orig_msg.references {
-                        refs.extend(orig_refs.iter().map(|r| bracket_message_id(r)));
+        // Replies thread via In-Reply-To/References. Forwards deliberately do
+        // not: they start a fresh thread, and reply headers would make them
+        // appear as replies in recipients' mail clients.
+        if !is_forward {
+            if let Some(reply_to_id) = in_reply_to_msg_id {
+                if let Some(orig_msg) = self
+                    .metadata_store
+                    .find_mail_message_by_id(reply_to_id)
+                    .await
+                    .map_err(|e| MailError::Database(e.to_string()))?
+                {
+                    if orig_msg.tenant_id != tenant_id || orig_msg.owner_id != owner_id {
+                        return Err(MailError::PermissionDenied);
                     }
-                    refs.push(bracket_message_id(msg_id));
-                    references = Some(refs.join(" "));
+
+                    if let Some(ref msg_id) = orig_msg.message_id {
+                        in_reply_to = Some(bracket_message_id(msg_id));
+                        let mut refs = Vec::new();
+                        if let Some(ref orig_refs) = orig_msg.references {
+                            refs.extend(orig_refs.iter().map(|r| bracket_message_id(r)));
+                        }
+                        refs.push(bracket_message_id(msg_id));
+                        references = Some(refs.join(" "));
+                    }
+                } else {
+                    return Err(MailError::NotFound(reply_to_id));
                 }
-            } else {
-                return Err(MailError::NotFound(reply_to_id));
             }
         }
 
