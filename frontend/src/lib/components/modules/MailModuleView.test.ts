@@ -367,9 +367,7 @@ describe('MailModuleView workspace', () => {
 		await fireEvent.click(await screen.findByText('Draft subject'));
 		await screen.findByDisplayValue('Draft subject');
 
-		await fireEvent.submit(
-			screen.getByRole('button', { name: 'Send' }).closest('form')!
-		);
+		await fireEvent.submit(screen.getByRole('button', { name: 'Send' }).closest('form')!);
 
 		await waitFor(() => {
 			expect(mocks.updateDraft).toHaveBeenCalledWith(
