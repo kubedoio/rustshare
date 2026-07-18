@@ -131,7 +131,10 @@
 			subject: draft.subject.trim(),
 			body: draft.body,
 			attachments: draft.attachments,
-			in_reply_to_msg_id: inReplyToMsgId
+			// Forward drafts must not persist the original as in_reply_to: the
+			// send path would then emit In-Reply-To/References and thread the
+			// forward as a reply in recipients' clients.
+			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId
 		};
 	}
 
