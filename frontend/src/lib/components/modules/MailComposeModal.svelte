@@ -26,6 +26,8 @@
 		initialBody = '',
 		initialAttachments = [],
 		inReplyToMsgId = null,
+		inReplyTo = null,
+		references = null,
 		mode = 'new',
 		draftId = null,
 		sending = false,
@@ -46,6 +48,9 @@
 		initialBody?: string;
 		initialAttachments?: string[];
 		inReplyToMsgId?: string | null;
+		/** Raw Message-ID of the message being replied to (remote mailbox threading). */
+		inReplyTo?: string | null;
+		references?: string[] | null;
 		mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'draft-edit';
 		draftId?: string | null;
 		sending?: boolean;
@@ -150,7 +155,9 @@
 			// Forward drafts must not persist the original as in_reply_to: the
 			// send path would then emit In-Reply-To/References and thread the
 			// forward as a reply in recipients' clients.
-			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId
+			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId,
+			in_reply_to: mode === 'forward' ? null : inReplyTo,
+			references: mode === 'forward' ? null : references
 		};
 	}
 

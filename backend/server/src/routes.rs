@@ -377,6 +377,22 @@ pub fn mail_routes() -> Router<AppState> {
             post(crate::handlers::mail::mark_mail_message_unread),
         )
         .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/star",
+            post(crate::handlers::mail::star_mail_message),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/unstar",
+            post(crate::handlers::mail::unstar_mail_message),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/body",
+            get(crate::handlers::mail::get_remote_mail_message_body),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/attachments/{index}",
+            get(crate::handlers::mail::download_remote_mail_attachment),
+        )
+        .route(
             "/api/v1/mail/accounts/{id}/messages/{uid}/move",
             post(crate::handlers::mail::move_mail_message),
         )

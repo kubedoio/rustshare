@@ -89,6 +89,46 @@ fn ensure_smtp_tls_allowed(tls_mode: MailTlsMode) -> Result<(), MailError> {
     Ok(())
 }
 
+const MAX_MAIL_REFERENCES: usize = 20;
+const MAX_MAIL_MESSAGE_ID_LEN: usize = 255;
+
+/// Validate raw threading header values (In-Reply-To / References) supplied
+/// for replies to remote-only messages. Rejects CR/LF to prevent header
+/// injection and caps lengths/counts.
+fn validate_threading_headers(
+    in_reply_to: Option<&str>,
+    references: Option<&[String]>,
+) -> Result<(), MailError> {
+    fn check_message_id(value: &str) -> Result<(), MailError> {
+        if value.len() > MAX_MAIL_MESSAGE_ID_LEN {
+            return Err(MailError::InvalidSource(
+                "Message-ID is too long".to_string(),
+            ));
+        }
+        if value.contains(['\r', '\n']) {
+            return Err(MailError::InvalidSource(
+                "Message-ID must not contain CR/LF".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    if let Some(value) = in_reply_to {
+        check_message_id(value)?;
+    }
+    if let Some(references) = references {
+        if references.len() > MAX_MAIL_REFERENCES {
+            return Err(MailError::InvalidSource(format!(
+                "At most {MAX_MAIL_REFERENCES} references are allowed"
+            )));
+        }
+        for reference in references {
+            check_message_id(reference)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_outbound_mail(
     to: &[String],
     cc: &[String],
@@ -164,6 +204,7 @@ fn draft_attachment_file_ids(attachments: Vec<MailAttachment>) -> Result<Vec<Uui
 
 enum MailboxMutation<'a> {
     MarkSeen(bool),
+    MarkFlagged(bool),
     Move(&'a str),
     Delete,
 }
@@ -198,6 +239,10 @@ pub enum MailError {
     Smtp,
     #[error("Import cancelled")]
     Cancelled,
+    #[error("Remote message not found (UID {0})")]
+    RemoteMessageNotFound(u32),
+    #[error("Folder UIDVALIDITY changed: {0}")]
+    UidValidityMismatch(String),
 }
 
 // ============================================================================
@@ -222,6 +267,14 @@ pub struct MailService {
 pub struct SentMail {
     pub message: Option<MailMessage>,
     pub append_failed: bool,
+}
+
+/// Raw RFC 822 source and current flags for a message that still lives on the
+/// remote IMAP server (not imported into RustShare).
+pub struct RemoteMailMessageSource {
+    pub rfc822: Vec<u8>,
+    pub is_seen: bool,
+    pub is_flagged: bool,
 }
 
 impl MailService {
@@ -1298,6 +1351,68 @@ impl MailService {
             uid,
             MailboxMutation::MarkSeen(seen),
         )
+        .await;
+        let _ = session.logout().await;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn mark_imap_message_flagged(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        expected_uidvalidity: Option<i64>,
+        uid: u32,
+        flagged: bool,
+    ) -> Result<(), MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let result = run_imap_mailbox_mutation(
+            &mut session,
+            folder,
+            expected_uidvalidity,
+            uid,
+            MailboxMutation::MarkFlagged(flagged),
+        )
+        .await;
+        let _ = session.logout().await;
+        result
+    }
+
+    /// Fetch the raw RFC 822 source plus current flags for a remote message.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn fetch_imap_message_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        folder: &str,
+        expected_uidvalidity: Option<i64>,
+        uid: u32,
+    ) -> Result<RemoteMailMessageSource, MailError> {
+        let account = self.get_account(tenant_id, owner_id, account_id).await?;
+        let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
+            .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
+        let mut session = self.connect_and_login(&account, &password).await?;
+        let result = async {
+            let rfc822 = session
+                .fetch_rfc822(folder, uid, expected_uidvalidity)
+                .await
+                .map_err(imap_to_mail_error)?;
+            let (is_seen, is_flagged) = session
+                .fetch_message_flags(folder, uid)
+                .await
+                .map_err(imap_to_mail_error)?;
+            Ok(RemoteMailMessageSource {
+                rfc822,
+                is_seen,
+                is_flagged,
+            })
+        }
         .await;
         let _ = session.logout().await;
         result
@@ -2909,6 +3024,8 @@ impl MailService {
         body_html: Option<String>,
         attachment_ids: Vec<Uuid>,
         in_reply_to_msg_id: Option<Uuid>,
+        in_reply_to_raw: Option<String>,
+        references_raw: Option<Vec<String>>,
         is_forward: bool,
         idempotency_key: Option<Uuid>,
     ) -> Result<SentMail, MailError> {
@@ -2921,6 +3038,7 @@ impl MailService {
             body_html.as_deref(),
             attachment_ids.len(),
         )?;
+        validate_threading_headers(in_reply_to_raw.as_deref(), references_raw.as_deref())?;
 
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
@@ -3011,6 +3129,27 @@ impl MailService {
                     }
                 } else {
                     return Err(MailError::NotFound(reply_to_id));
+                }
+            }
+            // Remote-only replies: when no stored message supplied the headers,
+            // fall back to the raw Message-ID/References the client provided
+            // (e.g. from the remote body endpoint). Stored values win.
+            if in_reply_to.is_none() {
+                if let Some(raw) = in_reply_to_raw.as_deref().map(str::trim) {
+                    if !raw.is_empty() {
+                        in_reply_to = Some(bracket_message_id(raw));
+                    }
+                }
+            }
+            if references.is_none() {
+                if let Some(raw_refs) = references_raw {
+                    let refs: Vec<String> = raw_refs
+                        .iter()
+                        .map(|reference| bracket_message_id(reference))
+                        .collect();
+                    if !refs.is_empty() {
+                        references = Some(refs.join(" "));
+                    }
                 }
             }
         }
@@ -3322,6 +3461,8 @@ impl MailService {
         body_html: Option<String>,
         attachment_ids: Vec<Uuid>,
         in_reply_to_msg_id: Option<Uuid>,
+        in_reply_to_raw: Option<String>,
+        references_raw: Option<Vec<String>>,
     ) -> Result<MailMessage, MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
 
@@ -3334,6 +3475,7 @@ impl MailService {
                 ));
             }
         }
+        validate_threading_headers(in_reply_to_raw.as_deref(), references_raw.as_deref())?;
 
         for file_id in &attachment_ids {
             let file = self
@@ -3370,6 +3512,29 @@ impl MailService {
                 updated_at: Utc::now(),
             });
 
+        // Replies to imported messages thread via the in_reply_to_msg_id UUID
+        // stored in the in_reply_to column below. Replies to remote-only
+        // messages instead carry raw Message-IDs, embedded into the draft EML
+        // so they survive a save/reload round-trip; the EML import parses
+        // them back into the row's in_reply_to/references columns.
+        let (draft_in_reply_to, draft_references) = if in_reply_to_msg_id.is_some() {
+            (None, None)
+        } else {
+            (
+                in_reply_to_raw
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(bracket_message_id),
+                references_raw.map(|refs| {
+                    refs.iter()
+                        .map(|reference| bracket_message_id(reference))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }),
+            )
+        };
+
         let email = OutboundMailMessage {
             recipients: &to,
             cc: &cc,
@@ -3377,8 +3542,8 @@ impl MailService {
             subject: &subject,
             body: &body,
             body_html: body_html.as_deref(),
-            in_reply_to: None,
-            references: None,
+            in_reply_to: draft_in_reply_to,
+            references: draft_references,
             attachments: Vec::new(),
         };
 
@@ -3429,11 +3594,16 @@ impl MailService {
                 Some(target_id),
             )
             .await?;
-        msg.in_reply_to = in_reply_to_msg_id.map(|id| id.to_string());
-        self.metadata_store
-            .update_mail_message_in_reply_to(target_id, owner_id, msg.in_reply_to.as_deref())
-            .await
-            .map_err(|e| MailError::Database(e.to_string()))?;
+        // Only overwrite the parsed in_reply_to for imported-message replies
+        // (stored as the replied-to row's UUID). Raw remote threading values
+        // were embedded in the draft EML and are already parsed into the row.
+        if let Some(reply_to_id) = in_reply_to_msg_id {
+            msg.in_reply_to = Some(reply_to_id.to_string());
+            self.metadata_store
+                .update_mail_message_in_reply_to(target_id, owner_id, msg.in_reply_to.as_deref())
+                .await
+                .map_err(|e| MailError::Database(e.to_string()))?;
+        }
 
         for file_id in &attachment_ids {
             let file = self
@@ -3592,6 +3762,18 @@ impl MailService {
         let bcc = mail_address_strings(&draft.bcc_addresses);
         let subject = draft.subject.unwrap_or_default();
 
+        // Imported-message replies stored the replied-to row UUID in
+        // in_reply_to; remote-only replies stored a raw Message-ID (plus the
+        // References chain in the references column). Pass them on
+        // accordingly so threading survives the draft round-trip.
+        let (in_reply_to_msg_id, in_reply_to_raw, references_raw) = match draft.in_reply_to {
+            Some(ref value) => match Uuid::parse_str(value) {
+                Ok(id) => (Some(id), None, None),
+                Err(_) => (None, Some(value.clone()), draft.references.clone()),
+            },
+            None => (None, None, None),
+        };
+
         let sent_msg = self
             .send_outbound_mail(
                 tenant_id,
@@ -3604,9 +3786,9 @@ impl MailService {
                 body,
                 body_html,
                 attachment_ids,
-                draft
-                    .in_reply_to
-                    .and_then(|id_str| Uuid::parse_str(&id_str).ok()),
+                in_reply_to_msg_id,
+                in_reply_to_raw,
+                references_raw,
                 false,
                 Some(draft_id),
             )
@@ -3633,7 +3815,11 @@ impl MailService {
 }
 
 fn imap_to_mail_error(err: ImapError) -> MailError {
-    MailError::Imap(err.to_string())
+    match err {
+        ImapError::MessageNotFound(uid) => MailError::RemoteMessageNotFound(uid),
+        ImapError::UidValidityMismatch { .. } => MailError::UidValidityMismatch(err.to_string()),
+        other => MailError::Imap(other.to_string()),
+    }
 }
 
 async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
@@ -3665,6 +3851,10 @@ async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
     match mutation {
         MailboxMutation::MarkSeen(seen) => session
             .mark_seen(folder, uid, seen)
+            .await
+            .map_err(imap_to_mail_error),
+        MailboxMutation::MarkFlagged(flagged) => session
+            .mark_flagged(folder, uid, flagged)
             .await
             .map_err(imap_to_mail_error),
         MailboxMutation::Move(destination_folder) => {
@@ -3870,6 +4060,7 @@ mod tests {
         uidvalidity: Option<u32>,
         supports_move: bool,
         supports_uidplus: bool,
+        folder_status: crate::services::imap_client::FolderStatus,
         calls: Vec<String>,
     }
 
@@ -3883,6 +4074,25 @@ mod tests {
         async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
             self.calls.push(format!("mark_seen:{folder}:{uid}:{seen}"));
             Ok(())
+        }
+
+        async fn mark_flagged(
+            &mut self,
+            folder: &str,
+            uid: u32,
+            flagged: bool,
+        ) -> Result<(), ImapError> {
+            self.calls
+                .push(format!("mark_flagged:{folder}:{uid}:{flagged}"));
+            Ok(())
+        }
+
+        async fn folder_status(
+            &mut self,
+            folder: &str,
+        ) -> Result<crate::services::imap_client::FolderStatus, ImapError> {
+            self.calls.push(format!("status:{folder}"));
+            Ok(self.folder_status)
         }
 
         async fn supports_move(&mut self) -> Result<bool, ImapError> {
@@ -3918,6 +4128,7 @@ mod tests {
             uidvalidity: Some(9),
             supports_move: true,
             supports_uidplus: true,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 
@@ -3941,6 +4152,7 @@ mod tests {
             uidvalidity: Some(9),
             supports_move: true,
             supports_uidplus: true,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 
@@ -3974,12 +4186,85 @@ mod tests {
         );
     }
 
+    #[test]
+    fn threading_headers_accept_plain_and_bracketed_message_ids() {
+        assert!(validate_threading_headers(
+            Some("abc@example.com"),
+            Some(&[
+                "<root@example.com>".to_string(),
+                "abc@example.com".to_string()
+            ]),
+        )
+        .is_ok());
+        assert!(validate_threading_headers(None, None).is_ok());
+    }
+
+    #[test]
+    fn threading_headers_reject_crlf_injection_and_overflow() {
+        assert!(validate_threading_headers(Some("a\r\nBcc: x@y.z"), None).is_err());
+        assert!(validate_threading_headers(Some("a\nb"), None).is_err());
+        assert!(validate_threading_headers(Some(&"a".repeat(256)), None).is_err());
+        let too_many: Vec<String> = (0..21).map(|i| format!("id-{i}@example.com")).collect();
+        assert!(validate_threading_headers(None, Some(&too_many)).is_err());
+    }
+
+    #[test]
+    fn bracket_message_id_normalizes_raw_ids() {
+        assert_eq!(bracket_message_id("abc@example.com"), "<abc@example.com>");
+        assert_eq!(bracket_message_id("<abc@example.com>"), "<abc@example.com>");
+        assert_eq!(
+            bracket_message_id("  abc@example.com  "),
+            "<abc@example.com>"
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_marks_flagged_and_unflagged() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: true,
+            supports_uidplus: true,
+            folder_status: Default::default(),
+            calls: Vec::new(),
+        };
+
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::MarkFlagged(true),
+        )
+        .await
+        .expect("star should succeed");
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::MarkFlagged(false),
+        )
+        .await
+        .expect("unstar should succeed");
+
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "mark_flagged:Inbox:42:true",
+                "select:Inbox",
+                "mark_flagged:Inbox:42:false",
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn mailbox_mutation_rejects_move_without_move_capability() {
         let mut session = MockMailboxSession {
             uidvalidity: Some(9),
             supports_move: false,
             supports_uidplus: true,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 
@@ -4003,6 +4288,7 @@ mod tests {
             uidvalidity: Some(9),
             supports_move: true,
             supports_uidplus: true,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 
@@ -4058,6 +4344,7 @@ mod tests {
             uidvalidity: Some(9),
             supports_move: true,
             supports_uidplus: false,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 
@@ -4076,6 +4363,7 @@ mod tests {
             uidvalidity: Some(9),
             supports_move: true,
             supports_uidplus: true,
+            folder_status: Default::default(),
             calls: Vec::new(),
         };
 

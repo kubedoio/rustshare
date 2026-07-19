@@ -92,6 +92,7 @@ pub enum EventType {
     MailSentFolderAppendFailed,
     MailMessageDraftCreated,
     MailMessageDraftDeleted,
+    MailRemoteAction,
 }
 
 impl EventType {
@@ -150,6 +151,7 @@ impl EventType {
             EventType::MailSentFolderAppendFailed => "MailSentFolderAppendFailed",
             EventType::MailMessageDraftCreated => "MailMessageDraftCreated",
             EventType::MailMessageDraftDeleted => "MailMessageDraftDeleted",
+            EventType::MailRemoteAction => "MailRemoteAction",
         }
     }
 }
@@ -618,6 +620,17 @@ pub struct MailMessageSentPayload {
     pub to_count: usize,
     pub cc_count: usize,
     pub bcc_count: usize,
+}
+
+/// Audit payload for mutations performed directly on the remote IMAP mailbox
+/// (mark read/unread, star/unstar, move, archive, trash, delete).
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MailRemoteActionPayload {
+    #[schema(value_type = Uuid)]
+    pub account_id: MailAccountId,
+    pub folder: String,
+    pub uid: u32,
+    pub action: String,
 }
 
 #[cfg(test)]

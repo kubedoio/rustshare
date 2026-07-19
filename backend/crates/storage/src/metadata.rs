@@ -539,6 +539,43 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Batch lookup: ids of already-imported messages for a page of IMAP UIDs.
+    ///
+    /// Returns `(source_uid, id)` pairs so callers can mark remote message
+    /// summaries as already imported without one query per message.
+    pub async fn find_imported_mail_message_ids(
+        &self,
+        owner_id: UserId,
+        account_id: MailAccountId,
+        source_folder: &str,
+        source_uids: &[i64],
+        source_uidvalidity: Option<i64>,
+    ) -> Result<Vec<(i64, Uuid)>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT source_uid, id
+            FROM mail_messages
+            WHERE owner_id = $1
+              AND account_id = $2
+              AND source_folder = $3
+              AND source_uid = ANY($4)
+              AND source_uidvalidity IS NOT DISTINCT FROM $5
+              AND deleted_at IS NULL
+            "#,
+            owner_id,
+            account_id,
+            source_folder,
+            source_uids,
+            source_uidvalidity
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.source_uid.map(|uid| (uid, row.id)))
+            .collect())
+    }
+
     /// Find an existing mail message imported from the same IMAP account/folder/UIDVALIDITY.
     pub async fn find_mail_message_by_source(
         &self,

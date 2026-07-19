@@ -5,6 +5,7 @@ import MailModuleView from './MailModuleView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	goto: vi.fn(),
+	listMessages: vi.fn(),
 	listMessagesPage: vi.fn(),
 	listAccounts: vi.fn(),
 	listFolders: vi.fn(),
@@ -13,18 +14,19 @@ const mocks = vi.hoisted(() => ({
 	listImportJobs: vi.fn(),
 	listDrafts: vi.fn(),
 	getDraft: vi.fn(),
-	getMessage: vi.fn(),
-	listParts: vi.fn(),
-	getPartContent: vi.fn(),
-	listAttachments: vi.fn(),
-	listLinks: vi.fn(),
+	createAccount: vi.fn(),
+	deleteAccount: vi.fn(),
+	testAccount: vi.fn(),
 	createImportJob: vi.fn(),
+	createArchiveJob: vi.fn(),
+	cancelArchiveJob: vi.fn(),
 	uploadMessage: vi.fn(),
+	sendMessage: vi.fn(),
 	sendOutboundMail: vi.fn(),
-	updateDraft: vi.fn(),
-	sendDraft: vi.fn(),
 	getSmtpSettings: vi.fn(),
-	listAllFiles: vi.fn()
+	updateSmtpSettings: vi.fn(),
+	deleteSmtpSettings: vi.fn(),
+	testSmtpConnection: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -32,14 +34,12 @@ vi.mock('$app/navigation', () => ({
 }));
 
 vi.mock('$lib/api/files', () => ({
-	listAllFiles: mocks.listAllFiles,
-	previewFile: vi.fn(),
-	downloadFile: vi.fn(),
-	getFileContent: vi.fn()
+	listAllFiles: vi.fn().mockResolvedValue([])
 }));
 
 vi.mock('$lib/api/mail', () => ({
 	mailApi: {
+		listMessages: mocks.listMessages,
 		listMessagesPage: mocks.listMessagesPage,
 		listAccounts: mocks.listAccounts,
 		listFolders: mocks.listFolders,
@@ -48,18 +48,19 @@ vi.mock('$lib/api/mail', () => ({
 		listImportJobs: mocks.listImportJobs,
 		listDrafts: mocks.listDrafts,
 		getDraft: mocks.getDraft,
-		getMessage: mocks.getMessage,
-		listParts: mocks.listParts,
-		getPartContent: mocks.getPartContent,
-		listAttachments: mocks.listAttachments,
-		listLinks: mocks.listLinks,
+		createAccount: mocks.createAccount,
+		deleteAccount: mocks.deleteAccount,
+		testAccount: mocks.testAccount,
 		createImportJob: mocks.createImportJob,
+		createArchiveJob: mocks.createArchiveJob,
+		cancelArchiveJob: mocks.cancelArchiveJob,
 		uploadMessage: mocks.uploadMessage,
+		sendMessage: mocks.sendMessage,
 		sendOutboundMail: mocks.sendOutboundMail,
-		updateDraft: mocks.updateDraft,
-		sendDraft: mocks.sendDraft,
 		getSmtpSettings: mocks.getSmtpSettings,
-		downloadSourceUrl: (id: string) => `/api/mail/messages/${id}/source`
+		updateSmtpSettings: mocks.updateSmtpSettings,
+		deleteSmtpSettings: mocks.deleteSmtpSettings,
+		testSmtpConnection: mocks.testSmtpConnection
 	}
 }));
 
@@ -115,75 +116,58 @@ const testModule = {
 	audit: { enabled: true }
 };
 
-const testAccount = {
-	id: 'acct-1',
-	name: 'Work mail',
-	host: 'imap.example.com',
-	port: 993,
-	username: 'alice@example.com',
-	tls_mode: 'tls',
-	is_enabled: true,
-	last_connected_at: null,
-	last_error: null,
-	created_at: '2026-07-01T00:00:00Z'
-};
-
-const importedMessage = {
-	id: 'msg-1',
-	account_id: 'acct-1',
-	subject: 'Quarterly update',
-	from_address: 'alice@example.com',
-	from_name: 'Alice',
-	to_addresses: ['bob@example.com'],
-	cc_addresses: [],
-	bcc_addresses: [],
-	sent_at: '2026-07-01T10:00:00Z',
-	imported_at: '2026-07-01T12:00:00Z',
-	size_bytes: 1024,
-	has_attachments: false,
-	is_seen: true,
-	source_mode: 'imap_selected'
-};
-
-describe('MailModuleView workspace', () => {
+describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		queryClient.clear();
-		mocks.listAccounts.mockResolvedValue([testAccount]);
-		mocks.listFolders.mockResolvedValue([]);
-		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
-		mocks.listArchiveJobs.mockResolvedValue([]);
-		mocks.listImportJobs.mockResolvedValue([]);
-		mocks.listDrafts.mockResolvedValue([]);
+		mocks.listMessages.mockResolvedValue([]);
 		mocks.listMessagesPage.mockResolvedValue({
 			messages: [],
 			next_cursor_at: null,
 			next_cursor_id: null
 		});
-		mocks.getMessage.mockResolvedValue(importedMessage);
-		mocks.listParts.mockResolvedValue([
+		mocks.listAccounts.mockResolvedValue([
 			{
-				id: 'part-1',
-				part_index: 1,
-				content_type: 'text/plain',
-				charset: 'utf-8',
-				size_bytes: 12,
-				is_body: true
+				id: 'acct-1',
+				name: 'Work mail',
+				host: 'imap.example.com',
+				port: 993,
+				username: 'alice@example.com',
+				tls_mode: 'tls',
+				is_enabled: true,
+				last_connected_at: null,
+				last_error: null,
+				created_at: '2026-07-01T00:00:00Z'
 			}
 		]);
-		mocks.getPartContent.mockResolvedValue('Hello from the body');
-		mocks.listAttachments.mockResolvedValue([]);
-		mocks.listLinks.mockResolvedValue([]);
-		mocks.listAllFiles.mockResolvedValue([]);
-		mocks.uploadMessage.mockResolvedValue(importedMessage);
+		mocks.listFolders.mockResolvedValue([]);
+		mocks.listAccountMessages.mockResolvedValue({ uidvalidity: null, messages: [] });
+		mocks.listArchiveJobs.mockResolvedValue([]);
+		mocks.listDrafts.mockResolvedValue([]);
+		mocks.getDraft.mockResolvedValue({
+			message: {
+				id: 'draft-1',
+				account_id: 'acct-1',
+				subject: 'Draft subject',
+				from_address: 'alice@example.com',
+				from_name: 'Alice',
+				to_addresses: ['bob@example.com'],
+				cc_addresses: [],
+				bcc_addresses: [],
+				sent_at: null,
+				imported_at: '2026-07-01T12:00:00Z',
+				size_bytes: 0,
+				has_attachments: false,
+				source_mode: 'draft'
+			},
+			body: 'Draft body',
+			attachments: []
+		});
+		mocks.uploadMessage.mockResolvedValue({ id: 'msg-uploaded' });
+		mocks.sendMessage.mockResolvedValue({ ok: true });
+		mocks.listImportJobs.mockResolvedValue([]);
 		mocks.sendOutboundMail.mockResolvedValue({
 			message_id: 'outbound-1',
-			stored: true,
-			append_failed: false
-		});
-		mocks.updateDraft.mockResolvedValue({ ...importedMessage, id: 'draft-2' });
-		mocks.sendDraft.mockResolvedValue({
-			message_id: 'outbound-2',
 			stored: true,
 			append_failed: false
 		});
@@ -196,92 +180,82 @@ describe('MailModuleView workspace', () => {
 			from_address: 'alice@example.com',
 			is_enabled: true
 		});
-		mocks.getDraft.mockResolvedValue({
-			message: {
-				...importedMessage,
-				id: 'draft-1',
-				subject: 'Draft subject',
-				source_mode: 'draft'
-			},
-			body: 'Draft body',
-			attachments: []
-		});
 	});
 
-	it('renders toolbar, folder pane, and imported messages; opens a message in the viewer', async () => {
-		mocks.listMessagesPage.mockResolvedValue({
-			messages: [importedMessage],
+	it('renders message subject rows and navigates on click', async () => {
+		mocks.listMessagesPage.mockResolvedValueOnce({
+			messages: [
+				{
+					id: 'msg-1',
+					subject: 'Quarterly update',
+					from_address: 'alice@example.com',
+					from_name: 'Alice',
+					to_addresses: ['bob@example.com'],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: '2026-07-01T10:00:00Z',
+					imported_at: '2026-07-01T12:00:00Z',
+					size_bytes: 1024,
+					has_attachments: false
+				}
+			],
 			next_cursor_at: null,
 			next_cursor_id: null
 		});
 
 		render(MailModuleView, { module: testModule });
 
-		// Toolbar
-		expect(await screen.findByText('Work mail')).toBeTruthy();
-		expect(screen.getByText('Compose')).toBeTruthy();
-		// Folder pane shows local folders
-		expect(screen.getByRole('option', { name: /Imported/ })).toBeTruthy();
-		expect(screen.getByRole('option', { name: /Drafts/ })).toBeTruthy();
-		// Message row
+		await fireEvent.click(await screen.findByRole('tab', { name: 'Imported' }));
 		const row = await screen.findByText('Quarterly update');
+		expect(row).toBeTruthy();
+
 		await fireEvent.click(row.closest('button')!);
 
-		// Viewer opens in place (no navigation) and loads the body
 		await waitFor(() => {
-			expect(mocks.getMessage).toHaveBeenCalledWith('msg-1');
+			expect(mocks.goto).toHaveBeenCalledWith('/modules/mail/messages/msg-1');
 		});
-		expect(await screen.findByText('Hello from the body')).toBeTruthy();
-		expect(screen.getByText('Reply')).toBeTruthy();
-		expect(mocks.goto).not.toHaveBeenCalled();
 	});
 
-	it('shows an inline folder error and keeps imported mail usable', async () => {
-		mocks.listFolders.mockRejectedValue(new Error('IMAP unreachable'));
-		mocks.listMessagesPage.mockResolvedValue({
-			messages: [importedMessage],
-			next_cursor_at: null,
-			next_cursor_id: null
-		});
+	it('renders empty state when no messages exist', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
 
 		render(MailModuleView, { module: testModule });
 
-		expect(
-			await screen.findByText('Folders could not be refreshed.', {}, { timeout: 8000 })
-		).toBeTruthy();
-		// Imported messages still render despite the folder failure
-		expect(await screen.findByText('Quarterly update')).toBeTruthy();
+		await fireEvent.click(await screen.findByRole('tab', { name: 'Imported' }));
+		const emptyTitle = await screen.findByText('No imported mail yet');
+		expect(emptyTitle).toBeTruthy();
 	});
 
-	it('lists drafts as a folder and opens a draft into compose', async () => {
-		mocks.listDrafts.mockResolvedValue([
+	it('renders empty drafts state', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.listDrafts.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		await fireEvent.click(await screen.findByRole('tab', { name: /Drafts/ }));
+		expect(await screen.findByText('No drafts')).toBeTruthy();
+	});
+
+	it('renders accounts, folders, and mailbox messages', async () => {
+		mocks.listAccounts.mockResolvedValueOnce([
 			{
-				...importedMessage,
-				id: 'draft-1',
-				subject: 'Draft subject',
-				source_mode: 'draft'
+				id: 'acct-1',
+				name: 'Work mail',
+				host: 'imap.example.com',
+				port: 993,
+				username: 'alice@example.com',
+				tls_mode: 'tls',
+				is_enabled: true,
+				last_connected_at: null,
+				last_error: null,
+				created_at: '2026-07-01T00:00:00Z'
 			}
 		]);
-
-		render(MailModuleView, { module: testModule });
-
-		await fireEvent.click(await screen.findByRole('option', { name: /Drafts/ }));
-		await fireEvent.click(await screen.findByText('Draft subject'));
-
-		await waitFor(() => {
-			expect(mocks.getDraft).toHaveBeenCalledWith('acct-1', 'draft-1');
-		});
-		const toInput = await screen.findByPlaceholderText('To');
-		expect((toInput as HTMLInputElement).value).toBe('bob@example.com');
-	});
-
-	it('lists remote IMAP messages after selecting a folder', async () => {
 		mocks.listFolders.mockResolvedValue([
 			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null }
 		]);
 		mocks.listAccountMessages.mockResolvedValue({
 			uidvalidity: 7,
-			next_cursor: null,
 			messages: [
 				{
 					uid: 12,
@@ -289,39 +263,127 @@ describe('MailModuleView workspace', () => {
 					from_address: 'ops@example.com',
 					from_name: 'Ops',
 					sent_at: '2026-07-01T10:00:00Z',
-					size_bytes: 2048,
-					is_seen: false
+					size_bytes: 2048
+				}
+			]
+		});
+		mocks.listMessages.mockResolvedValueOnce([]);
+
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByText('Work mail')).toBeTruthy();
+		expect(await screen.findByText('INBOX')).toBeTruthy();
+		expect(await screen.findByText('Server alert')).toBeTruthy();
+	});
+
+	it('gates archive and trash actions on their own folders', async () => {
+		mocks.listFolders.mockResolvedValue([
+			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null },
+			{ name: 'Archive', display_name: 'Archive', delimiter: '/', role: 'archive' }
+		]);
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			messages: [
+				{
+					uid: 12,
+					subject: 'Server alert',
+					from_address: 'ops@example.com',
+					from_name: 'Ops',
+					sent_at: '2026-07-01T10:00:00Z',
+					size_bytes: 2048
 				}
 			]
 		});
 
 		render(MailModuleView, { module: testModule });
 
-		await fireEvent.click(await screen.findByRole('option', { name: 'INBOX' }));
-		const row = await screen.findByText('Server alert');
-		expect(row).toBeTruthy();
+		const archiveButton = (await screen.findByTitle('Archive')) as HTMLButtonElement;
+		expect(archiveButton.disabled).toBe(false);
+		const trashButton = (await screen.findByTitle(
+			'No trash folder is configured'
+		)) as HTMLButtonElement;
+		expect(trashButton.disabled).toBe(true);
+	});
 
-		await fireEvent.click(row.closest('button')!);
-		expect(await screen.findByText('Save to workspace')).toBeTruthy();
+	it('disables archive and enables trash when only a trash folder exists', async () => {
+		mocks.listFolders.mockResolvedValue([
+			{ name: 'INBOX', display_name: 'INBOX', delimiter: '/', role: null },
+			{ name: 'Trash', display_name: 'Trash', delimiter: '/', role: 'trash' }
+		]);
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			messages: [
+				{
+					uid: 12,
+					subject: 'Server alert',
+					from_address: 'ops@example.com',
+					from_name: 'Ops',
+					sent_at: '2026-07-01T10:00:00Z',
+					size_bytes: 2048
+				}
+			]
+		});
+
+		render(MailModuleView, { module: testModule });
+
+		const archiveButton = (await screen.findByTitle(
+			'No archive folder is configured'
+		)) as HTMLButtonElement;
+		expect(archiveButton.disabled).toBe(true);
+		const trashButton = (await screen.findByTitle('Move to trash')) as HTMLButtonElement;
+		expect(trashButton.disabled).toBe(false);
 	});
 
 	it('uploads .eml files through the mail import endpoint', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+
 		render(MailModuleView, { module: testModule });
-		await screen.findByRole('option', { name: /Imported/ });
+
+		await fireEvent.click(await screen.findByRole('tab', { name: 'Imported' }));
+		await screen.findByText('No imported mail yet');
 
 		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-		const file = new File(['From: alice@example.com'], 'message.eml', {
-			type: 'message/rfc822'
-		});
+		const file = new File(['From: alice@example.com'], 'message.eml', { type: 'message/rfc822' });
+
 		await fireEvent.change(input, { target: { files: [file] } });
 
 		await waitFor(() => {
 			expect(mocks.uploadMessage).toHaveBeenCalledWith(file);
+			expect(mocks.listMessagesPage).toHaveBeenCalledTimes(2);
 		});
 	});
 
-	it('opens compose from the toolbar and sends outbound mail', async () => {
+	it('opens compose and sends outbound mail', async () => {
+		const testAccount = {
+			id: 'acct-1',
+			tenant_id: 'tenant-1',
+			owner_id: 'user-1',
+			name: 'Test Account',
+			host: 'imap.example.com',
+			port: 993,
+			username: 'testuser',
+			tls_mode: 'tls',
+			created_at: '',
+			updated_at: ''
+		};
+		mocks.listAccounts.mockResolvedValueOnce([testAccount]);
+		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.getSmtpSettings.mockResolvedValueOnce({
+			id: 'smtp-1',
+			host: 'smtp.example.com',
+			port: 587,
+			username: 'testuser',
+			tls_mode: 'tls',
+			from_address: 'test@example.com',
+			is_enabled: true
+		});
+
 		render(MailModuleView, { module: testModule });
+
+		// Wait for accounts to load
+		await waitFor(() => {
+			expect(screen.queryAllByText('Test Account').length).toBeGreaterThan(0);
+		});
 
 		await fireEvent.click(await screen.findByText('Compose'));
 		await fireEvent.input(screen.getByPlaceholderText('To'), {
@@ -330,10 +392,8 @@ describe('MailModuleView workspace', () => {
 		await fireEvent.input(screen.getByPlaceholderText('Subject'), {
 			target: { value: 'Hello' }
 		});
-		// The body is a rich-text (ProseMirror) editor; seed its DOM and let the
-		// editor's mutation observer sync it back to the draft.
-		const editorEl = document.querySelector('.ProseMirror') as HTMLElement;
-		editorEl.innerHTML = '<p>Hi Bob</p>';
+		const editor = document.querySelector('.ProseMirror') as HTMLElement;
+		editor.innerHTML = '<p>Hi Bob</p>';
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		await fireEvent.submit(document.querySelector('.mail-body-editor')!.closest('form')!);
 
@@ -341,41 +401,50 @@ describe('MailModuleView workspace', () => {
 			expect(mocks.sendOutboundMail.mock.calls[0][1]).toEqual(
 				expect.objectContaining({
 					to: ['bob@example.com'],
+					cc: [],
+					bcc: [],
 					subject: 'Hello',
 					body: 'Hi Bob',
-					body_html: '<p>Hi Bob</p>'
+					attachments: [],
+					in_reply_to_msg_id: null
 				})
 			);
+			expect(mocks.sendOutboundMail.mock.calls[0][1].idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
+			expect(mocks.listMessagesPage).toHaveBeenCalledTimes(2);
 		});
 	});
 
-	it('sends an edited draft via the draft id returned by the save', async () => {
-		// The backend replaces the draft row on update, so the send must use
-		// the id returned by updateDraft ('draft-2'), not the opened id.
-		mocks.listDrafts.mockResolvedValue([
+	it('opens an existing draft into compose', async () => {
+		mocks.listMessages.mockResolvedValueOnce([]);
+		mocks.listDrafts.mockResolvedValueOnce([
 			{
-				...importedMessage,
 				id: 'draft-1',
+				account_id: 'acct-1',
 				subject: 'Draft subject',
+				from_address: 'alice@example.com',
+				from_name: 'Alice',
+				to_addresses: ['bob@example.com'],
+				cc_addresses: [],
+				bcc_addresses: [],
+				sent_at: null,
+				imported_at: '2026-07-01T12:00:00Z',
+				size_bytes: 0,
+				has_attachments: false,
 				source_mode: 'draft'
 			}
 		]);
 
 		render(MailModuleView, { module: testModule });
 
-		await fireEvent.click(await screen.findByRole('option', { name: /Drafts/ }));
+		await fireEvent.click(await screen.findByRole('tab', { name: /Drafts/ }));
 		await fireEvent.click(await screen.findByText('Draft subject'));
-		await screen.findByDisplayValue('Draft subject');
-
-		await fireEvent.submit(screen.getByRole('button', { name: 'Send' }).closest('form')!);
 
 		await waitFor(() => {
-			expect(mocks.updateDraft).toHaveBeenCalledWith(
-				'acct-1',
-				'draft-1',
-				expect.objectContaining({ subject: 'Draft subject' })
-			);
-			expect(mocks.sendDraft).toHaveBeenCalledWith('acct-1', 'draft-2');
+			expect(mocks.getDraft).toHaveBeenCalledWith('acct-1', 'draft-1');
 		});
+		const toInput = await screen.findByPlaceholderText('To');
+		const subjectInput = await screen.findByPlaceholderText('Subject');
+		expect((toInput as HTMLInputElement).value).toBe('bob@example.com');
+		expect((subjectInput as HTMLInputElement).value).toBe('Draft subject');
 	});
 });

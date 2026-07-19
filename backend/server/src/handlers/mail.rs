@@ -102,6 +102,10 @@ pub struct MailFolderResponse {
     pub display_name: String,
     pub delimiter: Option<String>,
     pub role: Option<String>,
+    /// Unread message count from IMAP STATUS; `null` when STATUS failed.
+    pub unseen: Option<u32>,
+    /// Total message count from IMAP STATUS; `null` when STATUS failed.
+    pub total: Option<u32>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -113,6 +117,11 @@ pub struct MailMessageSummaryResponse {
     pub sent_at: Option<DateTime<Utc>>,
     pub size_bytes: i64,
     pub is_seen: bool,
+    pub is_flagged: bool,
+    /// ID of the imported RustShare mail message, when this remote UID has
+    /// already been imported; `null` otherwise.
+    #[schema(value_type = Option<Uuid>)]
+    pub imported_message_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -756,11 +765,14 @@ fn folder_to_response(folder: crate::services::imap_client::MailFolder) -> MailF
         display_name: folder.display_name,
         delimiter: folder.delimiter,
         role: folder.role,
+        unseen: folder.unseen,
+        total: folder.total,
     }
 }
 
 fn summary_to_response(
     summary: crate::services::imap_client::ImapMessageSummary,
+    imported_message_id: Option<Uuid>,
 ) -> MailMessageSummaryResponse {
     MailMessageSummaryResponse {
         uid: summary.uid,
@@ -770,6 +782,8 @@ fn summary_to_response(
         sent_at: summary.sent_at,
         size_bytes: summary.size_bytes,
         is_seen: summary.is_seen,
+        is_flagged: summary.is_flagged,
+        imported_message_id,
     }
 }
 
@@ -1142,7 +1156,33 @@ pub async fn list_mail_account_messages(
         )
         .await?;
 
-    let messages: Vec<_> = messages.into_iter().map(summary_to_response).collect();
+    // Single batched lookup for the whole page: which of these remote UIDs
+    // have already been imported into RustShare.
+    let uids: Vec<i64> = messages
+        .iter()
+        .map(|message| i64::from(message.uid))
+        .collect();
+    let imported: std::collections::HashMap<i64, Uuid> = state
+        .metadata_store
+        .find_imported_mail_message_ids(
+            auth.user_id,
+            account_id,
+            &query.folder,
+            &uids,
+            uidvalidity.map(i64::from),
+        )
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?
+        .into_iter()
+        .collect();
+
+    let messages: Vec<_> = messages
+        .into_iter()
+        .map(|summary| {
+            let imported_message_id = imported.get(&i64::from(summary.uid)).copied();
+            summary_to_response(summary, imported_message_id)
+        })
+        .collect();
     let next_cursor = messages
         .iter()
         .map(|message| message.uid)
@@ -1198,6 +1238,15 @@ pub async fn mark_mail_message_read(
             true,
         )
         .await?;
+    emit_mail_remote_action(
+        &state,
+        account_id,
+        auth.user_id,
+        &req.folder,
+        uid,
+        "mark_read",
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1229,7 +1278,301 @@ pub async fn mark_mail_message_unread(
             false,
         )
         .await?;
+    emit_mail_remote_action(
+        &state,
+        account_id,
+        auth.user_id,
+        &req.folder,
+        uid,
+        "mark_unread",
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/star",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message starred")),
+)]
+pub async fn star_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .mark_imap_message_flagged(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            true,
+        )
+        .await?;
+    emit_mail_remote_action(&state, account_id, auth.user_id, &req.folder, uid, "star").await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/unstar",
+    tag = "Mail",
+    params(("id" = Uuid, Path, description = "Mail account ID"), ("uid" = i64, Path, description = "IMAP UID")),
+    request_body = MailMessageActionRequest,
+    responses((status = 204, description = "Message unstarred")),
+)]
+pub async fn unstar_mail_message(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Json(req): Json<MailMessageActionRequest>,
+) -> Result<StatusCode, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let uid = validate_imap_uid(uid)?;
+    state
+        .mail_service
+        .mark_imap_message_flagged(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &req.folder,
+            req.source_uidvalidity,
+            uid,
+            false,
+        )
+        .await?;
+    emit_mail_remote_action(&state, account_id, auth.user_id, &req.folder, uid, "unstar").await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct RemoteMailMessageQuery {
+    /// IMAP folder containing the message.
+    pub folder: String,
+    /// UIDVALIDITY observed when the folder was listed; guards against stale UIDs.
+    pub source_uidvalidity: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailRemoteAddressResponse {
+    pub name: Option<String>,
+    pub address: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailRemoteAttachmentResponse {
+    /// Index into the parsed attachment list; used by the attachment download endpoint.
+    pub index: usize,
+    pub filename: Option<String>,
+    pub mime_type: String,
+    pub size_bytes: usize,
+    pub content_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MailRemoteMessageBodyResponse {
+    pub uid: u32,
+    pub subject: Option<String>,
+    pub from_address: Option<String>,
+    pub from_name: Option<String>,
+    pub to: Vec<MailRemoteAddressResponse>,
+    pub cc: Vec<MailRemoteAddressResponse>,
+    pub date: Option<DateTime<Utc>>,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub text: Option<String>,
+    /// Raw (unsanitized) HTML body; the frontend sanitizes it before rendering.
+    pub html: Option<String>,
+    pub attachments: Vec<MailRemoteAttachmentResponse>,
+    pub is_seen: bool,
+    pub is_flagged: bool,
+}
+
+fn parse_remote_rfc822(
+    uid: u32,
+    rfc822: &[u8],
+) -> Result<rustshare_core::services::eml_parser::ParsedMail, AppError> {
+    rustshare_core::services::eml_parser::EmlParser::parse(rfc822)
+        .map_err(|e| AppError::internal(format!("Failed to parse remote message {uid}: {e}")))
+}
+
+fn validate_remote_message_query(query: &RemoteMailMessageQuery) -> Result<(), AppError> {
+    if query.folder.trim().is_empty() {
+        return Err(AppError::bad_request("Missing folder query parameter"));
+    }
+    if query.folder.len() > 512 {
+        return Err(AppError::bad_request(
+            "Folder name must be at most 512 characters",
+        ));
+    }
+    Ok(())
+}
+
+fn remote_address_to_response(
+    address: rustshare_core::services::eml_parser::ParsedAddress,
+) -> MailRemoteAddressResponse {
+    MailRemoteAddressResponse {
+        name: address.name,
+        address: address.address,
+    }
+}
+
+/// Fetch and parse a message that still lives on the remote IMAP server.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/body",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail account ID"),
+        ("uid" = i64, Path, description = "IMAP UID"),
+        RemoteMailMessageQuery,
+    ),
+    responses(
+        (status = 200, description = "Remote message body", body = MailRemoteMessageBodyResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Message not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Folder UIDVALIDITY changed", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_remote_mail_message_body(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Query(query): Query<RemoteMailMessageQuery>,
+) -> Result<Json<MailRemoteMessageBodyResponse>, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_remote_message_query(&query)?;
+    let uid = validate_imap_uid(uid)?;
+
+    let remote = state
+        .mail_service
+        .fetch_imap_message_source(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &query.folder,
+            query.source_uidvalidity,
+            uid,
+        )
+        .await?;
+    let parsed = parse_remote_rfc822(uid, &remote.rfc822)?;
+
+    let from = parsed.from;
+    Ok(Json(MailRemoteMessageBodyResponse {
+        uid,
+        subject: parsed.subject,
+        from_address: from.as_ref().map(|from| from.address.clone()),
+        from_name: from.as_ref().and_then(|from| from.name.clone()),
+        to: parsed
+            .to
+            .into_iter()
+            .map(remote_address_to_response)
+            .collect(),
+        cc: parsed
+            .cc
+            .into_iter()
+            .map(remote_address_to_response)
+            .collect(),
+        date: parsed.sent_at,
+        message_id: parsed.message_id,
+        in_reply_to: parsed.in_reply_to,
+        text: parsed.body_text,
+        html: parsed.body_html,
+        attachments: parsed
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| MailRemoteAttachmentResponse {
+                index,
+                filename: attachment.filename.clone(),
+                mime_type: attachment.mime_type.clone(),
+                size_bytes: attachment.size_bytes,
+                content_id: attachment.content_id.clone(),
+            })
+            .collect(),
+        is_seen: remote.is_seen,
+        is_flagged: remote.is_flagged,
+    }))
+}
+
+/// Download one attachment of a remote IMAP message.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/attachments/{index}",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail account ID"),
+        ("uid" = i64, Path, description = "IMAP UID"),
+        ("index" = usize, Path, description = "Attachment index from the body endpoint"),
+        RemoteMailMessageQuery,
+    ),
+    responses(
+        (status = 200, description = "Attachment bytes"),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Message or attachment not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Folder UIDVALIDITY changed", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn download_remote_mail_attachment(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid, index)): Path<(Uuid, i64, usize)>,
+    Query(query): Query<RemoteMailMessageQuery>,
+) -> Result<Response, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_remote_message_query(&query)?;
+    let uid = validate_imap_uid(uid)?;
+
+    // NOTE: this re-fetches and re-parses the full RFC 822 source to extract
+    // the attachment part by index. Acceptable for interactive downloads
+    // (messages are capped at 25 MB); revisit if it becomes a hotspot.
+    let remote = state
+        .mail_service
+        .fetch_imap_message_source(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &query.folder,
+            query.source_uidvalidity,
+            uid,
+        )
+        .await?;
+    let parsed = parse_remote_rfc822(uid, &remote.rfc822)?;
+
+    let attachment = parsed
+        .attachments
+        .into_iter()
+        .nth(index)
+        .ok_or_else(|| AppError::not_found("attachment"))?;
+
+    let filename = attachment
+        .filename
+        .clone()
+        .unwrap_or_else(|| format!("attachment-{index}"));
+    let content_disposition = super::public_shares::build_content_disposition(&filename);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&attachment.mime_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&content_disposition)
+            .map_err(|e| AppError::internal(e.to_string()))?,
+    );
+    Ok((StatusCode::OK, headers, attachment.data).into_response())
 }
 
 #[utoipa::path(
@@ -1260,6 +1603,7 @@ pub async fn move_mail_message(
             &req.destination_folder,
         )
         .await?;
+    emit_mail_remote_action(&state, account_id, auth.user_id, &req.folder, uid, "move").await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1292,6 +1636,15 @@ pub async fn archive_mail_message(
             destination,
         )
         .await?;
+    emit_mail_remote_action(
+        &state,
+        account_id,
+        auth.user_id,
+        &req.folder,
+        uid,
+        "archive",
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1324,6 +1677,7 @@ pub async fn trash_mail_message(
             destination,
         )
         .await?;
+    emit_mail_remote_action(&state, account_id, auth.user_id, &req.folder, uid, "trash").await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1354,6 +1708,7 @@ pub async fn delete_mail_message(
             uid,
         )
         .await?;
+    emit_mail_remote_action(&state, account_id, auth.user_id, &req.folder, uid, "delete").await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1785,6 +2140,45 @@ pub async fn list_mail_message_attachments(
     }))
 }
 
+/// Best-effort audit event for mutations performed directly on the remote
+/// IMAP mailbox (mark read/unread, star/unstar, move, archive, trash, delete).
+/// Failures are logged, never propagated, so the mailbox action still succeeds.
+async fn emit_mail_remote_action(
+    state: &AppState,
+    account_id: Uuid,
+    user_id: rustshare_core::domain::UserId,
+    folder: &str,
+    uid: u32,
+    action: &str,
+) {
+    use rustshare_core::events::{AggregateType, Event, EventType, MailRemoteActionPayload};
+    let result = async {
+        let payload = MailRemoteActionPayload {
+            account_id,
+            folder: folder.to_string(),
+            uid,
+            action: action.to_string(),
+        };
+        let event = Event::new(
+            EventType::MailRemoteAction,
+            account_id,
+            AggregateType::MailAccount,
+            serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+            user_id,
+        );
+        state
+            .event_store
+            .append(&event, &state.broadcaster)
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        Ok::<(), AppError>(())
+    }
+    .await;
+    if let Err(e) = result {
+        tracing::warn!(error = ?e, %account_id, folder, uid, action, "failed to record remote mail action event");
+    }
+}
+
 async fn emit_mail_message_viewed(
     state: &AppState,
     message_id: Uuid,
@@ -1950,7 +2344,28 @@ pub struct SendOutboundMailRequest {
     #[serde(default)]
     pub attachments: Vec<Uuid>,
     pub in_reply_to_msg_id: Option<Uuid>,
+    /// Raw Message-ID of the message being replied to, for replies to messages
+    /// that were never imported into RustShare. Ignored when
+    /// `in_reply_to_msg_id` resolves to a stored message, and for forwards.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    /// Raw References chain (Message-IDs) for remote-only replies.
+    #[serde(default)]
+    pub references: Option<Vec<String>>,
     pub idempotency_key: Option<Uuid>,
+}
+
+const MAX_THREADING_REFERENCES: usize = 20;
+const MAX_THREADING_MESSAGE_ID_LEN: usize = 255;
+
+fn validate_threading_field(value: &str) -> Result<(), AppError> {
+    if value.len() > MAX_THREADING_MESSAGE_ID_LEN {
+        return Err(AppError::bad_request("Message-ID is too long"));
+    }
+    if value.contains(['\r', '\n']) {
+        return Err(AppError::bad_request("Message-ID must not contain CR/LF"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -2005,6 +2420,19 @@ fn validate_send_outbound_mail_request(req: &SendOutboundMailRequest) -> Result<
         .any(|address| address.trim().is_empty() || address.len() > 512)
     {
         return Err(AppError::bad_request("Recipient addresses are invalid"));
+    }
+    if let Some(in_reply_to) = &req.in_reply_to {
+        validate_threading_field(in_reply_to)?;
+    }
+    if let Some(references) = &req.references {
+        if references.len() > MAX_THREADING_REFERENCES {
+            return Err(AppError::bad_request(format!(
+                "At most {MAX_THREADING_REFERENCES} references are allowed"
+            )));
+        }
+        for reference in references {
+            validate_threading_field(reference)?;
+        }
     }
     Ok(())
 }
@@ -2206,6 +2634,8 @@ pub async fn send_outbound_mail_handler(
             req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
+            req.in_reply_to,
+            req.references,
             false,
             req.idempotency_key,
         )
@@ -2247,6 +2677,8 @@ pub async fn reply_mail_handler(
             req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
+            req.in_reply_to,
+            req.references,
             false,
             req.idempotency_key,
         )
@@ -2295,6 +2727,8 @@ pub async fn reply_all_mail_handler(
             req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
+            req.in_reply_to,
+            req.references,
             false,
             req.idempotency_key,
         )
@@ -2336,6 +2770,8 @@ pub async fn forward_mail_handler(
             req.body_html,
             req.attachments,
             None,
+            None,
+            None,
             true,
             req.idempotency_key,
         )
@@ -2358,6 +2794,13 @@ pub struct SaveDraftRequest {
     #[serde(default)]
     pub attachments: Vec<Uuid>,
     pub in_reply_to_msg_id: Option<Uuid>,
+    /// Raw Message-ID / References for replies to remote-only messages; kept
+    /// with the draft so threading survives save/reload. See
+    /// `SendOutboundMailRequest`.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub references: Option<Vec<String>>,
 }
 
 /// Create draft mail.
@@ -2392,6 +2835,8 @@ pub async fn create_draft_handler(
             req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
+            req.in_reply_to,
+            req.references,
         )
         .await?;
     Ok(Json(MailMessageResponse::from(msg)))
@@ -2429,6 +2874,8 @@ pub async fn update_draft_handler(
             req.body_html,
             req.attachments,
             req.in_reply_to_msg_id,
+            req.in_reply_to,
+            req.references,
         )
         .await?;
     Ok(Json(MailMessageResponse::from(msg)))
@@ -2482,7 +2929,8 @@ pub async fn send_draft_handler(
 mod tests {
     use super::{
         remove_reply_all_sender, require_destination_folder, rewrite_cid_urls, sanitize_email_html,
-        CreateMailImportJobRequest, CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+        validate_send_outbound_mail_request, CreateMailImportJobRequest,
+        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
     };
     use chrono::Utc;
     use uuid::Uuid;
@@ -2518,6 +2966,48 @@ mod tests {
     }
 
     #[test]
+    fn outbound_request_accepts_raw_remote_threading_headers() {
+        let req: SendOutboundMailRequest = serde_json::from_value(serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Re: hello",
+            "body": "reply",
+            "in_reply_to": "abc123@remote.example",
+            "references": ["<root@remote.example>", "abc123@remote.example"]
+        }))
+        .expect("request should deserialize");
+
+        assert!(validate_send_outbound_mail_request(&req).is_ok());
+        assert_eq!(req.in_reply_to.as_deref(), Some("abc123@remote.example"));
+        assert_eq!(req.references.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn outbound_request_rejects_threading_header_injection() {
+        let req: SendOutboundMailRequest = serde_json::from_value(serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Re: hello",
+            "body": "reply",
+            "in_reply_to": "abc@example.com\r\nBcc: attacker@example.com"
+        }))
+        .expect("request should deserialize");
+
+        assert!(validate_send_outbound_mail_request(&req).is_err());
+    }
+
+    #[test]
+    fn outbound_request_rejects_too_many_references() {
+        let req: SendOutboundMailRequest = serde_json::from_value(serde_json::json!({
+            "to": ["alice@example.com"],
+            "subject": "Re: hello",
+            "body": "reply",
+            "references": (0..21).map(|i| format!("id-{i}@example.com")).collect::<Vec<_>>()
+        }))
+        .expect("request should deserialize");
+
+        assert!(validate_send_outbound_mail_request(&req).is_err());
+    }
+
+    #[test]
     fn reply_all_removes_authoritative_sender_and_duplicates() {
         let mut req = SendOutboundMailRequest {
             to: vec![
@@ -2538,6 +3028,8 @@ mod tests {
             body_html: None,
             attachments: Vec::new(),
             in_reply_to_msg_id: None,
+            in_reply_to: None,
+            references: None,
             idempotency_key: None,
         };
 
