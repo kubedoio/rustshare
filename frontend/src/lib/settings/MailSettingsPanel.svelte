@@ -41,6 +41,7 @@
 	let replaceSmtpPassword = $state(false);
 	let provider = $state<Provider>('custom');
 	let pendingSmtpPreset = $state<{ host: string; port: number; tls_mode: 'starttls' } | null>(null);
+	let settingsFields = $state<HTMLDivElement>();
 
 	let imapForm = $state({
 		name: '',
@@ -248,6 +249,13 @@
 
 	async function handleSaveAll() {
 		if (!selectedMailAccountId) return;
+		const invalidField = settingsFields?.querySelector<HTMLInputElement | HTMLSelectElement>(
+			':invalid'
+		);
+		if (invalidField) {
+			invalidField.reportValidity();
+			return;
+		}
 		saving = true;
 		try {
 			await mailApi.updateAccount(selectedMailAccountId, {
@@ -578,7 +586,7 @@
 					{/if}
 				</div>
 
-				<div class="px-4">
+				<div class="px-4" bind:this={settingsFields}>
 					<CollapsibleSection
 						title="General"
 						description="Account identity and availability"
