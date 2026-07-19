@@ -508,15 +508,15 @@
 		action: 'read' | 'unread' | 'archive' | 'trash' | 'delete',
 		uid: number,
 		options: { silent?: boolean } = {}
-	) {
-		if (!selectedAccountId || selection.kind !== 'imap') return;
+	): Promise<boolean> {
+		if (!selectedAccountId || selection.kind !== 'imap') return false;
 		const folder = selection.name;
 		if (
 			!options.silent &&
 			action === 'delete' &&
 			!confirm('Delete this message from the mailbox permanently?')
 		)
-			return;
+			return false;
 		try {
 			if (action === 'read')
 				await mailApi.markMessageRead(selectedAccountId, uid, folder, uidvalidity);
@@ -552,7 +552,7 @@
 				viewerTarget = null;
 				mobileView = 'list';
 			}
-			if (options.silent) return;
+			if (options.silent) return true;
 			await refreshCurrent();
 			toastStore.show(
 				action === 'read'
@@ -566,8 +566,11 @@
 								: 'Deleted message',
 				'success'
 			);
+			return true;
 		} catch (error) {
-			toastStore.show(error instanceof Error ? error.message : 'Action failed', 'error');
+			if (!options.silent)
+				toastStore.show(error instanceof Error ? error.message : 'Action failed', 'error');
+			return false;
 		}
 	}
 
@@ -576,21 +579,24 @@
 		if (action === 'delete' && !confirm(`Delete ${checkedUids.length} message(s) permanently?`))
 			return;
 		const count = checkedUids.length;
+		let failed = 0;
 		for (const uid of checkedUids) {
 			// Sequential to preserve server-side UID validity handling
 
-			await runImapAction(action, uid, { silent: true });
+			if (!(await runImapAction(action, uid, { silent: true }))) failed += 1;
 		}
 		checkedUids = [];
 		await refreshCurrent();
-		toastStore.show(
-			action === 'archive'
-				? `Archived ${count} message(s)`
-				: action === 'trash'
-					? `Moved ${count} message(s) to trash`
-					: `Deleted ${count} message(s)`,
-			'success'
-		);
+		const verb = action === 'archive' ? 'Archived' : action === 'trash' ? 'Moved' : 'Deleted';
+		const suffix = action === 'trash' ? ' to trash' : '';
+		if (failed === 0) {
+			toastStore.show(`${verb} ${count} message(s)${suffix}`, 'success');
+		} else {
+			toastStore.show(
+				`${verb} ${count - failed} of ${count} message(s)${suffix}; ${failed} failed`,
+				'error'
+			);
+		}
 	}
 
 	function toggleUid(uid: number) {

@@ -265,7 +265,10 @@
 						host: smtpForm.host.trim(),
 						port: Number(smtpForm.port),
 						username: smtpForm.username.trim(),
-						password: replaceSmtpPassword && smtpForm.password ? smtpForm.password : null,
+						password:
+							(replaceSmtpPassword || !selectedSmtp) && smtpForm.password
+								? smtpForm.password
+								: null,
 						tls_mode: smtpForm.tls_mode,
 						from_address: smtpForm.from_address.trim(),
 						from_name: smtpForm.from_name.trim() || null,
