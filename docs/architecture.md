@@ -1,7 +1,7 @@
 # RustShare System Architecture
 
-> **Status:** Production-readiness gap closure complete — Workstreams A–F  
-> **Last updated:** 2026-06-18
+> **Status:** Pre-release; target-environment launch gates are not complete
+> **Last updated:** 2026-07-20
 
 ---
 
@@ -29,7 +29,7 @@ RustShare is a self-hosted file-sharing and sync platform. It is designed to giv
                        │ HTTPS (operator-provided TLS)
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Nginx (reverse proxy)                  │
+│                 Host HTTPS reverse proxy                    │
 │           • TLS termination (production)                    │
 │           • Static asset caching                            │
 │           • WebSocket upgrade handling                      │
@@ -222,7 +222,7 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
                                                               └──────────┘    └──────────┘    └──────────┘
 ```
 
-1. **Nginx** terminates TLS (production), adds security headers, and proxies to the backend.
+1. A **same-host HTTPS reverse proxy** terminates TLS and forwards to the loopback-bound Compose nginx service, which adds security headers and proxies to the backend.
 2. **Axum Router** matches the request path (`/api/v1/...`, `/api/ws`, or SPA fallback).
 3. **Middleware Stack:**
    - **CORS** (configured via `ORIGIN`)

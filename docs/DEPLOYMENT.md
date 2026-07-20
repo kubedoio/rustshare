@@ -96,64 +96,22 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 
 ## TLS / HTTPS Setup
 
-RustShare requires HTTPS in production. TLS is terminated at the nginx reverse proxy.
+RustShare requires HTTPS in production.
 
-### Option A: Let's Encrypt with Certbot (Recommended)
+The production Compose profile publishes nginx only on `127.0.0.1:80`. A
+same-host HTTPS reverse proxy must accept public traffic and forward it to that
+loopback listener. Do not expose port 80 directly: production sessions use
+`Secure` cookies and will not authenticate over HTTP.
 
-1. **Install certbot** on the Docker host:
-   ```bash
-   # Debian/Ubuntu
-   sudo apt update && sudo apt install -y certbot
-   # macOS
-   brew install certbot
-   ```
+### Required External TLS Termination
 
-2. **Obtain certificates**:
-   ```bash
-   sudo certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
-   ```
+Use a host reverse proxy such as Caddy, nginx, or HAProxy. A CDN or load
+balancer can terminate TLS upstream only when its connection to the host is
+carried through a private tunnel.
 
-3. **Mount certificates** into the nginx container via `docker-compose.prod.yml`:
-   ```yaml
-   services:
-     nginx:
-       volumes:
-         - /etc/letsencrypt/live/yourdomain.com/fullchain.pem:/etc/nginx/ssl/cert.pem:ro
-         - /etc/letsencrypt/live/yourdomain.com/privkey.pem:/etc/nginx/ssl/key.pem:ro
-   ```
-
-4. **Enable the 443 server block** in `docker/nginx.conf` by uncommenting the SSL configuration and setting `server_name yourdomain.com;`.
-
-5. **Set up auto-renewal** with a cron job:
-   ```bash
-   echo "0 3 * * * root certbot renew --quiet && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -s reload" | sudo tee /etc/cron.d/rustshare-certbot
-   ```
-
-### Option B: Manual Certificates
-
-1. Place your certificate and private key in `./certs/`:
-   ```bash
-   mkdir -p certs
-   cp your-cert.pem certs/cert.pem
-   cp your-key.pem certs/key.pem
-   ```
-
-2. Mount them in `docker-compose.prod.yml`:
-   ```yaml
-   services:
-     nginx:
-       volumes:
-         - ./certs/cert.pem:/etc/nginx/ssl/cert.pem:ro
-         - ./certs/key.pem:/etc/nginx/ssl/key.pem:ro
-   ```
-
-3. Enable the 443 server block in `docker/nginx.conf` and set `server_name` to your domain.
-
-### Option C: External TLS Termination (Cloudflare, AWS ALB, etc.)
-
-If TLS is terminated at a CDN or load balancer upstream of RustShare:
-
-1. **Forward plain HTTP** from the edge to nginx. Ensure the nginx port is not exposed to the public internet directly (bind to `127.0.0.1:80` in `docker-compose.prod.yml`).
+1. **Run a same-host TLS proxy** that forwards plain HTTP to nginx at
+   `127.0.0.1:80`. A remote CDN or load balancer must connect through a private
+   tunnel or a same-host proxy; never expose the HTTP listener publicly.
 
 2. **Set the `X-Forwarded-Proto` header** at your edge proxy:
    ```
@@ -166,6 +124,17 @@ If TLS is terminated at a CDN or load balancer upstream of RustShare:
    ```
 
 4. The included nginx config already passes `X-Forwarded-Proto` to the backend via proxy headers.
+
+### RustFS Upgrades
+
+RustFS is pinned by digest because it owns persistent data. To upgrade it:
+
+1. Back up the stack and verify the backup bundle.
+2. Run a restore drill with the candidate digest in an isolated environment.
+3. Review upstream storage-format or migration requirements.
+4. Update the digest in both `docker-compose.yml` and
+   `docker-compose.restore-drill.yml`, then run the launch smoke test.
+5. Keep the previous digest and verified backup available for rollback.
 
 ---
 
@@ -375,9 +344,9 @@ Before deploying to production:
    - `OIDC_REDIRECT_URL`
 
 3. **Configure TLS**
-   - [ ] Choose a TLS option (Let's Encrypt, manual certs, or external termination)
-   - [ ] Enable the 443 server block in `docker/nginx.conf`
-   - [ ] Verify HTTPS is working and redirects from HTTP to HTTPS are active
+   - [ ] Configure a same-host HTTPS reverse proxy in front of `127.0.0.1:80`
+   - [ ] Verify the loopback listener is not publicly reachable
+   - [ ] Verify HTTPS is working and HTTP redirects to HTTPS
    - [ ] Set `ORIGIN` in `.env` to your HTTPS URL
 
 4. **Use `docker-compose.prod.yml`**

@@ -79,6 +79,22 @@ jobs:
           PG_PASSWORD=$(openssl rand -hex 32)
           echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
 
+  production-compose-contract:
+    name: Production Compose Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify production deployment safeguards
+        env:
+          POSTGRES_PASSWORD: compose-validation-only
+          RUSTFS_ROOT_USER: compose-validation-only
+          RUSTFS_ROOT_PASSWORD: compose-validation-only
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json > /tmp/production-compose.json
+          jq -e '.services.nginx.ports == [{"mode":"ingress","host_ip":"127.0.0.1","target":80,"published":"80","protocol":"tcp"}]' /tmp/production-compose.json
+          jq -e '.services.backend.healthcheck.test | index("http://127.0.0.1:8080/health/ready")' /tmp/production-compose.json
+          jq -e '.services.rustfs.image | test("^rustfs/rustfs@sha256:[0-9a-f]{64}$")' /tmp/production-compose.json
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

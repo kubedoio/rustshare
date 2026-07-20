@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Hardened the production Compose contract by requiring same-host external TLS termination, probing dependency readiness, and pinning RustFS to an immutable image digest.
+
+### Documentation
+
+- Aligned metadata-backend support and launch-readiness claims around PostgreSQL production deployments and target-environment release gates.
+
 ### Added
 
 - Added safe WebUI editing for eligible vault files. Vaults now have a `write_policy` (`read_only`, `web_editing_enabled`, or `sync_client_only`) defaulting to `read_only`. The WebUI can load and save Markdown/text files through `GET/PUT /api/vault-sync/v1/vaults/{id}/content/{*path}` when `web_editing_enabled` is set, using optimistic revision locking to prevent silent overwrites. Added `PATCH /api/vault-sync/v1/vaults/{id}/write-policy` for policy updates, a vault detail page policy selector, and a `VaultFileEditor` component with dirty state, conflict handling, and save shortcuts.

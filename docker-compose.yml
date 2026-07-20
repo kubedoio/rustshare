@@ -21,7 +21,8 @@ services:
       retries: 5
 
   rustfs:
-    image: rustfs/rustfs:latest
+    # Upgrade only after a verified backup and restore drill; see docs/DEPLOYMENT.md.
+    image: rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a
     environment:
       # Must be set via env var or .env file — see .env.example
       RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER}

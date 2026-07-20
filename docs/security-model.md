@@ -1,8 +1,8 @@
 # RustShare Security Model
 
-> **Status:** Production-readiness gap closure complete — Workstreams A–F  
+> **Status:** Pre-release; target-environment launch gates are not complete
 > **Scope:** Backend, frontend, and deployment runtime  
-> **Last updated:** 2026-06-18
+> **Last updated:** 2026-07-20
 
 ---
 

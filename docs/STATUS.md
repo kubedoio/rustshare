@@ -4,22 +4,19 @@
 
 RustShare is a late-MVP / pre-release file-sharing platform with a strong web product core and a deliberately narrower scope than Nextcloud. The project is no longer a prototype shell: the main web app, sharing flows, realtime updates, async replication, and operator recovery tooling are all implemented and working.
 
-### Major Architecture Update: Zero-PostgreSQL (2026-03-27)
+### Supported Metadata Architecture
 
-RustShare now supports a **zero-PostgreSQL architecture**. The system can run entirely without PostgreSQL, using RustFS as the durable system of record for all metadata. This enables:
-
-- **Simpler deployments**: Just rustshare + rustfs (optionally + redis)
-- **Two runtime profiles**: Standalone (single-node) and Distributed (multi-node with Redis)
-- **Flexible scaling**: Start with standalone, migrate to distributed as needed
-
-See [Zero-PostgreSQL Architecture](docs/ZERO_POSTGRES_ARCHITECTURE.md) for details.
+PostgreSQL is the only supported production metadata backend. The `dual_write`,
+`rustfs_reads`, and `rustfs` modes are migration experiments and must not be used
+for production data. See [Production Readiness](PRODUCTION_READINESS.md) for the
+deployment contract and [Zero-PostgreSQL Architecture](ZERO_POSTGRES_ARCHITECTURE.md)
+for the experimental roadmap.
 
 ### Implemented Features
 
 As of 2026-05-22, the implemented platform includes:
 
-- **Zero-PostgreSQL architecture** with RustFS as canonical store
-- **Dual runtime profiles**: Standalone and Distributed with Redis coordination
+- PostgreSQL-backed metadata with RustFS-compatible object storage
 - **Multi-Tenant Schema Hardening**: Composite tenant-scoped unique constraints on `modules` and `templates` tables to prevent key collisions across tenants.
 - **Decoupled NoteService**: Path generalization utilizing custom workspace and folder names via builder, fully separating notes storage.
 - **Frontend CSS Alignment**: Migrated hardcoded hex/purple colors to design-system theme tokens in Svelte components.
