@@ -99,6 +99,13 @@ services:
       RUSTSHARE_METADATA_CACHE: ${RUSTSHARE_METADATA_CACHE:-true}
       SERVER_HOST: 0.0.0.0
       FRONTEND_DIST_DIR: /app/frontend-build
+      # Mail: opt-in to IMAP/SMTP connections to internal/private servers
+      # (e.g. self-hosted mail on a private network). Off by default (SSRF guard);
+      # set RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS=true in .env to enable.
+      RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS: ${RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS:-false}
+      # Accept invalid TLS certificates for internal/private mail servers only
+      # (internal | never). Public servers always get full verification.
+      RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS: ${RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS:-internal}
       # Default to false for the HTTP base compose path; production overrides
       # can explicitly set this to true when served over HTTPS.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}

@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, MailAddr, MailHeaderMap};
 use rustshare_core::domain::MailTlsMode;
-use rustshare_core::validation::resolve_mail_server_socket_addrs;
+use rustshare_core::validation::{resolve_mail_server_socket_addrs, should_accept_invalid_certs};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
@@ -81,6 +81,14 @@ pub enum ImapError {
     CommandFailed(String),
     #[error("IMAP message {uid} size {size} bytes exceeds maximum allowed {max} bytes")]
     MessageTooLarge { uid: u32, size: usize, max: usize },
+    #[error("IMAP message {0} not found")]
+    MessageNotFound(u32),
+    #[error("UIDVALIDITY changed from {expected:?} to {actual:?}; selected UID {uid} is stale")]
+    UidValidityMismatch {
+        uid: u32,
+        expected: Option<i64>,
+        actual: Option<i64>,
+    },
 }
 
 impl From<std::io::Error> for ImapError {
@@ -101,6 +109,17 @@ pub struct MailFolder {
     pub display_name: String,
     pub delimiter: Option<String>,
     pub role: Option<String>,
+    /// Unread/total message counts from IMAP STATUS. `None` when the server
+    /// refused STATUS for this folder (e.g. `\Noselect` parents).
+    pub unseen: Option<u32>,
+    pub total: Option<u32>,
+}
+
+/// Unread/total message counts for a single folder, from IMAP STATUS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FolderStatus {
+    pub unseen: Option<u32>,
+    pub total: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -112,6 +131,7 @@ pub struct ImapMessageSummary {
     pub sent_at: Option<DateTime<Utc>>,
     pub size_bytes: i64,
     pub is_seen: bool,
+    pub is_flagged: bool,
 }
 
 pub struct ImapClient;
@@ -140,10 +160,21 @@ impl ImapClient {
                 "no addresses for IMAP host".to_string(),
             ));
         }
+        // Relaxed certificate verification is only ever enabled for
+        // internal/private destinations (e.g. self-signed intranet servers
+        // reached by IP); public hosts always get full verification.
+        let accept_invalid_certs = should_accept_invalid_certs(&addrs);
+        if accept_invalid_certs {
+            tracing::warn!(
+                host = %host,
+                port = %port,
+                "accepting invalid TLS certificates for internal mail server connection"
+            );
+        }
 
         let mut last_error = None;
         for addr in addrs {
-            match Self::connect_addr(host, port, addr, tls_mode).await {
+            match Self::connect_addr(host, port, addr, tls_mode, accept_invalid_certs).await {
                 Ok(client) => return Ok(client),
                 Err(e) => {
                     tracing::warn!(
@@ -167,6 +198,7 @@ impl ImapClient {
         _port: u16,
         addr: std::net::SocketAddr,
         tls_mode: MailTlsMode,
+        accept_invalid_certs: bool,
     ) -> Result<async_imap::Client<ImapStream>, ImapError> {
         match tls_mode {
             MailTlsMode::Tls => {
@@ -176,7 +208,7 @@ impl ImapClient {
                         ImapError::ConnectionFailed("operation timed out".to_string())
                     })??;
 
-                let connector = build_tls_connector()?;
+                let connector = build_tls_connector(accept_invalid_certs)?;
                 // Keep the original hostname for TLS certificate verification.
                 let server_name = host
                     .to_string()
@@ -221,7 +253,7 @@ impl ImapClient {
                         "unexpected IMAP stream state after STARTTLS".to_string(),
                     ));
                 };
-                let connector = build_tls_connector()?;
+                let connector = build_tls_connector(accept_invalid_certs)?;
                 let server_name = host
                     .to_string()
                     .try_into()
@@ -262,18 +294,48 @@ impl ImapSession {
         .await
         .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
 
-        Ok(names
-            .into_iter()
-            .map(|name| {
-                let raw_name = name.name().to_string();
-                MailFolder {
-                    display_name: decode_modified_utf7(&raw_name),
-                    role: folder_role(name.attributes()).map(str::to_string),
-                    name: raw_name,
-                    delimiter: name.delimiter().map(str::to_string),
-                }
-            })
-            .collect())
+        let mut folders = Vec::with_capacity(names.len());
+        for name in names {
+            let raw_name = name.name().to_string();
+            let no_select = name
+                .attributes()
+                .iter()
+                .any(|attribute| matches!(attribute, NameAttribute::NoSelect));
+            // STATUS is refused for `\Noselect` hierarchy parents and may fail
+            // for individual folders on some servers; degrade to `None` counts
+            // instead of failing the whole listing.
+            let status = if no_select {
+                None
+            } else {
+                self.folder_status(&raw_name).await.ok()
+            };
+            let (unseen, total) = status
+                .map(|status| (status.unseen, status.total))
+                .unwrap_or((None, None));
+            folders.push(MailFolder {
+                display_name: decode_modified_utf7(&raw_name),
+                role: folder_role(name.attributes()).map(str::to_string),
+                name: raw_name,
+                delimiter: name.delimiter().map(str::to_string),
+                unseen,
+                total,
+            });
+        }
+        Ok(folders)
+    }
+
+    /// Fetch UNSEEN/MESSAGES counts for a folder via IMAP STATUS.
+    pub async fn folder_status(&mut self, folder: &str) -> Result<FolderStatus, ImapError> {
+        let mailbox = tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.status(folder, "(MESSAGES UNSEEN)"),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        Ok(FolderStatus {
+            unseen: mailbox.unseen,
+            total: Some(mailbox.exists),
+        })
     }
 
     pub async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError> {
@@ -343,12 +405,11 @@ impl ImapSession {
     ) -> Result<Vec<u8>, ImapError> {
         let uidvalidity = self.select_folder(folder).await?;
         if uidvalidity.map(i64::from) != expected_uidvalidity {
-            return Err(ImapError::CommandFailed(format!(
-                "UIDVALIDITY changed from {:?} to {:?}; selected UID {} is stale",
-                expected_uidvalidity,
-                uidvalidity.map(i64::from),
-                uid
-            )));
+            return Err(ImapError::UidValidityMismatch {
+                uid,
+                expected: expected_uidvalidity,
+                actual: uidvalidity.map(i64::from),
+            });
         }
 
         // Fetch the advertised size first so we reject oversized messages
@@ -366,7 +427,7 @@ impl ImapSession {
         let size_fetch = size_fetches
             .into_iter()
             .next()
-            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} not found")))?;
+            .ok_or(ImapError::MessageNotFound(uid))?;
         let size = size_fetch.size.unwrap_or(0) as usize;
         if size > MAX_MAIL_BODY_SIZE_BYTES {
             return Err(ImapError::MessageTooLarge {
@@ -390,7 +451,7 @@ impl ImapSession {
         let fetch = fetches
             .into_iter()
             .next()
-            .ok_or_else(|| ImapError::CommandFailed(format!("message {uid} not found")))?;
+            .ok_or(ImapError::MessageNotFound(uid))?;
 
         let body = fetch
             .body()
@@ -463,6 +524,62 @@ impl ImapSession {
         .await
         .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
         Ok(())
+    }
+
+    pub async fn mark_flagged(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        flagged: bool,
+    ) -> Result<(), ImapError> {
+        self.select_folder(folder).await?;
+        let query = if flagged {
+            "+FLAGS.SILENT (\\Flagged)"
+        } else {
+            "-FLAGS.SILENT (\\Flagged)"
+        };
+        tokio::time::timeout(
+            DEFAULT_TIMEOUT,
+            self.session.uid_store(uid.to_string(), query),
+        )
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??
+        .try_collect::<Vec<Fetch>>()
+        .await
+        .map_err(|e| ImapError::CommandFailed(format!("UID STORE failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Fetch the current `\Seen` / `\Flagged` state for a message.
+    pub async fn fetch_message_flags(
+        &mut self,
+        folder: &str,
+        uid: u32,
+    ) -> Result<(bool, bool), ImapError> {
+        self.select_folder(folder).await?;
+        let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+            self.session
+                .uid_fetch(uid.to_string(), "FLAGS")
+                .await?
+                .try_collect::<Vec<Fetch>>()
+                .await
+        })
+        .await
+        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+        let fetch = fetches
+            .into_iter()
+            .next()
+            .ok_or(ImapError::MessageNotFound(uid))?;
+        let mut is_seen = false;
+        let mut is_flagged = false;
+        for flag in fetch.flags() {
+            match flag {
+                async_imap::types::Flag::Seen => is_seen = true,
+                async_imap::types::Flag::Flagged => is_flagged = true,
+                _ => {}
+            }
+        }
+        Ok((is_seen, is_flagged))
     }
 
     pub async fn copy_message(
@@ -649,6 +766,13 @@ impl ImapArchiveSession for ImapSession {
 pub trait ImapMailboxSession: Send {
     async fn select_folder(&mut self, folder: &str) -> Result<Option<u32>, ImapError>;
     async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError>;
+    async fn mark_flagged(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        flagged: bool,
+    ) -> Result<(), ImapError>;
+    async fn folder_status(&mut self, folder: &str) -> Result<FolderStatus, ImapError>;
     async fn supports_move(&mut self) -> Result<bool, ImapError>;
     async fn move_message(
         &mut self,
@@ -668,6 +792,19 @@ impl ImapMailboxSession for ImapSession {
 
     async fn mark_seen(&mut self, folder: &str, uid: u32, seen: bool) -> Result<(), ImapError> {
         ImapSession::mark_seen(self, folder, uid, seen).await
+    }
+
+    async fn mark_flagged(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        flagged: bool,
+    ) -> Result<(), ImapError> {
+        ImapSession::mark_flagged(self, folder, uid, flagged).await
+    }
+
+    async fn folder_status(&mut self, folder: &str) -> Result<FolderStatus, ImapError> {
+        ImapSession::folder_status(self, folder).await
     }
 
     async fn supports_move(&mut self) -> Result<bool, ImapError> {
@@ -703,13 +840,71 @@ fn build_archive_search_query(since: Option<NaiveDate>, before: Option<NaiveDate
     criteria.join(" ")
 }
 
-fn build_tls_connector() -> Result<tokio_rustls::TlsConnector, ImapError> {
+/// Certificate verifier that accepts any certificate. Only used for
+/// internal/private mail servers, where self-signed certificates and
+/// hostname mismatches (connecting by IP address) are common. Never used for
+/// public destinations — see [`should_accept_invalid_certs`].
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &tokio_rustls::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error>
+    {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+fn build_tls_connector(
+    accept_invalid_certs: bool,
+) -> Result<tokio_rustls::TlsConnector, ImapError> {
     let root_store = tokio_rustls::rustls::RootCertStore::from_iter(
         webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
     );
-    let config = tokio_rustls::rustls::ClientConfig::builder()
+    let mut config = tokio_rustls::rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
+    if accept_invalid_certs {
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertVerifier));
+    }
     Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }
 
@@ -734,10 +929,22 @@ fn parse_imap_date(value: &str) -> Option<DateTime<Utc>> {
 fn summary_from_fetch(fetch: Fetch) -> Option<ImapMessageSummary> {
     let uid = fetch.uid?;
     let header = fetch.header()?;
-    let is_seen = fetch
-        .flags()
-        .any(|flag| flag == async_imap::types::Flag::Seen);
-    summary_from_header_bytes(uid, header, i64::from(fetch.size.unwrap_or(0)), is_seen)
+    let mut is_seen = false;
+    let mut is_flagged = false;
+    for flag in fetch.flags() {
+        match flag {
+            async_imap::types::Flag::Seen => is_seen = true,
+            async_imap::types::Flag::Flagged => is_flagged = true,
+            _ => {}
+        }
+    }
+    summary_from_header_bytes(
+        uid,
+        header,
+        i64::from(fetch.size.unwrap_or(0)),
+        is_seen,
+        is_flagged,
+    )
 }
 
 /// Build a message summary from a raw RFC 5322 header block. Uses mailparse,
@@ -749,6 +956,7 @@ fn summary_from_header_bytes(
     header: &[u8],
     size_bytes: i64,
     is_seen: bool,
+    is_flagged: bool,
 ) -> Option<ImapMessageSummary> {
     let (headers, _) = mailparse::parse_headers(header).ok()?;
 
@@ -773,6 +981,7 @@ fn summary_from_header_bytes(
         sent_at,
         size_bytes,
         is_seen,
+        is_flagged,
     })
 }
 
@@ -803,7 +1012,7 @@ mod tests {
     #[test]
     fn summary_parses_plain_ascii_header_block() {
         let header = b"Subject: Hello, world!\r\nFrom: \"John Doe\" <john@example.com>\r\nDate: Mon, 15 Aug 2022 10:30:00 +0000\r\n\r\n";
-        let summary = summary_from_header_bytes(7, header, 1234, false).unwrap();
+        let summary = summary_from_header_bytes(7, header, 1234, false, false).unwrap();
         assert_eq!(summary.uid, 7);
         assert_eq!(summary.subject, Some("Hello, world!".to_string()));
         assert_eq!(summary.from_name, Some("John Doe".to_string()));
@@ -811,13 +1020,14 @@ mod tests {
         assert_eq!(summary.sent_at.unwrap().timestamp(), 1_660_559_400);
         assert_eq!(summary.size_bytes, 1234);
         assert!(!summary.is_seen);
+        assert!(!summary.is_flagged);
     }
 
     #[test]
     fn summary_decodes_rfc2047_headers() {
         // Base64-encoded UTF-8 for "Привет" (Russian for "Hi").
         let header = b"Subject: =?UTF-8?B?0J/RgNC40LLQtdGC?=\r\nFrom: =?UTF-8?B?0J/RgNC40LLQtdGC?= <test@example.com>\r\n\r\n";
-        let summary = summary_from_header_bytes(1, header, 0, true).unwrap();
+        let summary = summary_from_header_bytes(1, header, 0, true, false).unwrap();
         assert_eq!(summary.subject, Some("Привет".to_string()));
         assert_eq!(summary.from_name, Some("Привет".to_string()));
         assert_eq!(summary.from_address, Some("test@example.com".to_string()));
@@ -825,11 +1035,19 @@ mod tests {
     }
 
     #[test]
+    fn summary_carries_flagged_state() {
+        let header = b"Subject: Hi\r\nFrom: <a@example.com>\r\n\r\n";
+        let summary = summary_from_header_bytes(5, header, 0, false, true).unwrap();
+        assert!(!summary.is_seen);
+        assert!(summary.is_flagged);
+    }
+
+    #[test]
     fn summary_accepts_raw_utf8_headers() {
         // Stalwart (UTF8=ACCEPT) returns raw UTF-8 in ENVELOPE/headers, which
         // the ENVELOPE parser could not handle; the header block parser must.
         let header = "Subject: Legal update – no action needed 📃\r\nFrom: Finom Legal <hello@legal.finom.co>\r\nDate: Thu, 16 Jul 2026 10:09:51 +0000\r\n\r\n".as_bytes();
-        let summary = summary_from_header_bytes(9719, header, 44747, true).unwrap();
+        let summary = summary_from_header_bytes(9719, header, 44747, true, false).unwrap();
         assert_eq!(
             summary.subject,
             Some("Legal update – no action needed 📃".to_string())
@@ -843,7 +1061,8 @@ mod tests {
 
     #[test]
     fn summary_tolerates_missing_headers() {
-        let summary = summary_from_header_bytes(3, b"X-Custom: 1\r\n\r\n", 0, false).unwrap();
+        let summary =
+            summary_from_header_bytes(3, b"X-Custom: 1\r\n\r\n", 0, false, false).unwrap();
         assert_eq!(summary.subject, None);
         assert_eq!(summary.from_name, None);
         assert_eq!(summary.from_address, None);

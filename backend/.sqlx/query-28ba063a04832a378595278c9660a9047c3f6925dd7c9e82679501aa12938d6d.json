@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT source_uid, id\n            FROM mail_messages\n            WHERE owner_id = $1\n              AND account_id = $2\n              AND source_folder = $3\n              AND source_uid = ANY($4)\n              AND source_uidvalidity IS NOT DISTINCT FROM $5\n              AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source_uid",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int8Array",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "28ba063a04832a378595278c9660a9047c3f6925dd7c9e82679501aa12938d6d"
+}

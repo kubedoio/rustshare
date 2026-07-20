@@ -1,4 +1,4 @@
-use crate::validation::resolve_mail_server_socket_addrs;
+use crate::validation::{resolve_mail_server_socket_addrs, should_accept_invalid_certs};
 use lettre::{
     address::Envelope,
     message::{
@@ -58,6 +58,7 @@ pub struct OutboundMailMessage<'a> {
     pub bcc: &'a [String],
     pub subject: &'a str,
     pub body: &'a str,
+    pub body_html: Option<&'a str>,
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<SmtpAttachment>,
@@ -289,7 +290,7 @@ impl EmailService {
         let port = u16::try_from(port).map_err(|_| {
             EmailError::SmtpSendFailed(format!("SMTP port {} is out of range", port))
         })?;
-        let connection_host = validate_smtp_host(host, port).await?;
+        let validated = validate_smtp_host(host, port).await?;
 
         let creds = config
             .username
@@ -311,10 +312,13 @@ impl EmailService {
             .as_deref()
         {
             Some("tls") => {
-                let tls = TlsParameters::new(host.to_string())
+                let tls = TlsParameters::builder(host.to_string())
+                    .dangerous_accept_invalid_certs(validated.accept_invalid_certs)
+                    .dangerous_accept_invalid_hostnames(validated.accept_invalid_certs)
+                    .build()
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
-                    connection_host.clone(),
+                    validated.connection_host.clone(),
                 )
                 .tls(Tls::Wrapper(tls))
                 .port(port);
@@ -324,10 +328,13 @@ impl EmailService {
                 b
             }
             Some("starttls") => {
-                let tls = TlsParameters::new(host.to_string())
+                let tls = TlsParameters::builder(host.to_string())
+                    .dangerous_accept_invalid_certs(validated.accept_invalid_certs)
+                    .dangerous_accept_invalid_hostnames(validated.accept_invalid_certs)
+                    .build()
                     .map_err(|e| EmailError::SmtpSendFailed(e.to_string()))?;
                 let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
-                    connection_host.clone(),
+                    validated.connection_host.clone(),
                 )
                 .tls(Tls::Required(tls))
                 .port(port);
@@ -337,9 +344,10 @@ impl EmailService {
                 b
             }
             Some("none") => {
-                let mut b =
-                    AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connection_host)
-                        .port(port);
+                let mut b = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                    validated.connection_host,
+                )
+                .port(port);
                 if let Some(c) = creds {
                     b = b.credentials(c);
                 }
@@ -356,16 +364,37 @@ impl EmailService {
     }
 }
 
-async fn validate_smtp_host(host: &str, port: u16) -> Result<String, EmailError> {
+#[derive(Debug)]
+struct ValidatedSmtpHost {
+    connection_host: String,
+    accept_invalid_certs: bool,
+}
+
+async fn validate_smtp_host(host: &str, port: u16) -> Result<ValidatedSmtpHost, EmailError> {
     let addrs = resolve_mail_server_socket_addrs(host, port)
         .await
         .map_err(|e| {
             EmailError::SmtpSendFailed(format!("SMTP host failed SSRF validation: {e}"))
         })?;
-    addrs
+    let connection_host = addrs
         .first()
         .map(|addr| addr.ip().to_string())
-        .ok_or_else(|| EmailError::SmtpSendFailed("SMTP host resolved no addresses".to_string()))
+        .ok_or_else(|| EmailError::SmtpSendFailed("SMTP host resolved no addresses".to_string()))?;
+    // Relaxed certificate verification is only ever enabled for
+    // internal/private destinations (e.g. self-signed intranet servers reached
+    // by IP); public hosts always get full verification.
+    let accept_invalid_certs = should_accept_invalid_certs(&addrs);
+    if accept_invalid_certs {
+        tracing::warn!(
+            host = %host,
+            port = %port,
+            "accepting invalid TLS certificates for internal SMTP server"
+        );
+    }
+    Ok(ValidatedSmtpHost {
+        connection_host,
+        accept_invalid_certs,
+    })
 }
 
 fn build_outbound_smtp_message(
@@ -427,12 +456,16 @@ fn build_outbound_message(
         builder = builder.envelope(envelope);
     }
 
-    let alternative = MultiPart::alternative()
-        .singlepart(SinglePart::plain(email.body.to_string()))
-        .singlepart(SinglePart::html(format!(
+    let html_part = match email.body_html {
+        Some(html) if !html.trim().is_empty() => SinglePart::html(html.to_string()),
+        _ => SinglePart::html(format!(
             "<pre style=\"white-space:pre-wrap;font-family:system-ui,sans-serif\">{}</pre>",
             html_escape(email.body)
-        )));
+        )),
+    };
+    let alternative = MultiPart::alternative()
+        .singlepart(SinglePart::plain(email.body.to_string()))
+        .singlepart(html_part);
 
     if email.attachments.is_empty() {
         builder.multipart(alternative)
@@ -558,6 +591,7 @@ mod tests {
                 bcc: &bcc,
                 subject: "Subject",
                 body: "Body",
+                body_html: None,
                 in_reply_to: None,
                 references: None,
                 attachments: vec![],
@@ -588,6 +622,7 @@ mod tests {
                 bcc: &bcc,
                 subject: "Draft",
                 body: "Body",
+                body_html: None,
                 in_reply_to: None,
                 references: None,
                 attachments: vec![],
@@ -602,6 +637,31 @@ mod tests {
         .expect("message is utf8");
         assert!(raw.contains("Bcc: blind@example.com"));
         assert_eq!(raw.matches("Bcc:").count(), 1);
+    }
+
+    #[test]
+    fn outbound_message_uses_provided_html_body() {
+        let smtp = smtp_settings();
+        let to = ["to@example.com".to_string()];
+        let msg = build_outbound_smtp_message(
+            &smtp,
+            OutboundMailMessage {
+                recipients: &to,
+                cc: &[],
+                bcc: &[],
+                subject: "Rich",
+                body: "Hello World",
+                body_html: Some("<p>Hello <b>World</b></p>"),
+                in_reply_to: None,
+                references: None,
+                attachments: vec![],
+            },
+        )
+        .expect("message should build");
+
+        let raw = String::from_utf8(msg.formatted()).expect("message is utf8");
+        assert!(raw.contains("<p>Hello <b>World</b></p>"));
+        assert!(!raw.contains("<pre style=\"white-space:pre-wrap"));
     }
 
     #[tokio::test]

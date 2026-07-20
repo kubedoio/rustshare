@@ -65,6 +65,8 @@ export interface MailFolder {
 	display_name: string;
 	delimiter: string | null;
 	role: 'archive' | 'drafts' | 'sent' | 'trash' | null;
+	unseen: number | null;
+	total: number | null;
 }
 
 export interface MailAccountMessage {
@@ -75,6 +77,39 @@ export interface MailAccountMessage {
 	sent_at: string | null;
 	size_bytes: number;
 	is_seen?: boolean;
+	is_flagged: boolean;
+	imported_message_id: string | null;
+}
+
+export interface MailAddress {
+	name: string | null;
+	address: string;
+}
+
+export interface MailRemoteMessageBody {
+	uid: number;
+	subject: string | null;
+	from_address: string | null;
+	from_name: string | null;
+	to: MailAddress[];
+	cc: MailAddress[];
+	date: string | null;
+	message_id: string | null;
+	in_reply_to: string | null;
+	/** RAW html — always sanitize before rendering. */
+	html: string | null;
+	text: string | null;
+	attachments: MailRemoteAttachment[];
+	is_seen: boolean;
+	is_flagged: boolean;
+}
+
+export interface MailRemoteAttachment {
+	index: number;
+	filename: string | null;
+	mime_type: string;
+	size_bytes: number;
+	content_id: string | null;
 }
 
 export interface MailImportJob {
@@ -211,8 +246,13 @@ export interface SendOutboundMailRequest {
 	bcc?: string[];
 	subject: string;
 	body: string;
+	/** Sanitized HTML alternative for the body, generated from the rich-text editor. */
+	body_html?: string | null;
 	attachments?: string[];
 	in_reply_to_msg_id?: string | null;
+	/** Raw Message-ID header value; backend normalizes brackets. in_reply_to_msg_id wins when both set. */
+	in_reply_to?: string | null;
+	references?: string[] | null;
 	idempotency_key?: string;
 }
 
@@ -341,6 +381,55 @@ export const mailApi = {
 		source_uidvalidity?: number | null
 	): Promise<void> => {
 		await apiClient.delete(`/mail/accounts/${accountId}/messages/${uid}`, {
+			folder,
+			source_uidvalidity
+		});
+	},
+
+	getRemoteMessageBody: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<MailRemoteMessageBody> => {
+		const params = new URLSearchParams({ folder });
+		if (source_uidvalidity != null) params.set('source_uidvalidity', String(source_uidvalidity));
+		return apiClient.get<MailRemoteMessageBody>(
+			`/mail/accounts/${accountId}/messages/${uid}/body?${params}`
+		);
+	},
+
+	remoteAttachmentUrl: (
+		accountId: string,
+		uid: number,
+		index: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): string => {
+		const params = new URLSearchParams({ folder });
+		if (source_uidvalidity != null) params.set('source_uidvalidity', String(source_uidvalidity));
+		return `${apiClient.getBaseURL()}/mail/accounts/${accountId}/messages/${uid}/attachments/${index}?${params}`;
+	},
+
+	starMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/star`, {
+			folder,
+			source_uidvalidity
+		});
+	},
+
+	unstarMessage: async (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): Promise<void> => {
+		await apiClient.postVoid(`/mail/accounts/${accountId}/messages/${uid}/unstar`, {
 			folder,
 			source_uidvalidity
 		});

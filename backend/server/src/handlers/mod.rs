@@ -676,6 +676,8 @@ impl From<crate::services::mail_service::MailError> for AppError {
                 AppError::Internal("Internal server error".to_string())
             }
             MailError::Cancelled => AppError::BadRequest(err.to_string()),
+            MailError::RemoteMessageNotFound(_) => AppError::NotFound(err.to_string()),
+            MailError::UidValidityMismatch(_) => AppError::Conflict(err.to_string()),
         }
     }
 }

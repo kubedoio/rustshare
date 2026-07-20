@@ -4,6 +4,9 @@
 	import type { SaveDraftRequest, SendOutboundMailRequest } from '$lib/api/mail';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File as WorkspaceFile } from '$lib/api/types';
+	import MailBodyEditor from '$lib/components/modules/mail/MailBodyEditor.svelte';
+	import { markdownToHtml } from '$lib/editor/adapter/markdown';
+	import { sanitizeHtml } from '$lib/editor/adapter/security';
 
 	type Draft = {
 		to: string;
@@ -23,6 +26,8 @@
 		initialBody = '',
 		initialAttachments = [],
 		inReplyToMsgId = null,
+		inReplyTo = null,
+		references = null,
 		mode = 'new',
 		draftId = null,
 		sending = false,
@@ -43,6 +48,9 @@
 		initialBody?: string;
 		initialAttachments?: string[];
 		inReplyToMsgId?: string | null;
+		/** Raw Message-ID of the message being replied to (remote mailbox threading). */
+		inReplyTo?: string | null;
+		references?: string[] | null;
 		mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'draft-edit';
 		draftId?: string | null;
 		sending?: boolean;
@@ -71,6 +79,8 @@
 	let saved = $state(false);
 	let baseline = $state('');
 	let idempotencyKey = $state('');
+	let showCc = $state(false);
+	let showBcc = $state(false);
 
 	onMount(async () => {
 		try {
@@ -91,6 +101,8 @@
 				body: initialBody,
 				attachments: [...initialAttachments]
 			};
+			showCc = initialCc.trim().length > 0;
+			showBcc = initialBcc.trim().length > 0;
 			saved = false;
 			baseline = JSON.stringify(draft);
 		}
@@ -123,6 +135,14 @@
 			.filter(Boolean);
 	}
 
+	/** Render the Markdown body to sanitized HTML for the multipart/alternative part. */
+	function bodyHtml(): string | null {
+		if (!draft.body.trim()) return null;
+		const rendered = markdownToHtml(draft.body);
+		if (!rendered.success || !rendered.html.trim()) return null;
+		return sanitizeHtml(rendered.html);
+	}
+
 	function draftPayload(): SaveDraftRequest {
 		return {
 			to: splitAddresses(draft.to),
@@ -130,15 +150,19 @@
 			bcc: splitAddresses(draft.bcc),
 			subject: draft.subject.trim(),
 			body: draft.body,
+			body_html: bodyHtml(),
 			attachments: draft.attachments,
 			// Forward drafts must not persist the original as in_reply_to: the
 			// send path would then emit In-Reply-To/References and thread the
 			// forward as a reply in recipients' clients.
-			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId
+			in_reply_to_msg_id: mode === 'forward' ? null : inReplyToMsgId,
+			in_reply_to: mode === 'forward' ? null : inReplyTo,
+			references: mode === 'forward' ? null : references
 		};
 	}
 
 	function handleSubmit() {
+		if (!draft.body.trim()) return;
 		onSend({ ...draftPayload(), idempotency_key: idempotencyKey });
 	}
 
@@ -160,28 +184,30 @@
 
 {#if open}
 	<div class="modal modal-open">
-		<div class="modal-box max-w-3xl rounded-lg">
-			<div class="mb-4 flex items-center justify-between gap-3">
-				<h2 class="text-lg font-semibold">Compose</h2>
+		<div
+			class="modal-box max-w-2xl rounded-lg border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-0"
+		>
+			<div class="flex items-center justify-between border-b border-[var(--rs-border)] px-4 py-2.5">
+				<h2 class="text-sm font-semibold text-base-content">Compose</h2>
 				<button
 					type="button"
 					class="btn btn-ghost btn-sm btn-square"
 					aria-label="Close compose"
 					onclick={handleClose}
 				>
-					<X size={18} />
+					<X size={16} />
 				</button>
 			</div>
 
 			{#if !hasSmtp}
-				<div class="py-6 text-center">
+				<div class="px-6 py-8 text-center">
 					<div
-						class="flex h-12 w-12 items-center justify-center rounded-xl bg-warning/10 text-warning mx-auto mb-4"
+						class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-warning/10 text-warning"
 					>
 						<AlertTriangle size={24} />
 					</div>
-					<h3 class="text-md font-bold text-base-content">Outgoing SMTP not configured</h3>
-					<p class="text-sm text-base-content/60 mt-1 mb-6">
+					<h3 class="text-base font-bold text-base-content">Outgoing SMTP not configured</h3>
+					<p class="mx-auto mt-1 mb-6 max-w-sm text-sm text-base-content/60">
 						Outgoing SMTP is not configured for this mail account. Configure SMTP in Settings to
 						send mail.
 					</p>
@@ -192,68 +218,114 @@
 				</div>
 			{:else}
 				<form
-					class="flex flex-col gap-3"
+					class="flex flex-col"
 					onsubmit={(event) => {
 						event.preventDefault();
 						handleSubmit();
 					}}
 				>
-					<input
-						class="input input-bordered"
-						type="text"
-						placeholder="To"
-						bind:value={draft.to}
-						required
-					/>
-					<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-						<input
-							class="input input-bordered"
-							type="text"
-							placeholder="Cc"
-							bind:value={draft.cc}
-						/>
-						<input
-							class="input input-bordered"
-							type="text"
-							placeholder="Bcc"
-							bind:value={draft.bcc}
-						/>
-					</div>
-					<input
-						class="input input-bordered"
-						placeholder="Subject"
-						bind:value={draft.subject}
-						required
-					/>
-
-					<!-- Attachments -->
-					<div class="flex flex-col gap-2 rounded-lg border border-base-300 bg-base-200/30 p-3">
-						<span class="flex items-center gap-2 text-xs font-semibold text-base-content/70">
-							<Paperclip size={14} />
-							Attachments
-						</span>
-						{#if attachedFiles.length > 0}
-							<div class="flex flex-wrap gap-2 mb-1">
-								{#each attachedFiles as file}
-									<span class="badge badge-secondary gap-2 p-3">
-										{file.name}
-										<button
-											type="button"
-											class="btn btn-ghost btn-xs btn-square text-error-content hover:bg-error/20"
-											onclick={() => removeAttachment(file.id)}
-										>
-											✕
-										</button>
-									</span>
-								{/each}
+					<!-- Header fields -->
+					<div class="flex flex-col divide-y divide-[var(--rs-border)]">
+						<div class="flex items-center gap-3 px-4">
+							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">To</span>
+							<input
+								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+								type="text"
+								placeholder="To"
+								aria-label="To"
+								bind:value={draft.to}
+								required
+								autofocus
+							/>
+							<span class="flex shrink-0 gap-1">
+								{#if !showCc}
+									<button
+										type="button"
+										class="rounded px-1.5 py-0.5 text-xs text-base-content/50 hover:bg-base-200 hover:text-base-content"
+										onclick={() => (showCc = true)}
+									>
+										Cc
+									</button>
+								{/if}
+								{#if !showBcc}
+									<button
+										type="button"
+										class="rounded px-1.5 py-0.5 text-xs text-base-content/50 hover:bg-base-200 hover:text-base-content"
+										onclick={() => (showBcc = true)}
+									>
+										Bcc
+									</button>
+								{/if}
+							</span>
+						</div>
+						{#if showCc}
+							<div class="flex items-center gap-3 px-4">
+								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Cc</span>
+								<input
+									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									type="text"
+									placeholder="Cc"
+									aria-label="Cc"
+									bind:value={draft.cc}
+								/>
 							</div>
 						{/if}
-						<div class="flex gap-2">
+						{#if showBcc}
+							<div class="flex items-center gap-3 px-4">
+								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Bcc</span>
+								<input
+									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									type="text"
+									placeholder="Bcc"
+									aria-label="Bcc"
+									bind:value={draft.bcc}
+								/>
+							</div>
+						{/if}
+						<div class="flex items-center gap-3 px-4">
+							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">
+								Subject
+							</span>
+							<input
+								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+								placeholder="Subject"
+								aria-label="Subject"
+								bind:value={draft.subject}
+								required
+							/>
+						</div>
+					</div>
+
+					<!-- Attachments -->
+					<div
+						class="flex flex-wrap items-center gap-2 border-y border-[var(--rs-border)] bg-base-200/40 px-4 py-2"
+					>
+						<span class="flex items-center gap-1.5 text-xs font-semibold text-base-content/60">
+							<Paperclip size={13} />
+							Attachments
+						</span>
+						{#each attachedFiles as file}
+							<span
+								class="flex items-center gap-1 rounded-md border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] px-1.5 py-0.5 text-xs"
+							>
+								<span class="max-w-40 truncate">{file.name}</span>
+								<button
+									type="button"
+									class="rounded p-0.5 text-base-content/45 hover:bg-error/10 hover:text-error"
+									aria-label="Remove attachment {file.name}"
+									onclick={() => removeAttachment(file.id)}
+								>
+									<X size={11} />
+								</button>
+							</span>
+						{/each}
+						<div class="ml-auto flex items-center gap-1.5">
 							<select
-								class="select select-sm select-bordered flex-1"
+								class="select select-xs select-bordered max-w-52"
+								aria-label="Select workspace file to attach"
 								bind:value={selectedFileIdToAdd}
 							>
-								<option value="">-- Link a file from workspace --</option>
+								<option value="">Link a file from workspace…</option>
 								{#each files as file}
 									{#if !draft.attachments.includes(file.id)}
 										<option value={file.id}>{file.name}</option>
@@ -262,7 +334,7 @@
 							</select>
 							<button
 								type="button"
-								class="btn btn-sm btn-outline"
+								class="btn btn-xs btn-outline"
 								onclick={addAttachment}
 								disabled={!selectedFileIdToAdd}
 							>
@@ -271,45 +343,53 @@
 						</div>
 					</div>
 
-					<textarea
-						class="textarea textarea-bordered min-h-72"
-						placeholder="Message"
-						bind:value={draft.body}
-						required></textarea>
+					<div class="px-4 py-3">
+						<MailBodyEditor
+							content={draft.body}
+							placeholder="Message"
+							onChange={(markdown) => (draft.body = markdown)}
+						/>
+					</div>
 
-					{#if saveError}
-						<p class="text-sm text-error">{saveError}</p>
-					{:else if saved && !changed}
-						<p class="text-sm text-success">Saved draft</p>
-					{:else if changed && draftId}
-						<p class="text-sm text-base-content/60">Unsaved changes</p>
-					{/if}
-
-					<div class="modal-action flex-wrap">
+					<!-- Status + actions -->
+					<div
+						class="flex flex-wrap items-center gap-2 border-t border-[var(--rs-border)] px-4 py-2.5"
+					>
+						<div class="min-w-0 flex-1 text-xs">
+							{#if saveError}
+								<span class="text-error">{saveError}</span>
+							{:else if saved && !changed}
+								<span class="text-success">Saved draft</span>
+							{:else if changed && draftId}
+								<span class="text-base-content/50">Unsaved changes</span>
+							{/if}
+						</div>
 						{#if draftId && onDiscard}
 							<button
 								type="button"
-								class="btn btn-error btn-outline gap-2"
+								class="btn btn-sm btn-ghost text-error"
 								disabled={discarding || sending || saving}
 								onclick={() => {
 									if (confirm('Discard this draft permanently?')) onDiscard?.(draftId);
 								}}
 							>
-								<Trash2 size={16} />
+								<Trash2 size={14} />
 								{discarding ? 'Discarding...' : 'Discard'}
 							</button>
 						{/if}
-						<button type="button" class="btn btn-outline" onclick={handleClose}>Cancel</button>
+						<button type="button" class="btn btn-sm btn-ghost" onclick={handleClose}>
+							Cancel
+						</button>
 						<button
 							type="button"
-							class="btn btn-outline gap-2"
+							class="btn btn-sm btn-outline gap-1.5"
 							disabled={saving ||
 								sending ||
 								discarding ||
 								(!draft.subject.trim() && !draft.body.trim())}
 							onclick={handleSave}
 						>
-							<Save size={16} />
+							<Save size={14} />
 							<span
 								>{saving
 									? 'Saving...'
@@ -318,9 +398,13 @@
 										: 'Save draft'}</span
 							>
 						</button>
-						<button type="submit" class="btn btn-primary gap-2" disabled={sending}>
-							<Send size={16} />
-							<span>{sending ? 'Sending...' : 'Send'}</span>
+						<button
+							type="submit"
+							class="btn btn-sm btn-primary gap-1.5"
+							disabled={sending || saving || discarding}
+						>
+							<Send size={14} />
+							<span>{sending ? 'Sending...' : saving ? 'Saving...' : 'Send'}</span>
 						</button>
 					</div>
 				</form>
