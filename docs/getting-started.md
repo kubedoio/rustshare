@@ -59,7 +59,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 The production profile intentionally publishes nginx only on
-`127.0.0.1:80`. Configure an HTTPS reverse proxy on the same host before
+`127.0.0.1:8080`. Configure an HTTPS reverse proxy on the same host before
 starting it; direct public HTTP deployment is unsupported because production
 sessions require secure cookies. See [TLS / HTTPS](#tls--https).
 

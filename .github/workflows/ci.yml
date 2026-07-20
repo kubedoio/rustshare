@@ -91,9 +91,11 @@ jobs:
           RUSTFS_ROOT_PASSWORD: compose-validation-only
         run: |
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json > /tmp/production-compose.json
-          jq -e '.services.nginx.ports == [{"mode":"ingress","host_ip":"127.0.0.1","target":80,"published":"80","protocol":"tcp"}]' /tmp/production-compose.json
+          jq -e '.services.nginx.ports == [{"mode":"ingress","host_ip":"127.0.0.1","target":80,"published":"8080","protocol":"tcp"}]' /tmp/production-compose.json
           jq -e '.services.backend.healthcheck.test | index("http://127.0.0.1:8080/health/ready")' /tmp/production-compose.json
           jq -e '.services.rustfs.image | test("^rustfs/rustfs@sha256:[0-9a-f]{64}$")' /tmp/production-compose.json
+          grep -q 'proxy_set_header X-Forwarded-Proto \$forwarded_proto;' docker/nginx.conf
+          docker run --rm --add-host backend:127.0.0.1 --add-host rustfs:127.0.0.1 -v "$PWD/docker/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:alpine nginx -t
 
   fmt:
     name: Format

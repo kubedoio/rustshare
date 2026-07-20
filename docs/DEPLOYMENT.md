@@ -98,7 +98,7 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 
 RustShare requires HTTPS in production.
 
-The production Compose profile publishes nginx only on `127.0.0.1:80`. A
+The production Compose profile publishes nginx only on `127.0.0.1:8080`. A
 same-host HTTPS reverse proxy must accept public traffic and forward it to that
 loopback listener. Do not expose port 80 directly: production sessions use
 `Secure` cookies and will not authenticate over HTTP.
@@ -110,7 +110,7 @@ balancer can terminate TLS upstream only when its connection to the host is
 carried through a private tunnel.
 
 1. **Run a same-host TLS proxy** that forwards plain HTTP to nginx at
-   `127.0.0.1:80`. A remote CDN or load balancer must connect through a private
+   `127.0.0.1:8080`. A remote CDN or load balancer must connect through a private
    tunnel or a same-host proxy; never expose the HTTP listener publicly.
 
 2. **Set the `X-Forwarded-Proto` header** at your edge proxy:
@@ -123,7 +123,8 @@ carried through a private tunnel.
    ORIGIN=https://yourdomain.com
    ```
 
-4. The included nginx config already passes `X-Forwarded-Proto` to the backend via proxy headers.
+4. The included nginx config validates and preserves `X-Forwarded-Proto: https`
+   when forwarding to the backend.
 
 ### RustFS Upgrades
 
@@ -344,7 +345,7 @@ Before deploying to production:
    - `OIDC_REDIRECT_URL`
 
 3. **Configure TLS**
-   - [ ] Configure a same-host HTTPS reverse proxy in front of `127.0.0.1:80`
+   - [ ] Configure a same-host HTTPS reverse proxy in front of `127.0.0.1:8080`
    - [ ] Verify the loopback listener is not publicly reachable
    - [ ] Verify HTTPS is working and HTTP redirects to HTTPS
    - [ ] Set `ORIGIN` in `.env` to your HTTPS URL

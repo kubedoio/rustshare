@@ -67,4 +67,4 @@ services:
     ports: !override
       # Production requires a same-host HTTPS reverse proxy. The loopback bind
       # prevents accidental plaintext public exposure.
-      - "127.0.0.1:80:80"
+      - "127.0.0.1:8080:80"

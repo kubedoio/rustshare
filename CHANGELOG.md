@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Hardened the production Compose contract by requiring same-host external TLS termination, probing dependency readiness, and pinning RustFS to an immutable image digest.
+- Hardened the production Compose contract by requiring same-host external TLS termination on a dedicated loopback port, preserving the validated upstream HTTPS scheme, probing dependency readiness, and pinning RustFS to an immutable image digest.
 
 ### Documentation
 
