@@ -3,60 +3,79 @@
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		mailApi,
-		type MailAccount,
-		type MailAccountMessage,
-		type MailArchiveJob,
-		type MailImportJob,
-		type MailFolder,
 		type ListMailAccountMessagesResponse,
 		type ListMailMessagesResponse,
+		type MailAccountMessage,
+		type MailArchiveJob,
+		type MailFolder,
+		type MailImportJob,
 		type MailMessage,
+		type MailRemoteMessageBody,
 		type MailSmtpSettings,
 		type SaveDraftRequest,
 		type SendOutboundMailRequest
 	} from '$lib/api/mail';
-	import EmptyState from '$lib/components/common/EmptyState.svelte';
+	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
-	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
-	import MailComposeModal from '$lib/components/modules/MailComposeModal.svelte';
+	import MailComposeModal from './MailComposeModal.svelte';
+	import MailMoveModal from './mail/MailMoveModal.svelte';
+	import MailSaveModal from './mail/MailSaveModal.svelte';
+	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
 	import { toastStore } from '$lib/stores/toast';
 	import {
-		Mail,
-		Download,
-		Inbox,
-		RefreshCw,
-		Trash2,
 		Archive,
-		CheckSquare,
-		Eye,
-		EyeOff,
-		Trash
+		ArrowLeft,
+		Check,
+		ChevronDown,
+		Download,
+		FileText,
+		Folder,
+		Forward,
+		Inbox,
+		Loader2,
+		Mail,
+		MailOpen,
+		MoreHorizontal,
+		Paperclip,
+		RefreshCw,
+		Reply,
+		ReplyAll,
+		Search,
+		Send,
+		Star,
+		Trash2
 	} from 'lucide-svelte';
 	import type { ModuleDefinition } from '$lib/modules/registry';
 
 	let { module }: { module: ModuleDefinition } = $props();
 
-	let activeTab = $state<'mailbox' | 'drafts' | 'imported' | 'activity'>('mailbox');
+	type MailboxView = 'remote' | 'drafts' | 'saved';
+	type MobilePane = 'folders' | 'list' | 'viewer';
+	type ComposeMode = 'new' | 'reply' | 'reply-all' | 'forward' | 'draft-edit';
+
 	let selectedAccountId = $state<string | null>(null);
 	let selectedFolder = $state<string | null>(null);
+	let mailboxView = $state<MailboxView>('remote');
+	let mobilePane = $state<MobilePane>('folders');
 	let selectedUids = $state<number[]>([]);
+	let selectedMessage = $state<MailAccountMessage | null>(null);
 	let uidvalidity = $state<number | null>(null);
-	let mailboxExtraMessages = $state<MailAccountMessage[]>([]);
-	let mailboxNextCursor = $state<number | null>(null);
-	let mailboxSearchInput = $state('');
-	let mailboxSearch = $state('');
-	let importedSearchInput = $state('');
-	let importedSearch = $state('');
-	let importedExtraMessages = $state<MailMessage[]>([]);
-	let importedNextCursorAt = $state<string | null>(null);
-	let importedNextCursorId = $state<string | null>(null);
-
-	let archiveSince = $state('');
-	let archiveBefore = $state('');
-	let retentionDays = $state('');
+	let searchInput = $state('');
+	let search = $state('');
+	let activityOpen = $state(false);
+	let overflowOpen = $state(false);
+	let moveOpen = $state(false);
+	let saveOpen = $state(false);
+	let actionPending = $state(false);
+	let lastSyncedAt = $state<Date | null>(null);
+	let mailboxInitialized = false;
+	const refreshedImportJobs = new Set<string>();
 	let uploadInput: HTMLInputElement | null = $state(null);
+
 	let composeOpen = $state(false);
+	let composeMode = $state<ComposeMode>('new');
 	let composeDraftId = $state<string | null>(null);
 	let composeTo = $state('');
 	let composeCc = $state('');
@@ -64,103 +83,69 @@
 	let composeSubject = $state('');
 	let composeBody = $state('');
 	let composeAttachments = $state<string[]>([]);
-	let composeReplyTo = $state<string | null>(null);
+	let composeInReplyTo = $state<string | null>(null);
+	let composeReferences = $state<string[] | null>(null);
 	let composeSaveError = $state('');
-
-	function hasMailSeenState(message: { is_seen?: boolean }): message is { is_seen: boolean } {
-		return typeof message.is_seen === 'boolean';
-	}
-
-	function folderNamed(role: MailFolder['role'], names: string[]): string | undefined {
-		const folders = $foldersQuery.data ?? [];
-		return (
-			folders.find((folder) => folder.role === role) ??
-			folders.find((folder) => names.includes(folder.display_name.toLowerCase()))
-		)?.name;
-	}
-
-	function archiveFolder(): string | undefined {
-		return folderNamed('archive', ['archive', 'all mail', '[gmail]/all mail']);
-	}
-
-	function trashFolder(): string | undefined {
-		return folderNamed('trash', ['trash', 'deleted items', '[gmail]/trash']);
-	}
+	let smtpSettings = $state<MailSmtpSettings | null>(null);
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
 	});
-
 	const foldersQuery = createQuery<MailFolder[]>({
 		queryKey: ['mail-folders', null],
 		queryFn: () => Promise.resolve([]),
 		enabled: false
 	});
-
 	const accountMessagesQuery = createQuery<ListMailAccountMessagesResponse>({
-		queryKey: ['mail-account-messages', null, null],
+		queryKey: ['mail-account-messages', null, null, ''],
 		queryFn: () => Promise.resolve({ uidvalidity: null, next_cursor: null, messages: [] }),
 		enabled: false
 	});
-	let mailboxMessages = $derived([
-		...($accountMessagesQuery.data?.messages ?? []),
-		...mailboxExtraMessages
-	]);
-
-	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
-		queryKey: ['mail-archive-jobs', null],
-		queryFn: () => Promise.resolve([]),
+	const remoteBodyQuery = createQuery<MailRemoteMessageBody>({
+		queryKey: ['mail-remote-body', null],
+		queryFn: () => Promise.reject(new Error('No message selected')),
 		enabled: false
 	});
-
-	const importJobsQuery = createQuery<MailImportJob[]>({
-		queryKey: ['mail-import-jobs'],
-		queryFn: () => mailApi.listImportJobs(),
-		refetchInterval: 3000
-	});
-	let recentImportJobs = $derived(($importJobsQuery.data ?? []).slice(0, 5));
-
-	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
-		queryKey: ['mail-messages', ''],
-		queryFn: () => mailApi.listMessagesPage()
-	});
-	let importedMessages = $derived.by(() => {
-		const messages = new Map<string, MailMessage>();
-		for (const message of [
-			...($importedMessagesQuery.data?.messages ?? []),
-			...importedExtraMessages
-		]) {
-			if (!messages.has(message.id)) messages.set(message.id, message);
-		}
-		return [...messages.values()];
-	});
-
-	$effect(() => {
-		importedExtraMessages = [];
-		importedMessagesQuery.setOptions({
-			queryKey: ['mail-messages', importedSearch],
-			queryFn: () => mailApi.listMessagesPage(importedSearch)
-		});
-	});
-
-	$effect(() => {
-		importedNextCursorAt = $importedMessagesQuery.data?.next_cursor_at ?? null;
-		importedNextCursorId = $importedMessagesQuery.data?.next_cursor_id ?? null;
-	});
-
 	const draftsQuery = createQuery<MailMessage[]>({
 		queryKey: ['mail-drafts', null],
 		queryFn: () => Promise.resolve([]),
 		enabled: false
 	});
+	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
+		queryKey: ['mail-messages', ''],
+		queryFn: () => mailApi.listMessagesPage('')
+	});
+	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
+		queryKey: ['mail-archive-jobs', null],
+		queryFn: () => Promise.resolve([]),
+		enabled: false
+	});
+	const importJobsQuery = createQuery<MailImportJob[]>({
+		queryKey: ['mail-import-jobs'],
+		queryFn: () => mailApi.listImportJobs(),
+		refetchInterval: 3000
+	});
+
+	let selectedAccount = $derived(
+		($accountsQuery.data ?? []).find((account) => account.id === selectedAccountId) ?? null
+	);
+	let visibleMessages = $derived($accountMessagesQuery.data?.messages ?? []);
+	let selectedActionUids = $derived(
+		selectedUids.length ? selectedUids : selectedMessage ? [selectedMessage.uid] : []
+	);
+	let safeBodyHtml = $derived(
+		$remoteBodyQuery.data?.html ? sanitizeHtml($remoteBodyQuery.data.html) : null
+	);
+	let syncing = $derived(
+		$foldersQuery.isFetching || $accountMessagesQuery.isFetching || $draftsQuery.isFetching
+	);
 
 	$effect(() => {
 		const accounts = $accountsQuery.data ?? [];
-		if (!selectedAccountId && accounts.length > 0) selectedAccountId = accounts[0].id;
+		if (!selectedAccountId && accounts.length) selectedAccountId = accounts[0].id;
 		if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
 			selectedAccountId = accounts[0]?.id ?? null;
-			selectedFolder = null;
 		}
 	});
 
@@ -170,139 +155,102 @@
 			queryFn: () => mailApi.listFolders(selectedAccountId!),
 			enabled: !!selectedAccountId
 		});
-		archiveJobsQuery.setOptions({
-			queryKey: ['mail-archive-jobs', selectedAccountId],
-			queryFn: () => mailApi.listArchiveJobs(selectedAccountId!),
-			enabled: !!selectedAccountId
-		});
 		draftsQuery.setOptions({
 			queryKey: ['mail-drafts', selectedAccountId],
 			queryFn: () => mailApi.listDrafts(selectedAccountId!),
 			enabled: !!selectedAccountId
 		});
+		archiveJobsQuery.setOptions({
+			queryKey: ['mail-archive-jobs', selectedAccountId],
+			queryFn: () => mailApi.listArchiveJobs(selectedAccountId!),
+			enabled: !!selectedAccountId
+		});
+		if (selectedAccountId) {
+			mailApi
+				.getSmtpSettings(selectedAccountId)
+				.then((settings) => (smtpSettings = settings))
+				.catch(() => (smtpSettings = null));
+		}
 	});
 
 	$effect(() => {
 		const folders = $foldersQuery.data ?? [];
-		if (!selectedFolder && folders.length > 0) selectedFolder = folders[0].name;
+		if (!selectedFolder && folders.length) selectedFolder = folders[0].name;
 		if (selectedFolder && !folders.some((folder) => folder.name === selectedFolder)) {
 			selectedFolder = folders[0]?.name ?? null;
 		}
 	});
 
 	$effect(() => {
-		selectedUids = [];
-		mailboxExtraMessages = [];
-		mailboxNextCursor = null;
 		accountMessagesQuery.setOptions({
-			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, mailboxSearch],
+			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, search],
 			queryFn: () =>
-				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100, null, mailboxSearch),
-			enabled: !!selectedAccountId && !!selectedFolder
+				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100, null, search),
+			enabled: mailboxView === 'remote' && !!selectedAccountId && !!selectedFolder
+		});
+		selectedUids = [];
+		selectedMessage = null;
+		if (mailboxInitialized) mobilePane = 'list';
+		mailboxInitialized = true;
+	});
+
+	$effect(() => {
+		uidvalidity = $accountMessagesQuery.data?.uidvalidity ?? null;
+	});
+
+	$effect(() => {
+		for (const job of $importJobsQuery.data ?? []) {
+			if (job.status === 'completed' && !refreshedImportJobs.has(job.id)) {
+				refreshedImportJobs.add(job.id);
+				void $accountMessagesQuery.refetch();
+			}
+		}
+	});
+
+	$effect(() => {
+		importedMessagesQuery.setOptions({
+			queryKey: ['mail-messages', search],
+			queryFn: () => mailApi.listMessagesPage(search),
+			enabled: mailboxView === 'saved'
 		});
 	});
 
 	$effect(() => {
-		const data = $accountMessagesQuery.data;
-		uidvalidity = data?.uidvalidity ?? null;
-		mailboxNextCursor = data?.next_cursor ?? null;
-	});
-
-	const importMutation = createMutation({
-		mutationFn: () =>
-			mailApi.createImportJob(selectedAccountId!, {
-				folder_name: selectedFolder!,
-				source_uidvalidity: uidvalidity,
-				selected_uids: selectedUids
-			}),
-		onSuccess: async () => {
-			selectedUids = [];
-			await $importJobsQuery.refetch();
-			await $importedMessagesQuery.refetch();
-			toastStore.show('Import job queued', 'success');
-		},
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Import failed', 'error')
-	});
-
-	const refreshImportJobMutation = createMutation({
-		mutationFn: (jobId: string) => mailApi.getImportJob(jobId),
-		onSuccess: async () => $importJobsQuery.refetch(),
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Refresh failed', 'error')
-	});
-
-	const archiveMutation = createMutation({
-		mutationFn: () =>
-			mailApi.createArchiveJob(selectedAccountId!, {
-				folder_name: selectedFolder!,
-				archive_since: archiveSince || null,
-				archive_before: archiveBefore || null,
-				retention_days: retentionDays ? Number(retentionDays) : null,
-				max_retries: 5
-			}),
-		onSuccess: async () => {
-			archiveSince = '';
-			archiveBefore = '';
-			retentionDays = '';
-			await $archiveJobsQuery.refetch();
-			toastStore.show('Archive job queued', 'success');
-		},
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Archive failed', 'error')
-	});
-
-	const cancelArchiveMutation = createMutation({
-		mutationFn: (jobId: string) => mailApi.cancelArchiveJob(jobId),
-		onSuccess: async () => {
-			await $archiveJobsQuery.refetch();
-			toastStore.show('Archive job cancelled', 'success');
-		},
-		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Cancel failed', 'error')
-	});
-
-	const uploadMutation = createMutation({
-		mutationFn: (file: File) => mailApi.uploadMessage(file),
-		onSuccess: async () => {
-			await $importedMessagesQuery.refetch();
-			toastStore.show('Mail imported', 'success');
-		},
-		onError: (error) => {
-			toastStore.show(error instanceof Error ? error.message : 'Upload failed', 'error');
-		}
+		remoteBodyQuery.setOptions({
+			queryKey: [
+				'mail-remote-body',
+				selectedAccountId,
+				selectedFolder,
+				selectedMessage?.uid,
+				uidvalidity
+			],
+			queryFn: () =>
+				mailApi.getRemoteMessageBody(
+					selectedAccountId!,
+					selectedMessage!.uid,
+					selectedFolder!,
+					uidvalidity
+				),
+			enabled: !!selectedAccountId && !!selectedFolder && !!selectedMessage
+		});
 	});
 
 	const sendMutation = createMutation({
-		mutationFn: (input: SendOutboundMailRequest) => {
-			if (!selectedAccountId) {
-				throw new Error('Select a mail account to compose/send.');
-			}
-			return mailApi.sendOutboundMail(selectedAccountId, input);
-		},
-		onSuccess: async (result) => {
+		mutationFn: (input: SendOutboundMailRequest) =>
+			mailApi.sendOutboundMail(selectedAccountId!, input),
+		onSuccess: async () => {
 			composeOpen = false;
-			await $importedMessagesQuery.refetch();
-			toastStore.show(
-				!result.stored
-					? 'Mail sent, but the RustShare copy could not be saved'
-					: result.append_failed
-						? 'Mail sent, but not saved to the Sent folder'
-						: 'Mail sent',
-				!result.stored || result.append_failed ? 'info' : 'success'
-			);
+			await $draftsQuery.refetch();
+			toastStore.show('Message sent', 'success');
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Send failed', 'error')
 	});
-
 	const saveDraftMutation = createMutation({
-		mutationFn: ({ message, draftId }: { message: SaveDraftRequest; draftId: string | null }) => {
-			if (!selectedAccountId) throw new Error('Select a mail account to save a draft.');
-			return draftId
-				? mailApi.updateDraft(selectedAccountId, draftId, message)
-				: mailApi.saveDraft(selectedAccountId, message);
-		},
+		mutationFn: ({ message, draftId }: { message: SaveDraftRequest; draftId: string | null }) =>
+			draftId
+				? mailApi.updateDraft(selectedAccountId!, draftId, message)
+				: mailApi.saveDraft(selectedAccountId!, message),
 		onSuccess: async (draft) => {
 			composeDraftId = draft.id;
 			composeSaveError = '';
@@ -314,76 +262,39 @@
 			toastStore.show(composeSaveError, 'error');
 		}
 	});
-
 	const sendDraftMutation = createMutation({
-		mutationFn: (draftId: string) => {
-			if (!selectedAccountId) throw new Error('Select a mail account to send a draft.');
-			return mailApi.sendDraft(selectedAccountId, draftId);
+		mutationFn: async (message: SaveDraftRequest) => {
+			const draft = await mailApi.updateDraft(selectedAccountId!, composeDraftId!, message);
+			return mailApi.sendDraft(selectedAccountId!, draft.id);
 		},
-		onSuccess: async (result) => {
+		onSuccess: async () => {
 			composeOpen = false;
-			composeDraftId = null;
 			await $draftsQuery.refetch();
-			await $importedMessagesQuery.refetch();
-			toastStore.show(
-				!result.stored
-					? 'Draft sent, but the RustShare copy could not be saved'
-					: result.append_failed
-						? 'Draft sent, but not saved to the Sent folder'
-						: 'Draft sent',
-				!result.stored || result.append_failed ? 'info' : 'success'
-			);
+			toastStore.show('Draft sent', 'success');
 		},
 		onError: (error) =>
 			toastStore.show(error instanceof Error ? error.message : 'Draft send failed', 'error')
 	});
-
 	const discardDraftMutation = createMutation({
-		mutationFn: (draftId: string) => {
-			if (!selectedAccountId) throw new Error('Select a mail account to discard a draft.');
-			return mailApi.discardDraft(selectedAccountId, draftId);
-		},
+		mutationFn: (draftId: string) => mailApi.discardDraft(selectedAccountId!, draftId),
 		onSuccess: async () => {
 			composeOpen = false;
-			composeDraftId = null;
 			await $draftsQuery.refetch();
 			toastStore.show('Draft discarded', 'success');
+		}
+	});
+	const uploadMutation = createMutation({
+		mutationFn: (file: File) => mailApi.uploadMessage(file),
+		onSuccess: async () => {
+			await $importedMessagesQuery.refetch();
+			toastStore.show('Mail imported', 'success');
 		},
 		onError: (error) =>
-			toastStore.show(error instanceof Error ? error.message : 'Draft discard failed', 'error')
+			toastStore.show(error instanceof Error ? error.message : 'Upload failed', 'error')
 	});
 
-	let smtpSettings = $state<MailSmtpSettings | null>(null);
-	let loadingSmtp = $state(false);
-
-	async function loadSmtpSettings(accountId: string) {
-		loadingSmtp = true;
-		try {
-			smtpSettings = await mailApi.getSmtpSettings(accountId);
-		} catch (err) {
-			console.error('Failed to load SMTP settings:', err);
-		} finally {
-			loadingSmtp = false;
-		}
-	}
-
-	$effect(() => {
-		if (selectedAccountId) {
-			loadSmtpSettings(selectedAccountId);
-		} else {
-			smtpSettings = null;
-		}
-	});
-
-	let selectedAccount = $derived(
-		($accountsQuery.data ?? []).find((account) => account.id === selectedAccountId) ?? null
-	);
-
-	function handleOpenMessage(message: MailMessage) {
-		goto(`/modules/mail/messages/${message.id}`);
-	}
-
-	function openCompose() {
+	function resetCompose(mode: ComposeMode = 'new') {
+		composeMode = mode;
 		composeDraftId = null;
 		composeTo = '';
 		composeCc = '';
@@ -391,79 +302,93 @@
 		composeSubject = '';
 		composeBody = '';
 		composeAttachments = [];
-		composeReplyTo = null;
+		composeInReplyTo = null;
+		composeReferences = null;
 		composeSaveError = '';
+	}
+
+	function openCompose() {
+		resetCompose();
 		composeOpen = true;
 	}
 
 	async function openDraft(message: MailMessage) {
-		if (!selectedAccountId) return;
-		try {
-			const draft = await mailApi.getDraft(selectedAccountId, message.id);
-			composeDraftId = message.id;
-			composeTo = formatAddresses(draft.message.to_addresses);
-			composeCc = formatAddresses(draft.message.cc_addresses);
-			composeBcc = formatAddresses(draft.message.bcc_addresses);
-			composeSubject = draft.message.subject ?? '';
-			composeBody = draft.body;
-			composeAttachments = draft.attachments;
-			composeReplyTo = draft.message.in_reply_to ?? null;
-			composeSaveError = '';
-			composeOpen = true;
-		} catch (error) {
-			toastStore.show(error instanceof Error ? error.message : 'Draft no longer exists', 'error');
-			await $draftsQuery.refetch();
-		}
+		const draft = await mailApi.getDraft(selectedAccountId!, message.id);
+		resetCompose('draft-edit');
+		composeDraftId = message.id;
+		composeTo = formatAddresses(draft.message.to_addresses);
+		composeCc = formatAddresses(draft.message.cc_addresses);
+		composeBcc = formatAddresses(draft.message.bcc_addresses);
+		composeSubject = draft.message.subject ?? '';
+		composeBody = draft.body;
+		composeAttachments = draft.attachments;
+		composeOpen = true;
 	}
 
-	async function saveComposeDraft(message: SaveDraftRequest, draftId: string | null) {
-		await saveDraftMutation.mutateAsync({ message, draftId });
-	}
-
-	async function sendCompose(message: SaveDraftRequest) {
-		if (!composeDraftId) {
-			await sendMutation.mutate(message);
-			return;
+	function openReply(mode: 'reply' | 'reply-all' | 'forward') {
+		const body = $remoteBodyQuery.data;
+		if (!body) return;
+		resetCompose(mode);
+		const own = selectedAccount?.username ? [selectedAccount.username] : [];
+		if (mode === 'reply') composeTo = body.from_address ?? '';
+		if (mode === 'reply-all') {
+			composeTo = uniqueMailAddresses(
+				[body.from_address ?? '', ...body.to.map((address) => address.address)],
+				own
+			).join(', ');
+			composeCc = uniqueMailAddresses(
+				body.cc.map((address) => address.address),
+				[...own, ...composeTo.split(',')]
+			).join(', ');
 		}
-		// The backend replaces the draft row on update, so wait for the save
-		// and send the returned (current) draft id — never the stale one.
-		const saved = await saveDraftMutation.mutateAsync({ message, draftId: composeDraftId });
-		await sendDraftMutation.mutate(saved.id);
+		composeSubject = `${mode === 'forward' ? 'Fwd:' : 'Re:'} ${(body.subject ?? '').replace(/^(re|fwd):\s*/i, '')}`;
+		const text = mailBodyText({
+			type: body.html ? 'html' : body.text ? 'text' : 'empty',
+			content: body.html ?? body.text ?? ''
+		});
+		composeBody = `\n\n${mode === 'forward' ? '---------- Forwarded message ----------\n' : ''}${quoteMailBody(text)}`;
+		if (mode !== 'forward' && body.message_id) {
+			composeInReplyTo = body.message_id;
+			composeReferences = [body.message_id];
+		}
+		composeOpen = true;
 	}
 
 	function formatAddresses(value: unknown): string {
-		if (Array.isArray(value)) {
-			return value
-				.map((item) => (typeof item === 'string' ? item : item?.address))
-				.filter(Boolean)
-				.join(', ');
-		}
-		return String(value ?? '');
+		if (!Array.isArray(value)) return String(value ?? '');
+		return value
+			.map((item) => (typeof item === 'string' ? item : (item as { address?: string })?.address))
+			.filter(Boolean)
+			.join(', ');
 	}
 
-	function formatBytes(value: number | null | undefined): string {
-		if (!value) return '0 B';
+	function formatDate(value: string | null): string {
+		if (!value) return '';
+		return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
+			new Date(value)
+		);
+	}
+
+	function formatBytes(value: number): string {
 		if (value < 1024) return `${value} B`;
 		if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
 		return `${(value / 1024 / 1024).toFixed(1)} MB`;
 	}
 
-	function formatSourceMode(mode: MailMessage['source_mode']): string {
-		switch (mode) {
-			case 'draft':
-				return 'Draft';
-			case 'outbound':
-				return 'Sent';
-			case 'imap_archive':
-				return 'Archived';
-			case 'imap_selected':
-				return 'Mailbox';
-			case 'inbound_address':
-				return 'Inbound';
-			case 'eml_upload':
-				return 'Imported';
-			default:
-				return mode;
+	function selectMailbox(view: MailboxView, folder: string | null = selectedFolder) {
+		mailboxView = view;
+		selectedFolder = folder;
+		selectedMessage = null;
+		selectedUids = [];
+		mobilePane = 'list';
+	}
+
+	async function selectRemoteMessage(message: MailAccountMessage) {
+		selectedMessage = message;
+		mobilePane = 'viewer';
+		if (message.is_seen === false) {
+			await mailApi.markMessageRead(selectedAccountId!, message.uid, selectedFolder!, uidvalidity);
+			await $accountMessagesQuery.refetch();
 		}
 	}
 
@@ -473,65 +398,81 @@
 			: [...selectedUids, uid];
 	}
 
-	async function refreshMailbox() {
-		mailboxExtraMessages = [];
-		mailboxNextCursor = null;
-		await $accountMessagesQuery.refetch();
-	}
-
-	async function loadMoreMessages() {
-		if (!selectedAccountId || !selectedFolder || !mailboxNextCursor) return;
-		const page = await mailApi.listAccountMessages(
-			selectedAccountId,
-			selectedFolder,
-			100,
-			mailboxNextCursor,
-			mailboxSearch
-		);
-		const known = new Set(mailboxMessages.map((message) => message.uid));
-		mailboxExtraMessages = [
-			...mailboxExtraMessages,
-			...page.messages.filter((message) => !known.has(message.uid))
-		];
-		mailboxNextCursor = page.next_cursor;
-	}
-
-	async function loadMoreImportedMessages() {
-		if (!importedNextCursorAt || !importedNextCursorId) return;
-		const page = await mailApi.listMessagesPage(
-			importedSearch,
-			importedNextCursorAt,
-			importedNextCursorId
-		);
-		const seen = new Set(importedMessages.map((message) => message.id));
-		importedExtraMessages = [
-			...importedExtraMessages,
-			...page.messages.filter((message) => !seen.has(message.id))
-		];
-		importedNextCursorAt = page.next_cursor_at;
-		importedNextCursorId = page.next_cursor_id;
-	}
-
-	async function runMailboxAction(action: () => Promise<void>, success: string, failure: string) {
+	async function runForSelection(action: (uid: number) => Promise<void>, success: string) {
+		if (!selectedActionUids.length) return;
+		actionPending = true;
 		try {
-			await action();
-			await refreshMailbox();
+			await Promise.all(selectedActionUids.map(action));
+			selectedUids = [];
+			selectedMessage = null;
+			await $accountMessagesQuery.refetch();
 			toastStore.show(success, 'success');
 		} catch (error) {
-			toastStore.show(error instanceof Error ? error.message : failure, 'error');
+			toastStore.show(error instanceof Error ? error.message : 'Mail action failed', 'error');
+		} finally {
+			actionPending = false;
 		}
 	}
 
-	function selectAllVisible(messages: MailAccountMessage[]) {
-		selectedUids = messages.map((message) => message.uid);
+	async function toggleStar(message: MailAccountMessage) {
+		await runForSelection(
+			(uid) =>
+				(message.is_flagged ? mailApi.unstarMessage : mailApi.starMessage)(
+					selectedAccountId!,
+					uid,
+					selectedFolder!,
+					uidvalidity
+				),
+			message.is_flagged ? 'Star removed' : 'Message starred'
+		);
 	}
 
-	function jobProgress(job: MailArchiveJob): string {
-		return `${job.processed_messages}/${job.total_messages} processed`;
+	async function confirmMove(destination: string) {
+		await runForSelection(
+			(uid) =>
+				mailApi.moveMessage(selectedAccountId!, uid, selectedFolder!, destination, uidvalidity),
+			'Message moved'
+		);
+		moveOpen = false;
 	}
 
-	function importJobProgress(job: MailImportJob): string {
-		return `${job.processed_messages}/${job.total_messages} processed`;
+	async function confirmSave() {
+		if (!selectedAccountId || !selectedFolder || !selectedActionUids.length) return;
+		actionPending = true;
+		try {
+			await mailApi.createImportJob(selectedAccountId, {
+				folder_name: selectedFolder,
+				source_uidvalidity: uidvalidity,
+				selected_uids: selectedActionUids
+			});
+			await $importJobsQuery.refetch();
+			toastStore.show('Import job queued', 'success');
+			saveOpen = false;
+		} catch (error) {
+			toastStore.show(error instanceof Error ? error.message : 'Import failed', 'error');
+		} finally {
+			actionPending = false;
+		}
+	}
+
+	async function syncMailbox() {
+		try {
+			await Promise.all([
+				$foldersQuery.refetch(),
+				$accountMessagesQuery.refetch(),
+				$draftsQuery.refetch(),
+				$archiveJobsQuery.refetch(),
+				$importJobsQuery.refetch()
+			]);
+			lastSyncedAt = new Date();
+		} catch (error) {
+			toastStore.show(error instanceof Error ? error.message : 'Synchronization failed', 'error');
+		}
+	}
+
+	function submitSearch(event: SubmitEvent) {
+		event.preventDefault();
+		search = searchInput.trim();
 	}
 
 	function handleUploadChange(event: Event) {
@@ -544,30 +485,8 @@
 
 <ModulePageShell title="Mail" subtitle={module.description}>
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={openCompose}>
-			<Mail size={14} />
-			<span>Compose</span>
-		</button>
-	</div>
-	<div slot="secondaryActions" class="flex flex-wrap gap-2">
-		<button class="btn gap-2 btn-sm btn-ghost" onclick={() => $importedMessagesQuery.refetch()}>
-			<RefreshCw size={14} />
-			<span>Refresh imported</span>
-		</button>
-		<input
-			bind:this={uploadInput}
-			class="hidden"
-			type="file"
-			accept=".eml,message/rfc822"
-			onchange={handleUploadChange}
-		/>
-		<button
-			class="btn gap-2 btn-sm btn-outline"
-			disabled={$uploadMutation.isPending}
-			onclick={() => uploadInput?.click()}
-		>
-			<Download size={14} />
-			<span>{$uploadMutation.isPending ? 'Uploading...' : 'Upload .eml'}</span>
+		<button type="button" class="btn btn-primary btn-sm gap-2" onclick={openCompose}>
+			<Send size={14} /> Compose
 		</button>
 	</div>
 
@@ -576,591 +495,578 @@
 	{:else if $accountsQuery.isError}
 		<ErrorState
 			title="Failed to load accounts"
-			message={$accountsQuery.error?.message || 'Unknown error'}
+			message={$accountsQuery.error?.message ?? 'Unknown error'}
 			onRetry={() => $accountsQuery.refetch()}
 		/>
 	{:else if ($accountsQuery.data ?? []).length === 0}
 		<div
-			class="mx-auto my-12 max-w-md rounded-2xl border border-dashed border-base-300 bg-base-100 px-6 py-10 text-center"
+			class="mx-auto my-12 max-w-md rounded-xl border border-dashed border-base-300 p-10 text-center"
 		>
-			<div
-				class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-600"
-			>
-				<Mail size={32} />
-			</div>
-			<h2 class="text-xl font-bold text-base-content">No mail account configured</h2>
-			<p class="text-sm text-base-content/60 mt-2 mb-6">
-				Configure an IMAP/SMTP account in Settings to use Mail.
-			</p>
-			<a href="/settings?tab=mail" class="btn btn-primary"> Open Mail settings </a>
+			<Mail size={36} class="mx-auto mb-4 text-brand-500" />
+			<h2 class="text-xl font-bold">No mail account configured</h2>
+			<p class="mt-2 text-sm text-base-content/60">Configure an IMAP/SMTP account to use Mail.</p>
+			<a href="/settings?tab=mail" class="btn btn-primary mt-6">Open Mail settings</a>
 		</div>
 	{:else}
-		<div class="overflow-hidden rounded-xl border border-base-300/60 bg-base-100">
-			<div
-				class="flex flex-col gap-3 border-b border-base-200 p-3 sm:flex-row sm:items-center sm:justify-between"
-			>
-				<div class="min-w-0">
+		<section
+			class="flex h-[calc(100vh-10rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
+		>
+			<header class="flex flex-wrap items-center gap-2 border-b border-base-300 p-2">
+				<div class="min-w-48">
 					<select
-						class="select select-bordered select-sm w-full sm:max-w-xs"
-						bind:value={selectedAccountId}
-						onchange={() => (selectedFolder = null)}
+						class="select select-bordered select-sm w-full"
 						aria-label="Mail account"
+						bind:value={selectedAccountId}
+						onchange={() => {
+							selectedFolder = null;
+							mailboxView = 'remote';
+						}}
 					>
 						{#each $accountsQuery.data ?? [] as account}
 							<option value={account.id}>{account.name}</option>
 						{/each}
 					</select>
-					{#if selectedAccount}
-						<p class="mt-1 truncate text-xs text-base-content/55">
-							{selectedAccount.username} · {selectedAccount.host}:{selectedAccount.port}
-						</p>
-						{#if selectedAccount.last_error}
-							<p class="truncate text-xs text-error" title={selectedAccount.last_error}>
-								{selectedAccount.last_error}
-							</p>
-						{/if}
+					<p
+						class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
+							? 'text-error'
+							: 'text-base-content/50'}"
+					>
+						{selectedAccount?.last_error
+							? `Error: ${selectedAccount.last_error}`
+							: syncing
+								? 'Synchronizing…'
+								: selectedAccount?.last_connected_at
+									? `Connected ${formatDate(selectedAccount.last_connected_at)}`
+									: 'Not synchronized yet'}
+					</p>
+				</div>
+				<form class="relative min-w-44 flex-1" onsubmit={submitSearch}>
+					<Search
+						size={14}
+						class="pointer-events-none absolute left-3 top-2.5 text-base-content/40"
+					/>
+					<input
+						class="input input-bordered input-sm w-full pl-9"
+						placeholder="Search mail"
+						aria-label="Search mail"
+						bind:value={searchInput}
+					/>
+				</form>
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm btn-square"
+					aria-label="Synchronize mail"
+					onclick={syncMailbox}
+					disabled={syncing}
+				>
+					<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
+				</button>
+				<div class="relative">
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm btn-square"
+						aria-label="More mail actions"
+						onclick={() => (overflowOpen = !overflowOpen)}
+					>
+						<MoreHorizontal size={18} />
+					</button>
+					{#if overflowOpen}
+						<div
+							class="absolute right-0 z-30 mt-1 w-56 rounded-lg border border-base-300 bg-base-100 p-1 shadow-xl"
+						>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm w-full justify-start"
+								onclick={() => uploadInput?.click()}><Download size={14} /> Upload .eml</button
+							>
+							<a class="btn btn-ghost btn-sm w-full justify-start" href="/settings?tab=mail"
+								><Folder size={14} /> Manage mail accounts</a
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm w-full justify-start"
+								onclick={() => {
+									activityOpen = true;
+									overflowOpen = false;
+								}}><Archive size={14} /> Synchronization / Activity</button
+							>
+						</div>
 					{/if}
 				</div>
-				<div class="join" role="tablist" aria-label="Mail sections">
-					<button
-						role="tab"
-						aria-selected={activeTab === 'mailbox'}
-						class="btn join-item btn-sm {activeTab === 'mailbox' ? 'btn-primary' : 'btn-outline'}"
-						onclick={() => (activeTab = 'mailbox')}
-					>
-						<Inbox size={14} />
-						<span>Mailbox</span>
-					</button>
-					<button
-						role="tab"
-						aria-selected={activeTab === 'drafts'}
-						class="btn join-item btn-sm {activeTab === 'drafts' ? 'btn-primary' : 'btn-outline'}"
-						onclick={() => (activeTab = 'drafts')}
-					>
-						<span>Drafts</span>
-						<span class="badge badge-ghost badge-sm">{($draftsQuery.data ?? []).length}</span>
-					</button>
-					<button
-						role="tab"
-						aria-selected={activeTab === 'imported'}
-						class="btn join-item btn-sm {activeTab === 'imported' ? 'btn-primary' : 'btn-outline'}"
-						onclick={() => (activeTab = 'imported')}
-					>
-						<span>Imported</span>
-					</button>
-					<button
-						role="tab"
-						aria-selected={activeTab === 'activity'}
-						class="btn join-item btn-sm {activeTab === 'activity' ? 'btn-primary' : 'btn-outline'}"
-						onclick={() => (activeTab = 'activity')}
-					>
-						<span>Activity</span>
-					</button>
-				</div>
-			</div>
+				<input
+					bind:this={uploadInput}
+					class="hidden"
+					type="file"
+					accept=".eml,message/rfc822"
+					onchange={handleUploadChange}
+				/>
+				<span class="sr-only" aria-live="polite"
+					>{syncing
+						? 'Synchronizing mail'
+						: lastSyncedAt
+							? `Mail synchronized at ${lastSyncedAt.toLocaleTimeString()}`
+							: ''}</span
+				>
+			</header>
 
-			{#if activeTab === 'mailbox'}
-				<div class="p-4 sm:p-5">
-					{#if !selectedAccountId}
-						<p class="text-sm text-base-content/60">Select an account.</p>
-					{:else if $foldersQuery.isLoading}
-						<ModulePageSkeleton />
-					{:else if $foldersQuery.isError}
-						<ErrorState
-							title="Failed to load folders"
-							message={$foldersQuery.error?.message || 'Unknown error'}
-							onRetry={() => $foldersQuery.refetch()}
-						/>
-					{:else if ($foldersQuery.data ?? []).length === 0}
-						<EmptyState
-							icon="📁"
-							title="No folders"
-							description="This account did not return folders."
-						/>
-					{:else}
-						<div class="mb-3 flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center">
-							<select
-								class="select select-bordered select-sm lg:w-48"
-								bind:value={selectedFolder}
-								aria-label="Mail folder"
-							>
-								{#each $foldersQuery.data ?? [] as folder}
-									<option value={folder.name}>{folder.display_name}</option>
-								{/each}
-							</select>
-							<form
-								class="flex min-w-0 flex-1 gap-2"
-								onsubmit={(event) => {
-									event.preventDefault();
-									mailboxSearch = mailboxSearchInput.trim();
-								}}
-							>
-								<input
-									class="input input-sm input-bordered min-w-0 flex-1"
-									placeholder="Search this folder"
-									bind:value={mailboxSearchInput}
-								/>
-								<button class="btn btn-sm btn-outline" type="submit">Search</button>
-								{#if mailboxSearch}
-									<button
-										class="btn btn-sm btn-ghost"
-										type="button"
-										onclick={() => {
-											mailboxSearchInput = '';
-											mailboxSearch = '';
-										}}>Clear</button
-									>
-								{/if}
-							</form>
-							<div class="flex gap-2">
+			<div class="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(300px,360px)_minmax(0,1fr)]">
+				<aside
+					class="min-h-0 overflow-y-auto border-r border-base-300 {mobilePane === 'folders'
+						? 'block'
+						: 'hidden'} lg:block"
+					aria-label="Mailboxes"
+				>
+					<div class="p-2">
+						<p class="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-base-content/45">
+							Mailboxes
+						</p>
+						{#if $foldersQuery.isError}
+							<div class="m-2 rounded-lg bg-error/10 p-3 text-sm text-error">
+								<p>Folders could not be synchronized.</p>
 								<button
-									class="btn btn-sm btn-outline"
-									disabled={!mailboxMessages.length}
-									onclick={() => selectAllVisible(mailboxMessages)}
+									type="button"
+									class="btn btn-xs btn-ghost mt-2"
+									onclick={() => $foldersQuery.refetch()}>Retry</button
 								>
-									<CheckSquare size={14} /> Select visible
-								</button>
-								<button
-									class="btn btn-sm btn-primary"
-									disabled={selectedUids.length === 0 || $importMutation.isPending}
-									onclick={() => importMutation.mutate()}
-								>
-									Import {selectedUids.length || ''}
-								</button>
 							</div>
-						</div>
-						{#if !selectedFolder}
-							<EmptyState
-								icon="📬"
-								title="Select a folder"
-								description="Choose a folder to load message summaries."
-							/>
-						{:else if $accountMessagesQuery.isLoading}
-							<ModulePageSkeleton />
-						{:else if $accountMessagesQuery.isError}
-							<ErrorState
-								title="Failed to load messages"
-								message={$accountMessagesQuery.error?.message || 'Unknown error'}
-								onRetry={() => $accountMessagesQuery.refetch()}
-							/>
-						{:else if mailboxMessages.length === 0}
-							<EmptyState
-								icon="📭"
-								title="Empty folder"
-								description="This folder has no messages to import."
-							/>
 						{:else}
-							<div class="divide-y divide-base-200">
-								{#each mailboxMessages as message}
-									<label class="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] gap-3 py-3">
+							{#each $foldersQuery.data ?? [] as folder}
+								<button
+									type="button"
+									class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-base-200 {mailboxView ===
+										'remote' && selectedFolder === folder.name
+										? 'bg-brand-500/10 font-semibold text-brand-700'
+										: ''}"
+									aria-current={mailboxView === 'remote' && selectedFolder === folder.name
+										? 'page'
+										: undefined}
+									onclick={() => selectMailbox('remote', folder.name)}
+								>
+									{#if folder.role === 'archive'}<Archive
+											size={15}
+										/>{:else if folder.role === 'trash'}<Trash2 size={15} />{:else}<Inbox
+											size={15}
+										/>{/if}
+									<span class="min-w-0 flex-1 truncate">{folder.display_name}</span>
+									{#if folder.unseen}<span class="badge badge-primary badge-sm"
+											>{folder.unseen}</span
+										>{/if}
+								</button>
+							{/each}
+						{/if}
+						<div class="my-2 border-t border-base-300"></div>
+						<button
+							type="button"
+							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
+							'drafts'
+								? 'bg-brand-500/10 font-semibold text-brand-700'
+								: ''}"
+							aria-current={mailboxView === 'drafts' ? 'page' : undefined}
+							onclick={() => selectMailbox('drafts')}
+						>
+							<FileText size={15} /><span class="flex-1 text-left">Drafts</span
+							>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
+									>{($draftsQuery.data ?? []).length}</span
+								>{/if}
+						</button>
+						<button
+							type="button"
+							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
+							'saved'
+								? 'bg-brand-500/10 font-semibold text-brand-700'
+								: ''}"
+							aria-current={mailboxView === 'saved' ? 'page' : undefined}
+							onclick={() => selectMailbox('saved')}
+						>
+							<Check size={15} /><span class="flex-1 text-left">Saved to RustShare</span>
+						</button>
+					</div>
+				</aside>
+
+				<section
+					class="min-h-0 overflow-y-auto border-r border-base-300 {mobilePane === 'list'
+						? 'block'
+						: 'hidden'} lg:block"
+					aria-label="Message list"
+				>
+					<div
+						class="sticky top-0 z-10 flex items-center gap-2 border-b border-base-300 bg-base-100 p-2"
+					>
+						<button
+							type="button"
+							class="btn btn-ghost btn-xs btn-square lg:hidden"
+							aria-label="Back to mailboxes"
+							onclick={() => (mobilePane = 'folders')}><ArrowLeft size={15} /></button
+						>
+						<h2 class="min-w-0 flex-1 truncate text-sm font-semibold">
+							{mailboxView === 'drafts'
+								? 'Drafts'
+								: mailboxView === 'saved'
+									? 'Saved to RustShare'
+									: (($foldersQuery.data ?? []).find((folder) => folder.name === selectedFolder)
+											?.display_name ?? 'Messages')}
+						</h2>
+						{#if mailboxView === 'remote' && visibleMessages.length}
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								aria-label="Select all messages"
+								checked={selectedUids.length === visibleMessages.length}
+								onchange={() =>
+									(selectedUids =
+										selectedUids.length === visibleMessages.length
+											? []
+											: visibleMessages.map((message) => message.uid))}
+							/>
+						{/if}
+					</div>
+					{#if mailboxView === 'remote'}
+						{#if $accountMessagesQuery.isLoading}<div class="flex justify-center p-8">
+								<Loader2 class="animate-spin" />
+							</div>
+						{:else if $accountMessagesQuery.isError}<div class="p-6 text-center text-sm text-error">
+								Messages could not be loaded.<button
+									class="btn btn-xs btn-ghost ml-2"
+									onclick={() => $accountMessagesQuery.refetch()}>Retry</button
+								>
+							</div>
+						{:else if visibleMessages.length === 0}<p
+								class="p-8 text-center text-sm text-base-content/50"
+							>
+								No messages in this folder.
+							</p>
+						{:else}
+							<div class="divide-y divide-base-300">
+								{#each visibleMessages as message (message.uid)}
+									<div
+										class="flex items-start gap-2 p-2 hover:bg-base-200/60 {selectedMessage?.uid ===
+										message.uid
+											? 'bg-brand-500/10'
+											: ''}"
+									>
 										<input
-											class="checkbox checkbox-sm mt-1"
 											type="checkbox"
+											class="checkbox checkbox-sm mt-2"
+											aria-label="Select message {message.subject ?? '(No subject)'}"
 											checked={selectedUids.includes(message.uid)}
 											onchange={() => toggleUid(message.uid)}
 										/>
-										<span class="min-w-0">
-											<span class="flex items-center gap-2">
-												<span class="block truncate text-sm font-medium"
-													>{message.subject || '(no subject)'}</span
+										<button
+											type="button"
+											class="min-w-0 flex-1 rounded text-left focus:outline-none focus:ring-2 focus:ring-brand-500"
+											onclick={() => selectRemoteMessage(message)}
+										>
+											<div class="flex items-center gap-2">
+												<span
+													class="min-w-0 flex-1 truncate text-sm {message.is_seen === false
+														? 'font-bold'
+														: 'font-medium'}"
+													>{message.from_name || message.from_address || 'Unknown sender'}</span
+												><time class="text-[11px] text-base-content/45"
+													>{formatDate(message.sent_at)}</time
 												>
-												{#if hasMailSeenState(message) && message.is_seen}
-													<span class="badge badge-ghost badge-xs">read</span>
-												{:else if hasMailSeenState(message)}
-													<span class="badge badge-primary badge-xs">unread</span>
-												{/if}
-											</span>
-											<span class="block truncate text-xs text-base-content/60"
-												>{message.from_name || message.from_address || 'Unknown sender'}</span
-											>
-										</span>
-										<div class="flex items-start gap-2">
-											<span class="text-right text-xs text-base-content/55">
-												{message.sent_at
-													? new Date(message.sent_at).toLocaleDateString()
-													: 'No date'}<br />
-												{formatBytes(message.size_bytes)}
-											</span>
-											<div class="flex flex-wrap justify-end gap-1">
-												<button
-													type="button"
-													class="btn btn-xs btn-ghost"
-													title={message.is_seen ? 'Mark as unread' : 'Mark as read'}
-													aria-label={message.is_seen ? 'Mark as unread' : 'Mark as read'}
-													onclick={(event) => {
-														event.stopPropagation();
-														runMailboxAction(
-															() =>
-																message.is_seen
-																	? mailApi.markMessageUnread(
-																			selectedAccountId!,
-																			message.uid,
-																			selectedFolder!,
-																			uidvalidity
-																		)
-																	: mailApi.markMessageRead(
-																			selectedAccountId!,
-																			message.uid,
-																			selectedFolder!,
-																			uidvalidity
-																		),
-															message.is_seen ? 'Marked unread' : 'Marked read',
-															'Failed to update read state'
-														);
-													}}
-												>
-													{#if message.is_seen}
-														<EyeOff size={12} />
-													{:else}
-														<Eye size={12} />
-													{/if}
-												</button>
-												<button
-													type="button"
-													class="btn btn-xs btn-ghost"
-													disabled={!archiveFolder()}
-													title={archiveFolder() ? 'Archive' : 'No archive folder is configured'}
-													aria-label={archiveFolder()
-														? 'Archive'
-														: 'No archive folder is configured'}
-													onclick={(event) => {
-														event.stopPropagation();
-														runMailboxAction(
-															() =>
-																mailApi.archiveMessage(
-																	selectedAccountId!,
-																	message.uid,
-																	selectedFolder!,
-																	uidvalidity,
-																	archiveFolder()
-																),
-															'Archived message',
-															'Failed to archive message'
-														);
-													}}
-												>
-													<Archive size={12} />
-												</button>
-												<button
-													type="button"
-													class="btn btn-xs btn-ghost"
-													disabled={!trashFolder()}
-													title={trashFolder() ? 'Move to trash' : 'No trash folder is configured'}
-													aria-label={trashFolder()
-														? 'Move to trash'
-														: 'No trash folder is configured'}
-													onclick={(event) => {
-														event.stopPropagation();
-														runMailboxAction(
-															() =>
-																mailApi.trashMessage(
-																	selectedAccountId!,
-																	message.uid,
-																	selectedFolder!,
-																	uidvalidity,
-																	trashFolder()
-																),
-															'Moved to trash',
-															'Failed to trash message'
-														);
-													}}
-												>
-													<Trash2 size={12} />
-												</button>
-												<button
-													type="button"
-													class="btn btn-xs btn-ghost text-error"
-													onclick={(event) => {
-														event.stopPropagation();
-														if (!confirm('Delete this message from the mailbox?')) return;
-														runMailboxAction(
-															() =>
-																mailApi.deleteMessage(
-																	selectedAccountId!,
-																	message.uid,
-																	selectedFolder!,
-																	uidvalidity
-																),
-															'Deleted message',
-															'Failed to delete message'
-														);
-													}}
-												>
-													<Trash size={12} />
-												</button>
 											</div>
-										</div>
-									</label>
+											<div class="mt-0.5 flex items-center gap-1">
+												<span
+													class="min-w-0 flex-1 truncate text-xs {message.is_seen === false
+														? 'font-semibold'
+														: 'text-base-content/65'}">{message.subject || '(No subject)'}</span
+												>{#if message.is_flagged}<Star
+														size={12}
+														class="fill-warning text-warning"
+													/>{/if}{#if message.imported_message_id}<Check
+														size={12}
+														class="text-success"
+													/>{/if}
+											</div>
+										</button>
+									</div>
 								{/each}
 							</div>
-							<div class="mt-2 flex items-center justify-between gap-2">
-								<p class="text-xs text-base-content/50">
-									Showing {mailboxMessages.length} messages.
-								</p>
-								<button
-									type="button"
-									class="btn btn-xs btn-outline"
-									disabled={!mailboxNextCursor}
-									onclick={loadMoreMessages}
-								>
-									Load more
-								</button>
-							</div>
 						{/if}
-					{/if}
-				</div>
-			{:else if activeTab === 'drafts'}
-				<div class="p-4 sm:p-5">
-					{#if $draftsQuery.isLoading}
-						<ModulePageSkeleton />
-					{:else if $draftsQuery.isError}
-						<ErrorState
-							title="Failed to load drafts"
-							message={$draftsQuery.error?.message || 'Unknown error'}
-							onRetry={() => $draftsQuery.refetch()}
-						/>
-					{:else if ($draftsQuery.data ?? []).length === 0}
-						<p class="text-sm text-base-content/60">No drafts</p>
+					{:else if mailboxView === 'drafts'}
+						{#each $draftsQuery.data ?? [] as draft (draft.id)}<button
+								type="button"
+								class="block w-full border-b border-base-300 p-3 text-left hover:bg-base-200"
+								onclick={() => openDraft(draft)}
+								><p class="truncate text-sm font-semibold">{draft.subject || '(No subject)'}</p>
+								<p class="truncate text-xs text-base-content/50">
+									To: {formatAddresses(draft.to_addresses)}
+								</p></button
+							>{:else}<p class="p-8 text-center text-sm text-base-content/50">No drafts.</p>{/each}
 					{:else}
-						<div class="flex flex-col gap-2">
-							{#each $draftsQuery.data ?? [] as draft}
-								<button
-									type="button"
-									class="w-full rounded-xl border border-base-300/40 p-3 text-left transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-									onclick={() => openDraft(draft)}
-								>
-									<span class="block truncate text-sm font-semibold"
-										>{draft.subject || '(no subject)'}</span
-									>
-									<span class="block truncate text-xs text-base-content/55">
-										To: {formatAddresses(draft.to_addresses) || '(no recipients)'}
-									</span>
-									<span class="block text-xs text-base-content/45">
-										Updated {new Date(draft.imported_at).toLocaleString()}
-									</span>
-								</button>
-							{/each}
-						</div>
+						{#each $importedMessagesQuery.data?.messages ?? [] as message (message.id)}<button
+								type="button"
+								class="block w-full border-b border-base-300 p-3 text-left hover:bg-base-200"
+								onclick={() => goto(`/modules/mail/messages/${message.id}`)}
+								><p class="truncate text-sm font-semibold">{message.subject || '(No subject)'}</p>
+								<p class="truncate text-xs text-base-content/50">
+									{message.from_name || message.from_address || 'Unknown sender'}
+								</p></button
+							>{:else}<p class="p-8 text-center text-sm text-base-content/50">
+								No saved mail.
+							</p>{/each}
 					{/if}
-				</div>
-			{:else if activeTab === 'imported'}
-				<div class="p-4 sm:p-5">
-					<form
-						class="mb-3 flex gap-2"
-						onsubmit={(event) => {
-							event.preventDefault();
-							importedSearch = importedSearchInput.trim();
-						}}
-					>
-						<input
-							class="input input-sm input-bordered min-w-0 flex-1"
-							placeholder="Search subject, sender, or recipient"
-							bind:value={importedSearchInput}
-						/>
-						<button type="submit" class="btn btn-sm btn-outline">Search</button>
-						{#if importedSearch}
+				</section>
+
+				<article
+					class="min-h-0 overflow-y-auto {mobilePane === 'viewer' ? 'block' : 'hidden'} lg:block"
+					aria-label="Message viewer"
+				>
+					{#if !selectedMessage}
+						<div
+							class="flex h-full flex-col items-center justify-center p-8 text-center text-base-content/40"
+						>
+							<MailOpen size={42} />
+							<p class="mt-3 text-sm">Select a message to read it.</p>
+						</div>
+					{:else}
+						<div
+							class="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b border-base-300 bg-base-100 p-2"
+						>
 							<button
 								type="button"
-								class="btn btn-sm btn-ghost"
-								onclick={() => {
-									importedSearchInput = '';
-									importedSearch = '';
-								}}>Clear</button
+								class="btn btn-ghost btn-xs btn-square lg:hidden"
+								aria-label="Back to messages"
+								onclick={() => (mobilePane = 'list')}><ArrowLeft size={15} /></button
 							>
-						{/if}
-					</form>
-					{#if $importedMessagesQuery.isLoading}
-						<ModulePageSkeleton />
-					{:else if $importedMessagesQuery.isError}
-						<ErrorState
-							title="Failed to load imported mail"
-							message={$importedMessagesQuery.error?.message || 'Unknown error'}
-							onRetry={() => $importedMessagesQuery.refetch()}
-						/>
-					{:else if importedMessages.length === 0}
-						<EmptyState
-							icon={'✉️'}
-							title={module.ui.page.emptyStateTitle}
-							description={module.ui.page.emptyStateDescription}
-							actionLabel={module.ui.page.primaryAction?.label}
-							onAction={() => uploadInput?.click()}
-						/>
-					{:else}
-						<div class="flex flex-col gap-2">
-							{#each importedMessages as message}
-								<button
-									type="button"
-									class="flex w-full items-center gap-4 rounded-xl border border-base-300/40 p-3 text-left transition-colors hover:border-brand-500/30 hover:bg-base-200/30"
-									onclick={() => handleOpenMessage(message)}
-								>
-									<div
-										class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-600"
-									>
-										<Mail size={20} />
-									</div>
-									<div class="min-w-0 flex-1">
-										<div class="flex flex-wrap items-center gap-2">
-											<span class="block truncate text-sm font-semibold"
-												>{message.subject || '(no subject)'}</span
-											>
-											<span class="badge badge-ghost badge-xs">
-												{formatSourceMode(message.source_mode)}
-											</span>
-											{#if hasMailSeenState(message) && message.is_seen}
-												<span class="badge badge-ghost badge-xs">read</span>
-											{:else if hasMailSeenState(message)}
-												<span class="badge badge-primary badge-xs">unread</span>
-											{/if}
-										</div>
-										<span class="block truncate text-xs text-base-content/55"
-											>{message.from_name || message.from_address || 'Unknown sender'} · {message.sent_at
-												? new Date(message.sent_at).toLocaleString()
-												: `imported ${new Date(message.imported_at).toLocaleString()}`}</span
-										>
-										<span class="block truncate text-xs text-base-content/45">
-											To: {formatAddresses(message.to_addresses) || '(no recipients)'}
-										</span>
-									</div>
-									{#if message.has_attachments}
-										<span class="badge badge-sm badge-ghost">attachments</span>
-									{/if}
-								</button>
-							{/each}
-							{#if importedNextCursorAt && importedNextCursorId}
-								<button class="btn btn-sm btn-outline" onclick={loadMoreImportedMessages}>
-									Load more
-								</button>
-							{/if}
-						</div>
-					{/if}
-				</div>
-			{:else}
-				<div class="divide-y divide-base-200">
-					{#if recentImportJobs.length > 0}
-						<div class="p-4 sm:p-5">
-							<h2 class="mb-3 text-sm font-semibold">Recent imports</h2>
-							<div class="flex flex-col gap-2">
-								{#each recentImportJobs as job}
-									<div class="rounded-md border border-base-300 p-3">
-										<div class="flex flex-wrap items-center justify-between gap-2">
-											<div class="min-w-0">
-												<div class="truncate text-sm font-medium">{job.folder_name}</div>
-												<div class="text-xs text-base-content/60">
-													{job.status} · {importJobProgress(job)} · failed {job.failed_messages}
-												</div>
-											</div>
-											<button
-												type="button"
-												class="btn btn-xs btn-outline"
-												onclick={() => refreshImportJobMutation.mutate(job.id)}
-											>
-												Refresh
-											</button>
-										</div>
-										{#if job.last_error}
-											<p class="mt-1 text-xs text-error">{job.last_error}</p>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						</div>
-					{/if}
-					<div class="p-4 sm:p-5">
-						<h2 class="mb-3 flex items-center gap-2 text-sm font-semibold">
-							<Archive size={15} /> Archive jobs
-						</h2>
-						<div class="mb-4 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_120px_auto]">
-							<input
-								class="input input-sm input-bordered"
-								type="date"
-								bind:value={archiveSince}
-								aria-label="Archive since"
-							/>
-							<input
-								class="input input-sm input-bordered"
-								type="date"
-								bind:value={archiveBefore}
-								aria-label="Archive before"
-							/>
-							<input
-								class="input input-sm input-bordered"
-								type="number"
-								min="1"
-								max="36500"
-								placeholder="Retention"
-								bind:value={retentionDays}
-							/>
 							<button
-								class="btn btn-sm btn-outline"
-								disabled={!selectedFolder || $archiveMutation.isPending}
-								onclick={() => archiveMutation.mutate()}
+								type="button"
+								class="btn btn-ghost btn-sm"
+								onclick={() => openReply('reply')}
+								disabled={!$remoteBodyQuery.data}><Reply size={14} /> Reply</button
 							>
-								Queue archive
-							</button>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm"
+								onclick={() => openReply('reply-all')}
+								disabled={!$remoteBodyQuery.data}><ReplyAll size={14} /> Reply all</button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm"
+								onclick={() => openReply('forward')}
+								disabled={!$remoteBodyQuery.data}><Forward size={14} /> Forward</button
+							>
+							<div class="flex-1"></div>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
+								onclick={() => toggleStar(selectedMessage!)}
+								><Star
+									size={15}
+									class={selectedMessage.is_flagged ? 'fill-warning text-warning' : ''}
+								/></button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Save to RustShare"
+								onclick={() => (saveOpen = true)}><Check size={15} /></button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Move message"
+								onclick={() => (moveOpen = true)}><Folder size={15} /></button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square text-error"
+								aria-label="Delete message"
+								onclick={() =>
+									runForSelection(
+										(uid) =>
+											mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+										'Message deleted'
+									)}><Trash2 size={15} /></button
+							>
 						</div>
-						{#if $archiveJobsQuery.isLoading}
-							<ModulePageSkeleton />
-						{:else if $archiveJobsQuery.isError}
-							<ErrorState
-								title="Failed to load archive jobs"
-								message={$archiveJobsQuery.error?.message || 'Unknown error'}
-								onRetry={() => $archiveJobsQuery.refetch()}
-							/>
-						{:else if ($archiveJobsQuery.data ?? []).length === 0}
-							<p class="text-sm text-base-content/60">No archive jobs for this account.</p>
-						{:else}
-							<div class="flex flex-col gap-2">
-								{#each $archiveJobsQuery.data ?? [] as job}
-									<div class="rounded-md border border-base-300 p-3">
-										<div class="flex flex-wrap items-center justify-between gap-2">
-											<div class="min-w-0">
-												<div class="truncate text-sm font-medium">{job.folder_name}</div>
-												<div class="text-xs text-base-content/60">
-													{job.status} · {jobProgress(job)} · retries {job.retry_count}/{job.max_retries}
-												</div>
-											</div>
-											{#if ['pending', 'running'].includes(job.status)}
-												<button
-													type="button"
-													class="btn btn-xs btn-outline"
-													onclick={() => cancelArchiveMutation.mutate(job.id)}
-												>
-													Cancel
-												</button>
-											{/if}
-										</div>
-										{#if job.last_error}
-											<p class="mt-1 text-xs text-error">{job.last_error}</p>
-										{/if}
+						{#if $remoteBodyQuery.isLoading}<div class="flex justify-center p-10">
+								<Loader2 class="animate-spin" />
+							</div>
+						{:else if $remoteBodyQuery.isError}<div class="p-8 text-center text-sm text-error">
+								Message body could not be loaded.<button
+									class="btn btn-xs btn-ghost ml-2"
+									onclick={() => $remoteBodyQuery.refetch()}>Retry</button
+								>
+							</div>
+						{:else if $remoteBodyQuery.data}
+							<div class="p-5">
+								<h2 class="text-xl font-bold">{$remoteBodyQuery.data.subject || '(No subject)'}</h2>
+								<div class="mt-3 flex flex-wrap justify-between gap-2 text-sm">
+									<div>
+										<p class="font-semibold">
+											{$remoteBodyQuery.data.from_name ||
+												$remoteBodyQuery.data.from_address ||
+												'Unknown sender'}
+										</p>
+										<p class="text-xs text-base-content/50">
+											To: {$remoteBodyQuery.data.to.map((address) => address.address).join(', ')}
+										</p>
 									</div>
-								{/each}
+									<time class="text-xs text-base-content/50"
+										>{formatDate($remoteBodyQuery.data.date)}</time
+									>
+								</div>
+								<div class="prose mt-6 max-w-none text-sm">
+									{#if safeBodyHtml}{@html safeBodyHtml}{:else}<pre
+											class="whitespace-pre-wrap font-sans">{$remoteBodyQuery.data.text ||
+												'This message has no readable body.'}</pre>{/if}
+								</div>
+								{#if $remoteBodyQuery.data.attachments.length}<div
+										class="mt-8 border-t border-base-300 pt-4"
+									>
+										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
+										<div class="flex flex-wrap gap-2">
+											{#each $remoteBodyQuery.data.attachments as attachment}<a
+													class="btn btn-outline btn-sm"
+													href={mailApi.remoteAttachmentUrl(
+														selectedAccountId!,
+														selectedMessage.uid,
+														attachment.index,
+														selectedFolder!,
+														uidvalidity
+													)}
+													><Paperclip size={13} />{attachment.filename ||
+														`Attachment ${attachment.index + 1}`}
+													<span class="text-base-content/45"
+														>{formatBytes(attachment.size_bytes)}</span
+													></a
+												>{/each}
+										</div>
+									</div>{/if}
 							</div>
 						{/if}
-					</div>
+					{/if}
+				</article>
+			</div>
+
+			{#if selectedUids.length}
+				<div
+					class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+				>
+					<span class="px-2 text-sm font-semibold">{selectedUids.length} selected</span>
+					<button
+						class="btn btn-ghost btn-sm"
+						onclick={() =>
+							runForSelection(
+								(uid) =>
+									mailApi.markMessageRead(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Marked read'
+							)}>Read</button
+					>
+					<button
+						class="btn btn-ghost btn-sm"
+						onclick={() =>
+							runForSelection(
+								(uid) =>
+									mailApi.markMessageUnread(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Marked unread'
+							)}>Unread</button
+					>
+					<button
+						class="btn btn-ghost btn-sm"
+						onclick={() =>
+							runForSelection(
+								(uid) => mailApi.starMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Messages starred'
+							)}>Star</button
+					>
+					<button class="btn btn-ghost btn-sm" onclick={() => (saveOpen = true)}>Save</button>
+					<button class="btn btn-ghost btn-sm" onclick={() => (moveOpen = true)}>Move</button>
+					<button
+						class="btn btn-ghost btn-sm text-error"
+						onclick={() =>
+							runForSelection(
+								(uid) =>
+									mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Messages deleted'
+							)}>Delete</button
+					>
 				</div>
 			{/if}
-		</div>
+		</section>
 	{/if}
 </ModulePageShell>
 
+{#if activityOpen}
+	<div class="modal modal-open">
+		<div class="modal-box max-w-2xl">
+			<h2 class="text-lg font-bold">Synchronization activity</h2>
+			<div class="mt-4 grid gap-4 sm:grid-cols-2">
+				<section>
+					<h3 class="mb-2 text-sm font-semibold">Imports</h3>
+					{#each ($importJobsQuery.data ?? []).slice(0, 8) as job}<div
+							class="mb-2 rounded border border-base-300 p-2 text-xs"
+						>
+							<p class="font-medium">{job.folder_name} · {job.status}</p>
+							<p>{job.processed_messages}/{job.total_messages} processed</p>
+							{#if job.last_error}<p class="text-error">{job.last_error}</p>{/if}
+						</div>{:else}<p class="text-sm text-base-content/50">No recent imports.</p>{/each}
+				</section>
+				<section>
+					<h3 class="mb-2 text-sm font-semibold">Archive jobs</h3>
+					{#each ($archiveJobsQuery.data ?? []).slice(0, 8) as job}<div
+							class="mb-2 rounded border border-base-300 p-2 text-xs"
+						>
+							<p class="font-medium">{job.status}</p>
+							<p>{job.processed_messages}/{job.total_messages} processed</p>
+						</div>{:else}<p class="text-sm text-base-content/50">No recent archive jobs.</p>{/each}
+				</section>
+			</div>
+			<div class="modal-action">
+				<button class="btn" onclick={() => (activityOpen = false)}>Close</button>
+			</div>
+		</div>
+		<button
+			class="modal-backdrop"
+			aria-label="Close activity"
+			onclick={() => (activityOpen = false)}>Close</button
+		>
+	</div>
+{/if}
+
+<MailMoveModal
+	open={moveOpen}
+	folders={$foldersQuery.data ?? []}
+	currentFolder={selectedFolder}
+	isLoading={actionPending}
+	onClose={() => (moveOpen = false)}
+	onMove={confirmMove}
+/>
+<MailSaveModal
+	open={saveOpen}
+	count={selectedActionUids.length || 1}
+	alreadySaved={selectedActionUids.length === 1 && !!selectedMessage?.imported_message_id}
+	importedMessageId={selectedMessage?.imported_message_id}
+	isLoading={actionPending}
+	onClose={() => (saveOpen = false)}
+	onConfirm={confirmSave}
+/>
 <MailComposeModal
 	open={composeOpen}
-	mode={composeDraftId ? 'draft-edit' : 'new'}
-	draftId={composeDraftId}
 	initialTo={composeTo}
 	initialCc={composeCc}
 	initialBcc={composeBcc}
 	initialSubject={composeSubject}
 	initialBody={composeBody}
 	initialAttachments={composeAttachments}
-	inReplyToMsgId={composeReplyTo}
+	inReplyTo={composeInReplyTo}
+	references={composeReferences}
+	mode={composeMode}
+	draftId={composeDraftId}
 	sending={$sendMutation.isPending || $sendDraftMutation.isPending}
 	saving={$saveDraftMutation.isPending}
 	discarding={$discardDraftMutation.isPending}
-	hasSmtp={!!smtpSettings && smtpSettings.is_enabled}
+	hasSmtp={!!smtpSettings?.is_enabled}
 	saveError={composeSaveError}
 	onClose={() => (composeOpen = false)}
-	onSend={(message) => sendCompose(message)}
-	onSave={(message, draftId) => saveComposeDraft(message, draftId)}
+	onSend={(message) =>
+		composeDraftId ? sendDraftMutation.mutate(message) : sendMutation.mutate(message)}
+	onSave={async (message, draftId) => {
+		await saveDraftMutation.mutateAsync({ message, draftId });
+	}}
 	onDiscard={(draftId) => discardDraftMutation.mutate(draftId)}
 />

@@ -109,6 +109,19 @@ describe('MailSettingsPanel', () => {
 		});
 	});
 
+	it('saves IMAP-only changes without requiring an SMTP password', async () => {
+		mocks.getSmtpSettings.mockResolvedValue(null);
+		render(MailSettingsPanel);
+
+		await screen.findByText('Save changes');
+		const smtpPassword = screen.getByLabelText('SMTP password') as HTMLInputElement;
+		expect(smtpPassword.required).toBe(false);
+		await fireEvent.click(screen.getByText('Save changes'));
+
+		await waitFor(() => expect(mocks.updateAccount).toHaveBeenCalled());
+		expect(mocks.updateSmtpSettings).not.toHaveBeenCalled();
+	});
+
 	it('prefills Gmail defaults from the provider preset', async () => {
 		render(MailSettingsPanel);
 

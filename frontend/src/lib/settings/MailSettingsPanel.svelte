@@ -792,7 +792,7 @@
 											: 'Password for the SMTP server'}
 										aria-label="SMTP password"
 										bind:value={smtpForm.password}
-										required={!selectedSmtp}
+										required={!!smtpForm.host.trim() && (!selectedSmtp || replaceSmtpPassword)}
 										autocomplete="new-password"
 									/>
 									{#if selectedSmtp}

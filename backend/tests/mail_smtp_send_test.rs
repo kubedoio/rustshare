@@ -278,6 +278,8 @@ async fn test_outbound_mail_send_flow() {
             None,
             vec![Uuid::new_v4()],
             None,
+            None,
+            None,
             false,
             Some(idempotency_key),
         )
@@ -304,6 +306,8 @@ async fn test_outbound_mail_send_flow() {
             None,
             vec![], // No attachments
             None,   // Not a reply
+            None,
+            None,
             false,
             Some(idempotency_key),
         )
@@ -321,6 +325,8 @@ async fn test_outbound_mail_send_flow() {
             "Test body content".to_string(),
             None,
             vec![],
+            None,
+            None,
             None,
             false,
             Some(idempotency_key),
@@ -450,6 +456,8 @@ async fn stale_pending_send_claim_is_reclaimed() {
             "Body".to_string(),
             None,
             vec![],
+            None,
+            None,
             None,
             false,
             Some(idempotency_key),

@@ -20,8 +20,12 @@
 	let retentionDays = $state('');
 
 	$effect(() => {
-		if (defaultFolder) archiveFolderName = defaultFolder;
-		else if (!archiveFolderName && folders.length > 0) archiveFolderName = folders[0].name;
+		if (!folders.some((folder) => folder.name === archiveFolderName)) {
+			archiveFolderName =
+				(defaultFolder && folders.some((folder) => folder.name === defaultFolder)
+					? defaultFolder
+					: folders[0]?.name) ?? '';
+		}
 	});
 
 	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
