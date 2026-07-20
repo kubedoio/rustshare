@@ -57,9 +57,9 @@ mime_guess = "2.0"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 async-trait = "0.1"
-mailparse = "0.15"
+mailparse = "0.16"
 tokio-rustls = "0.26"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 slug = "0.1.6"
 regex = "1.12"
 serde_yaml = "0.9"
@@ -213,7 +213,7 @@ name = "mail_smtp_send_test"
 path = "../tests/mail_smtp_send_test.rs"
 
 [dev-dependencies]
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }
