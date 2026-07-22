@@ -1,4 +1,4 @@
-//! Session management for zero-PostgreSQL authentication
+//! Session management for PostgreSQL-backed authentication
 //!
 //! Provides stateless JWT-based sessions with optional revocation caching.
 //! Two modes:
