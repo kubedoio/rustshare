@@ -35,34 +35,25 @@ A quick map of the domains you will touch:
 
 These are the commands CI runs. Run them locally before opening a PR.
 
-### Backend
+### Rust workspace
+
+The repository uses one unified Cargo workspace. All commands below run from the repository root.
 
 ```bash
-cd backend
-
 # Format
-cargo fmt --check
+cargo fmt --all --check
 
 # Lint
-SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Unit tests
-SQLX_OFFLINE=true cargo test --all-features --lib
+SQLX_OFFLINE=true cargo test --workspace --all-features --lib
 
 # Release build
-SQLX_OFFLINE=true cargo build --release --all-features
+SQLX_OFFLINE=true cargo build --workspace --release --all-features
 
 # SQLx query metadata is up to date
 cargo sqlx prepare --workspace --check
-```
-
-### Root workspace
-
-Includes `apps/desktop/`, `crates/`, and shared libraries.
-
-```bash
-SQLX_OFFLINE=true cargo check --workspace
-SQLX_OFFLINE=true cargo test --workspace --lib
 ```
 
 ### Frontend
@@ -91,14 +82,10 @@ scripts/final-launch-smoke.sh
 Run at least these baselines:
 
 ```bash
-# Backend
-cd backend && cargo fmt --check
-cd backend && SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
-cd backend && SQLX_OFFLINE=true cargo test --all-features --lib
-
-# Root workspace
-SQLX_OFFLINE=true cargo check --workspace
-SQLX_OFFLINE=true cargo test --workspace --lib
+# Rust workspace (run from repository root)
+cargo fmt --all --check
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
+SQLX_OFFLINE=true cargo test --workspace --all-features --lib
 
 # Frontend
 cd frontend && npm install && npm run check && npm run lint && npm run test && npm run build

@@ -44,8 +44,7 @@ cp .env.example .env
 docker compose up -d
 
 # Run database migrations
-cd backend
-sqlx migrate run
+sqlx migrate run --source backend/migrations
 
 # Start the backend server
 cargo run --bin rustshare-server
@@ -53,7 +52,7 @@ cargo run --bin rustshare-server
 
 > **Tip:** For frontend development with hot reload, use `docker-compose.frontend.yml`. For backend development overrides, use `docker-compose.dev.yml`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for details.
 
-The workspace crates live in `backend/crates/` (`core`, `storage`, `auth`, `crypto`, `infrastructure`). The server binary is in `backend/server/`.
+The unified Cargo workspace includes `backend/crates/` (`core`, `storage`, `auth`, `crypto`, `infrastructure`), `backend/server/`, `apps/desktop/`, and the shared client crates in `crates/`. All `cargo` commands run from the repository root.
 
 ### Frontend
 
@@ -87,14 +86,13 @@ The `crates/` directory at the repository root contains shared libraries:
 
 Before opening a pull request, ensure all quality checks pass.
 
-### Backend
+### Rust workspace
 
 ```bash
-cd backend
-cargo fmt --check
-SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
-SQLX_OFFLINE=true cargo test --all-features --lib
-SQLX_OFFLINE=true cargo build --release --all-features
+cargo fmt --all --check
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
+SQLX_OFFLINE=true cargo test --workspace --all-features --lib
+SQLX_OFFLINE=true cargo build --workspace --release --all-features
 ```
 
 ### Frontend
@@ -107,9 +105,9 @@ cd frontend && npm install && npm run check && npm run lint && npm run test && n
 
 RustShare has multiple levels of testing. Please add tests for new features and bug fixes.
 
-- **Unit tests**: `cd backend && SQLX_OFFLINE=true cargo test --all-features --lib`
-- **Integration tests**: `cargo test --all-features` (requires running DB + RustFS)
-- **Contract tests**: `cargo test --test contracts -- --ignored` (requires DB + RustFS)
+- **Unit tests**: `SQLX_OFFLINE=true cargo test --workspace --all-features --lib`
+- **Integration tests**: `cargo test --workspace --all-features -- --ignored` (requires running DB + RustFS)
+- **Contract tests**: `cargo test --workspace --test contracts -- --ignored` (requires DB + RustFS)
 - **Frontend tests**: `npm run test`
 - **E2E tests**: `npm run test:e2e` (requires Playwright and a running backend)
 

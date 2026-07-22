@@ -26,6 +26,7 @@
 	import { resolveModuleFolderId } from '$lib/modules/modulePages';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import type { KanbanBoard, KanbanCard, KanbanCardDetail } from '$lib/api/types';
+	import { currentUser } from '$lib/stores/auth';
 	import { Folder as FolderIcon, Plus, ArrowLeft, MoreHorizontal } from 'lucide-svelte';
 
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
@@ -589,10 +590,11 @@
 
 	async function handleAddComment(text: string) {
 		if (!cardDetail) return;
+		const user = $currentUser;
 		const newEvent = {
 			event_type: 'comment',
 			timestamp: new Date().toISOString(),
-			actor: 'current-user', // TODO: get from auth store
+			actor: user?.id ?? 'unknown',
 			payload: { text },
 			id: `act-${Date.now()}`,
 			text

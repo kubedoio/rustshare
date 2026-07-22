@@ -17,8 +17,8 @@
 | `docs/adr/0029-filename-heading-separation.md` | Accepted | **File identity must be separate from H1.** Changing the first H1 must not rename the file/folder; renaming must not rewrite the H1. |
 | `docs/specs/admin-modules-and-templates.md` | Draft / implementation ready | Required admin routes, module/template table columns, actions, validation rules, empty states, and approved icon registry. |
 
-### Important tension
-`backend/server/src/services/note_service.rs` currently **renames the note bundle folder when the first H1 changes** (`save_note`). This conflicts with `docs/adr/0029-filename-heading-separation.md` and will need to be reconciled for a true OKF-native Notes module.
+### H1 / filename separation status
+`NoteService::save_note` no longer renames the note bundle folder when the first H1 changes. File identity and the first H1 are independent, matching `docs/adr/0029-filename-heading-separation.md`.
 
 ---
 
@@ -60,9 +60,8 @@
   2. Loads existing sidecar (or fallback).
   3. Applies optional `color` and `attachments`.
   4. Regenerates `excerpt` and `updated_at`.
-  5. **Extracts H1** via `extract_h1_title(&content)`.
-  6. If the file is folder-backed (`name == "note.md"`) and the H1 differs from `meta.title`, it **renames the parent bundle folder** to the H1 title and sets `meta.title = new_title`.
-  7. `save_metadata` writes:
+  5. Preserves the existing title and bundle name; **does not** rename the folder or derive the title from the first H1.
+  6. `save_metadata` writes:
      - `{file.name}.rustshare.json` sidecar.
      - `_rustshare/manifest.json` if folder-backed.
 
@@ -78,9 +77,8 @@
   - Updates sidecar title and rewrites both sidecar and manifest.
 
 ### H1-driven rename (implicit, on save)
-- `NoteService::save_note` calls `extract_h1_title`.
-- If a first-level heading `# New Title` is found and differs from the stored title, the bundle folder is renamed.
-- This is the behavior that violates `docs/adr/0029-filename-heading-separation.md`.
+- `NoteService::save_note` does **not** derive the title from the first H1.
+- Changing the first H1 only changes document content; the file/folder name and metadata title remain unchanged.
 
 ### Frontend rename UI
 - `NotesModuleView.svelte` (list) and `modules/[key]/[id]/+page.svelte` (detail) both call `renameNote(id, { title })`.
@@ -213,7 +211,6 @@ The following breakdown assumes 8 focused subagents. Each should make minimal, b
   - All handler functions.
 - `backend/server/src/routes.rs`
   - `note_routes()` and `note_public_routes()`.
-- Reconcile H1-driven folder rename with `docs/adr/0029-filename-heading-separation.md`.
 
 ### Subagent 3 — Backend module / template registry & defaults
 - `backend/server/src/services/module_service.rs`
@@ -276,7 +273,6 @@ The following breakdown assumes 8 focused subagents. Each should make minimal, b
 1. **Unit / contract tests (no external services)**
    - `normalize_module_ui_config` preserves `modulePage` alias and adds canonical `page` keys.
    - Module/template serialization contracts (snake_case fields, legacy aliases).
-   - `extract_h1_title` edge cases (whitespace, missing H1, multiple headings).
 
 2. **Backend integration tests (Postgres + S3)**
    - `create_note` creates a folder bundle with `note.md`, `_rustshare/manifest.json`, and sidecar.

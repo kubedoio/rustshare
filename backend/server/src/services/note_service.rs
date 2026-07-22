@@ -1715,7 +1715,7 @@ impl NoteService {
         meta.excerpt = generate_excerpt(&new_body);
 
         // ADR-0029: changing the first H1 must NOT rename the bundle folder.
-        let _ = is_folder_backed;
+        // The folder name and metadata title are preserved above.
 
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
             .await?;
@@ -2601,22 +2601,6 @@ fn generate_excerpt(content: &str) -> String {
 
     plain.truncate(200);
     plain.trim().to_string()
-}
-
-/// Extract the first H1 heading from markdown content.
-/// Returns None if no H1 is found.
-#[allow(dead_code)]
-fn extract_h1_title(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(title) = trimmed.strip_prefix("# ") {
-            let title = title.trim();
-            if !title.is_empty() {
-                return Some(title.to_string());
-            }
-        }
-    }
-    None
 }
 
 fn generate_share_id() -> String {

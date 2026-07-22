@@ -30,8 +30,7 @@ Workflow: [`.github/workflows/dependencies.yml`](../.github/workflows/dependenci
 ### Quick Check (Local)
 
 ```bash
-# Check backend dependencies
-cd backend
+# Check Rust dependencies (run from repository root)
 cargo outdated -R
 
 # Check frontend dependencies
@@ -127,10 +126,9 @@ tokio = "1.50"    # Gets 1.50.x but not 1.51
 Always run tests after updating dependencies:
 
 ```bash
-cd backend
 cargo update
-cargo test --all-features
-cargo check --all-features
+cargo test --workspace --all-features
+cargo check --workspace --all-features
 ```
 
 ### 4. Lock File Committing

@@ -4,19 +4,16 @@ Run these format, lint, and type-check commands before opening a PR.
 
 ## Rust
 
-```bash
-cd backend
+All commands run from the repository root.
 
+```bash
 # Format check
-cargo fmt --check
+cargo fmt --all --check
 
 # Lint
-SQLX_OFFLINE=true cargo clippy --all-features -- -D warnings
-```
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-The root workspace is also checked in CI:
-
-```bash
+# Fast compile check
 SQLX_OFFLINE=true cargo check --workspace
 ```
 
@@ -37,7 +34,7 @@ Frontend CI also runs `npm run build`.
 If you change queries, regenerate the offline query data and verify it is current:
 
 ```bash
-cd backend
+sqlx migrate run --source backend/migrations
 cargo sqlx prepare --workspace --check
 ```
 

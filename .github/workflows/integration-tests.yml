@@ -155,7 +155,7 @@ jobs:
         run: cargo install sqlx-cli --features postgres --locked
 
       - name: Run migrations
-        run: cd backend && sqlx migrate run
+        run: sqlx migrate run --source backend/migrations
 
       - name: Run all integration tests
-        run: cd backend && cargo test --all-features -- --ignored
+        run: cargo test --workspace --all-features -- --ignored
