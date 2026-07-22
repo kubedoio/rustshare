@@ -72,7 +72,6 @@ jobs:
           fi
 
       - name: Check for outdated dependencies
-        working-directory: ./backend
         run: |
           echo "## Outdated Dependencies" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -101,15 +100,13 @@ jobs:
         run: cargo install sqlx-cli --features postgres
 
       - name: Run migrations
-        working-directory: ./backend
-        run: sqlx migrate run
+        run: sqlx migrate run --source backend/migrations
 
       - name: Verify build with latest dependencies
-        working-directory: ./backend
         run: |
           cargo update
-          cargo check --all-features
-          cargo test --all-features --lib
+          cargo check --workspace --all-features
+          cargo test --workspace --all-features --lib
 
   check-frontend-dependencies:
     name: Check Frontend Dependencies
@@ -150,4 +147,4 @@ jobs:
       - name: Run security audit
         run: |
           cargo install cargo-deny --locked
-          cargo deny --manifest-path backend/Cargo.toml check advisories
+          cargo deny --manifest-path Cargo.toml check advisories

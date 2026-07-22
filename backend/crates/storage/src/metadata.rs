@@ -5838,6 +5838,738 @@ impl MetadataStore {
     }
 }
 
+
+// Service-layer metadata-store trait bridges.
+// These live next to the concrete type so the storage crate root stays small.
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+    async fn create_file(&self, file: &rustshare_core::domain::File) -> anyhow::Result<()> {
+        self.create_file(file).await
+    }
+
+    async fn create_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        file: &rustshare_core::domain::File,
+    ) -> anyhow::Result<()> {
+        self.create_file_in_tx(tx, file).await
+    }
+
+    async fn find_file_by_path(
+        &self,
+        path: &str,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_path(path, owner_id).await
+    }
+
+    async fn create_file_version(
+        &self,
+        version: &rustshare_core::domain::FileVersion,
+    ) -> anyhow::Result<()> {
+        self.create_file_version(version).await
+    }
+
+    async fn create_file_version_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        version: &rustshare_core::domain::FileVersion,
+    ) -> anyhow::Result<()> {
+        self.create_file_version_in_tx(tx, version).await
+    }
+
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id, owner_id).await
+    }
+
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
+    }
+
+    async fn find_file_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id(id, owner_id).await
+    }
+
+    async fn find_file_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id_unchecked(id).await
+    }
+
+    async fn update_file(&self, file: &rustshare_core::domain::File) -> anyhow::Result<()> {
+        self.update_file(file).await
+    }
+
+    async fn update_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        file: &rustshare_core::domain::File,
+    ) -> anyhow::Result<()> {
+        self.update_file_in_tx(tx, file).await
+    }
+
+    async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
+        self.delete_file(id, owner_id).await
+    }
+
+    async fn delete_file_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        self.delete_file_in_tx(tx, id, owner_id).await
+    }
+
+    async fn list_file_versions(
+        &self,
+        file_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::FileVersion>> {
+        self.list_file_versions(file_id, owner_id).await
+    }
+
+    async fn find_file_version(
+        &self,
+        file_id: uuid::Uuid,
+        version: i32,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::FileVersion>> {
+        self.find_file_version(file_id, version, owner_id).await
+    }
+
+    async fn count_enabled_replication_targets(&self) -> anyhow::Result<i64> {
+        self.count_enabled_replication_targets().await
+    }
+
+    async fn create_replication_job(
+        &self,
+        job: &rustshare_core::domain::ReplicationJob,
+    ) -> anyhow::Result<()> {
+        self.create_replication_job(job).await
+    }
+
+    async fn update_file_version_replication_state(
+        &self,
+        version_id: uuid::Uuid,
+        state: rustshare_core::domain::ReplicationState,
+    ) -> anyhow::Result<()> {
+        self.update_file_version_replication_state(version_id, state)
+            .await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
+    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+    async fn create_folder(&self, folder: &rustshare_core::domain::Folder) -> anyhow::Result<()> {
+        self.create_folder(folder).await
+    }
+
+    async fn create_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        folder: &rustshare_core::domain::Folder,
+    ) -> anyhow::Result<()> {
+        self.create_folder_in_tx(tx, folder).await
+    }
+
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id, owner_id).await
+    }
+
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
+    }
+
+    async fn update_folder(&self, folder: &rustshare_core::domain::Folder) -> anyhow::Result<()> {
+        self.update_folder(folder).await
+    }
+
+    async fn update_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        folder: &rustshare_core::domain::Folder,
+    ) -> anyhow::Result<()> {
+        self.update_folder_in_tx(tx, folder).await
+    }
+
+    async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
+        self.delete_folder(id, owner_id).await
+    }
+
+    async fn delete_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        self.delete_folder_in_tx(tx, id, owner_id).await
+    }
+
+    async fn list_folders(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders_by_parent(parent_id, tenant_id).await
+    }
+
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders(folder_id, owner_id).await
+    }
+
+    async fn list_files(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
+        self.list_files(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
+        self.list_files_by_parent(parent_id, tenant_id).await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
+    async fn find_user_by_id(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
+        self.find_user_by_id(id).await
+    }
+
+    async fn find_file_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id(id, owner_id).await
+    }
+
+    async fn find_file_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
+        self.find_file_by_id_unchecked(id).await
+    }
+
+    async fn find_folder_by_id(
+        &self,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id(id, owner_id).await
+    }
+
+    async fn find_folder_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
+        self.find_folder_by_id_unchecked(id).await
+    }
+
+    async fn create_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
+        self.create_share(share).await
+    }
+
+    async fn get_share_by_id(
+        &self,
+        id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        self.get_share(id, actor_id).await
+    }
+
+    async fn get_share_by_id_unchecked(
+        &self,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_unchecked(id).await
+    }
+
+    async fn get_share_by_token(
+        &self,
+        token: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_by_token(token, tenant_id).await
+    }
+
+    async fn get_share_by_token_unscoped(
+        &self,
+        token: &str,
+    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
+        self.get_share_by_token_unscoped(token).await
+    }
+
+    async fn get_file_shares(
+        &self,
+        file_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
+        self.get_file_shares(file_id).await
+    }
+
+    async fn get_folder_shares(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
+        self.get_folder_shares(folder_id).await
+    }
+
+    async fn list_files(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
+        self.list_files(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_files_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
+        self.list_files_by_parent(parent_id, tenant_id).await
+    }
+
+    async fn list_folders(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        owner_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders(parent_id, owner_id, tenant_id).await
+    }
+
+    async fn list_folders_by_parent(
+        &self,
+        parent_id: Option<uuid::Uuid>,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.list_folders_by_parent(parent_id, tenant_id).await
+    }
+
+    async fn find_descendant_folders(
+        &self,
+        folder_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders(folder_id, owner_id).await
+    }
+
+    async fn find_descendant_folders_unchecked(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_unchecked(folder_id).await
+    }
+
+    async fn revoke_share(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
+    ) -> anyhow::Result<()> {
+        self.revoke_share(share_id, actor_id).await
+    }
+
+    async fn update_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
+        self.update_share(share).await
+    }
+
+    async fn is_user_in_group(
+        &self,
+        user_id: rustshare_core::domain::UserId,
+        group_id: uuid::Uuid,
+    ) -> anyhow::Result<bool> {
+        self.is_user_in_group(user_id, group_id).await
+    }
+}
+
+#[allow(async_fn_in_trait, clippy::too_many_arguments)]
+impl rustshare_core::services::VaultStore for MetadataStore {
+    async fn create_vault(
+        &self,
+        vault: &rustshare_core::domain::Vault,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.create_vault(vault)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn get_vault(
+        &self,
+        vault_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.get_vault(vault_id, tenant_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
+            .ok_or(rustshare_core::services::VaultSyncError::VaultNotFound(
+                vault_id,
+            ))
+    }
+
+    async fn list_vaults(
+        &self,
+        tenant_id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Vault>, rustshare_core::services::VaultSyncError>
+    {
+        self.list_vaults(tenant_id, owner_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn get_file(
+        &self,
+        vault_id: uuid::Uuid,
+        relative_path: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
+    {
+        self.get_vault_file(vault_id, relative_path, tenant_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
+            .ok_or_else(|| {
+                rustshare_core::services::VaultSyncError::FileNotFound(relative_path.to_string())
+            })
+    }
+
+    async fn get_file_including_deleted(
+        &self,
+        vault_id: uuid::Uuid,
+        relative_path: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
+    {
+        self.get_vault_file_including_deleted(vault_id, relative_path, tenant_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
+            .ok_or_else(|| {
+                rustshare_core::services::VaultSyncError::FileNotFound(relative_path.to_string())
+            })
+    }
+
+    async fn list_files(
+        &self,
+        vault_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+        limit: Option<i64>,
+    ) -> anyhow::Result<
+        Vec<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.list_vault_files(vault_id, tenant_id, limit)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn insert_file_atomic(
+        &self,
+        file: &rustshare_core::domain::VaultFile,
+    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
+    {
+        self.insert_vault_file_atomic(file)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    rustshare_core::services::VaultSyncError::VaultNotFound(file.vault_id)
+                }
+                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
+            })
+    }
+
+    async fn update_file_conditional_atomic(
+        &self,
+        file: &rustshare_core::domain::VaultFile,
+        base_server_rev: i64,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.update_vault_file_conditional_atomic(file, base_server_rev)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    rustshare_core::services::VaultSyncError::VaultNotFound(file.vault_id)
+                }
+                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
+            })
+    }
+
+    async fn update_file_conditional_atomic_for_webui(
+        &self,
+        file: &rustshare_core::domain::VaultFile,
+        base_server_rev: i64,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.update_vault_file_conditional_atomic_for_webui(file, base_server_rev)
+            .await
+    }
+
+    async fn tombstone_file_conditional_atomic(
+        &self,
+        vault_id: uuid::Uuid,
+        relative_path: &str,
+        tenant_id: uuid::Uuid,
+        base_server_rev: i64,
+        device_id: &str,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.tombstone_vault_file_conditional_atomic(
+            vault_id,
+            relative_path,
+            tenant_id,
+            base_server_rev,
+            device_id,
+        )
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                rustshare_core::services::VaultSyncError::VaultNotFound(vault_id)
+            }
+            _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
+        })
+    }
+
+    async fn rename_file_conditional_atomic(
+        &self,
+        vault_id: uuid::Uuid,
+        old_path: &str,
+        new_path: &str,
+        tenant_id: uuid::Uuid,
+        base_server_rev: i64,
+        device_id: &str,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultFile>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.rename_vault_file_conditional_atomic(
+            vault_id,
+            old_path,
+            new_path,
+            tenant_id,
+            base_server_rev,
+            device_id,
+        )
+        .await
+        .map_err(|e| {
+            if let Some(err) = e.downcast_ref::<VaultFileStoreError>() {
+                match err {
+                    VaultFileStoreError::NotFound => {
+                        rustshare_core::services::VaultSyncError::FileNotFound(old_path.to_string())
+                    }
+                    VaultFileStoreError::DestinationExists => {
+                        rustshare_core::services::VaultSyncError::FileAlreadyExists(
+                            new_path.to_string(),
+                        )
+                    }
+                }
+            } else if e
+                .downcast_ref::<sqlx::Error>()
+                .map(|se| matches!(se, sqlx::Error::RowNotFound))
+                .unwrap_or(false)
+            {
+                rustshare_core::services::VaultSyncError::VaultNotFound(vault_id)
+            } else {
+                rustshare_core::services::VaultSyncError::Database(e.to_string())
+            }
+        })
+    }
+
+    async fn register_device(
+        &self,
+        device: &rustshare_core::domain::VaultDevice,
+    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
+    {
+        self.create_vault_device(device)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn get_device(
+        &self,
+        device_id: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
+    {
+        self.get_vault_device(device_id, tenant_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
+            .ok_or_else(|| {
+                rustshare_core::services::VaultSyncError::DeviceNotFound(device_id.to_string())
+            })
+    }
+
+    async fn bind_device_to_vault(
+        &self,
+        device_id: &str,
+        tenant_id: uuid::Uuid,
+        vault_id: uuid::Uuid,
+    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
+    {
+        match self
+            .bind_vault_device_to_vault(device_id, tenant_id, vault_id)
+            .await
+        {
+            Ok(device) => Ok(device),
+            Err(sqlx::Error::RowNotFound) => {
+                match self.get_vault_device(device_id, tenant_id).await {
+                    Ok(Some(device)) if device.revoked_at.is_some() => {
+                        Err(rustshare_core::services::VaultSyncError::DeviceRevoked)
+                    }
+                    Ok(Some(_)) => Err(rustshare_core::services::VaultSyncError::Unauthorized),
+                    Ok(None) => Err(rustshare_core::services::VaultSyncError::DeviceNotFound(
+                        device_id.to_string(),
+                    )),
+                    Err(e) => Err(rustshare_core::services::VaultSyncError::Database(
+                        e.to_string(),
+                    )),
+                }
+            }
+            Err(e) => Err(rustshare_core::services::VaultSyncError::Database(
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn update_vault(
+        &self,
+        vault: &rustshare_core::domain::Vault,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.update_vault(vault)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn update_vault_write_policy(
+        &self,
+        vault_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+        write_policy: &rustshare_core::domain::VaultWritePolicy,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
+    {
+        self.update_vault_write_policy(vault_id, tenant_id, write_policy, updated_at)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn get_webui_device(
+        &self,
+        tenant_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        vault_id: uuid::Uuid,
+    ) -> anyhow::Result<
+        Option<rustshare_core::domain::VaultDevice>,
+        rustshare_core::services::VaultSyncError,
+    > {
+        self.get_webui_device(tenant_id, user_id, vault_id)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn create_webui_device(
+        &self,
+        device: &rustshare_core::domain::VaultDevice,
+    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
+    {
+        self.create_webui_device(device)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+
+    async fn revoke_device(
+        &self,
+        device_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.revoke_vault_device(device_id, tenant_id)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => {
+                    rustshare_core::services::VaultSyncError::DeviceNotFound(device_id.to_string())
+                }
+                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
+            })
+    }
+
+    async fn update_device_last_seen(
+        &self,
+        device_id: &str,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.update_vault_device_last_seen(device_id, tenant_id)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => rustshare_core::services::VaultSyncError::DeviceRevoked,
+                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
+            })
+    }
+
+    async fn update_vault_device_last_seen_at(
+        &self,
+        device_id: uuid::Uuid,
+        last_seen_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.update_vault_device_last_seen_at(device_id, last_seen_at)
+            .await
+            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6925,732 +7657,3 @@ mod tests {
     }
 }
 
-// Service-layer metadata-store trait bridges.
-// These live next to the concrete type so the storage crate root stays small.
-#[allow(async_fn_in_trait)]
-impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
-    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
-
-    async fn create_file(&self, file: &rustshare_core::domain::File) -> anyhow::Result<()> {
-        self.create_file(file).await
-    }
-
-    async fn create_file_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        file: &rustshare_core::domain::File,
-    ) -> anyhow::Result<()> {
-        self.create_file_in_tx(tx, file).await
-    }
-
-    async fn find_file_by_path(
-        &self,
-        path: &str,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_path(path, owner_id).await
-    }
-
-    async fn create_file_version(
-        &self,
-        version: &rustshare_core::domain::FileVersion,
-    ) -> anyhow::Result<()> {
-        self.create_file_version(version).await
-    }
-
-    async fn create_file_version_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        version: &rustshare_core::domain::FileVersion,
-    ) -> anyhow::Result<()> {
-        self.create_file_version_in_tx(tx, version).await
-    }
-
-    async fn find_folder_by_id(
-        &self,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id, owner_id).await
-    }
-
-    async fn find_folder_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id_unchecked(id).await
-    }
-
-    async fn find_file_by_id(
-        &self,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id(id, owner_id).await
-    }
-
-    async fn find_file_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id_unchecked(id).await
-    }
-
-    async fn update_file(&self, file: &rustshare_core::domain::File) -> anyhow::Result<()> {
-        self.update_file(file).await
-    }
-
-    async fn update_file_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        file: &rustshare_core::domain::File,
-    ) -> anyhow::Result<()> {
-        self.update_file_in_tx(tx, file).await
-    }
-
-    async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
-        self.delete_file(id, owner_id).await
-    }
-
-    async fn delete_file_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<()> {
-        self.delete_file_in_tx(tx, id, owner_id).await
-    }
-
-    async fn list_file_versions(
-        &self,
-        file_id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::FileVersion>> {
-        self.list_file_versions(file_id, owner_id).await
-    }
-
-    async fn find_file_version(
-        &self,
-        file_id: uuid::Uuid,
-        version: i32,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::FileVersion>> {
-        self.find_file_version(file_id, version, owner_id).await
-    }
-
-    async fn count_enabled_replication_targets(&self) -> anyhow::Result<i64> {
-        self.count_enabled_replication_targets().await
-    }
-
-    async fn create_replication_job(
-        &self,
-        job: &rustshare_core::domain::ReplicationJob,
-    ) -> anyhow::Result<()> {
-        self.create_replication_job(job).await
-    }
-
-    async fn update_file_version_replication_state(
-        &self,
-        version_id: uuid::Uuid,
-        state: rustshare_core::domain::ReplicationState,
-    ) -> anyhow::Result<()> {
-        self.update_file_version_replication_state(version_id, state)
-            .await
-    }
-}
-
-#[allow(async_fn_in_trait)]
-impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
-    type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
-
-    async fn create_folder(&self, folder: &rustshare_core::domain::Folder) -> anyhow::Result<()> {
-        self.create_folder(folder).await
-    }
-
-    async fn create_folder_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        folder: &rustshare_core::domain::Folder,
-    ) -> anyhow::Result<()> {
-        self.create_folder_in_tx(tx, folder).await
-    }
-
-    async fn find_folder_by_id(
-        &self,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id, owner_id).await
-    }
-
-    async fn find_folder_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id_unchecked(id).await
-    }
-
-    async fn update_folder(&self, folder: &rustshare_core::domain::Folder) -> anyhow::Result<()> {
-        self.update_folder(folder).await
-    }
-
-    async fn update_folder_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        folder: &rustshare_core::domain::Folder,
-    ) -> anyhow::Result<()> {
-        self.update_folder_in_tx(tx, folder).await
-    }
-
-    async fn delete_folder(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {
-        self.delete_folder(id, owner_id).await
-    }
-
-    async fn delete_folder_in_tx(
-        &self,
-        tx: &mut Self::Tx,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<()> {
-        self.delete_folder_in_tx(tx, id, owner_id).await
-    }
-
-    async fn list_folders(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        owner_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders(parent_id, owner_id, tenant_id).await
-    }
-
-    async fn list_folders_by_parent(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders_by_parent(parent_id, tenant_id).await
-    }
-
-    async fn find_descendant_folders(
-        &self,
-        folder_id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.find_descendant_folders(folder_id, owner_id).await
-    }
-
-    async fn list_files(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        owner_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
-        self.list_files(parent_id, owner_id, tenant_id).await
-    }
-
-    async fn list_files_by_parent(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
-        self.list_files_by_parent(parent_id, tenant_id).await
-    }
-}
-
-#[allow(async_fn_in_trait)]
-impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
-    async fn find_user_by_id(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::User>> {
-        self.find_user_by_id(id).await
-    }
-
-    async fn find_file_by_id(
-        &self,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id(id, owner_id).await
-    }
-
-    async fn find_file_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::File>> {
-        self.find_file_by_id_unchecked(id).await
-    }
-
-    async fn find_folder_by_id(
-        &self,
-        id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id(id, owner_id).await
-    }
-
-    async fn find_folder_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Folder>> {
-        self.find_folder_by_id_unchecked(id).await
-    }
-
-    async fn create_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
-        self.create_share(share).await
-    }
-
-    async fn get_share_by_id(
-        &self,
-        id: uuid::Uuid,
-        actor_id: rustshare_core::domain::UserId,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
-        self.get_share(id, actor_id).await
-    }
-
-    async fn get_share_by_id_unchecked(
-        &self,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
-        self.get_share_unchecked(id).await
-    }
-
-    async fn get_share_by_token(
-        &self,
-        token: &str,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
-        self.get_share_by_token(token, tenant_id).await
-    }
-
-    async fn get_share_by_token_unscoped(
-        &self,
-        token: &str,
-    ) -> anyhow::Result<Option<rustshare_core::domain::Share>> {
-        self.get_share_by_token_unscoped(token).await
-    }
-
-    async fn get_file_shares(
-        &self,
-        file_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
-        self.get_file_shares(file_id).await
-    }
-
-    async fn get_folder_shares(
-        &self,
-        folder_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Share>> {
-        self.get_folder_shares(folder_id).await
-    }
-
-    async fn list_files(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        owner_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
-        self.list_files(parent_id, owner_id, tenant_id).await
-    }
-
-    async fn list_files_by_parent(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::File>> {
-        self.list_files_by_parent(parent_id, tenant_id).await
-    }
-
-    async fn list_folders(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        owner_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders(parent_id, owner_id, tenant_id).await
-    }
-
-    async fn list_folders_by_parent(
-        &self,
-        parent_id: Option<uuid::Uuid>,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.list_folders_by_parent(parent_id, tenant_id).await
-    }
-
-    async fn find_descendant_folders(
-        &self,
-        folder_id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.find_descendant_folders(folder_id, owner_id).await
-    }
-
-    async fn find_descendant_folders_unchecked(
-        &self,
-        folder_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
-        self.find_descendant_folders_unchecked(folder_id).await
-    }
-
-    async fn revoke_share(
-        &self,
-        share_id: uuid::Uuid,
-        actor_id: rustshare_core::domain::UserId,
-    ) -> anyhow::Result<()> {
-        self.revoke_share(share_id, actor_id).await
-    }
-
-    async fn update_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
-        self.update_share(share).await
-    }
-
-    async fn is_user_in_group(
-        &self,
-        user_id: rustshare_core::domain::UserId,
-        group_id: uuid::Uuid,
-    ) -> anyhow::Result<bool> {
-        self.is_user_in_group(user_id, group_id).await
-    }
-}
-
-#[allow(async_fn_in_trait, clippy::too_many_arguments)]
-impl rustshare_core::services::VaultStore for MetadataStore {
-    async fn create_vault(
-        &self,
-        vault: &rustshare_core::domain::Vault,
-    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
-    {
-        self.create_vault(vault)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn get_vault(
-        &self,
-        vault_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
-    {
-        self.get_vault(vault_id, tenant_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
-            .ok_or(rustshare_core::services::VaultSyncError::VaultNotFound(
-                vault_id,
-            ))
-    }
-
-    async fn list_vaults(
-        &self,
-        tenant_id: uuid::Uuid,
-        owner_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<rustshare_core::domain::Vault>, rustshare_core::services::VaultSyncError>
-    {
-        self.list_vaults(tenant_id, owner_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn get_file(
-        &self,
-        vault_id: uuid::Uuid,
-        relative_path: &str,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
-    {
-        self.get_vault_file(vault_id, relative_path, tenant_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
-            .ok_or_else(|| {
-                rustshare_core::services::VaultSyncError::FileNotFound(relative_path.to_string())
-            })
-    }
-
-    async fn get_file_including_deleted(
-        &self,
-        vault_id: uuid::Uuid,
-        relative_path: &str,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
-    {
-        self.get_vault_file_including_deleted(vault_id, relative_path, tenant_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
-            .ok_or_else(|| {
-                rustshare_core::services::VaultSyncError::FileNotFound(relative_path.to_string())
-            })
-    }
-
-    async fn list_files(
-        &self,
-        vault_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-        limit: Option<i64>,
-    ) -> anyhow::Result<
-        Vec<rustshare_core::domain::VaultFile>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.list_vault_files(vault_id, tenant_id, limit)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn insert_file_atomic(
-        &self,
-        file: &rustshare_core::domain::VaultFile,
-    ) -> anyhow::Result<rustshare_core::domain::VaultFile, rustshare_core::services::VaultSyncError>
-    {
-        self.insert_vault_file_atomic(file)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => {
-                    rustshare_core::services::VaultSyncError::VaultNotFound(file.vault_id)
-                }
-                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
-            })
-    }
-
-    async fn update_file_conditional_atomic(
-        &self,
-        file: &rustshare_core::domain::VaultFile,
-        base_server_rev: i64,
-    ) -> anyhow::Result<
-        Option<rustshare_core::domain::VaultFile>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.update_vault_file_conditional_atomic(file, base_server_rev)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => {
-                    rustshare_core::services::VaultSyncError::VaultNotFound(file.vault_id)
-                }
-                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
-            })
-    }
-
-    async fn update_file_conditional_atomic_for_webui(
-        &self,
-        file: &rustshare_core::domain::VaultFile,
-        base_server_rev: i64,
-    ) -> anyhow::Result<
-        Option<rustshare_core::domain::VaultFile>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.update_vault_file_conditional_atomic_for_webui(file, base_server_rev)
-            .await
-    }
-
-    async fn tombstone_file_conditional_atomic(
-        &self,
-        vault_id: uuid::Uuid,
-        relative_path: &str,
-        tenant_id: uuid::Uuid,
-        base_server_rev: i64,
-        device_id: &str,
-    ) -> anyhow::Result<
-        Option<rustshare_core::domain::VaultFile>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.tombstone_vault_file_conditional_atomic(
-            vault_id,
-            relative_path,
-            tenant_id,
-            base_server_rev,
-            device_id,
-        )
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                rustshare_core::services::VaultSyncError::VaultNotFound(vault_id)
-            }
-            _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
-        })
-    }
-
-    async fn rename_file_conditional_atomic(
-        &self,
-        vault_id: uuid::Uuid,
-        old_path: &str,
-        new_path: &str,
-        tenant_id: uuid::Uuid,
-        base_server_rev: i64,
-        device_id: &str,
-    ) -> anyhow::Result<
-        Option<rustshare_core::domain::VaultFile>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.rename_vault_file_conditional_atomic(
-            vault_id,
-            old_path,
-            new_path,
-            tenant_id,
-            base_server_rev,
-            device_id,
-        )
-        .await
-        .map_err(|e| {
-            if let Some(err) = e.downcast_ref::<VaultFileStoreError>() {
-                match err {
-                    VaultFileStoreError::NotFound => {
-                        rustshare_core::services::VaultSyncError::FileNotFound(old_path.to_string())
-                    }
-                    VaultFileStoreError::DestinationExists => {
-                        rustshare_core::services::VaultSyncError::FileAlreadyExists(
-                            new_path.to_string(),
-                        )
-                    }
-                }
-            } else if e
-                .downcast_ref::<sqlx::Error>()
-                .map(|se| matches!(se, sqlx::Error::RowNotFound))
-                .unwrap_or(false)
-            {
-                rustshare_core::services::VaultSyncError::VaultNotFound(vault_id)
-            } else {
-                rustshare_core::services::VaultSyncError::Database(e.to_string())
-            }
-        })
-    }
-
-    async fn register_device(
-        &self,
-        device: &rustshare_core::domain::VaultDevice,
-    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
-    {
-        self.create_vault_device(device)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn get_device(
-        &self,
-        device_id: &str,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
-    {
-        self.get_vault_device(device_id, tenant_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))?
-            .ok_or_else(|| {
-                rustshare_core::services::VaultSyncError::DeviceNotFound(device_id.to_string())
-            })
-    }
-
-    async fn bind_device_to_vault(
-        &self,
-        device_id: &str,
-        tenant_id: uuid::Uuid,
-        vault_id: uuid::Uuid,
-    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
-    {
-        match self
-            .bind_vault_device_to_vault(device_id, tenant_id, vault_id)
-            .await
-        {
-            Ok(device) => Ok(device),
-            Err(sqlx::Error::RowNotFound) => {
-                match self.get_vault_device(device_id, tenant_id).await {
-                    Ok(Some(device)) if device.revoked_at.is_some() => {
-                        Err(rustshare_core::services::VaultSyncError::DeviceRevoked)
-                    }
-                    Ok(Some(_)) => Err(rustshare_core::services::VaultSyncError::Unauthorized),
-                    Ok(None) => Err(rustshare_core::services::VaultSyncError::DeviceNotFound(
-                        device_id.to_string(),
-                    )),
-                    Err(e) => Err(rustshare_core::services::VaultSyncError::Database(
-                        e.to_string(),
-                    )),
-                }
-            }
-            Err(e) => Err(rustshare_core::services::VaultSyncError::Database(
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn update_vault(
-        &self,
-        vault: &rustshare_core::domain::Vault,
-    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
-    {
-        self.update_vault(vault)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn update_vault_write_policy(
-        &self,
-        vault_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-        write_policy: &rustshare_core::domain::VaultWritePolicy,
-        updated_at: chrono::DateTime<chrono::Utc>,
-    ) -> anyhow::Result<rustshare_core::domain::Vault, rustshare_core::services::VaultSyncError>
-    {
-        self.update_vault_write_policy(vault_id, tenant_id, write_policy, updated_at)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn get_webui_device(
-        &self,
-        tenant_id: uuid::Uuid,
-        user_id: uuid::Uuid,
-        vault_id: uuid::Uuid,
-    ) -> anyhow::Result<
-        Option<rustshare_core::domain::VaultDevice>,
-        rustshare_core::services::VaultSyncError,
-    > {
-        self.get_webui_device(tenant_id, user_id, vault_id)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn create_webui_device(
-        &self,
-        device: &rustshare_core::domain::VaultDevice,
-    ) -> anyhow::Result<rustshare_core::domain::VaultDevice, rustshare_core::services::VaultSyncError>
-    {
-        self.create_webui_device(device)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-
-    async fn revoke_device(
-        &self,
-        device_id: uuid::Uuid,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
-        self.revoke_vault_device(device_id, tenant_id)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => {
-                    rustshare_core::services::VaultSyncError::DeviceNotFound(device_id.to_string())
-                }
-                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
-            })
-    }
-
-    async fn update_device_last_seen(
-        &self,
-        device_id: &str,
-        tenant_id: uuid::Uuid,
-    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
-        self.update_vault_device_last_seen(device_id, tenant_id)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => rustshare_core::services::VaultSyncError::DeviceRevoked,
-                _ => rustshare_core::services::VaultSyncError::Database(e.to_string()),
-            })
-    }
-
-    async fn update_vault_device_last_seen_at(
-        &self,
-        device_id: uuid::Uuid,
-        last_seen_at: chrono::DateTime<chrono::Utc>,
-    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
-        self.update_vault_device_last_seen_at(device_id, last_seen_at)
-            .await
-            .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
-    }
-}

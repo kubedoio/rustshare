@@ -36,7 +36,7 @@ tower = "0.5"
 tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "ipnetwork"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
 
 # Serialization
@@ -46,7 +46,7 @@ toml = "1.1"
 
 # Crypto
 argon2 = "0.5"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
 rand = "0.10"
 sha2 = "0.11"
 aes-gcm = "0.10"

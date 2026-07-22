@@ -21,8 +21,7 @@ Wait a few seconds for PostgreSQL to be ready.
 ### Step 2: Run Migrations
 
 ```bash
-cd backend
-sqlx migrate run
+sqlx migrate run --source backend/migrations
 ```
 
 Expected: Migration `20260318000001_add_events_index.sql` is applied successfully.
@@ -30,8 +29,7 @@ Expected: Migration `20260318000001_add_events_index.sql` is applied successfull
 ### Step 3: Start Server
 
 ```bash
-cd backend/server
-cargo run
+cargo run --bin rustshare-server
 ```
 
 Expected: Server starts on port 8080, logs show "EventBroadcaster initialized".
@@ -189,7 +187,6 @@ wscat -c ws://localhost:8080/api/ws \
 These automated checks cover the canonical-path and nested-folder regressions that previously caused duplicate remote metadata and client drift.
 
 ```bash
-cd backend
 cargo test -p rustshare-core --test file_service_duplicate -- --nocapture
 cargo test -p rustshare-core --test upload_service_duplicate -- --nocapture
 ```

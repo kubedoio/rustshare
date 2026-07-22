@@ -203,6 +203,7 @@ mod tests {
     async fn resolve_mail_server_socket_addrs_allows_private_ip_when_enabled() {
         let _guard = env_lock();
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
+        drop(_guard);
         let result = resolve_mail_server_socket_addrs("10.0.0.1", 993).await;
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(result.is_ok());
@@ -216,6 +217,7 @@ mod tests {
     async fn resolve_mail_server_socket_addrs_rejects_localhost_even_when_enabled() {
         let _guard = env_lock();
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
+        drop(_guard);
         let result = resolve_mail_server_socket_addrs("localhost", 993).await;
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(result.is_err());

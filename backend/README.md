@@ -143,17 +143,19 @@ docker compose up -d
 ```
 
 ```bash
-cd backend
-sqlx migrate run
+# Run from repository root
+sqlx migrate run --source backend/migrations
 cargo run --bin rustshare-server
 ```
 
 ### Quality checks
 
+Run from the repository root:
+
 ```bash
-cargo fmt
-cargo clippy
-cargo check
+cargo fmt --all --check
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
+SQLX_OFFLINE=true cargo check --workspace
 ```
 
 See [backend/TESTING.md](TESTING.md) for broader validation guidance.

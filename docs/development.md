@@ -51,34 +51,31 @@ This starts PostgreSQL 16 and RustFS (S3-compatible object storage).
 ### 4. Run database migrations
 
 ```bash
-cd backend
-sqlx migrate run
+sqlx migrate run --source backend/migrations
 ```
 
 ---
 
-## Backend Development
+## Rust Backend Development
 
 ### Run unit tests
 
 ```bash
-cd backend
-cargo test --all-features --lib
+SQLX_OFFLINE=true cargo test --workspace --all-features --lib
 ```
 
 ### Run quality checks
 
 ```bash
-cargo fmt --check
-cargo clippy --all-features -- -D warnings
-cargo check
+cargo fmt --all --check
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace
 ```
 
 ### Run migrations
 
 ```bash
-cd backend
-sqlx migrate run
+sqlx migrate run --source backend/migrations
 ```
 
 Migrations live in `backend/migrations/` and use sqlx.
@@ -86,13 +83,14 @@ Migrations live in `backend/migrations/` and use sqlx.
 ### Start the backend server locally
 
 ```bash
-cd backend
 cargo run --bin rustshare-server
 ```
 
 The server binds to `SERVER_HOST:SERVER_PORT` (default `0.0.0.0:8080`).
 
 ### Workspace structure
+
+The repository uses one unified Cargo workspace. The backend members are:
 
 | Path | Description |
 |------|-------------|
@@ -102,6 +100,8 @@ The server binds to `SERVER_HOST:SERVER_PORT` (default `0.0.0.0:8080`).
 | `backend/crates/crypto` | Encryption utilities |
 | `backend/crates/infrastructure` | Repositories and persistence |
 | `backend/server` | Axum HTTP and WebSocket server binary |
+
+The workspace also includes `apps/desktop/` and the shared client crates in `crates/`.
 
 ---
 
@@ -156,8 +156,7 @@ Run the backend and frontend simultaneously against shared Docker infrastructure
 docker compose -f docker-compose.dev.yml up -d postgres rustfs
 
 # Terminal 2 — backend
-cd backend
-sqlx migrate run
+sqlx migrate run --source backend/migrations
 cargo run --bin rustshare-server
 
 # Terminal 3 — frontend
@@ -180,16 +179,16 @@ Integration and contract tests require live PostgreSQL and RustFS services. They
 docker compose -f docker-compose.dev.yml up -d postgres rustfs
 
 # Run migrations
-cd backend && sqlx migrate run
+sqlx migrate run --source backend/migrations
 
 # Run ignored tests
-cargo test --all-features -- --ignored
+cargo test --workspace --all-features -- --ignored
 ```
 
 ### Run specific contract tests
 
 ```bash
-cargo test --test contracts -- --ignored
+cargo test --workspace --test contracts -- --ignored
 ```
 
 For deeper testing guidance, see [`backend/TESTING.md`](../backend/TESTING.md).
@@ -202,16 +201,16 @@ For deeper testing guidance, see [`backend/TESTING.md`](../backend/TESTING.md).
 
 | Command | Purpose |
 |---------|---------|
-| `cargo check` | Fast compile check |
-| `cargo build` | Debug build |
-| `cargo build --release` | Optimized release build |
-| `cargo test --all-features --lib` | Unit tests only |
-| `cargo test --all-features -- --ignored` | Integration + contract tests |
-| `cargo fmt` | Format code |
-| `cargo clippy --all-features -- -D warnings` | Lint (zero warnings policy) |
+| `cargo check --workspace` | Fast compile check |
+| `cargo build --workspace` | Debug build |
+| `cargo build --workspace --release` | Optimized release build |
+| `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` | Unit tests only |
+| `cargo test --workspace --all-features -- --ignored` | Integration + contract tests |
+| `cargo fmt --all` | Format code |
+| `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings` | Lint (zero warnings policy) |
 | `cargo doc --open` | Build and open docs |
-| `sqlx migrate run` | Apply pending migrations |
-| `sqlx migrate revert` | Revert last migration |
+| `sqlx migrate run --source backend/migrations` | Apply pending migrations |
+| `sqlx migrate revert --source backend/migrations` | Revert last migration |
 
 ### Frontend
 
