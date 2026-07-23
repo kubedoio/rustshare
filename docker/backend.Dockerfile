@@ -54,8 +54,10 @@ COPY rust-toolchain.toml ./
 COPY backend ./backend/
 COPY apps ./apps/
 COPY crates ./crates/
+COPY .sqlx ./.sqlx/
 
 # Build the application or select precompiled binaries
+ENV SQLX_OFFLINE=true
 ENV CARGO_NET_RETRY=10
 RUN mkdir -p target/release \
     && if [ "$USE_PRECOMPILED" = "true" ]; then \
