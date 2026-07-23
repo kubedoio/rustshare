@@ -1,7 +1,29 @@
-import { vi } from 'vitest';
+import { vi, beforeEach } from 'vitest';
 
 // Mock browser APIs that aren't available in test environment
 global.fetch = vi.fn();
+
+// Provide deterministic object URL lifecycle mocks for thumbnail tests
+let objectUrlCounter = 0;
+
+Object.defineProperty(URL, 'createObjectURL', {
+	value: vi.fn((_blob: Blob) => {
+		objectUrlCounter += 1;
+		return `blob:mock-object-url-${objectUrlCounter}`;
+	}),
+	configurable: true,
+	writable: true
+});
+
+Object.defineProperty(URL, 'revokeObjectURL', {
+	value: vi.fn((_url: string) => {}),
+	configurable: true,
+	writable: true
+});
+
+beforeEach(() => {
+	objectUrlCounter = 0;
+});
 
 // Mock localStorage
 const localStorageMock = (() => {

@@ -108,6 +108,12 @@ tempfile = "3.10"
 validator = { version = "0.20", features = ["derive"] }
 windows = { version = "0.62", features = ["Win32_Storage_CloudFilters", "Win32_Foundation", "Win32_System_IO", "Win32_System_SystemServices", "Win32_Security"] }
 
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
+
 [profile.release]
 opt-level = 3
 lto = true
