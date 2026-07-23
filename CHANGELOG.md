@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidated the root and backend Cargo workspaces into one unified workspace with a single `Cargo.lock`, removing the nested `backend/Cargo.toml` workspace and eliminating ambiguous dependency resolution.
+- Reduced development and test build overhead by setting `debug = 1` in the `dev` and `test` Cargo profiles; this preserves line-level debugging while shrinking the target directory and improving test-linking times.
+- Updated CI so documentation-only and frontend-only changes no longer trigger the full Rust workflow; the DCO check now runs in its own always-on workflow.
+
+### Fixed
+
+- Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.
+- Corrected Kanban comment actor attribution so the comment author matches the authenticated actor.
+- Made the internal-mail-server validation tests deterministic by serializing environment-variable mutations with an async mutex and restoring values after each test.
+- Restored skipped `FileThumbnail` lifecycle tests and added coverage for prop-change replacement and object-URL cleanup.
+
 ### Security
 
 - Hardened the production Compose contract by requiring same-host external TLS termination on a dedicated loopback port, preserving the validated upstream HTTPS scheme, probing dependency readiness, and pinning RustFS to an immutable image digest.
