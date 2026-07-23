@@ -15,6 +15,154 @@ use super::embedding::{Embedding, EmbeddingGenerator};
 use super::vector_store::VectorStore;
 use crate::okf::frontmatter::split_frontmatter;
 
+use std::collections::HashSet;
+use std::str::FromStr;
+
+/// Visibility level stored in the index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexVisibility {
+    Private,
+    Workspace,
+    Public,
+}
+
+impl std::fmt::Display for IndexVisibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Private => write!(f, "private"),
+            Self::Workspace => write!(f, "workspace"),
+            Self::Public => write!(f, "public"),
+        }
+    }
+}
+
+impl FromStr for IndexVisibility {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "private" => Ok(Self::Private),
+            "workspace" => Ok(Self::Workspace),
+            "public" => Ok(Self::Public),
+            _ => Err(anyhow::anyhow!("unknown visibility: {s}")),
+        }
+    }
+}
+
+/// Embedding/indexing policy for an object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingPolicy {
+    #[default]
+    Allowed,
+    Denied,
+}
+
+impl std::fmt::Display for EmbeddingPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Allowed => write!(f, "allowed"),
+            Self::Denied => write!(f, "denied"),
+        }
+    }
+}
+
+impl FromStr for EmbeddingPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "allowed" => Ok(Self::Allowed),
+            "denied" => Ok(Self::Denied),
+            _ => Err(anyhow::anyhow!("unknown embedding policy: {s}")),
+        }
+    }
+}
+
+/// A typed principal that may appear in an indexed ACL.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum IndexPrincipal {
+    Owner(Uuid),
+    User(Uuid),
+    Group(Uuid),
+    Workspace(Uuid),
+    Public,
+}
+
+impl std::fmt::Display for IndexPrincipal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Owner(id) => write!(f, "owner:{id}"),
+            Self::User(id) => write!(f, "user:{id}"),
+            Self::Group(id) => write!(f, "group:{id}"),
+            Self::Workspace(id) => write!(f, "workspace:{id}"),
+            Self::Public => write!(f, "public"),
+        }
+    }
+}
+
+impl FromStr for IndexPrincipal {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "public" {
+            return Ok(Self::Public);
+        }
+        let (kind, id) = s.split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("principal missing colon: {s}"))?;
+        let id = Uuid::parse_str(id)
+            .map_err(|e| anyhow::anyhow!("invalid principal uuid {id}: {e}"))?;
+        match kind {
+            "owner" => Ok(Self::Owner(id)),
+            "user" => Ok(Self::User(id)),
+            "group" => Ok(Self::Group(id)),
+            "workspace" => Ok(Self::Workspace(id)),
+            _ => Err(anyhow::anyhow!("unknown principal kind: {kind}")),
+        }
+    }
+}
+
+/// Canonical ACL projection for an indexed object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexAclProjection {
+    pub tenant_id: Uuid,
+    pub workspace_id: Uuid,
+    pub object_id: Uuid,
+    pub owner_id: Uuid,
+    pub read_principals: Vec<IndexPrincipal>,
+    pub visibility: IndexVisibility,
+    pub acl_hash: String,
+    pub acl_version: i64,
+    pub embedding_policy: EmbeddingPolicy,
+}
+
+/// Principal used at retrieval time.
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalPrincipal {
+    pub tenant_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub user_id: Uuid,
+    pub group_ids: Vec<Uuid>,
+    /// object_id -> minimum accepted acl_version.
+    pub min_acl_versions: HashMap<Uuid, i64>,
+}
+
+impl RetrievalPrincipal {
+    /// Return the principal strings to match against the stored ACL.
+    pub fn to_index_principals(&self) -> Vec<String> {
+        let mut out = vec![
+            format!("owner:{}", self.user_id),
+            format!("user:{}", self.user_id),
+        ];
+        for gid in &self.group_ids {
+            out.push(format!("group:{gid}"));
+        }
+        if let Some(wid) = self.workspace_id {
+            out.push(format!("workspace:{wid}"));
+        }
+        out
+    }
+}
+
 /// Maximum content length to index per document (to prevent memory issues).
 const MAX_CONTENT_LENGTH: usize = 100_000;
 
@@ -1012,5 +1160,86 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(indexer.document_count(tenant_id).await, 0);
+    }
+
+    #[test]
+    fn index_visibility_round_trip() {
+        for vis in [IndexVisibility::Private, IndexVisibility::Workspace, IndexVisibility::Public] {
+            let s = vis.to_string();
+            let parsed: IndexVisibility = s.parse().unwrap();
+            assert_eq!(parsed, vis);
+        }
+        assert!("unknown".parse::<IndexVisibility>().is_err());
+    }
+
+    #[test]
+    fn embedding_policy_round_trip() {
+        for policy in [EmbeddingPolicy::Allowed, EmbeddingPolicy::Denied] {
+            let s = policy.to_string();
+            let parsed: EmbeddingPolicy = s.parse().unwrap();
+            assert_eq!(parsed, policy);
+        }
+        assert_eq!(EmbeddingPolicy::default(), EmbeddingPolicy::Allowed);
+        assert!("blocked".parse::<EmbeddingPolicy>().is_err());
+    }
+
+    #[test]
+    fn index_principal_round_trip() {
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+
+        for principal in [
+            IndexPrincipal::Owner(owner_id),
+            IndexPrincipal::User(user_id),
+            IndexPrincipal::Group(group_id),
+            IndexPrincipal::Workspace(workspace_id),
+            IndexPrincipal::Public,
+        ] {
+            let s = principal.to_string();
+            let parsed: IndexPrincipal = s.parse().unwrap();
+            assert_eq!(parsed, principal);
+        }
+
+        assert_eq!("public".parse::<IndexPrincipal>().unwrap(), IndexPrincipal::Public);
+        assert!("garbage".parse::<IndexPrincipal>().is_err());
+        assert!("user:not-a-uuid".parse::<IndexPrincipal>().is_err());
+        assert!("unknown:00000000-0000-0000-0000-000000000000".parse::<IndexPrincipal>().is_err());
+    }
+
+    #[test]
+    fn index_principal_serializes_with_kind_and_id() {
+        let user_id = Uuid::new_v4();
+        let principal = IndexPrincipal::User(user_id);
+        let json = serde_json::to_value(&principal).unwrap();
+        assert_eq!(json["kind"], "user");
+        assert_eq!(json["id"], user_id.to_string());
+
+        let public = IndexPrincipal::Public;
+        let json = serde_json::to_value(&public).unwrap();
+        assert_eq!(json["kind"], "public");
+        assert!(json["id"].is_null());
+    }
+
+    #[test]
+    fn retrieval_principal_to_index_principals() {
+        let user_id = Uuid::new_v4();
+        let group_a = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+
+        let principal = RetrievalPrincipal {
+            tenant_id: Uuid::new_v4(),
+            workspace_id: Some(workspace_id),
+            user_id,
+            group_ids: vec![group_a],
+            min_acl_versions: HashMap::new(),
+        };
+
+        let principals = principal.to_index_principals();
+        assert!(principals.contains(&format!("owner:{user_id}")));
+        assert!(principals.contains(&format!("user:{user_id}")));
+        assert!(principals.contains(&format!("group:{group_a}")));
+        assert!(principals.contains(&format!("workspace:{workspace_id}")));
     }
 }
