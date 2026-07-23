@@ -2,6 +2,7 @@
 name = "platform"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 keyring-core = "1.0"
