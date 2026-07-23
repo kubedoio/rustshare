@@ -16,8 +16,7 @@ use super::embedding::{Embedding, EmbeddingGenerator};
 use super::vector_store::VectorStore;
 use crate::okf::frontmatter::split_frontmatter;
 
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
+/// Visibility level for an indexed object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexVisibility {
@@ -48,8 +47,7 @@ impl FromStr for IndexVisibility {
     }
 }
 
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
+/// Embedding policy for an indexed object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingPolicy {
@@ -79,8 +77,6 @@ impl FromStr for EmbeddingPolicy {
 }
 
 /// A typed principal that may appear in an indexed ACL.
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "id")]
 pub enum IndexPrincipal {
@@ -125,8 +121,6 @@ impl FromStr for IndexPrincipal {
 }
 
 /// Canonical ACL projection for an indexed object.
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexAclProjection {
     pub tenant_id: Uuid,
@@ -142,8 +136,6 @@ pub struct IndexAclProjection {
 }
 
 /// Principal used at retrieval time.
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct RetrievalPrincipal {
     pub tenant_id: Uuid,
@@ -154,8 +146,6 @@ pub struct RetrievalPrincipal {
     pub min_acl_versions: HashMap<Uuid, i64>,
 }
 
-// Introduced for permission-aware indexing; used in Tasks 6-10.
-#[allow(dead_code)]
 impl RetrievalPrincipal {
     /// Return the principal strings to match against the stored ACL.
     pub fn to_index_principals(&self) -> Vec<String> {
@@ -208,6 +198,12 @@ pub fn validate_and_project(acl: &NoteAclPayload) -> anyhow::Result<IndexAclProj
 
 /// Maximum content length to index per document (to prevent memory issues).
 const MAX_CONTENT_LENGTH: usize = 100_000;
+
+/// Truncate text to a maximum number of Unicode characters without splitting
+/// multi-byte code points.
+fn truncate_to_length(text: &str, max_len: usize) -> String {
+    text.chars().take(max_len).collect()
+}
 
 /// ACL payload stored on indexed note chunks.
 ///
@@ -311,11 +307,14 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         mime_type: String,
         acl: IndexAclProjection,
     ) -> anyhow::Result<()> {
-        let content = if content.len() > MAX_CONTENT_LENGTH {
-            content[..MAX_CONTENT_LENGTH].to_string()
-        } else {
-            content
-        };
+        if acl.embedding_policy == EmbeddingPolicy::Denied {
+            self.store
+                .remove_note_chunks(acl.tenant_id, acl.object_id)
+                .await?;
+            return Ok(());
+        }
+
+        let content = truncate_to_length(&content, MAX_CONTENT_LENGTH);
 
         let combined_text = format!("{} {} {}", file_name, file_path, content);
         let embedding = self.embedding_generator.generate(&combined_text).await;
@@ -368,11 +367,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         let payload = note_acl_payload_from_projection(file_id, &acl);
 
         let body = strip_frontmatter(&content);
-        let body = if body.len() > MAX_CONTENT_LENGTH {
-            body[..MAX_CONTENT_LENGTH].to_string()
-        } else {
-            body
-        };
+        let body = truncate_to_length(&body, MAX_CONTENT_LENGTH);
 
         let combined_text = format!("{} {} {}", file_name, file_path, body);
         let embedding = self.embedding_generator.generate(&combined_text).await;
@@ -407,10 +402,21 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         limit: usize,
     ) -> Vec<(IndexedDocument, f32)> {
         let query_embedding = self.embedding_generator.generate(query).await;
-        self.store
+        match self
+            .store
             .search_with_acl(principal, query_embedding.as_slice(), limit)
             .await
-            .unwrap_or_default()
+        {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    error = %e,
+                    "AI index search failed; returning empty results"
+                );
+                Vec::new()
+            }
+        }
     }
 
     /// Update the ACL projection for every indexed chunk of a note.
@@ -422,20 +428,40 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         note_id: Uuid,
         new_acl: NoteAclPayload,
     ) -> usize {
-        self.store
+        match self
+            .store
             .update_note_acl(tenant_id, note_id, &new_acl)
             .await
-            .unwrap_or(0)
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    note_id = %note_id,
+                    error = %e,
+                    "Failed to update note ACL in index"
+                );
+                0
+            }
+        }
     }
 
     /// Remove every indexed chunk belonging to a note.
     ///
     /// Returns the number of chunks that were removed.
     pub async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> usize {
-        self.store
-            .remove_note_chunks(tenant_id, note_id)
-            .await
-            .unwrap_or(0)
+        match self.store.remove_note_chunks(tenant_id, note_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    note_id = %note_id,
+                    error = %e,
+                    "Failed to remove note chunks from index"
+                );
+                0
+            }
+        }
     }
 
     /// Remove a file from the index.
@@ -444,7 +470,14 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// * `file_id` - The file ID to remove
     /// * `tenant_id` - The tenant ID
     pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) {
-        let _ = self.store.remove_chunk(tenant_id, file_id).await;
+        if let Err(e) = self.store.remove_chunk(tenant_id, file_id).await {
+            tracing::error!(
+                tenant_id = %tenant_id,
+                file_id = %file_id,
+                error = %e,
+                "Failed to remove file chunk from index"
+            );
+        }
     }
 
     /// Get a document by file ID, enforcing the caller's ACL.
@@ -469,10 +502,18 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         principal: &RetrievalPrincipal,
         chunk_id: Uuid,
     ) -> Option<IndexedDocument> {
-        self.store
-            .get_chunk(principal, chunk_id)
-            .await
-            .unwrap_or(None)
+        match self.store.get_chunk(principal, chunk_id).await {
+            Ok(doc) => doc,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    chunk_id = %chunk_id,
+                    error = %e,
+                    "Failed to get chunk from index"
+                );
+                None
+            }
+        }
     }
 
     /// Get all documents for a tenant.
@@ -491,7 +532,13 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Arguments
     /// * `tenant_id` - The tenant ID
     pub async fn clear_tenant(&self, tenant_id: Uuid) {
-        let _ = self.store.clear_tenant(tenant_id).await;
+        if let Err(e) = self.store.clear_tenant(tenant_id).await {
+            tracing::error!(
+                tenant_id = %tenant_id,
+                error = %e,
+                "Failed to clear tenant index"
+            );
+        }
     }
 
     /// Get the document count for a tenant.
@@ -502,7 +549,17 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Returns
     /// Number of indexed documents
     pub async fn document_count(&self, tenant_id: Uuid) -> usize {
-        self.store.document_count(tenant_id).await.unwrap_or(0)
+        match self.store.document_count(tenant_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    error = %e,
+                    "Failed to get document count from index"
+                );
+                0
+            }
+        }
     }
 
     /// Extract text content from a file based on its MIME type.

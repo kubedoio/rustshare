@@ -196,10 +196,9 @@ where
         };
 
         // Build a retrieval principal for permission-aware search.
-        // TODO: workspace_id is set to tenant_id as a placeholder because the
-        // current domain does not expose a separate workspace scope at this
-        // layer. Replace with the caller's actual workspace membership once
-        // workspace scoping is available.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
         let principal = RetrievalPrincipal {
             tenant_id,
             workspace_id: Some(tenant_id),
@@ -314,10 +313,9 @@ where
         }
 
         // Build a retrieval principal for ACL-enforced lookup.
-        // TODO: workspace_id is set to tenant_id as a placeholder because the
-        // current domain does not expose a separate workspace scope at this
-        // layer. Replace with the caller's actual workspace membership once
-        // workspace scoping is available.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
         let group_ids = self
             .permission_resolver
             .resolve_user_group_ids(user_id, tenant_id)

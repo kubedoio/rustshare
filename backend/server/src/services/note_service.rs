@@ -13,6 +13,7 @@ use rustshare_core::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
         OkfNoteFrontmatter, RustshareFrontmatter,
     },
+    services::ai::indexing::IndexPrincipal,
     services::{
         EmbeddingPolicy, FileService, FolderService, IndexAclProjection, IndexVisibility,
         PermissionResolver,
@@ -210,6 +211,8 @@ pub enum NoteError {
     Database(String),
     #[error("Invalid name: {0}")]
     InvalidName(String),
+    #[error("Invalid ACL metadata: {0}")]
+    InvalidAcl(String),
 }
 
 impl From<rustshare_core::services::FileError> for NoteError {
@@ -691,12 +694,16 @@ impl NoteService {
     }
 
     /// Build the ACL projection used by the AI content indexer.
+    ///
+    /// Returns an error if any resolved read principal cannot be parsed. Parsed
+    /// principals come from the authoritative permission resolver, so a parse
+    /// failure indicates corrupt metadata and must fail closed.
     pub fn build_acl_payload(
         file: &rustshare_core::domain::File,
         meta: &NoteMetadata,
         tenant_id: Uuid,
         read_acl: Vec<String>,
-    ) -> IndexAclProjection {
+    ) -> Result<IndexAclProjection, NoteError> {
         let embedding_policy = meta
             .embedding_policy
             .as_deref()
@@ -704,13 +711,21 @@ impl NoteService {
             .parse()
             .unwrap_or(EmbeddingPolicy::Denied);
 
-        IndexAclProjection {
+        let mut read_principals = Vec::with_capacity(read_acl.len());
+        for principal in read_acl {
+            let parsed: IndexPrincipal = principal.parse().map_err(|e| {
+                NoteError::InvalidAcl(format!("invalid read principal {principal}: {e}"))
+            })?;
+            read_principals.push(parsed);
+        }
+
+        Ok(IndexAclProjection {
             tenant_id,
             workspace_id: file.workspace_id(),
             object_id: meta.okf_id.unwrap_or(file.id),
             source_folder_id: file.parent_folder_id,
             owner_id: file.owner_id,
-            read_principals: read_acl.iter().filter_map(|s| s.parse().ok()).collect(),
+            read_principals,
             visibility: meta
                 .visibility
                 .as_str()
@@ -719,7 +734,7 @@ impl NoteService {
             acl_hash: meta.acl_hash.clone().unwrap_or_default(),
             acl_version: meta.acl_version.unwrap_or(1),
             embedding_policy,
-        }
+        })
     }
 
     async fn emit_index_note(
@@ -737,7 +752,13 @@ impl NoteService {
                     return;
                 }
             };
-            let mut acl = Self::build_acl_payload(file, meta, tenant_id, read_acl);
+            let mut acl = match Self::build_acl_payload(file, meta, tenant_id, read_acl) {
+                Ok(acl) => acl,
+                Err(e) => {
+                    tracing::warn!("Failed to build ACL projection for note {}: {}", file.id, e);
+                    return;
+                }
+            };
 
             // Compute a deterministic ACL hash and bump the version when the
             // effective ACL state changes. This keeps indexed chunks in sync
@@ -2760,7 +2781,8 @@ mod tests {
             &meta,
             tenant_id,
             vec![format!("owner:{owner_id}")],
-        );
+        )
+        .unwrap();
 
         assert_eq!(acl.tenant_id, tenant_id);
         assert_eq!(acl.workspace_id, tenant_id);
@@ -2804,7 +2826,8 @@ mod tests {
             &meta,
             tenant_id,
             vec![format!("owner:{owner_id}")],
-        );
+        )
+        .unwrap();
 
         assert_eq!(acl.embedding_policy, EmbeddingPolicy::Denied);
     }
@@ -2839,7 +2862,8 @@ mod tests {
             &meta,
             tenant_id,
             vec![format!("owner:{owner_id}"), format!("user:{user_id}")],
-        );
+        )
+        .unwrap();
 
         assert!(acl
             .read_principals
