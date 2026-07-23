@@ -37,7 +37,7 @@ Deferred (out of scope for stabilization):
 | Item | Value |
 |------|-------|
 | Date | 2026-07-23 |
-| Commit SHA | `76729a50` (`stabilization/phase-2-closeout`) |
+| Commit SHA | `247d8f9cb9aca97c509e1290eace50a4c1b6d245` (`stabilization/phase-2-closeout`) |
 | OS | Linux rustshare 6.8.0-124-generic #124-Ubuntu SMP PREEMPT_DYNAMIC x86_64 |
 | CPU | AMD EPYC 7401P 24-Core Processor, 16 logical cores visible |
 | RAM | 15 GiB |
