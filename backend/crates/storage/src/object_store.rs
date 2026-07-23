@@ -480,7 +480,6 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool
     }
 }
 
-
 // Service-layer object-store trait bridge.
 // This lives next to the concrete type so the storage crate root stays small.
 #[allow(async_fn_in_trait)]
@@ -505,7 +504,6 @@ impl rustshare_core::services::ObjectStoreOps for ObjectStore {
         self.delete(key).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -838,4 +836,3 @@ mod tests {
         assert!(stream.next().await.is_none());
     }
 }
-
