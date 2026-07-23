@@ -1,0 +1,13 @@
+[advisories]
+ignore = [
+    # rsa crate — no patch available yet (Marvin Attack timing sidechannel)
+    "RUSTSEC-2023-0071",
+    # rustls-webpki v0.101.7 — pulled in by rustls v0.21.12 via AWS SDK
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0
+    "RUSTSEC-2026-0173",
+    # daemonize is unmaintained; used only by rustshare-desktop and no replacement is available in this milestone
+    "RUSTSEC-2025-0069",
+]
