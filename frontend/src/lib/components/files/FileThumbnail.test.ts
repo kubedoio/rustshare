@@ -5,9 +5,23 @@ import FileThumbnail from './FileThumbnail.svelte';
 import type { File } from '$lib/api/types';
 
 describe('FileThumbnail', () => {
+	const mockFetch = vi.mocked(fetch);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			blob: async () => new Blob(['mock'], { type: 'image/jpeg' })
+		} as Response);
 	});
+
+	const mockThumbnailBlob = (body = 'mock', type = 'image/jpeg') =>
+		mockFetch.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			blob: async () => new Blob([body], { type })
+		} as Response);
 
 	const createMockFile = (overrides?: Partial<File>): File => ({
 		id: 'test-file-id',
@@ -35,21 +49,16 @@ describe('FileThumbnail', () => {
 			expect(spinner).toBeTruthy();
 		});
 
-		// Skip: onMount doesn't execute in test environment with happy-dom
-		it.skip('should fetch download URL for image files', async () => {
+		it('should fetch the thumbnail endpoint for image files', async () => {
 			const file = createMockFile({ mime_type: 'image/png' });
-			const mockFetch = vi.mocked(fetch);
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: async () => ({ url: 'http://example.com/image.png' })
-			} as Response);
+			mockThumbnailBlob('mock', 'image/png');
 
 			render(FileThumbnail, { props: { file, size: 'md' } });
 
 			await waitFor(() => {
 				expect(mockFetch).toHaveBeenCalledWith(
-					'/api/v1/files/test-file-id/download',
+					'/api/v1/files/test-file-id/thumbnail?size=md',
 					expect.objectContaining({
 						credentials: 'include'
 					})
@@ -57,15 +66,10 @@ describe('FileThumbnail', () => {
 			});
 		});
 
-		// Skip: onMount doesn't execute in test environment with happy-dom
-		it.skip('should generate thumbnail and display image', async () => {
+		it('should render a thumbnail image after loading', async () => {
 			const file = createMockFile({ mime_type: 'image/jpeg' });
-			const mockFetch = vi.mocked(fetch);
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: async () => ({ url: 'http://example.com/image.jpg' })
-			} as Response);
+			mockThumbnailBlob();
 
 			const { container } = render(FileThumbnail, {
 				props: { file, size: 'md' }
@@ -75,7 +79,7 @@ describe('FileThumbnail', () => {
 				() => {
 					const img = container.querySelector('img');
 					expect(img).toBeTruthy();
-					expect(img?.src).toContain('data:image/jpeg');
+					expect(img?.src).toMatch(/^blob:mock-object-url-\d+$/);
 				},
 				{ timeout: 2000 }
 			);
@@ -111,10 +115,8 @@ describe('FileThumbnail', () => {
 			expect(wrapper).toBeTruthy();
 		});
 
-		// Skip: onMount doesn't execute in test environment with happy-dom
-		it.skip('should handle thumbnail generation failure gracefully', async () => {
+		it('should fall back to an icon when thumbnail loading fails', async () => {
 			const file = createMockFile({ mime_type: 'image/jpeg' });
-			const mockFetch = vi.mocked(fetch);
 
 			mockFetch.mockResolvedValueOnce({
 				ok: false,
@@ -126,8 +128,8 @@ describe('FileThumbnail', () => {
 			});
 
 			await waitFor(() => {
-				const icon = container.querySelector('span');
-				expect(icon?.textContent).toBe('🖼️');
+				const icon = container.querySelector('svg');
+				expect(icon).toBeTruthy();
 			});
 		});
 	});
@@ -138,7 +140,6 @@ describe('FileThumbnail', () => {
 				mime_type: 'application/pdf',
 				name: 'document.pdf'
 			});
-			const mockFetch = vi.mocked(fetch);
 			mockFetch.mockResolvedValueOnce({
 				ok: false,
 				status: 500
@@ -159,7 +160,6 @@ describe('FileThumbnail', () => {
 				mime_type: 'video/mp4',
 				name: 'video.mp4'
 			});
-			const mockFetch = vi.mocked(fetch);
 			mockFetch.mockResolvedValueOnce({
 				ok: false,
 				status: 500
@@ -275,12 +275,11 @@ describe('FileThumbnail', () => {
 
 		it('should not attempt thumbnail generation for non-image files', async () => {
 			const file = createMockFile({ mime_type: 'application/octet-stream' });
-			const mockFetch = vi.mocked(fetch);
 
 			render(FileThumbnail, { props: { file, size: 'md' } });
 			await tick();
 
-			// Should not call fetch for download URL
+			// Should not call fetch for thumbnail URL
 			expect(mockFetch).not.toHaveBeenCalled();
 		});
 	});
@@ -354,18 +353,13 @@ describe('FileThumbnail', () => {
 			expect(wrapper?.classList.contains('rounded')).toBe(true);
 		});
 
-		// Skip: onMount doesn't execute in test environment with happy-dom
-		it.skip('should have alt text on thumbnail images', async () => {
+		it('should use the file name as alt text for thumbnail images', async () => {
 			const file = createMockFile({
 				mime_type: 'image/jpeg',
 				name: 'vacation-photo.jpg'
 			});
-			const mockFetch = vi.mocked(fetch);
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: async () => ({ url: 'http://example.com/image.jpg' })
-			} as Response);
+			mockThumbnailBlob();
 
 			const { container } = render(FileThumbnail, {
 				props: { file, size: 'md' }
@@ -380,15 +374,10 @@ describe('FileThumbnail', () => {
 			);
 		});
 
-		// Skip: onMount doesn't execute in test environment with happy-dom
-		it.skip('should apply object-cover class to thumbnail images', async () => {
+		it('should apply object-cover class to thumbnail images', async () => {
 			const file = createMockFile({ mime_type: 'image/jpeg' });
-			const mockFetch = vi.mocked(fetch);
 
-			mockFetch.mockResolvedValueOnce({
-				ok: true,
-				json: async () => ({ url: 'http://example.com/image.jpg' })
-			} as Response);
+			mockThumbnailBlob();
 
 			const { container } = render(FileThumbnail, {
 				props: { file, size: 'md' }
@@ -401,6 +390,64 @@ describe('FileThumbnail', () => {
 				},
 				{ timeout: 2000 }
 			);
+		});
+
+		it('should not display a stale thumbnail when the file changes', async () => {
+			const file1 = createMockFile({
+				id: 'file-1',
+				name: 'first.jpg',
+				mime_type: 'image/jpeg',
+				modified_at: '2026-03-19T10:00:00Z'
+			});
+			const file2 = createMockFile({
+				id: 'file-2',
+				name: 'second.jpg',
+				mime_type: 'image/jpeg',
+				modified_at: '2026-03-19T11:00:00Z'
+			});
+
+			mockThumbnailBlob('first');
+
+			const { container, rerender } = render(FileThumbnail, {
+				props: { file: file1, size: 'md' }
+			});
+
+			let firstSrc: string | null = null;
+			await waitFor(() => {
+				const img = container.querySelector('img');
+				expect(img).toBeTruthy();
+				firstSrc = img?.src ?? null;
+			});
+
+			mockThumbnailBlob('second');
+
+			await rerender({ file: file2, size: 'md' });
+
+			await waitFor(() => {
+				const img = container.querySelector('img');
+				expect(img?.src).toBeTruthy();
+				expect(img?.src).not.toBe(firstSrc);
+			});
+		});
+
+		it('should revoke the object URL when the component is destroyed', async () => {
+			const file = createMockFile({ mime_type: 'image/jpeg' });
+
+			mockThumbnailBlob();
+
+			const { unmount } = render(FileThumbnail, { props: { file, size: 'md' } });
+
+			await waitFor(() => {
+				expect(URL.createObjectURL).toHaveBeenCalled();
+			});
+
+			const createdUrl = vi.mocked(URL.createObjectURL).mock.results[0].value as string;
+
+			unmount();
+
+			await waitFor(() => {
+				expect(URL.revokeObjectURL).toHaveBeenCalledWith(createdUrl);
+			});
 		});
 	});
 });
