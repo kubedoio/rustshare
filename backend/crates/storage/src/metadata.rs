@@ -5838,7 +5838,6 @@ impl MetadataStore {
     }
 }
 
-
 // Service-layer metadata-store trait bridges.
 // These live next to the concrete type so the storage crate root stays small.
 #[allow(async_fn_in_trait)]
@@ -6568,7 +6567,6 @@ impl rustshare_core::services::VaultStore for MetadataStore {
             .map_err(|e| rustshare_core::services::VaultSyncError::Database(e.to_string()))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -7656,4 +7654,3 @@ mod tests {
             .unwrap();
     }
 }
-
