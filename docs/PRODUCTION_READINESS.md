@@ -1,10 +1,11 @@
 # Production Readiness
 
-> **Status:** Production-readiness gap closure complete — Workstreams A–F and remediation Tasks 1–13
-> **Branch:** `production-readiness-gap-closure`  
-> **Last updated:** 2026-06-18
+> **Status:** Pre-release; target-environment launch gates are not complete
+> **Last updated:** 2026-07-20
 
-This document summarizes what is production-ready, what remains experimental, and what operators must do before running RustShare in production. It reflects the work completed in the `production-readiness-gap-closure` branch.
+This document summarizes implemented controls, experimental areas, and the
+mandatory gates operators must pass in the actual target environment before a
+production launch. Repository-level implementation does not close these gates.
 
 ---
 
@@ -80,7 +81,11 @@ This document summarizes what is production-ready, what remains experimental, an
 
 ---
 
-## 5. Operator Checklist
+## 5. Mandatory Release Checklist
+
+Every applicable item below must be completed and recorded for the target
+environment. An unchecked mandatory item blocks production launch; mark an item
+not applicable only with a documented reason and release-owner approval.
 
 ### 5.1 Secrets
 
@@ -140,6 +145,11 @@ See [Backup/Restore Runbook](runbooks/backup-restore.md).
 
 ### 5.5 Pre-Launch Validation
 
+- [ ] Terminate TLS at an external reverse proxy and confirm the RustShare HTTP listener is reachable only from the proxy host.
+- [ ] Complete an external security assessment and resolve all launch-blocking findings.
+- [ ] Validate OIDC end-to-end with the target identity provider, or explicitly disable OIDC for the release.
+- [ ] Complete and record a restore drill using a current production backup.
+- [ ] Wire replication health alerts to the target paging system, or explicitly disable replication for the release.
 - [ ] Run `SQLX_OFFLINE=true cargo check --workspace` and `cargo test --workspace`.
 - [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`.
 - [ ] Run `cargo audit` and `cargo deny check`.
@@ -151,7 +161,10 @@ See [Backup/Restore Runbook](runbooks/backup-restore.md).
 
 ## 6. Launch Recommendation
 
-**Proceed with a careful, web-first launch or pilot.** RustShare's core file-sharing runtime, tenant isolation, security controls, and operational recovery story are production-grade for a self-hosted deployment. Do not market mobile, desktop, or a "finished platform" claim until those workstreams are completed and validated.
+**Do not launch until every applicable mandatory release checklist item is
+complete and recorded for the target environment.** After the gates pass,
+proceed with a controlled web-first pilot. Do not market mobile, desktop, or a
+"finished platform" claim until those workstreams are completed and validated.
 
 ---
 

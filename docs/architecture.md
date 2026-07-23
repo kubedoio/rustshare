@@ -1,7 +1,7 @@
 # RustShare System Architecture
 
-> **Status:** Production-readiness gap closure complete — Workstreams A–F  
-> **Last updated:** 2026-06-18
+> **Status:** Pre-release; target-environment launch gates are not complete
+> **Last updated:** 2026-07-20
 
 ---
 
@@ -29,7 +29,7 @@ RustShare is a self-hosted file-sharing and sync platform. It is designed to giv
                        │ HTTPS (operator-provided TLS)
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Nginx (reverse proxy)                  │
+│                 Host HTTPS reverse proxy                    │
 │           • TLS termination (production)                    │
 │           • Static asset caching                            │
 │           • WebSocket upgrade handling                      │
@@ -60,7 +60,7 @@ RustShare is a self-hosted file-sharing and sync platform. It is designed to giv
 └─────────────────────┘
 ```
 
-> **Note:** In the **zero-PostgreSQL** runtime profile, PostgreSQL can be removed entirely and all metadata lives in RustFS. See [Future Evolution](#10-future-evolution).
+> **Note:** PostgreSQL is the only supported production metadata backend. RustFS remains the object-store for file contents and metadata sidecars.
 
 ---
 
@@ -198,7 +198,7 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
 
 - **Storage keys are content-addressable where possible** (content hash in metadata), enabling deduplication opportunities.
 - **Metadata sidecars** keep note data portable with the file itself.
-- **Zero-PostgreSQL mode** migrates all relational metadata into hierarchical JSON objects in the bucket.
+
 
 ---
 
@@ -222,7 +222,7 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
                                                               └──────────┘    └──────────┘    └──────────┘
 ```
 
-1. **Nginx** terminates TLS (production), adds security headers, and proxies to the backend.
+1. A **same-host HTTPS reverse proxy** terminates TLS and forwards to the loopback-bound Compose nginx service, which adds security headers and proxies to the backend.
 2. **Axum Router** matches the request path (`/api/v1/...`, `/api/ws`, or SPA fallback).
 3. **Middleware Stack:**
    - **CORS** (configured via `ORIGIN`)
@@ -320,7 +320,7 @@ Secrets are loaded from environment variables and held in memory only. They are 
 | Backend language | Rust | Memory safety, performance, and excellent async ecosystem. |
 | Web framework | Axum | Composable middleware, first-class Tower integration, and strong WebSocket support. |
 | Database | PostgreSQL 16 | Proven reliability, rich indexing, and JSONB for hybrid relational/document workloads. |
-| Object storage | S3-compatible (RustFS) | Portable, deduplication-friendly, and allows zero-PostgreSQL operation. |
+| Object storage | S3-compatible (RustFS) | Portable and deduplication-friendly object storage for file contents and metadata sidecars. |
 | Frontend framework | SvelteKit + Svelte 5 | Minimal runtime overhead, fine-grained reactivity, and simple static export. |
 | Auth hashing | Argon2id | OWASP-recommended password hashing. |
 | Encryption at rest | AES-256-GCM | Standard authenticated encryption for secrets and sensitive metadata. |
@@ -332,18 +332,13 @@ Secrets are loaded from environment variables and held in memory only. They are 
 
 ## 13. Future Evolution
 
-### Metadata Backend Migration
+### Metadata Backend
 
-RustShare is transitioning from PostgreSQL as the metadata authority to **RustFS as the canonical metadata store**. This is controlled by `RUSTSHARE_METADATA_BACKEND`:
+PostgreSQL 16 is the only supported production metadata backend. It provides the relational model, rich indexing, and JSONB hybrid workloads used by the current platform.
 
-| Stage | Value | Behavior |
-|-------|-------|----------|
-| 1 | `postgres` | PostgreSQL only (current default). |
-| 2 | `dual_write` | Writes to both; reads from PostgreSQL. |
-| 3 | `rustfs_reads` | Writes to both; reads from RustFS. |
-| 4 | `rustfs` | RustFS only; PostgreSQL optional or absent. |
+Experimental `RUSTSHARE_METADATA_BACKEND` stages (`dual_write`, `rustfs_reads`, `rustfs`) exist only as a migration roadmap and must not be used for production data. The `rustfs` stage in particular does not remove the PostgreSQL requirement for supported deployments. See [Production Readiness](PRODUCTION_READINESS.md) for the deployment contract.
 
-Additional tuning:
+Additional tuning (experimental stages only):
 
 ```bash
 RUSTSHARE_METADATA_CACHE=true
@@ -351,14 +346,14 @@ RUSTSHARE_METADATA_PREFIX=apps/rustshare
 RUSTSHARE_METADATA_NAMESPACE=default
 ```
 
-Admin endpoints for verification and repair:
+Admin endpoints for verification and repair (experimental stages only):
 
 - `GET /admin/metadata/health`
 - `GET /admin/metadata/stats`
 - `GET /admin/metadata/verify/parity`
 - `POST /admin/metadata/repair`
 
-See [docs/2026-03-27-metadata-refactor-design.md](2026-03-27-metadata-refactor-design.md) for the full migration plan.
+See [docs/2026-03-27-metadata-refactor-design.md](2026-03-27-metadata-refactor-design.md) for the historical migration plan.
 
 ### Known Roadmap Items
 

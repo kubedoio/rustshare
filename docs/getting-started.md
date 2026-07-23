@@ -58,6 +58,11 @@ For production, use the production override to enable restart policies, resource
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
+The production profile intentionally publishes nginx only on
+`127.0.0.1:8080`. Configure an HTTPS reverse proxy on the same host before
+starting it; direct public HTTP deployment is unsupported because production
+sessions require secure cookies. See [TLS / HTTPS](#tls--https).
+
 Key differences from the default stack:
 - Containers restart automatically on failure
 - CPU/memory limits prevent runaway growth
@@ -68,13 +73,9 @@ See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the full production guide.
 
 ## TLS / HTTPS
 
-Three options for HTTPS:
-
-| Option | Best For | Details |
-|--------|----------|---------|
-| **A** — Let's Encrypt | Public servers | Free certificates with auto-renewal |
-| **B** — Manual certs | Internal / air-gapped | Bring your own certificate files |
-| **C** — External termination | Cloudflare, AWS ALB | TLS terminated at the edge |
+Production requires a same-host HTTPS reverse proxy in front of the loopback
+Compose listener. The proxy may use Let's Encrypt, manually managed
+certificates, or a private tunnel to an upstream TLS terminator.
 
 See the [TLS section in `DEPLOYMENT.md`](DEPLOYMENT.md#tls--https-setup) for step-by-step instructions.
 
