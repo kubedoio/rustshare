@@ -623,6 +623,9 @@ fn generate_rag_answer(query: &str, results: &[SemanticSearchResult]) -> String 
 mod tests {
     use super::*;
     use crate::services::ai::embedding::SimpleEmbeddingGenerator;
+    use crate::services::ai::indexing::{
+        EmbeddingPolicy, IndexAclProjection, IndexPrincipal, IndexVisibility,
+    };
     use crate::services::{ContentIndexer, InMemoryVectorStore};
 
     fn test_indexer() -> Arc<ContentIndexer<SimpleEmbeddingGenerator>> {
@@ -1205,18 +1208,19 @@ mod tests {
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/plain".to_string(),
                 owner_id,
-                crate::services::ai::indexing::NoteAclPayload {
+                IndexAclProjection {
                     tenant_id,
                     workspace_id: tenant_id,
-                    note_id: file_id,
-                    source_file_id: file_id,
-                    source_folder_id: None,
+                    object_id: file_id,
                     owner_id,
-                    read_acl: vec![format!("owner:{owner_id}"), format!("user:{recipient_id}")],
-                    visibility: "private".to_string(),
+                    read_principals: vec![
+                        IndexPrincipal::Owner(owner_id),
+                        IndexPrincipal::User(recipient_id),
+                    ],
+                    visibility: IndexVisibility::Private,
                     acl_hash: "hash-1".to_string(),
                     acl_version: 1,
-                    embedding_policy: "allowed".to_string(),
+                    embedding_policy: EmbeddingPolicy::Allowed,
                 },
             )
             .await

@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rustshare_core::domain::UserId;
-use rustshare_core::services::{ContentIndexer, EmbeddingGenerator, NoteAclPayload};
+use rustshare_core::services::{ContentIndexer, EmbeddingGenerator, IndexAclProjection};
 use uuid::Uuid;
 
 /// Trait for note indexing callbacks.
@@ -27,7 +27,7 @@ pub trait NoteIndexSink: Send + Sync {
         content: String,
         mime_type: String,
         owner_id: UserId,
-        acl: NoteAclPayload,
+        acl: IndexAclProjection,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
     /// Update the ACL projection for every chunk of a note.
@@ -35,7 +35,7 @@ pub trait NoteIndexSink: Send + Sync {
         &self,
         tenant_id: Uuid,
         note_id: Uuid,
-        acl: NoteAclPayload,
+        acl: rustshare_core::services::NoteAclPayload,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
     /// Remove every indexed chunk for a note.
@@ -59,7 +59,7 @@ impl NoteIndexSink for NoOpNoteIndexSink {
         _content: String,
         _mime_type: String,
         _owner_id: UserId,
-        _acl: NoteAclPayload,
+        _acl: IndexAclProjection,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             tracing::debug!("NoOpNoteIndexSink: index_note ignored");
@@ -70,7 +70,7 @@ impl NoteIndexSink for NoOpNoteIndexSink {
         &self,
         _tenant_id: Uuid,
         _note_id: Uuid,
-        _acl: NoteAclPayload,
+        _acl: rustshare_core::services::NoteAclPayload,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             tracing::debug!("NoOpNoteIndexSink: update_acl ignored");
@@ -109,7 +109,7 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
         content: String,
         mime_type: String,
         owner_id: UserId,
-        acl: NoteAclPayload,
+        acl: IndexAclProjection,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let indexer = self.indexer.clone();
         Box::pin(async move {
@@ -128,7 +128,7 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
         &self,
         tenant_id: Uuid,
         note_id: Uuid,
-        acl: NoteAclPayload,
+        acl: rustshare_core::services::NoteAclPayload,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let indexer = self.indexer.clone();
         Box::pin(async move {

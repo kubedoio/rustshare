@@ -239,21 +239,6 @@ pub struct NoteAclPayload {
     pub embedding_policy: String,
 }
 
-/// Filter supplied by the caller during permission-aware search.
-///
-/// Deprecated: use `RetrievalPrincipal` directly. This type is kept only for
-/// backward compatibility during the migration of existing callers.
-#[deprecated(since = "0.6.0", note = "Use RetrievalPrincipal directly")]
-#[derive(Debug, Clone, Default)]
-pub struct AclSearchFilter {
-    pub tenant_id: Uuid,
-    pub caller_user_id: Uuid,
-    pub caller_workspace_id: Option<Uuid>,
-    pub caller_group_ids: Vec<Uuid>,
-    /// note_id -> minimum accepted acl_version.
-    pub min_acl_versions: HashMap<Uuid, i64>,
-}
-
 /// An indexed document with its embedding and metadata.
 #[derive(Debug, Clone)]
 pub struct IndexedDocument {
@@ -369,11 +354,12 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             .await
     }
 
-    /// Index a note's content with an ACL payload.
+    /// Index a note's content with an ACL projection.
     ///
     /// Frontmatter is stripped before embedding generation so that YAML metadata
     /// does not dominate the semantic vector. If `acl.embedding_policy` is
-    /// `"denied"`, the note is removed from the index instead of inserted.
+    /// [`EmbeddingPolicy::Denied`], the note is removed from the index instead
+    /// of inserted.
     #[allow(clippy::too_many_arguments)]
     pub async fn index_note(
         &self,
@@ -383,14 +369,16 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         content: String,
         mime_type: String,
         owner_id: Uuid,
-        acl: NoteAclPayload,
+        acl: IndexAclProjection,
     ) -> anyhow::Result<()> {
-        if acl.embedding_policy == "denied" {
+        if acl.embedding_policy == EmbeddingPolicy::Denied {
             self.store
-                .remove_note_chunks(acl.tenant_id, acl.note_id)
+                .remove_note_chunks(acl.tenant_id, acl.object_id)
                 .await?;
             return Ok(());
         }
+
+        let payload = note_acl_payload_from_projection(file_id, &acl);
 
         let body = strip_frontmatter(&content);
         let body = if body.len() > MAX_CONTENT_LENGTH {
@@ -412,12 +400,12 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             owner_id,
             tenant_id: acl.tenant_id,
             indexed_at: chrono::Utc::now(),
-            acl: Some(acl.clone()),
+            acl: Some(payload.clone()),
             chunk_id: file_id,
         };
 
         self.store
-            .upsert_chunk(acl.tenant_id, file_id, &document, &acl)
+            .upsert_chunk(acl.tenant_id, file_id, &document, &payload)
             .await
     }
 
@@ -570,93 +558,29 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     }
 }
 
-/// Check whether a caller can access a note chunk according to its ACL.
+/// Convert a typed [`IndexAclProjection`] into the storage-level
+/// [`NoteAclPayload`].
 ///
-/// Access is granted when any of the following holds:
-/// - the caller is the document owner;
-/// - the note visibility is `"public"`;
-/// - the note visibility is `"workspace"` and the caller belongs to the same
-///   workspace;
-/// - the caller belongs to a group listed in `read_acl`;
-/// - `read_acl` contains an explicit `owner:<caller_user_id>` principal;
-/// - `read_acl` contains an explicit `user:<caller_user_id>` principal (direct
-///   user share);
-/// - `read_acl` contains a `workspace:<caller_workspace_id>` principal and the
-///   caller belongs to that workspace.
-///
-/// Chunks with `embedding_policy != "allowed"` or a stale `acl_version` are
-/// rejected by the caller before this helper is invoked.
-#[allow(deprecated)]
-pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
-    if acl.embedding_policy != "allowed" {
-        return false;
+/// The storage payload keeps the stringified forms of enums and principals so
+/// existing vector-store implementations and database columns continue to work
+/// without migration.
+fn note_acl_payload_from_projection(
+    file_id: Uuid,
+    acl: &IndexAclProjection,
+) -> NoteAclPayload {
+    NoteAclPayload {
+        tenant_id: acl.tenant_id,
+        workspace_id: acl.workspace_id,
+        note_id: acl.object_id,
+        source_file_id: file_id,
+        source_folder_id: None,
+        owner_id: acl.owner_id,
+        read_acl: acl.read_principals.iter().map(|p| p.to_string()).collect(),
+        visibility: acl.visibility.to_string(),
+        acl_hash: acl.acl_hash.clone(),
+        acl_version: acl.acl_version,
+        embedding_policy: acl.embedding_policy.to_string(),
     }
-
-    if let Some(min_version) = filter.min_acl_versions.get(&acl.note_id) {
-        if acl.acl_version < *min_version {
-            tracing::warn!(
-                object_id = %acl.note_id,
-                acl_version = acl.acl_version,
-                min_version = *min_version,
-                "Rejecting search result with stale ACL version"
-            );
-            return false;
-        }
-    }
-
-    // Owner match.
-    if filter.caller_user_id == acl.owner_id {
-        return true;
-    }
-
-    // Explicit owner principal in the ACL list.
-    let owner_principal = format!("owner:{}", filter.caller_user_id);
-    if acl.read_acl.contains(&owner_principal) {
-        return true;
-    }
-
-    // Explicit direct-user principal in the ACL list.
-    let user_principal = format!("user:{}", filter.caller_user_id);
-    if acl.read_acl.contains(&user_principal) {
-        return true;
-    }
-
-    // Group membership match.
-    if !filter.caller_group_ids.is_empty() {
-        let group_principals: Vec<String> = filter
-            .caller_group_ids
-            .iter()
-            .map(|id| format!("group:{id}"))
-            .collect();
-        if acl.read_acl.iter().any(|p| group_principals.contains(p)) {
-            return true;
-        }
-    }
-
-    // Workspace visibility or workspace principal match.
-    //
-    // SECURITY: `RetrievalPrincipal.workspace_id` must only be set after the
-    // caller's workspace membership has been verified by the authentication or
-    // session layer. This helper assumes the principal accurately represents the
-    // authenticated caller and does not re-verify membership here.
-    if let Some(caller_workspace_id) = filter.caller_workspace_id {
-        if caller_workspace_id == acl.workspace_id {
-            if acl.visibility == "workspace" {
-                return true;
-            }
-            let workspace_principal = format!("workspace:{caller_workspace_id}");
-            if acl.read_acl.contains(&workspace_principal) {
-                return true;
-            }
-        }
-    }
-
-    // Public visibility match.
-    if acl.visibility == "public" {
-        return true;
-    }
-
-    false
 }
 
 /// Strip YAML frontmatter from a Markdown document, returning the body.
@@ -849,46 +773,46 @@ mod tests {
     fn make_acl_payload(
         tenant_id: Uuid,
         note_id: Uuid,
-        source_file_id: Uuid,
+        _source_file_id: Uuid,
         owner_id: Uuid,
         visibility: &str,
         embedding_policy: &str,
         acl_version: i64,
-    ) -> NoteAclPayload {
-        NoteAclPayload {
+    ) -> IndexAclProjection {
+        IndexAclProjection {
             tenant_id,
             workspace_id: tenant_id,
-            note_id,
-            source_file_id,
-            source_folder_id: None,
+            object_id: note_id,
             owner_id,
-            read_acl: vec![format!("owner:{}", owner_id)],
-            visibility: visibility.to_string(),
+            read_principals: vec![format!("owner:{}", owner_id).parse().unwrap()],
+            visibility: visibility.parse().unwrap(),
             acl_hash: format!("hash-{}", acl_version),
             acl_version,
-            embedding_policy: embedding_policy.to_string(),
+            embedding_policy: embedding_policy.parse().unwrap(),
         }
     }
 
     #[test]
     fn test_note_acl_payload_serializes() {
+        let file_id = Uuid::new_v4();
         let acl = make_acl_payload(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            Uuid::new_v4(),
+            file_id,
             Uuid::new_v4(),
             "private",
             "allowed",
             1,
         );
-        let json = serde_json::to_value(&acl).unwrap();
-        assert_eq!(json["tenant_id"], acl.tenant_id.to_string());
+        let payload = note_acl_payload_from_projection(file_id, &acl);
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["tenant_id"], payload.tenant_id.to_string());
         assert_eq!(json["visibility"], "private");
         assert_eq!(json["embedding_policy"], "allowed");
         assert_eq!(json["acl_version"], 1);
 
         let decoded: NoteAclPayload = serde_json::from_value(json).unwrap();
-        assert_eq!(acl, decoded);
+        assert_eq!(payload, decoded);
     }
 
     #[tokio::test]
@@ -1072,9 +996,9 @@ mod tests {
         let mut acl = make_acl_payload(
             tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
         );
-        acl.read_acl = vec![
-            format!("owner:{owner_id}"),
-            format!("user:{shared_user_id}"),
+        acl.read_principals = vec![
+            format!("owner:{owner_id}").parse().unwrap(),
+            format!("user:{shared_user_id}").parse().unwrap(),
         ];
 
         indexer
@@ -1180,10 +1104,10 @@ mod tests {
             tenant_id, note_id, file_id, owner_id, "public", "allowed", 2,
         );
         let engineering_id = Uuid::new_v4();
-        new_acl.read_acl = vec![format!("group:{engineering_id}")];
+        new_acl.read_principals = vec![format!("group:{engineering_id}").parse().unwrap()];
 
         let updated = indexer
-            .update_note_acl(tenant_id, note_id, new_acl.clone())
+            .update_note_acl(tenant_id, note_id, note_acl_payload_from_projection(file_id, &new_acl))
             .await;
         assert_eq!(updated, 1);
 

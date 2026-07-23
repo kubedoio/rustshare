@@ -13,7 +13,10 @@ use rustshare_core::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
         OkfNoteFrontmatter, RustshareFrontmatter,
     },
-    services::{FileService, FolderService, NoteAclPayload, PermissionResolver},
+    services::{
+        EmbeddingPolicy, FileService, FolderService, IndexAclProjection, IndexVisibility,
+        PermissionResolver,
+    },
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
@@ -57,6 +60,8 @@ pub struct NoteMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acl_version: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict: Option<NoteConflict>,
 }
 
@@ -80,6 +85,7 @@ impl NoteMetadata {
             okf_id: None,
             acl_hash: None,
             acl_version: None,
+            embedding_policy: None,
             conflict: None,
         }
     }
@@ -684,25 +690,30 @@ impl NoteService {
             .map_err(|e| NoteError::Database(format!("Failed to resolve ACL principals: {e}")))
     }
 
-    /// Build the ACL payload used by the AI content indexer.
+    /// Build the ACL projection used by the AI content indexer.
     pub fn build_acl_payload(
         file: &rustshare_core::domain::File,
         meta: &NoteMetadata,
         tenant_id: Uuid,
         read_acl: Vec<String>,
-    ) -> NoteAclPayload {
-        NoteAclPayload {
+    ) -> IndexAclProjection {
+        let embedding_policy = meta
+            .embedding_policy
+            .as_deref()
+            .unwrap_or("allowed")
+            .parse()
+            .unwrap_or(EmbeddingPolicy::Allowed);
+
+        IndexAclProjection {
             tenant_id,
             workspace_id: tenant_id,
-            note_id: meta.okf_id.unwrap_or(file.id),
-            source_file_id: file.id,
-            source_folder_id: file.parent_folder_id,
+            object_id: meta.okf_id.unwrap_or(file.id),
             owner_id: file.owner_id,
-            read_acl,
-            visibility: meta.visibility.as_str().to_string(),
+            read_principals: read_acl.iter().filter_map(|s| s.parse().ok()).collect(),
+            visibility: meta.visibility.as_str().parse().unwrap_or(IndexVisibility::Private),
             acl_hash: meta.acl_hash.clone().unwrap_or_default(),
             acl_version: meta.acl_version.unwrap_or(1),
-            embedding_policy: "allowed".to_string(),
+            embedding_policy,
         }
     }
 
@@ -721,7 +732,17 @@ impl NoteService {
                     return;
                 }
             };
-            let acl = Self::build_acl_payload(file, meta, tenant_id, read_acl);
+            let mut acl = Self::build_acl_payload(file, meta, tenant_id, read_acl);
+
+            // Compute a deterministic ACL hash and bump the version when the
+            // effective ACL state changes. This keeps indexed chunks in sync
+            // with the note's permission model.
+            let computed_hash = compute_index_acl_hash(&acl);
+            if computed_hash != acl.acl_hash {
+                acl.acl_version += 1;
+            }
+            acl.acl_hash = computed_hash;
+
             sink.index_note(
                 file.id,
                 file.name.clone(),
@@ -2474,6 +2495,30 @@ fn compute_acl_hash(tenant_id: Uuid, workspace_id: Uuid, okf_id: Uuid, visibilit
     hex::encode(Sha256::digest(input.as_bytes()))
 }
 
+/// Compute a deterministic hash of an index ACL projection.
+///
+/// Covers the fields that affect retrieval decisions so any change to the
+/// effective ACL produces a different hash and triggers an acl_version bump.
+fn compute_index_acl_hash(projection: &IndexAclProjection) -> String {
+    let mut principals: Vec<String> = projection
+        .read_principals
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+    principals.sort();
+    let input = format!(
+        "tenant:{}:workspace:{}:object:{}:owner:{}:visibility:{}:policy:{}:principals:[{}]",
+        projection.tenant_id,
+        projection.workspace_id,
+        projection.object_id,
+        projection.owner_id,
+        projection.visibility,
+        projection.embedding_policy,
+        principals.join(",")
+    );
+    hex::encode(Sha256::digest(input.as_bytes()))
+}
+
 /// Merge incoming frontmatter over an existing frontmatter, preserving identity
 /// and bundle metadata that should not change on a normal save.
 fn merge_incoming_frontmatter(
@@ -2714,15 +2759,16 @@ mod tests {
 
         assert_eq!(acl.tenant_id, tenant_id);
         assert_eq!(acl.workspace_id, tenant_id);
-        assert_eq!(acl.note_id, okf_id);
-        assert_eq!(acl.source_file_id, file.id);
-        assert_eq!(acl.source_folder_id, Some(parent_id));
+        assert_eq!(acl.object_id, okf_id);
         assert_eq!(acl.owner_id, owner_id);
         assert_eq!(acl.acl_hash, "test-hash");
         assert_eq!(acl.acl_version, 3);
-        assert_eq!(acl.visibility, "public");
-        assert_eq!(acl.embedding_policy, "allowed");
-        assert_eq!(acl.read_acl, vec![format!("owner:{}", owner_id)]);
+        assert_eq!(acl.visibility, IndexVisibility::Public);
+        assert_eq!(acl.embedding_policy, EmbeddingPolicy::Allowed);
+        assert_eq!(
+            acl.read_principals,
+            vec![format!("owner:{}", owner_id).parse().unwrap()]
+        );
     }
 
     #[test]
@@ -2757,7 +2803,11 @@ mod tests {
             vec![format!("owner:{owner_id}"), format!("user:{user_id}")],
         );
 
-        assert!(acl.read_acl.contains(&format!("owner:{owner_id}")));
-        assert!(acl.read_acl.contains(&format!("user:{user_id}")));
+        assert!(acl
+            .read_principals
+            .contains(&format!("owner:{owner_id}").parse().unwrap()));
+        assert!(acl
+            .read_principals
+            .contains(&format!("user:{user_id}").parse().unwrap()));
     }
 }

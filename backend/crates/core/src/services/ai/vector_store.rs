@@ -111,10 +111,10 @@ fn score_and_rank(
 /// Check whether a caller can access a note chunk according to its typed ACL
 /// projection.
 ///
-/// This mirrors the semantics of `indexing::can_access` but operates on the
-/// canonical `IndexAclProjection` and `RetrievalPrincipal` types used by the
-/// permission-aware retrieval path.
-fn can_access(projection: &IndexAclProjection, principal: &RetrievalPrincipal) -> bool {
+/// This mirrors the semantics of the legacy `indexing::can_access` but operates
+/// on the canonical `IndexAclProjection` and `RetrievalPrincipal` types used by
+/// the permission-aware retrieval path.
+pub fn can_access(projection: &IndexAclProjection, principal: &RetrievalPrincipal) -> bool {
     if projection.embedding_policy != EmbeddingPolicy::Allowed {
         return false;
     }

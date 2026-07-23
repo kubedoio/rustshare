@@ -1,4 +1,4 @@
-mod ai;
+pub mod ai;
 mod ai_service;
 mod chat_integration;
 mod email_service;
@@ -23,11 +23,10 @@ mod user_share_service;
 mod vault_service;
 mod vault_sync_service;
 
-#[allow(deprecated)]
-pub use ai::AclSearchFilter;
 pub use ai::{
-    can_access, validate_and_project, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore,
-    IndexedDocument, NoteAclPayload, RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
+    can_access, validate_and_project, ContentIndexer, EmbeddingGenerator, EmbeddingPolicy,
+    InMemoryVectorStore, IndexAclProjection, IndexVisibility, IndexedDocument, NoteAclPayload,
+    RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
 };
 pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,

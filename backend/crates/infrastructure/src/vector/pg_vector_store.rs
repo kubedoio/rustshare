@@ -6,8 +6,8 @@
 //! `vector` in SQL; retrieved vectors are selected as `text` and parsed.
 
 use anyhow::Result;
-use rustshare_core::services::{
-    can_access, validate_and_project, AclSearchFilter, IndexedDocument, NoteAclPayload,
+use rustshare_core::services::ai::{
+    can_access, validate_and_project, IndexAclProjection, IndexedDocument, NoteAclPayload,
     RetrievalPrincipal, VectorStore,
 };
 use sqlx::{postgres::PgRow, PgPool, Row};
@@ -88,34 +88,27 @@ fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
     Ok((doc, similarity as f32))
 }
 
-/// Validate that the indexed document has a well-formed, allowed ACL.
+/// Validate that the indexed document has a well-formed, allowed ACL and
+/// return the typed projection.
 ///
 /// Logs a warning on missing, malformed, or denied ACLs so retrieval fails
 /// closed. Uses only safe identifiers in logs.
-fn validate_chunk_acl(doc: &IndexedDocument, tenant_id: Uuid) -> bool {
-    let Some(acl) = &doc.acl else {
-        tracing::warn!(
-            chunk_id = %doc.chunk_id,
-            tenant_id = %tenant_id,
-            counter = "pg_vector_store.malformed_acl_skipped",
-            "skipping indexed chunk with missing ACL"
-        );
-        return false;
-    };
+fn validate_chunk_acl(doc: &IndexedDocument) -> Option<IndexAclProjection> {
+    let acl = doc.acl.as_ref()?;
 
-    if let Err(e) = validate_and_project(acl) {
-        tracing::warn!(
-            chunk_id = %doc.chunk_id,
-            note_id = %acl.note_id,
-            tenant_id = %tenant_id,
-            error = %e,
-            counter = "pg_vector_store.malformed_acl_skipped",
-            "skipping indexed chunk with malformed ACL"
-        );
-        return false;
+    match validate_and_project(acl) {
+        Ok(projection) => Some(projection),
+        Err(e) => {
+            tracing::warn!(
+                chunk_id = %doc.chunk_id,
+                note_id = %acl.note_id,
+                tenant_id = %acl.tenant_id,
+                error = %e,
+                "skipping indexed chunk with malformed ACL"
+            );
+            None
+        }
     }
-
-    true
 }
 
 #[async_trait::async_trait]
@@ -227,23 +220,13 @@ impl VectorStore for PgVectorStore {
         .fetch_all(&self.pool)
         .await?;
 
-        let filter = AclSearchFilter {
-            tenant_id: principal.tenant_id,
-            caller_user_id: principal.user_id,
-            caller_workspace_id: principal.workspace_id,
-            caller_group_ids: principal.group_ids.clone(),
-            min_acl_versions: principal.min_acl_versions.clone(),
-        };
-
         let mut results: Vec<(IndexedDocument, f32)> = Vec::new();
         for row in rows {
             match row_to_doc(&row, tenant_id) {
                 Ok((doc, similarity)) => {
-                    if validate_chunk_acl(&doc, tenant_id) {
-                        if let Some(acl) = &doc.acl {
-                            if can_access(acl, &filter) {
-                                results.push((doc, similarity));
-                            }
+                    if let Some(projection) = validate_chunk_acl(&doc) {
+                        if can_access(&projection, principal) {
+                            results.push((doc, similarity));
                         }
                     }
                 }
@@ -360,23 +343,11 @@ impl VectorStore for PgVectorStore {
         };
 
         let doc = row_to_indexed_doc(&row, tenant_id)?;
-        if !validate_chunk_acl(&doc, tenant_id) {
-            return Ok(None);
-        }
-
-        let Some(acl) = &doc.acl else {
+        let Some(projection) = validate_chunk_acl(&doc) else {
             return Ok(None);
         };
 
-        let filter = AclSearchFilter {
-            tenant_id: principal.tenant_id,
-            caller_user_id: principal.user_id,
-            caller_workspace_id: principal.workspace_id,
-            caller_group_ids: principal.group_ids.clone(),
-            min_acl_versions: principal.min_acl_versions.clone(),
-        };
-
-        if can_access(acl, &filter) {
+        if can_access(&projection, principal) {
             Ok(Some(doc))
         } else {
             Ok(None)
