@@ -14,13 +14,14 @@
 //! - A-06: Content boundaries respected
 //! - A-07: Tenant isolation maintained
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
-use super::ai::indexing::{ContentIndexer, IndexedDocument};
+use super::ai::indexing::{ContentIndexer, IndexedDocument, RetrievalPrincipal};
 use super::ai::EmbeddingGenerator;
 
 /// Errors that can occur during AI operations.
@@ -174,8 +175,42 @@ where
             ));
         }
 
+        // Resolve the caller's group IDs for ACL pre-filtering.
+        let group_ids = match self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        // Build a retrieval principal for permission-aware search.
+        // TODO: workspace_id is set to tenant_id as a placeholder because the
+        // current domain does not expose a separate workspace scope at this
+        // layer. Replace with the caller's actual workspace membership once
+        // workspace scoping is available.
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
         // Perform semantic search
-        let raw_results = self.indexer.search(tenant_id, query, limit * 3).await;
+        let raw_results = self
+            .indexer
+            .search_with_acl(&principal, query, limit * 3)
+            .await;
 
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
@@ -276,10 +311,36 @@ where
             return Err(AiError::PermissionDenied { user_id });
         }
 
+        // Build a retrieval principal for ACL-enforced lookup.
+        // TODO: workspace_id is set to tenant_id as a placeholder because the
+        // current domain does not expose a separate workspace scope at this
+        // layer. Replace with the caller's actual workspace membership once
+        // workspace scoping is available.
+        let group_ids = self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            });
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
         // Get the indexed document
         let document = self
             .indexer
-            .get_document(file_id, tenant_id)
+            .get_document(file_id, &principal)
             .await
             .ok_or(AiError::FileNotFound(file_id))?;
 
@@ -1135,21 +1196,34 @@ mod tests {
             None,
         ));
 
-        let permission_resolver = Arc::new(PermissionResolver::new(ops));
-        let service = AiService::new(indexer, permission_resolver);
-
-        service
-            .index_file(
+        // Index with an ACL that grants the recipient direct read access.
+        indexer
+            .index_note(
                 file_id,
                 "shared.txt".to_string(),
                 "/shared.txt".to_string(),
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/plain".to_string(),
                 owner_id,
-                tenant_id,
+                crate::services::ai::indexing::NoteAclPayload {
+                    tenant_id,
+                    workspace_id: tenant_id,
+                    note_id: file_id,
+                    source_file_id: file_id,
+                    source_folder_id: None,
+                    owner_id,
+                    read_acl: vec![format!("owner:{owner_id}"), format!("user:{recipient_id}")],
+                    visibility: "private".to_string(),
+                    acl_hash: "hash-1".to_string(),
+                    acl_version: 1,
+                    embedding_policy: "allowed".to_string(),
+                },
             )
             .await
             .unwrap();
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
 
         let results = service
             .semantic_search("programming language", recipient_id, tenant_id, 10)

@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::indexing::{AclSearchFilter, IndexedDocument, NoteAclPayload};
+use super::indexing::{
+    can_access, AclSearchFilter, IndexedDocument, NoteAclPayload, RetrievalPrincipal,
+};
 
 /// A persistent or ephemeral backend for indexed document chunks.
 #[async_trait::async_trait]
@@ -20,16 +22,7 @@ pub trait VectorStore: Send + Sync {
     /// Search for chunks similar to the query, pre-filtered by tenant and ACL.
     async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> anyhow::Result<Vec<(IndexedDocument, f32)>>;
-
-    /// Search for chunks similar to the query, scoped to a tenant only.
-    /// This preserves the legacy non-ACL search behavior for non-note content.
-    async fn search(
-        &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<(IndexedDocument, f32)>>;
@@ -54,10 +47,10 @@ pub trait VectorStore: Send + Sync {
     /// Count chunks for a tenant.
     async fn document_count(&self, tenant_id: Uuid) -> anyhow::Result<usize>;
 
-    /// Look up a single chunk by id.
+    /// Look up a single chunk by id, enforcing the caller's ACL.
     async fn get_chunk(
         &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         chunk_id: Uuid,
     ) -> anyhow::Result<Option<IndexedDocument>>;
 }
@@ -132,35 +125,26 @@ impl VectorStore for InMemoryVectorStore {
 
     async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
+        principal: &RetrievalPrincipal,
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<(IndexedDocument, f32)>> {
-        use super::indexing::can_access;
+        let filter = AclSearchFilter {
+            tenant_id: principal.tenant_id,
+            caller_user_id: principal.user_id,
+            caller_workspace_id: principal.workspace_id,
+            caller_group_ids: principal.group_ids.clone(),
+            min_acl_versions: principal.min_acl_versions.clone(),
+        };
 
         let docs = self.documents.lock().unwrap();
         let tenant_docs = docs.get(&filter.tenant_id).cloned().unwrap_or_default();
 
         let allowed = tenant_docs.into_values().filter(|doc| match &doc.acl {
-            Some(acl) => can_access(acl, filter),
-            None => true,
+            Some(acl) => can_access(acl, &filter),
+            None => false,
         });
         Ok(score_and_rank(allowed, query_embedding, limit))
-    }
-
-    async fn search(
-        &self,
-        tenant_id: Uuid,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> anyhow::Result<Vec<(IndexedDocument, f32)>> {
-        let docs = self.documents.lock().unwrap();
-        let tenant_docs = docs.get(&tenant_id).cloned().unwrap_or_default();
-        Ok(score_and_rank(
-            tenant_docs.into_values(),
-            query_embedding,
-            limit,
-        ))
     }
 
     async fn update_note_acl(
@@ -218,20 +202,41 @@ impl VectorStore for InMemoryVectorStore {
 
     async fn get_chunk(
         &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         chunk_id: Uuid,
     ) -> anyhow::Result<Option<IndexedDocument>> {
         let docs = self.documents.lock().unwrap();
-        Ok(docs
-            .get(&tenant_id)
-            .and_then(|tenant| tenant.get(&chunk_id).cloned()))
+        let Some(doc) = docs
+            .get(&principal.tenant_id)
+            .and_then(|tenant| tenant.get(&chunk_id).cloned())
+        else {
+            return Ok(None);
+        };
+
+        let Some(acl) = &doc.acl else {
+            return Ok(None);
+        };
+
+        let filter = AclSearchFilter {
+            tenant_id: principal.tenant_id,
+            caller_user_id: principal.user_id,
+            caller_workspace_id: principal.workspace_id,
+            caller_group_ids: principal.group_ids.clone(),
+            min_acl_versions: principal.min_acl_versions.clone(),
+        };
+
+        if can_access(acl, &filter) {
+            Ok(Some(doc))
+        } else {
+            Ok(None)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
-    use super::super::indexing::{AclSearchFilter, IndexedDocument, NoteAclPayload};
+    use super::super::indexing::{IndexedDocument, NoteAclPayload, RetrievalPrincipal};
     use super::*;
 
     fn make_acl(
@@ -303,14 +308,15 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("rust").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.file_id, file_id);
     }
@@ -339,14 +345,15 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: stranger_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: stranger_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("secret").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert!(results.is_empty());
     }
 
@@ -381,16 +388,17 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: Uuid::new_v4(),
-            caller_group_ids: vec![group_id],
+            workspace_id: None,
+            user_id: Uuid::new_v4(),
+            group_ids: vec![group_id],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new()
             .generate("engineering")
             .await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -426,14 +434,15 @@ mod tests {
         let mut min_acl_versions = HashMap::new();
         min_acl_versions.insert(file_id, 2);
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions,
         };
         let query = SimpleEmbeddingGenerator::new().generate("shared").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert!(results.is_empty());
     }
 
@@ -462,14 +471,15 @@ mod tests {
             .unwrap();
         assert_eq!(updated, 1);
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: Uuid::new_v4(),
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: Uuid::new_v4(),
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("content").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
     }
 

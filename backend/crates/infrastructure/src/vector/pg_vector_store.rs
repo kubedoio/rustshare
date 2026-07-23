@@ -7,7 +7,8 @@
 
 use anyhow::Result;
 use rustshare_core::services::{
-    can_access, AclSearchFilter, IndexedDocument, NoteAclPayload, VectorStore,
+    can_access, validate_and_project, AclSearchFilter, IndexedDocument, NoteAclPayload,
+    RetrievalPrincipal, VectorStore,
 };
 use sqlx::{postgres::PgRow, PgPool, Row};
 use uuid::Uuid;
@@ -50,10 +51,10 @@ fn decode_vector(text: &str) -> anyhow::Result<Vec<f32>> {
 fn row_to_indexed_doc(row: &PgRow, tenant_id: Uuid) -> Result<IndexedDocument> {
     let acl = NoteAclPayload {
         tenant_id,
-        workspace_id: tenant_id,
+        workspace_id: row.try_get("workspace_id")?,
         note_id: row.try_get("note_id")?,
         source_file_id: row.try_get("source_file_id")?,
-        source_folder_id: None,
+        source_folder_id: row.try_get("source_folder_id")?,
         owner_id: row.try_get("owner_id")?,
         read_acl: row.try_get("read_acl")?,
         visibility: row.try_get("visibility")?,
@@ -87,6 +88,36 @@ fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
     Ok((doc, similarity as f32))
 }
 
+/// Validate that the indexed document has a well-formed, allowed ACL.
+///
+/// Logs a warning on missing, malformed, or denied ACLs so retrieval fails
+/// closed. Uses only safe identifiers in logs.
+fn validate_chunk_acl(doc: &IndexedDocument, tenant_id: Uuid) -> bool {
+    let Some(acl) = &doc.acl else {
+        tracing::warn!(
+            chunk_id = %doc.chunk_id,
+            tenant_id = %tenant_id,
+            counter = "pg_vector_store.malformed_acl_skipped",
+            "skipping indexed chunk with missing ACL"
+        );
+        return false;
+    };
+
+    if let Err(e) = validate_and_project(acl) {
+        tracing::warn!(
+            chunk_id = %doc.chunk_id,
+            note_id = %acl.note_id,
+            tenant_id = %tenant_id,
+            error = %e,
+            counter = "pg_vector_store.malformed_acl_skipped",
+            "skipping indexed chunk with malformed ACL"
+        );
+        return false;
+    }
+
+    true
+}
+
 #[async_trait::async_trait]
 impl VectorStore for PgVectorStore {
     async fn upsert_chunk(
@@ -101,13 +132,16 @@ impl VectorStore for PgVectorStore {
         sqlx::query(
             r#"
             INSERT INTO note_index_chunks (
-                id, tenant_id, note_id, source_file_id, file_name, file_path,
-                content, mime_type, owner_id, embedding, acl_hash, acl_version,
-                read_acl, visibility, embedding_policy, indexed_at
+                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
+                file_name, file_path, content, mime_type, owner_id, embedding, acl_hash,
+                acl_version, read_acl, visibility, embedding_policy, indexed_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11, $12, $13, $14, $15, $16
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13, $14, $15, $16, $17, $18
             )
             ON CONFLICT (id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                workspace_id = EXCLUDED.workspace_id,
+                source_folder_id = EXCLUDED.source_folder_id,
                 note_id = EXCLUDED.note_id,
                 source_file_id = EXCLUDED.source_file_id,
                 file_name = EXCLUDED.file_name,
@@ -126,6 +160,8 @@ impl VectorStore for PgVectorStore {
         )
         .bind(chunk_id)
         .bind(tenant_id)
+        .bind(acl.workspace_id)
+        .bind(acl.source_folder_id)
         .bind(acl.note_id)
         .bind(acl.source_file_id)
         .bind(&doc.file_name)
@@ -148,30 +184,24 @@ impl VectorStore for PgVectorStore {
 
     async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
+        principal: &RetrievalPrincipal,
         query_embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<(IndexedDocument, f32)>> {
-        let caller_user_id = filter.caller_user_id;
+        let tenant_id = principal.tenant_id;
         let limit = limit as i64;
 
         // Build the caller's principal list for a SQL ACL pre-filter.
         // Exact enforcement happens in Rust via can_access after the rows are fetched.
-        let mut caller_principals = vec![
-            format!("owner:{caller_user_id}"),
-            format!("user:{caller_user_id}"),
-        ];
-        for group_id in &filter.caller_group_ids {
-            caller_principals.push(format!("group:{group_id}"));
-        }
+        let caller_principals = principal.to_index_principals();
 
         let query_vector_text = encode_vector(query_embedding);
 
         let rows = sqlx::query(
             r#"
             SELECT
-                id, note_id, source_file_id, file_name, file_path,
-                content, mime_type, owner_id, embedding::text as embedding,
+                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
+                file_name, file_path, content, mime_type, owner_id, embedding::text as embedding,
                 acl_hash, acl_version, read_acl,
                 visibility, embedding_policy, indexed_at,
                 1 - (embedding <=> $1::vector) AS similarity
@@ -182,6 +212,7 @@ impl VectorStore for PgVectorStore {
               AND (
                   owner_id = $3
                   OR visibility = 'public'
+                  OR visibility = 'workspace'
                   OR read_acl && $4::text[]
               )
             ORDER BY embedding <=> $1::vector
@@ -189,62 +220,44 @@ impl VectorStore for PgVectorStore {
             "#,
         )
         .bind(&query_vector_text)
-        .bind(filter.tenant_id)
-        .bind(caller_user_id)
+        .bind(tenant_id)
+        .bind(principal.user_id)
         .bind(&caller_principals)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
+        let filter = AclSearchFilter {
+            tenant_id: principal.tenant_id,
+            caller_user_id: principal.user_id,
+            caller_workspace_id: principal.workspace_id,
+            caller_group_ids: principal.group_ids.clone(),
+            min_acl_versions: principal.min_acl_versions.clone(),
+        };
+
         let mut results: Vec<(IndexedDocument, f32)> = Vec::new();
         for row in rows {
-            let (doc, similarity) = row_to_doc(&row, filter.tenant_id)?;
-            if let Some(acl) = &doc.acl {
-                if can_access(acl, filter) {
-                    results.push((doc, similarity));
+            match row_to_doc(&row, tenant_id) {
+                Ok((doc, similarity)) => {
+                    if validate_chunk_acl(&doc, tenant_id) {
+                        if let Some(acl) = &doc.acl {
+                            if can_access(acl, &filter) {
+                                results.push((doc, similarity));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        error = %e,
+                        "failed to decode indexed row during ACL search"
+                    );
                 }
             }
         }
 
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(results)
-    }
-
-    async fn search(
-        &self,
-        tenant_id: Uuid,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<(IndexedDocument, f32)>> {
-        let limit = limit as i64;
-        let query_vector_text = encode_vector(query_embedding);
-
-        let rows = sqlx::query(
-            r#"
-            SELECT
-                id, note_id, source_file_id, file_name, file_path,
-                content, mime_type, owner_id, embedding::text as embedding,
-                acl_hash, acl_version, read_acl,
-                visibility, embedding_policy, indexed_at,
-                1 - (embedding <=> $1::vector) AS similarity
-            FROM note_index_chunks
-            WHERE tenant_id = $2
-              AND 1 - (embedding <=> $1::vector) > 0.1
-            ORDER BY embedding <=> $1::vector
-            LIMIT $3
-            "#,
-        )
-        .bind(&query_vector_text)
-        .bind(tenant_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row_to_doc(&row, tenant_id)?);
-        }
-
         Ok(results)
     }
 
@@ -257,14 +270,18 @@ impl VectorStore for PgVectorStore {
         let result = sqlx::query(
             r#"
             UPDATE note_index_chunks
-            SET acl_hash = $1,
-                acl_version = $2,
-                read_acl = $3,
-                visibility = $4,
-                embedding_policy = $5
-            WHERE tenant_id = $6 AND note_id = $7
+            SET workspace_id = $1,
+                source_folder_id = $2,
+                acl_hash = $3,
+                acl_version = $4,
+                read_acl = $5,
+                visibility = $6,
+                embedding_policy = $7
+            WHERE tenant_id = $8 AND note_id = $9
             "#,
         )
+        .bind(new_acl.workspace_id)
+        .bind(new_acl.source_folder_id)
         .bind(&new_acl.acl_hash)
         .bind(new_acl.acl_version)
         .bind(&new_acl.read_acl)
@@ -316,12 +333,17 @@ impl VectorStore for PgVectorStore {
         Ok(count as usize)
     }
 
-    async fn get_chunk(&self, tenant_id: Uuid, chunk_id: Uuid) -> Result<Option<IndexedDocument>> {
+    async fn get_chunk(
+        &self,
+        principal: &RetrievalPrincipal,
+        chunk_id: Uuid,
+    ) -> Result<Option<IndexedDocument>> {
+        let tenant_id = principal.tenant_id;
         let row = sqlx::query(
             r#"
             SELECT
-                id, note_id, source_file_id, file_name, file_path,
-                content, mime_type, owner_id, embedding::text as embedding,
+                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
+                file_name, file_path, content, mime_type, owner_id, embedding::text as embedding,
                 acl_hash, acl_version, read_acl,
                 visibility, embedding_policy, indexed_at
             FROM note_index_chunks
@@ -333,9 +355,31 @@ impl VectorStore for PgVectorStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(row_to_indexed_doc(&row, tenant_id)?)),
-            None => Ok(None),
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let doc = row_to_indexed_doc(&row, tenant_id)?;
+        if !validate_chunk_acl(&doc, tenant_id) {
+            return Ok(None);
+        }
+
+        let Some(acl) = &doc.acl else {
+            return Ok(None);
+        };
+
+        let filter = AclSearchFilter {
+            tenant_id: principal.tenant_id,
+            caller_user_id: principal.user_id,
+            caller_workspace_id: principal.workspace_id,
+            caller_group_ids: principal.group_ids.clone(),
+            min_acl_versions: principal.min_acl_versions.clone(),
+        };
+
+        if can_access(acl, &filter) {
+            Ok(Some(doc))
+        } else {
+            Ok(None)
         }
     }
 }
