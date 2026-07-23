@@ -23,10 +23,11 @@ mod user_share_service;
 mod vault_service;
 mod vault_sync_service;
 
+#[allow(deprecated)]
+pub use ai::AclSearchFilter;
 pub use ai::{
-    can_access, validate_and_project, AclSearchFilter, ContentIndexer, EmbeddingGenerator,
-    InMemoryVectorStore, IndexedDocument, NoteAclPayload, RetrievalPrincipal,
-    SimpleEmbeddingGenerator, VectorStore,
+    can_access, validate_and_project, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore,
+    IndexedDocument, NoteAclPayload, RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
 };
 pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,

@@ -17,11 +17,12 @@ pub mod vector_store;
 // Re-exports used in subsequent Tasks 6-10; suppress unused-import warnings until then.
 #[allow(unused_imports)]
 pub use embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
+#[allow(unused_imports, deprecated)]
+pub use indexing::AclSearchFilter;
 #[allow(unused_imports)]
 pub use indexing::{
-    can_access, validate_and_project, AclSearchFilter, ContentIndexer, EmbeddingPolicy,
-    IndexAclProjection, IndexPrincipal, IndexVisibility, IndexedDocument, NoteAclPayload,
-    RetrievalPrincipal,
+    can_access, validate_and_project, ContentIndexer, EmbeddingPolicy, IndexAclProjection,
+    IndexPrincipal, IndexVisibility, IndexedDocument, NoteAclPayload, RetrievalPrincipal,
 };
 #[allow(unused_imports)]
 pub use vector_store::{InMemoryVectorStore, VectorStore};

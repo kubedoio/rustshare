@@ -240,6 +240,10 @@ pub struct NoteAclPayload {
 }
 
 /// Filter supplied by the caller during permission-aware search.
+///
+/// Deprecated: use `RetrievalPrincipal` directly. This type is kept only for
+/// backward compatibility during the migration of existing callers.
+#[deprecated(since = "0.6.0", note = "Use RetrievalPrincipal directly")]
 #[derive(Debug, Clone, Default)]
 pub struct AclSearchFilter {
     pub tenant_id: Uuid,
@@ -582,6 +586,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
 ///
 /// Chunks with `embedding_policy != "allowed"` or a stale `acl_version` are
 /// rejected by the caller before this helper is invoked.
+#[allow(deprecated)]
 pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
     if acl.embedding_policy != "allowed" {
         return false;
