@@ -168,28 +168,51 @@ mod tests {
     use super::*;
 
     /// Serializes tests that mutate the process-global
-    /// `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` variable; Cargo runs unit tests
+    /// `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` and
+    /// `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` variables. Cargo runs unit tests
     /// in parallel threads, so unsynchronized set/remove races make them flaky.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Using a tokio async mutex avoids holding a blocking `std::sync::MutexGuard`
+    /// across `.await` points.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    /// RAII helper that captures the original value of a process-global env var
+    /// and restores it (or removes it) when dropped, even on panic.
+    struct EnvVarRestore {
+        key: &'static str,
+        original: Option<String>,
     }
 
-    #[test]
-    fn allow_internal_mail_servers_defaults_to_false() {
-        let _guard = env_lock();
+    impl EnvVarRestore {
+        fn new(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_internal_mail_servers_defaults_to_false() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         // The variable is not set in unit-test runs, so the guard must be off.
         std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(!allow_internal_mail_servers());
     }
 
-    #[test]
-    fn allow_internal_mail_servers_activates_with_true() {
-        let _guard = env_lock();
+    #[tokio::test]
+    async fn allow_internal_mail_servers_activates_with_true() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
         assert!(allow_internal_mail_servers());
-        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
     }
 
     #[tokio::test]
@@ -201,11 +224,10 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_allows_private_ip_when_enabled() {
-        let _guard = env_lock();
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        drop(_guard);
         let result = resolve_mail_server_socket_addrs("10.0.0.1", 993).await;
-        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(result.is_ok());
         let addrs = result.unwrap();
         assert_eq!(addrs.len(), 1);
@@ -215,11 +237,10 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_rejects_localhost_even_when_enabled() {
-        let _guard = env_lock();
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        drop(_guard);
         let result = resolve_mail_server_socket_addrs("localhost", 993).await;
-        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("localhost"));
     }
@@ -245,9 +266,11 @@ mod tests {
         assert!(!all_addrs_internal(&[]));
     }
 
-    #[test]
-    fn should_accept_invalid_certs_composes_all_gates() {
-        let _guard = env_lock();
+    #[tokio::test]
+    async fn should_accept_invalid_certs_composes_all_gates() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore_internal = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
+        let _restore_certs = EnvVarRestore::new("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS");
         let private: SocketAddr = "10.5.199.84:993".parse().unwrap();
         let public: SocketAddr = "142.250.74.5:993".parse().unwrap();
 
