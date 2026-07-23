@@ -702,15 +702,20 @@ impl NoteService {
             .as_deref()
             .unwrap_or("allowed")
             .parse()
-            .unwrap_or(EmbeddingPolicy::Allowed);
+            .unwrap_or(EmbeddingPolicy::Denied);
 
         IndexAclProjection {
             tenant_id,
-            workspace_id: tenant_id,
+            workspace_id: file.workspace_id(),
             object_id: meta.okf_id.unwrap_or(file.id),
+            source_folder_id: file.parent_folder_id,
             owner_id: file.owner_id,
             read_principals: read_acl.iter().filter_map(|s| s.parse().ok()).collect(),
-            visibility: meta.visibility.as_str().parse().unwrap_or(IndexVisibility::Private),
+            visibility: meta
+                .visibility
+                .as_str()
+                .parse()
+                .unwrap_or(IndexVisibility::Private),
             acl_hash: meta.acl_hash.clone().unwrap_or_default(),
             acl_version: meta.acl_version.unwrap_or(1),
             embedding_policy,
@@ -2760,6 +2765,7 @@ mod tests {
         assert_eq!(acl.tenant_id, tenant_id);
         assert_eq!(acl.workspace_id, tenant_id);
         assert_eq!(acl.object_id, okf_id);
+        assert_eq!(acl.source_folder_id, Some(parent_id));
         assert_eq!(acl.owner_id, owner_id);
         assert_eq!(acl.acl_hash, "test-hash");
         assert_eq!(acl.acl_version, 3);
@@ -2769,6 +2775,38 @@ mod tests {
             acl.read_principals,
             vec![format!("owner:{}", owner_id).parse().unwrap()]
         );
+    }
+
+    #[test]
+    fn build_acl_payload_fails_closed_on_invalid_embedding_policy() {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let okf_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+
+        let file = rustshare_core::domain::File::new(
+            "note.md".to_string(),
+            "/Workspace/Notes/Test/note.md".to_string(),
+            "hash".to_string(),
+            100,
+            "text/markdown".to_string(),
+            Some(parent_id),
+            owner_id,
+            tenant_id,
+        );
+
+        let mut meta = NoteMetadata::new("Test Note");
+        meta.okf_id = Some(okf_id);
+        meta.embedding_policy = Some("invalid-value".to_string());
+
+        let acl = NoteService::build_acl_payload(
+            &file,
+            &meta,
+            tenant_id,
+            vec![format!("owner:{owner_id}")],
+        );
+
+        assert_eq!(acl.embedding_policy, EmbeddingPolicy::Denied);
     }
 
     #[test]

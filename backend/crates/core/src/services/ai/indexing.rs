@@ -132,6 +132,7 @@ pub struct IndexAclProjection {
     pub tenant_id: Uuid,
     pub workspace_id: Uuid,
     pub object_id: Uuid,
+    pub source_folder_id: Option<Uuid>,
     pub owner_id: Uuid,
     pub read_principals: Vec<IndexPrincipal>,
     pub visibility: IndexVisibility,
@@ -195,6 +196,7 @@ pub fn validate_and_project(acl: &NoteAclPayload) -> anyhow::Result<IndexAclProj
         tenant_id: acl.tenant_id,
         workspace_id: acl.workspace_id,
         object_id: acl.note_id,
+        source_folder_id: acl.source_folder_id,
         owner_id: acl.owner_id,
         read_principals,
         visibility,
@@ -226,8 +228,8 @@ pub struct NoteAclPayload {
     pub owner_id: Uuid,
     /// Resolved read principals, e.g. `["owner:<uuid>", "group:<uuid>"]`.
     ///
-    /// TODO(#118): wire in the real permission resolver instead of the
-    /// placeholder owner principal.
+    /// These principals are produced by the authoritative permission resolver
+    /// and must never be synthesized by indexing code.
     pub read_acl: Vec<String>,
     /// Visibility level: `"private"`, `"workspace"`, or `"public"`.
     pub visibility: String,
@@ -288,7 +290,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         }
     }
 
-    /// Index a file's content.
+    /// Index a file's content with an ACL projection.
     ///
     /// # Arguments
     /// * `file_id` - The file ID
@@ -296,12 +298,10 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// * `file_path` - The full file path
     /// * `content` - The extracted text content
     /// * `mime_type` - The MIME type
-    /// * `owner_id` - The file owner
-    /// * `tenant_id` - The tenant ID
+    /// * `acl` - The canonical ACL projection for the object
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
-    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: Uuid,
@@ -309,8 +309,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         file_path: String,
         content: String,
         mime_type: String,
-        owner_id: Uuid,
-        tenant_id: Uuid,
+        acl: IndexAclProjection,
     ) -> anyhow::Result<()> {
         let content = if content.len() > MAX_CONTENT_LENGTH {
             content[..MAX_CONTENT_LENGTH].to_string()
@@ -321,19 +320,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         let combined_text = format!("{} {} {}", file_name, file_path, content);
         let embedding = self.embedding_generator.generate(&combined_text).await;
 
-        let acl_payload = NoteAclPayload {
-            tenant_id,
-            workspace_id: tenant_id,
-            note_id: file_id,
-            source_file_id: file_id,
-            source_folder_id: None,
-            owner_id,
-            read_acl: vec![format!("owner:{owner_id}")],
-            visibility: "private".to_string(),
-            acl_hash: String::new(),
-            acl_version: 1,
-            embedding_policy: "allowed".to_string(),
-        };
+        let acl_payload = note_acl_payload_from_projection(file_id, &acl);
 
         let document = IndexedDocument {
             file_id,
@@ -342,15 +329,15 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             content,
             embedding,
             mime_type,
-            owner_id,
-            tenant_id,
+            owner_id: acl.owner_id,
+            tenant_id: acl.tenant_id,
             indexed_at: chrono::Utc::now(),
             acl: Some(acl_payload.clone()),
             chunk_id: file_id,
         };
 
         self.store
-            .upsert_chunk(tenant_id, file_id, &document, &acl_payload)
+            .upsert_chunk(acl.tenant_id, file_id, &document, &acl_payload)
             .await
     }
 
@@ -564,16 +551,13 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
 /// The storage payload keeps the stringified forms of enums and principals so
 /// existing vector-store implementations and database columns continue to work
 /// without migration.
-fn note_acl_payload_from_projection(
-    file_id: Uuid,
-    acl: &IndexAclProjection,
-) -> NoteAclPayload {
+fn note_acl_payload_from_projection(file_id: Uuid, acl: &IndexAclProjection) -> NoteAclPayload {
     NoteAclPayload {
         tenant_id: acl.tenant_id,
         workspace_id: acl.workspace_id,
         note_id: acl.object_id,
         source_file_id: file_id,
-        source_folder_id: None,
+        source_folder_id: acl.source_folder_id,
         owner_id: acl.owner_id,
         read_acl: acl.read_principals.iter().map(|p| p.to_string()).collect(),
         visibility: acl.visibility.to_string(),
@@ -649,28 +633,28 @@ mod tests {
         let owner_id = Uuid::new_v4();
 
         // Index some documents
+        let file_a = Uuid::new_v4();
         indexer
             .index_file(
-                Uuid::new_v4(),
+                file_a,
                 "rust_guide.md".to_string(),
                 "/docs/rust_guide.md".to_string(),
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/markdown".to_string(),
-                owner_id,
-                tenant_id,
+                make_acl_payload(tenant_id, file_a, file_a, owner_id, "private", "allowed", 1),
             )
             .await
             .unwrap();
 
+        let file_b = Uuid::new_v4();
         indexer
             .index_file(
-                Uuid::new_v4(),
+                file_b,
                 "python_guide.md".to_string(),
                 "/docs/python_guide.md".to_string(),
                 "Python is a high-level programming language".to_string(),
                 "text/markdown".to_string(),
-                owner_id,
-                tenant_id,
+                make_acl_payload(tenant_id, file_b, file_b, owner_id, "private", "allowed", 1),
             )
             .await
             .unwrap();
@@ -708,8 +692,15 @@ mod tests {
                 "/test.txt".to_string(),
                 "test content".to_string(),
                 "text/plain".to_string(),
-                Uuid::new_v4(),
-                tenant_id,
+                make_acl_payload(
+                    tenant_id,
+                    file_id,
+                    file_id,
+                    Uuid::new_v4(),
+                    "private",
+                    "allowed",
+                    1,
+                ),
             )
             .await
             .unwrap();
@@ -752,8 +743,9 @@ mod tests {
                 "/test.txt".to_string(),
                 "test content".to_string(),
                 "text/plain".to_string(),
-                owner_id,
-                tenant_id,
+                make_acl_payload(
+                    tenant_id, file_id, file_id, owner_id, "private", "allowed", 1,
+                ),
             )
             .await
             .unwrap();
@@ -783,6 +775,7 @@ mod tests {
             tenant_id,
             workspace_id: tenant_id,
             object_id: note_id,
+            source_folder_id: None,
             owner_id,
             read_principals: vec![format!("owner:{}", owner_id).parse().unwrap()],
             visibility: visibility.parse().unwrap(),
@@ -1107,7 +1100,11 @@ mod tests {
         new_acl.read_principals = vec![format!("group:{engineering_id}").parse().unwrap()];
 
         let updated = indexer
-            .update_note_acl(tenant_id, note_id, note_acl_payload_from_projection(file_id, &new_acl))
+            .update_note_acl(
+                tenant_id,
+                note_id,
+                note_acl_payload_from_projection(file_id, &new_acl),
+            )
             .await;
         assert_eq!(updated, 1);
 

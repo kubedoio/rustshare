@@ -21,7 +21,9 @@ use uuid::Uuid;
 use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
-use super::ai::indexing::{ContentIndexer, IndexedDocument, RetrievalPrincipal};
+use super::ai::indexing::{
+    ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
+};
 use super::ai::EmbeddingGenerator;
 
 /// Errors that can occur during AI operations.
@@ -451,7 +453,7 @@ where
         })
     }
 
-    /// Index a file for AI search.
+    /// Index a file for AI search with an ACL projection.
     ///
     /// # Arguments
     /// * `file_id` - The file ID
@@ -459,12 +461,10 @@ where
     /// * `file_path` - The full file path
     /// * `content` - The extracted text content
     /// * `mime_type` - The MIME type
-    /// * `owner_id` - The file owner
-    /// * `tenant_id` - The tenant ID
+    /// * `acl` - The canonical ACL projection for the object
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
-    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: FileId,
@@ -472,13 +472,10 @@ where
         file_path: String,
         content: String,
         mime_type: String,
-        owner_id: UserId,
-        tenant_id: Uuid,
+        acl: IndexAclProjection,
     ) -> Result<(), AiError> {
         self.indexer
-            .index_file(
-                file_id, file_name, file_path, content, mime_type, owner_id, tenant_id,
-            )
+            .index_file(file_id, file_name, file_path, content, mime_type, acl)
             .await
             .map_err(|e| AiError::Internal(e.to_string()))
     }
@@ -627,6 +624,21 @@ mod tests {
         EmbeddingPolicy, IndexAclProjection, IndexPrincipal, IndexVisibility,
     };
     use crate::services::{ContentIndexer, InMemoryVectorStore};
+
+    fn make_file_acl(tenant_id: Uuid, file_id: Uuid, owner_id: Uuid) -> IndexAclProjection {
+        IndexAclProjection {
+            tenant_id,
+            workspace_id: tenant_id,
+            object_id: file_id,
+            source_folder_id: None,
+            owner_id,
+            read_principals: vec![IndexPrincipal::Owner(owner_id)],
+            visibility: IndexVisibility::Private,
+            acl_hash: "hash-1".to_string(),
+            acl_version: 1,
+            embedding_policy: EmbeddingPolicy::Allowed,
+        }
+    }
 
     fn test_indexer() -> Arc<ContentIndexer<SimpleEmbeddingGenerator>> {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
@@ -778,17 +790,17 @@ mod tests {
         let service = create_test_service();
         let user_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
 
         // Index a document first
         service
             .index_file(
-                Uuid::new_v4(),
+                file_id,
                 "test.txt".to_string(),
                 "/test.txt".to_string(),
                 "Rust is a programming language with memory safety guarantees".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();
@@ -1073,8 +1085,7 @@ mod tests {
                 "/deleted.txt".to_string(),
                 "sensitive content".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();
@@ -1117,8 +1128,7 @@ mod tests {
                 "/revoked.txt".to_string(),
                 "revoked content".to_string(),
                 "text/plain".to_string(),
-                owner_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, owner_id),
             )
             .await
             .unwrap();
@@ -1163,8 +1173,7 @@ mod tests {
                 "/expired.txt".to_string(),
                 "expired content".to_string(),
                 "text/plain".to_string(),
-                owner_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, owner_id),
             )
             .await
             .unwrap();
@@ -1212,6 +1221,7 @@ mod tests {
                     tenant_id,
                     workspace_id: tenant_id,
                     object_id: file_id,
+                    source_folder_id: None,
                     owner_id,
                     read_principals: vec![
                         IndexPrincipal::Owner(owner_id),
@@ -1282,8 +1292,7 @@ mod tests {
                 "/ghost.txt".to_string(),
                 "ghost content".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();
