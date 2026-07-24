@@ -122,28 +122,63 @@ async fn insert_test_tenant(pool: &sqlx::PgPool) -> Uuid {
     tenant_id
 }
 
-async fn insert_test_markdown_file(pool: &sqlx::PgPool, tenant_id: Uuid, owner_id: Uuid) -> Uuid {
+async fn create_test_note(
+    state: &rustshare_server::AppState,
+    sink: &RecordingSink,
+    tenant_id: Uuid,
+    owner_id: Uuid,
+) -> Uuid {
+    let note = state
+        .note_service
+        .create_note(
+            owner_id,
+            tenant_id,
+            Some("Test note".to_string()),
+            None,
+            Some("# Test note".to_string()),
+        )
+        .await
+        .unwrap();
+    let _ = sink.take_indexed();
+    note.id
+}
+
+async fn insert_test_pdf(pool: &sqlx::PgPool, tenant_id: Uuid, owner_id: Uuid) -> Uuid {
     let file_id = Uuid::new_v4();
     sqlx::query(
-        r#"
-        INSERT INTO files (id, name, path, storage_key, content_hash, size, mime_type, owner_id, tenant_id, current_version)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        "#,
+        "INSERT INTO files (id, name, path, storage_key, content_hash, size, mime_type, owner_id, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(file_id)
-    .bind("note.md")
-    .bind("/Workspace/Notes/note.md")
-    .bind(format!("notes/{}", file_id))
+    .bind("document.pdf")
+    .bind("/document.pdf")
+    .bind(format!("tests/{file_id}"))
     .bind("hash")
     .bind(100i64)
-    .bind("text/markdown")
+    .bind("application/pdf")
     .bind(owner_id)
     .bind(tenant_id)
-    .bind(1i32)
     .execute(pool)
     .await
     .unwrap();
     file_id
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_non_note_share_refresh_does_not_index_file() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    insert_test_user(&state.db_pool, tenant_id, owner_id, "pdf-owner@example.com").await;
+    let file_id = insert_test_pdf(&state.db_pool, tenant_id, owner_id).await;
+
+    state
+        .note_service
+        .refresh_note_index_acl(file_id, owner_id, tenant_id)
+        .await
+        .unwrap();
+
+    assert!(sink.take_indexed().is_empty());
 }
 
 #[tokio::test]
@@ -161,7 +196,7 @@ async fn test_share_create_triggers_acl_refresh() {
         "recipient@example.com",
     )
     .await;
-    let file_id = insert_test_markdown_file(&state.db_pool, tenant_id, owner_id).await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
 
     rustshare_server::handlers::user_shares::create_file_share(
         State(state.clone()),
@@ -205,7 +240,7 @@ async fn test_share_update_triggers_acl_refresh() {
         "recipient@example.com",
     )
     .await;
-    let file_id = insert_test_markdown_file(&state.db_pool, tenant_id, owner_id).await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
 
     let response = rustshare_server::handlers::user_shares::create_file_share(
         State(state.clone()),
@@ -274,7 +309,7 @@ async fn test_share_revoke_triggers_acl_refresh() {
         "recipient@example.com",
     )
     .await;
-    let file_id = insert_test_markdown_file(&state.db_pool, tenant_id, owner_id).await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
 
     let response = rustshare_server::handlers::user_shares::create_file_share(
         State(state.clone()),

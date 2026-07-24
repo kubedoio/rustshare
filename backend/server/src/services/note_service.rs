@@ -810,10 +810,12 @@ impl NoteService {
         if file.tenant_id != tenant_id {
             return Err(NoteError::PermissionDenied);
         }
-        let meta = self
-            .load_metadata(file_id, user_id, tenant_id)
-            .await?
-            .unwrap_or_else(|| NoteMetadata::new(file.name.trim_end_matches(".md")));
+        let Some(meta) = self.load_metadata(file_id, user_id, tenant_id).await? else {
+            return Ok(());
+        };
+        if meta.kind != "note" {
+            return Ok(());
+        }
         let content = match self.object_store.get(&file.storage_key()).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
             Err(_) => String::new(),
@@ -1947,6 +1949,10 @@ impl NoteService {
             ..Default::default()
         };
         final_fm = merge_required_okf_keys(Some(final_fm), required);
+        meta.embedding_policy = final_fm
+            .rustshare
+            .as_ref()
+            .and_then(|rustshare| rustshare.embedding_policy.clone());
 
         // Serialize the document and write it back to note.md.
         let document = to_document(&final_fm, &new_body)
