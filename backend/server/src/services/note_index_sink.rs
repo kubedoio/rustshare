@@ -149,13 +149,24 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let indexer = self.indexer.clone();
         Box::pin(async move {
-            let removed = indexer.remove_note_chunks(tenant_id, note_id).await;
-            tracing::debug!(
-                "Removed note {} chunks from tenant {} ({} chunks)",
-                note_id,
-                tenant_id,
-                removed
-            );
+            match indexer.remove_note_chunks(tenant_id, note_id).await {
+                Ok(removed) => {
+                    tracing::debug!(
+                        "Removed note {} chunks from tenant {} ({} chunks)",
+                        note_id,
+                        tenant_id,
+                        removed
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        note_id = %note_id,
+                        error = %e,
+                        "Failed to remove note chunks from index"
+                    );
+                }
+            }
         })
     }
 }

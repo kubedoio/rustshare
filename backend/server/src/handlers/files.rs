@@ -363,6 +363,20 @@ pub async fn delete_file(
         .delete_file(file_id, auth.user_id)
         .await?;
 
+    // Best-effort removal of this file's chunk from the AI index after trash.
+    // Chunks are keyed by file id, so remove exactly that chunk rather than
+    // resolving note_id (which can be shared across multiple files).
+    if let Some(ref ai_service) = state.ai_service {
+        if let Err(e) = ai_service.remove_file(file_id, auth.tenant_id).await {
+            tracing::warn!(
+                file_id = %file_id,
+                tenant_id = %auth.tenant_id,
+                error = %e,
+                "Failed to remove file chunk from AI index after trash"
+            );
+        }
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1105,6 +1119,30 @@ pub async fn restore_file_from_trash(
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
     }
 
+    // Best-effort re-index after restore so markdown notes become searchable again.
+    if let Ok(file) = state.file_service.get_file(file_id, auth.user_id).await {
+        if file.mime_type == "text/markdown" {
+            if let Err(e) = state
+                .note_service
+                .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
+                .await
+            {
+                tracing::warn!(
+                    file_id = %file_id,
+                    tenant_id = %auth.tenant_id,
+                    error = %e,
+                    "Failed to refresh AI index ACL after restore"
+                );
+            }
+        }
+    } else {
+        tracing::warn!(
+            file_id = %file_id,
+            tenant_id = %auth.tenant_id,
+            "Failed to load restored file for AI index refresh"
+        );
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1132,6 +1170,18 @@ pub async fn permanently_delete_file(
 
     if !deleted {
         return Err(AppError::not_found(format!("File not found: {}", file_id)));
+    }
+
+    // Best-effort removal of this file's chunk from the AI index after permanent delete.
+    if let Some(ref ai_service) = state.ai_service {
+        if let Err(e) = ai_service.remove_file(file_id, auth.tenant_id).await {
+            tracing::warn!(
+                file_id = %file_id,
+                tenant_id = %auth.tenant_id,
+                error = %e,
+                "Failed to remove file chunk from AI index after permanent delete"
+            );
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -3915,15 +3915,45 @@ impl MetadataStore {
     }
 
     /// Permanently delete all trashed items for a user.
-    pub async fn empty_trash(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<()> {
-        // Delete trashed files first (to avoid FK violations when deleting folders)
-        sqlx::query!(
-            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL",
+    ///
+    /// Returns the IDs of the files that were actually deleted. Folder IDs are
+    /// not returned because they do not have associated index chunks.
+    pub async fn empty_trash(&self, owner_id: Uuid, tenant_id: Uuid) -> Result<Vec<Uuid>> {
+        let mut tx = self.pool.begin().await?;
+
+        // Delete trashed files directly and collect their IDs.
+        let file_rows = sqlx::query!(
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL RETURNING id",
             owner_id,
             tenant_id
         )
-        .execute(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        let mut deleted_file_ids: Vec<Uuid> = file_rows.into_iter().map(|r| r.id).collect();
+
+        // Collect file IDs that will be cascade-deleted by folder deletion.
+        let cascade_rows = sqlx::query!(
+            r#"
+            WITH RECURSIVE trashed_folders AS (
+                SELECT id FROM folders
+                WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN trashed_folders tf ON f.parent_folder_id = tf.id
+                WHERE f.tenant_id = $2 AND f.owner_id = $1
+            )
+            SELECT files.id FROM files
+            INNER JOIN trashed_folders tf ON files.parent_folder_id = tf.id
+            WHERE files.tenant_id = $2 AND files.owner_id = $1
+            "#,
+            owner_id,
+            tenant_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        deleted_file_ids.extend(cascade_rows.into_iter().map(|r| r.id));
+        deleted_file_ids.sort_unstable();
+        deleted_file_ids.dedup();
 
         // Delete trashed folders (cascade will handle any remaining child records)
         sqlx::query!(
@@ -3931,37 +3961,74 @@ impl MetadataStore {
             owner_id,
             tenant_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        Ok(())
+        tx.commit().await?;
+        Ok(deleted_file_ids)
     }
 
     /// Permanently delete trashed items older than the given number of days for a user.
-    pub async fn clean_old_trash(&self, owner_id: Uuid, tenant_id: Uuid, days: i32) -> Result<u64> {
+    ///
+    /// Returns the IDs of the files that were actually deleted. Folder IDs are
+    /// not returned because they do not have associated index chunks.
+    pub async fn clean_old_trash(
+        &self,
+        owner_id: Uuid,
+        tenant_id: Uuid,
+        days: i32,
+    ) -> Result<Vec<Uuid>> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(days.into());
+        let mut tx = self.pool.begin().await?;
 
-        // Delete old trashed files first
-        let file_result = sqlx::query!(
-            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3",
+        // Delete old trashed files directly and collect their IDs.
+        let file_rows = sqlx::query!(
+            "DELETE FROM files WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3 RETURNING id",
             owner_id,
             tenant_id,
             cutoff
         )
-        .execute(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        let mut deleted_file_ids: Vec<Uuid> = file_rows.into_iter().map(|r| r.id).collect();
 
-        // Delete old trashed folders
-        let folder_result = sqlx::query!(
+        // Collect file IDs that will be cascade-deleted by folder deletion.
+        let cascade_rows = sqlx::query!(
+            r#"
+            WITH RECURSIVE trashed_folders AS (
+                SELECT id FROM folders
+                WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN trashed_folders tf ON f.parent_folder_id = tf.id
+                WHERE f.tenant_id = $2 AND f.owner_id = $1
+            )
+            SELECT files.id FROM files
+            INNER JOIN trashed_folders tf ON files.parent_folder_id = tf.id
+            WHERE files.tenant_id = $2 AND files.owner_id = $1
+            "#,
+            owner_id,
+            tenant_id,
+            cutoff
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        deleted_file_ids.extend(cascade_rows.into_iter().map(|r| r.id));
+        deleted_file_ids.sort_unstable();
+        deleted_file_ids.dedup();
+
+        // Delete old trashed folders (cascade will handle any remaining child records)
+        sqlx::query!(
             "DELETE FROM folders WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3",
             owner_id,
             tenant_id,
             cutoff
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        Ok(file_result.rows_affected() + folder_result.rows_affected())
+        tx.commit().await?;
+        Ok(deleted_file_ids)
     }
 
     /// Delete audit logs (admin_actions) older than the given number of days.
@@ -7652,5 +7719,392 @@ mod tests {
             .update_security_config(Some(true), Some(5), Some(15))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_empty_trash_returns_deleted_file_ids_including_cascade_children() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let owner = User::new(
+            "trashtestowner".to_string(),
+            "Trash Test Owner".to_string(),
+            "hashabc".to_string(),
+            "trashtestowner@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        let root = Folder::new_root(owner.id, tenant_id);
+        store.create_folder(&root).await.unwrap();
+
+        let trashed_parent = Folder::new_child(
+            "TrashedParent".to_string(),
+            "/TrashedParent".to_string(),
+            root.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&trashed_parent).await.unwrap();
+
+        let trashed_child = Folder::new_child(
+            "TrashedChild".to_string(),
+            "/TrashedParent/TrashedChild".to_string(),
+            trashed_parent.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&trashed_child).await.unwrap();
+
+        // Directly trashed file at the root level.
+        let direct_trashed_file = File::new(
+            "direct-trashed.txt".to_string(),
+            "/direct-trashed.txt".to_string(),
+            "hash-direct".to_string(),
+            128,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&direct_trashed_file).await.unwrap();
+
+        // File inside a trashed folder (cascade).
+        let cascade_file = File::new(
+            "cascade-file.txt".to_string(),
+            "/TrashedParent/TrashedChild/cascade-file.txt".to_string(),
+            "hash-cascade".to_string(),
+            256,
+            "text/plain".to_string(),
+            Some(trashed_child.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&cascade_file).await.unwrap();
+
+        // File inside a trashed folder but not directly trashed itself.
+        let cascade_parent_file = File::new(
+            "cascade-parent-file.txt".to_string(),
+            "/TrashedParent/cascade-parent-file.txt".to_string(),
+            "hash-cascade-parent".to_string(),
+            512,
+            "text/plain".to_string(),
+            Some(trashed_parent.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&cascade_parent_file).await.unwrap();
+
+        // Non-trashed file that should remain untouched.
+        let kept_file = File::new(
+            "kept-file.txt".to_string(),
+            "/kept-file.txt".to_string(),
+            "hash-kept".to_string(),
+            1024,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&kept_file).await.unwrap();
+
+        // Another user in the same tenant whose folder is nested under the
+        // owner's trashed folder. Their files must not be reported as deleted.
+        let other_user = User::new(
+            "trashtestother".to_string(),
+            "Trash Test Other".to_string(),
+            "hashother".to_string(),
+            "trashtestother@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&other_user).await.unwrap();
+
+        let other_root = Folder::new_root(other_user.id, tenant_id);
+        store.create_folder(&other_root).await.unwrap();
+
+        let other_child = Folder::new_child(
+            "OtherChild".to_string(),
+            "/TrashedParent/OtherChild".to_string(),
+            trashed_parent.id,
+            other_user.id,
+            tenant_id,
+        );
+        store.create_folder(&other_child).await.unwrap();
+
+        let other_file = File::new(
+            "other-file.txt".to_string(),
+            "/TrashedParent/OtherChild/other-file.txt".to_string(),
+            "hash-other".to_string(),
+            64,
+            "text/plain".to_string(),
+            Some(other_child.id),
+            other_user.id,
+            tenant_id,
+        );
+        store.create_file(&other_file).await.unwrap();
+
+        // Mark the direct file and folder hierarchy as trashed.
+        let now = Utc::now();
+        sqlx::query("UPDATE files SET deleted_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(direct_trashed_file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for id in [trashed_parent.id, trashed_child.id] {
+            sqlx::query("UPDATE folders SET deleted_at = $1 WHERE id = $2")
+                .bind(now)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let deleted_ids = store.empty_trash(owner.id, tenant_id).await.unwrap();
+
+        assert!(
+            deleted_ids.contains(&direct_trashed_file.id),
+            "directly trashed file should be reported"
+        );
+        assert!(
+            deleted_ids.contains(&cascade_file.id),
+            "file in nested trashed folder should be reported"
+        );
+        assert!(
+            deleted_ids.contains(&cascade_parent_file.id),
+            "file in trashed parent folder should be reported"
+        );
+        assert!(
+            !deleted_ids.contains(&kept_file.id),
+            "non-trashed file should not be reported"
+        );
+        assert!(
+            !deleted_ids.contains(&other_file.id),
+            "other user's file should not be reported"
+        );
+
+        // Cleanup any rows that survived (empty_trash deletes trashed items).
+        for user_id in [owner.id, other_user.id] {
+            sqlx::query("DELETE FROM files WHERE owner_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for user_id in [owner.id, other_user.id] {
+            sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires DATABASE_URL
+    async fn test_clean_old_trash_returns_aged_deleted_file_ids_including_cascade_children() {
+        let (store, pool) = setup_metadata_store().await;
+        let tenant_id = Uuid::new_v4();
+
+        let owner = User::new(
+            "oldtrashtestowner".to_string(),
+            "Old Trash Test Owner".to_string(),
+            "hashdef".to_string(),
+            "oldtrashtestowner@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&owner).await.unwrap();
+
+        let root = Folder::new_root(owner.id, tenant_id);
+        store.create_folder(&root).await.unwrap();
+
+        let old_trashed_parent = Folder::new_child(
+            "OldTrashedParent".to_string(),
+            "/OldTrashedParent".to_string(),
+            root.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&old_trashed_parent).await.unwrap();
+
+        let old_trashed_child = Folder::new_child(
+            "OldTrashedChild".to_string(),
+            "/OldTrashedParent/OldTrashedChild".to_string(),
+            old_trashed_parent.id,
+            owner.id,
+            tenant_id,
+        );
+        store.create_folder(&old_trashed_child).await.unwrap();
+
+        let old_direct_file = File::new(
+            "old-direct.txt".to_string(),
+            "/old-direct.txt".to_string(),
+            "hash-old-direct".to_string(),
+            128,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&old_direct_file).await.unwrap();
+
+        let old_cascade_file = File::new(
+            "old-cascade.txt".to_string(),
+            "/OldTrashedParent/OldTrashedChild/old-cascade.txt".to_string(),
+            "hash-old-cascade".to_string(),
+            256,
+            "text/plain".to_string(),
+            Some(old_trashed_child.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&old_cascade_file).await.unwrap();
+
+        // Recent trashed file should not be cleaned.
+        let recent_trashed_file = File::new(
+            "recent-trashed.txt".to_string(),
+            "/recent-trashed.txt".to_string(),
+            "hash-recent".to_string(),
+            512,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&recent_trashed_file).await.unwrap();
+
+        // Non-trashed file should remain untouched.
+        let kept_file = File::new(
+            "kept-old.txt".to_string(),
+            "/kept-old.txt".to_string(),
+            "hash-kept-old".to_string(),
+            1024,
+            "text/plain".to_string(),
+            Some(root.id),
+            owner.id,
+            tenant_id,
+        );
+        store.create_file(&kept_file).await.unwrap();
+
+        // Another user in the same tenant whose folder is nested under the
+        // owner's trashed folder. Their files must not be reported as deleted.
+        let other_user = User::new(
+            "oldtrashtestother".to_string(),
+            "Old Trash Test Other".to_string(),
+            "hashother".to_string(),
+            "oldtrashtestother@example.com".to_string(),
+            false,
+            10_737_418_240,
+            tenant_id,
+        );
+        store.create_user(&other_user).await.unwrap();
+
+        let other_root = Folder::new_root(other_user.id, tenant_id);
+        store.create_folder(&other_root).await.unwrap();
+
+        let other_child = Folder::new_child(
+            "OtherChild".to_string(),
+            "/OldTrashedParent/OtherChild".to_string(),
+            old_trashed_parent.id,
+            other_user.id,
+            tenant_id,
+        );
+        store.create_folder(&other_child).await.unwrap();
+
+        let other_file = File::new(
+            "other-old-file.txt".to_string(),
+            "/OldTrashedParent/OtherChild/other-old-file.txt".to_string(),
+            "hash-other-old".to_string(),
+            64,
+            "text/plain".to_string(),
+            Some(other_child.id),
+            other_user.id,
+            tenant_id,
+        );
+        store.create_file(&other_file).await.unwrap();
+
+        let old_deleted_at = Utc::now() - chrono::Duration::days(10);
+        let recent_deleted_at = Utc::now() - chrono::Duration::days(1);
+
+        for id in [old_direct_file.id, old_cascade_file.id] {
+            sqlx::query("UPDATE files SET deleted_at = $1 WHERE id = $2")
+                .bind(old_deleted_at)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        sqlx::query("UPDATE files SET deleted_at = $1 WHERE id = $2")
+            .bind(recent_deleted_at)
+            .bind(recent_trashed_file.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for id in [old_trashed_parent.id, old_trashed_child.id] {
+            sqlx::query("UPDATE folders SET deleted_at = $1 WHERE id = $2")
+                .bind(old_deleted_at)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let deleted_ids = store.clean_old_trash(owner.id, tenant_id, 7).await.unwrap();
+
+        assert!(
+            deleted_ids.contains(&old_direct_file.id),
+            "aged directly trashed file should be reported"
+        );
+        assert!(
+            deleted_ids.contains(&old_cascade_file.id),
+            "file in aged trashed folder should be reported"
+        );
+        assert!(
+            !deleted_ids.contains(&recent_trashed_file.id),
+            "recently trashed file should not be reported"
+        );
+        assert!(
+            !deleted_ids.contains(&kept_file.id),
+            "non-trashed file should not be reported"
+        );
+        assert!(
+            !deleted_ids.contains(&other_file.id),
+            "other user's file should not be reported"
+        );
+
+        // Cleanup any rows that survived.
+        for user_id in [owner.id, other_user.id] {
+            sqlx::query("DELETE FROM files WHERE owner_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for user_id in [owner.id, other_user.id] {
+            sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
     }
 }

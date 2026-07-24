@@ -449,19 +449,12 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// Remove every indexed chunk belonging to a note.
     ///
     /// Returns the number of chunks that were removed.
-    pub async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> usize {
-        match self.store.remove_note_chunks(tenant_id, note_id).await {
-            Ok(count) => count,
-            Err(e) => {
-                tracing::error!(
-                    tenant_id = %tenant_id,
-                    note_id = %note_id,
-                    error = %e,
-                    "Failed to remove note chunks from index"
-                );
-                0
-            }
-        }
+    pub async fn remove_note_chunks(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.store.remove_note_chunks(tenant_id, note_id).await
     }
 
     /// Remove a file from the index.
@@ -469,15 +462,8 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Arguments
     /// * `file_id` - The file ID to remove
     /// * `tenant_id` - The tenant ID
-    pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) {
-        if let Err(e) = self.store.remove_chunk(tenant_id, file_id).await {
-            tracing::error!(
-                tenant_id = %tenant_id,
-                file_id = %file_id,
-                error = %e,
-                "Failed to remove file chunk from index"
-            );
-        }
+    pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) -> anyhow::Result<()> {
+        self.store.remove_chunk(tenant_id, file_id).await
     }
 
     /// Get a document by file ID, enforcing the caller's ACL.
@@ -764,7 +750,7 @@ mod tests {
 
         assert_eq!(indexer.document_count(tenant_id).await, 1);
 
-        indexer.remove_file(file_id, tenant_id).await;
+        assert!(indexer.remove_file(file_id, tenant_id).await.is_ok());
 
         assert_eq!(indexer.document_count(tenant_id).await, 0);
     }

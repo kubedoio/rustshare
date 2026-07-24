@@ -483,8 +483,23 @@ where
     /// # Arguments
     /// * `file_id` - The file ID
     /// * `tenant_id` - The tenant ID
-    pub async fn remove_file_from_index(&self, file_id: FileId, tenant_id: Uuid) {
-        self.indexer.remove_file(file_id, tenant_id).await;
+    pub async fn remove_file(&self, file_id: FileId, tenant_id: Uuid) -> anyhow::Result<()> {
+        self.indexer.remove_file(file_id, tenant_id).await
+    }
+
+    /// Remove every indexed chunk belonging to a note/file.
+    ///
+    /// # Arguments
+    /// * `tenant_id` - The tenant ID
+    /// * `note_id` - The note_id value stored in note_index_chunks.note_id
+    ///
+    /// Returns the number of chunks that were removed.
+    pub async fn remove_note_chunks(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.indexer.remove_note_chunks(tenant_id, note_id).await
     }
 }
 
