@@ -227,6 +227,74 @@ async fn test_share_create_triggers_acl_refresh() {
 
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_folder_share_refreshes_descendant_note_acl() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "folder-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "folder-recipient@example.com",
+    )
+    .await;
+    let parent = state
+        .folder_service
+        .create_folder("Shared".to_string(), None, owner_id, tenant_id)
+        .await
+        .unwrap();
+    let child = state
+        .folder_service
+        .create_folder("Nested".to_string(), Some(parent.id), owner_id, tenant_id)
+        .await
+        .unwrap();
+    let note = state
+        .note_service
+        .create_note(
+            owner_id,
+            tenant_id,
+            Some("Nested note".to_string()),
+            Some(child.id),
+            Some("# Nested note".to_string()),
+        )
+        .await
+        .unwrap();
+    let _ = sink.take_indexed();
+
+    rustshare_server::handlers::user_shares::create_folder_share(
+        State(state.clone()),
+        Path(parent.id),
+        AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFolderShareRequest {
+                recipient_email: "folder-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        sink.take_indexed().iter().any(|(_, id)| *id == note.id),
+        "Folder share should refresh descendant note ACLs"
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn test_share_update_triggers_acl_refresh() {
     let (state, sink) = setup_with_recording_sink().await;
     let tenant_id = insert_test_tenant(&state.db_pool).await;
