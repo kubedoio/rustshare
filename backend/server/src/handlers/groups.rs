@@ -451,6 +451,14 @@ pub async fn revoke_group_share(
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    // Preserve the file id before the share is revoked so we can refresh the
+    // AI index ACL afterwards.
+    let share = state
+        .share_service
+        .get_share_by_id(share_id, auth.user_id)
+        .await?
+        .ok_or(AppError::not_found("Share not found"))?;
+
     let result = state
         .share_service
         .revoke_group_share(share_id, auth.user_id)
@@ -469,6 +477,14 @@ pub async fn revoke_group_share(
             return Err(AppError::internal("Failed to process share operation"));
         }
     };
+
+    // Best-effort refresh if the share targeted a file (note).
+    if let Some(file_id) = share.file_id {
+        let _ = state
+            .note_service
+            .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
+            .await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -523,6 +539,14 @@ pub async fn update_group_share_permission(
             return Err(AppError::internal("Failed to process share operation"));
         }
     };
+
+    // Best-effort refresh of the AI index ACL if the share targeted a file.
+    if let Some(file_id) = share.file_id {
+        let _ = state
+            .note_service
+            .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
+            .await;
+    }
 
     // Get group name
     let group_name = if let Some(group_id) = share.recipient_group_id {

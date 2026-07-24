@@ -359,7 +359,23 @@ pub async fn revoke_share(
     Path(share_id): Path<uuid::Uuid>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<StatusCode, AppError> {
+    // Preserve the file id before the share is revoked so we can refresh the
+    // AI index ACL afterwards.
+    let share = state
+        .share_service
+        .get_share_by_id(share_id, user_id)
+        .await?
+        .ok_or(AppError::not_found("Share not found"))?;
+
     state.share_service.revoke_share(share_id, user_id).await?;
+
+    // Best-effort refresh if the share targeted a file (note).
+    if let Some(file_id) = share.file_id {
+        let _ = state
+            .note_service
+            .refresh_note_index_acl(file_id, user_id, share.tenant_id)
+            .await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

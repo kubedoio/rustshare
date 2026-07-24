@@ -139,6 +139,14 @@ pub async fn create_file_share(
         .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
         .await?;
 
+    // Best-effort refresh of the AI index ACL for this file.
+    if let Some(file_id) = share.file_id {
+        let _ = state
+            .note_service
+            .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
+            .await;
+    }
+
     // Get recipient email for response (it was validated in the service)
     let response = UserShareResponse {
         share_id: share.id,

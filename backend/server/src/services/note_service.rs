@@ -784,6 +784,64 @@ impl NoteService {
         }
     }
 
+    /// Refresh the indexed ACL projection for a single note.
+    ///
+    /// This re-resolves the note's current read principals and re-indexes the
+    /// content with a fresh ACL projection. Callers should use this after share
+    /// or revoke events that may have changed the effective ACL without changing
+    /// the note content.
+    pub async fn refresh_note_index_acl(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        let meta = self
+            .load_metadata(file_id, user_id, tenant_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(file.name.trim_end_matches(".md")));
+        let content = match self.object_store.get(&file.storage_key()).await {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            Err(_) => String::new(),
+        };
+        self.emit_index_note(&file, &meta, &content, tenant_id)
+            .await;
+        Ok(())
+    }
+
+    /// Remove a single note from the AI index.
+    pub async fn remove_note_from_index(
+        &self,
+        file_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        let file = self
+            .metadata_store
+            .find_file_by_id_unchecked(file_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?
+            .ok_or(NoteError::NotFound(file_id))?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        let note_id = if let Some(meta) = self
+            .load_metadata(file_id, file.owner_id, tenant_id)
+            .await?
+        {
+            meta.okf_id.unwrap_or(file_id)
+        } else {
+            file_id
+        };
+        if let Some(sink) = &self.index_sink {
+            sink.remove_note(tenant_id, note_id).await;
+        }
+        Ok(())
+    }
+
     /// Find or create the target folder under workspace.
     ///
     /// Legacy module root policy: new writes are always directed to the
@@ -1913,10 +1971,15 @@ impl NoteService {
         }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
+        // Load metadata before deletion so we can preserve the OKF identity and
+        // clean up the index after the note is removed.
+        let meta = self.load_metadata(file_id, user_id, file.tenant_id).await?;
+        let note_id = meta.as_ref().and_then(|m| m.okf_id).unwrap_or(file_id);
+
         // If public, invalidate share index
-        if let Some(meta) = self.load_metadata(file_id, user_id, file.tenant_id).await? {
-            if let Some(share_id) = meta.public_share_id {
-                let _ = self.delete_public_share_index(&share_id).await;
+        if let Some(ref meta) = meta {
+            if let Some(ref share_id) = meta.public_share_id {
+                let _ = self.delete_public_share_index(share_id).await;
             }
 
             // Delete attachment files
@@ -1946,6 +2009,10 @@ impl NoteService {
             self.delete_metadata(file_id, user_id, file.tenant_id)
                 .await?;
             self.file_service.delete_file(file_id, user_id).await?;
+        }
+
+        if let Some(sink) = &self.index_sink {
+            sink.remove_note(tenant_id, note_id).await;
         }
 
         Ok(())
@@ -1994,6 +2061,9 @@ impl NoteService {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
             Err(_) => String::new(),
         };
+
+        self.emit_index_note(&moved_file, &meta, &content, tenant_id)
+            .await;
 
         Ok(Note {
             id: moved_file.id,
@@ -2148,6 +2218,9 @@ impl NoteService {
                 .await
                 .ok();
 
+            self.emit_index_note(&new_file, &meta, &duplicated_content, tenant_id)
+                .await;
+
             return Ok(Note {
                 id: new_file.id,
                 okf_id: Some(new_okf_id),
@@ -2189,6 +2262,9 @@ impl NoteService {
         meta.updated_at = Utc::now();
         self.save_metadata(new_file.id, user_id, tenant_id, &meta)
             .await?;
+
+        self.emit_index_note(&new_file, &meta, &original.content, tenant_id)
+            .await;
 
         Ok(Note {
             id: new_file.id,
@@ -2456,6 +2532,9 @@ impl NoteService {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
             Err(_) => String::new(),
         };
+
+        self.emit_index_note(&file, &meta, &content, tenant_id)
+            .await;
 
         Ok(Note {
             id: file.id,

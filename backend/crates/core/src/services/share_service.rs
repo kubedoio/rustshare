@@ -214,6 +214,18 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         }
     }
 
+    /// Look up a share by ID, enforcing actor authorization.
+    pub async fn get_share_by_id(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: UserId,
+    ) -> Result<Option<Share>, ShareError> {
+        self.metadata_store
+            .get_share_by_id(share_id, actor_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))
+    }
+
     /// Generate a cryptographically secure 32-character alphanumeric token.
     ///
     /// Returns a unique token suitable for use as a share link identifier.
