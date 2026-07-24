@@ -1,6 +1,6 @@
 # Permission-Aware AI Indexing Security Audit
 
-> **Status:** Task 1 complete — documentation only, no code changes.  
+> **Status:** Resolved by `security/permission-aware-indexing-audit` — see [`2026-permission-aware-indexing-result.md`](2026-permission-aware-indexing-result.md).  
 > **Branch:** `security/permission-aware-indexing-audit`  
 > **Date:** 2026-07-23  
 > **Goal:** Prove that RustShare never returns indexed content to a principal who lacks permission, and document the gaps between the current implementation and that goal.
@@ -84,17 +84,17 @@ The secure retrieval pipeline, aligned with the design spec, is:
 
 ## Security gaps status
 
-| Gap | Current state | Required fix | Priority |
-|---|---|---|---|
-| Search does not use ACL pre-filtering | `AiService::semantic_search` calls tenant-only `indexer.search`. | Switch to `search_with_acl` with `RetrievalPrincipal`. | Critical |
-| `read_acl` not consulted at retrieval | Stored ACL is ignored by the production search path. | Enforce `read_acl` in vector store query + Rust-side `can_access`. | Critical |
-| Lifecycle events do not propagate ACL changes | `delete_note`, `move_note`, `toggle_visibility`, `duplicate_note`, share create/revoke never update or remove chunks. | Wire every event to `upsert`/`update_note_acl`/`remove_note_chunks`. | Critical |
-| `workspace_id` and `source_folder_id` are fabricated | `PgVectorStore::row_to_indexed_doc` hardcodes both; migration lacks columns. | Add columns and persist real values. | High |
-| `embedding_policy` hardcoded to `"allowed"` | `NoteService::build_acl_payload` ignores frontmatter policy. | Read authoritative policy; `denied` removes from index. | High |
-| pgvector path untested for ACL semantics | Tests only exercise `InMemoryVectorStore`. | Backend-agnostic contract tests against both stores. | High |
-| Stale TODO about owner-only placeholder | `NoteAclPayload::read_acl` comment references `TODO(#118)`. | Remove stale comment; prevent owner-only synthesis in `index_file`. | Medium |
-| `IndexedDocument::acl: Option<...>` allows tenant-wide fallback | `None` ACLs are treated as accessible in `InMemoryVectorStore::search_with_acl`. | Reject `None` ACLs at retrieval; fail closed. | Critical |
-| File indexing is un-wired | `AiService::index_file` / `ContentIndexer::index_file` have no production callers. | Keep documented gap; do not expand scope until wired. | Low (out of scope) |
+| Gap | Current state | Required fix | Priority | Status |
+|---|---|---|---|---|
+| Search does not use ACL pre-filtering | `AiService::semantic_search` calls tenant-only `indexer.search`. | Switch to `search_with_acl` with `RetrievalPrincipal`. | Critical | ✅ Resolved |
+| `read_acl` not consulted at retrieval | Stored ACL is ignored by the production search path. | Enforce `read_acl` in vector store query + Rust-side `can_access`. | Critical | ✅ Resolved |
+| Lifecycle events do not propagate ACL changes | `delete_note`, `move_note`, `toggle_visibility`, `duplicate_note`, share create/revoke never update or remove chunks. | Wire every event to `upsert`/`update_note_acl`/`remove_note_chunks`. | Critical | ✅ Resolved |
+| `workspace_id` and `source_folder_id` are fabricated | `PgVectorStore::row_to_indexed_doc` hardcodes both; migration lacks columns. | Add columns and persist real values. | High | ✅ Resolved |
+| `embedding_policy` hardcoded to `"allowed"` | `NoteService::build_acl_payload` ignores frontmatter policy. | Read authoritative policy; `denied` removes from index. | High | ✅ Resolved |
+| pgvector path untested for ACL semantics | Tests only exercise `InMemoryVectorStore`. | Backend-agnostic contract tests against both stores. | High | ✅ Resolved |
+| Stale TODO about owner-only placeholder | `NoteAclPayload::read_acl` comment references `TODO(#118)`. | Remove stale comment; prevent owner-only synthesis in `index_file`. | Medium | ✅ Resolved |
+| `IndexedDocument::acl: Option<...>` allows tenant-wide fallback | `None` ACLs are treated as accessible in `InMemoryVectorStore::search_with_acl`. | Reject `None` ACLs at retrieval; fail closed. | Critical | ✅ Resolved |
+| File indexing is un-wired | `AiService::index_file` / `ContentIndexer::index_file` have no production callers. | Keep documented gap; do not expand scope until wired. | Low (out of scope) | ⚠️ Deferred |
 
 ---
 

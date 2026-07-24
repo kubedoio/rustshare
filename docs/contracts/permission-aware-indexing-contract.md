@@ -144,10 +144,12 @@ Reject ACL-less chunks until reindexed.
 
 ## Acceptance Criteria
 
-- [ ] All indexed objects carry a complete `IndexAclProjection` before being written or returned.
-- [ ] Retrieval enforces the full ACL projection for every candidate chunk.
-- [ ] `embedding_policy = denied` objects are removed from the index and never returned.
-- [ ] Missing, malformed, and stale ACL projections fail closed.
-- [ ] Cross-tenant retrieval always fails closed.
-- [ ] Deleted and trashed objects are not retrievable.
-- [ ] The contract is verified by backend-agnostic tests running against both `InMemoryVectorStore` and `PgVectorStore`.
+- [x] All indexed objects carry a complete `IndexAclProjection` before being written or returned.
+- [x] Retrieval enforces the full ACL projection for every candidate chunk.
+- [x] `embedding_policy = denied` objects are removed from the index and never returned.
+- [x] Missing, malformed, and stale ACL projections fail closed.
+- [x] Cross-tenant retrieval always fails closed.
+- [x] Deleted and trashed objects are not retrievable.
+- [x] The contract is verified by backend-agnostic tests running against both `InMemoryVectorStore` and `PgVectorStore`.
+
+Verification: `backend/tests/ai_vector_store_permission_contract.rs` and `backend/tests/ai_permission_contract.rs`; see `docs/audits/2026-permission-aware-indexing-result.md`.

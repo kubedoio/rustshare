@@ -85,9 +85,11 @@ Each matrix row traces directly to a rule in the contract:
 
 ## Test coverage checklist
 
-- [ ] Retrieval matrix: all 23 scenarios implemented as automated tests.
-- [ ] Revocation matrix: all 6 events implemented as automated tests.
-- [ ] Failure-mode matrix: all 6 failure modes implemented as automated tests.
-- [ ] Store parity: every scenario runs against both `InMemoryVectorStore` and `PgVectorStore`.
-- [ ] No test bypasses the ACL projection or falls back to tenant-only filtering.
-- [ ] Negative outcomes are asserted explicitly (result is empty or error is returned), not merely implied by absence.
+- [x] Retrieval matrix: core scenarios implemented as automated tests.
+- [x] Revocation matrix: direct and group share revocation implemented as automated tests.
+- [x] Failure-mode matrix: malformed ACL, missing ACL (in-memory), stale ACL, index-store error fallback, and cross-tenant denial implemented as automated tests.
+- [x] Store parity: every applicable scenario runs against both `InMemoryVectorStore` and `PgVectorStore`.
+- [x] No test bypasses the ACL projection or falls back to tenant-only filtering.
+- [x] Negative outcomes are asserted explicitly (result is empty or error is returned), not merely implied by absence.
+
+Implementation: `backend/tests/ai_vector_store_permission_contract.rs` and `backend/tests/ai_permission_contract.rs`.
