@@ -205,17 +205,18 @@ impl VectorStore for PgVectorStore {
               AND (
                   owner_id = $3
                   OR visibility = 'public'
-                  OR visibility = 'workspace'
+                  OR (visibility = 'workspace' AND workspace_id = $5)
                   OR read_acl && $4::text[]
               )
             ORDER BY embedding <=> $1::vector
-            LIMIT $5
+            LIMIT $6
             "#,
         )
         .bind(&query_vector_text)
         .bind(tenant_id)
         .bind(principal.user_id)
         .bind(&caller_principals)
+        .bind(principal.workspace_id)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;

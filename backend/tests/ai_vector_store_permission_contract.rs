@@ -663,6 +663,80 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
 
         let _ = store.clear_tenant(tenant_id).await;
     }
+
+    // Scenario 13: inaccessible workspace rows do not consume the result limit.
+    {
+        let tenant_id = Uuid::new_v4();
+        let caller_id = Uuid::new_v4();
+        let workspace_owner_id = Uuid::new_v4();
+        let shared_owner_id = Uuid::new_v4();
+
+        let workspace_chunk_id = Uuid::new_v4();
+        let workspace_acl = make_acl_payload(
+            tenant_id,
+            Uuid::new_v4(),
+            workspace_chunk_id,
+            workspace_owner_id,
+            vec![],
+            IndexVisibility::Workspace,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let workspace_doc = make_indexed_doc(
+            workspace_chunk_id,
+            tenant_id,
+            workspace_acl.note_id,
+            workspace_owner_id,
+            "closer inaccessible workspace content",
+            workspace_acl.clone(),
+        );
+        store
+            .upsert_chunk(
+                tenant_id,
+                workspace_chunk_id,
+                &workspace_doc,
+                &workspace_acl,
+            )
+            .await
+            .unwrap();
+
+        let shared_chunk_id = Uuid::new_v4();
+        let shared_acl = make_acl_payload(
+            tenant_id,
+            Uuid::new_v4(),
+            shared_chunk_id,
+            shared_owner_id,
+            vec![IndexPrincipal::User(caller_id)],
+            IndexVisibility::Private,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let mut shared_doc = make_indexed_doc(
+            shared_chunk_id,
+            tenant_id,
+            shared_acl.note_id,
+            shared_owner_id,
+            "lower-ranked directly shared content",
+            shared_acl.clone(),
+        );
+        shared_doc.embedding[EMBEDDING_DIM / 2..].fill(0.0);
+        store
+            .upsert_chunk(tenant_id, shared_chunk_id, &shared_doc, &shared_acl)
+            .await
+            .unwrap();
+
+        let results = store
+            .search_with_acl(&user_principal(tenant_id, caller_id), &unit_embedding(), 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            results.first().map(|(doc, _)| doc.chunk_id),
+            Some(shared_chunk_id),
+            "inaccessible workspace rows must not hide allowed lower-ranked rows"
+        );
+
+        let _ = store.clear_tenant(tenant_id).await;
+    }
 }
 
 #[tokio::test]
@@ -672,6 +746,7 @@ async fn test_in_memory_vector_store_permission_contract() {
 }
 
 #[tokio::test]
+#[ignore = "Requires PostgreSQL with pgvector"]
 async fn test_pgvector_store_permission_contract() {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
