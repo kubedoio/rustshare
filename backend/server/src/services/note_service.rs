@@ -852,6 +852,163 @@ impl NoteService {
         Ok(())
     }
 
+    /// Refresh the indexed ACL projection for a resource after a share
+    /// lifecycle change.
+    ///
+    /// For a file, re-indexes it if it is a markdown note. For a folder,
+    /// re-indexes every markdown note in the folder tree. Errors are logged at
+    /// `error!` level and are not returned, because index refresh is
+    /// best-effort and must not fail the originating share request.
+    pub async fn refresh_index_acl_for_resource(
+        &self,
+        resource: rustshare_core::services::Resource,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) {
+        match resource {
+            rustshare_core::services::Resource::File(file_id) => {
+                if let Err(error) = self
+                    .refresh_note_index_acl(file_id, user_id, tenant_id)
+                    .await
+                {
+                    tracing::error!(
+                        object_id = %file_id,
+                        tenant_id = %tenant_id,
+                        error_category = "acl_refresh",
+                        error = %error,
+                        "Failed to refresh AI index ACL for file after share change"
+                    );
+                }
+            }
+            rustshare_core::services::Resource::Folder(folder_id) => {
+                self.refresh_folder_notes_index_acl(folder_id, user_id, tenant_id)
+                    .await;
+            }
+        }
+    }
+
+    /// Refresh the indexed ACL projection for every resource shared with a group.
+    ///
+    /// Call after group membership changes so the AI index reflects the new
+    /// effective ACL for all resources shared with that group. Errors are logged
+    /// and do not fail the originating request.
+    pub async fn refresh_index_acl_for_group(&self, group_id: Uuid, tenant_id: Uuid) {
+        let rows = match sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, UserId)>(
+            r#"
+            SELECT file_id, folder_id, created_by
+            FROM shares
+            WHERE recipient_group_id = $1
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+            "#,
+        )
+        .bind(group_id)
+        .bind(tenant_id)
+        .fetch_all(&self.db_pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!(
+                    object_id = %group_id,
+                    tenant_id = %tenant_id,
+                    error_category = "group_share_lookup",
+                    error = %error,
+                    "Failed to list active shares for group ACL refresh"
+                );
+                return;
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        for (file_id, folder_id, created_by) in rows {
+            let resource = if let Some(file_id) = file_id {
+                rustshare_core::services::Resource::File(file_id)
+            } else if let Some(folder_id) = folder_id {
+                rustshare_core::services::Resource::Folder(folder_id)
+            } else {
+                continue;
+            };
+
+            let key = match resource {
+                rustshare_core::services::Resource::File(id) => (id, 0i32),
+                rustshare_core::services::Resource::Folder(id) => (id, 1i32),
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+
+            self.refresh_index_acl_for_resource(resource, created_by, tenant_id)
+                .await;
+        }
+    }
+
+    /// Refresh the indexed ACL projection for every markdown note in a folder tree.
+    async fn refresh_folder_notes_index_acl(
+        &self,
+        folder_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) {
+        let descendants = match self
+            .metadata_store
+            .find_descendant_folders_unchecked(folder_id)
+            .await
+        {
+            Ok(folders) => folders,
+            Err(error) => {
+                tracing::error!(
+                    object_id = %folder_id,
+                    tenant_id = %tenant_id,
+                    error_category = "folder_lookup",
+                    error = %error,
+                    "Failed to list descendant folders for AI index ACL refresh"
+                );
+                return;
+            }
+        };
+
+        let mut folder_ids = vec![folder_id];
+        folder_ids.extend(descendants.iter().map(|folder| folder.id));
+
+        for current_folder_id in folder_ids {
+            let files = match self
+                .metadata_store
+                .list_files_by_parent(Some(current_folder_id), tenant_id)
+                .await
+            {
+                Ok(files) => files,
+                Err(error) => {
+                    tracing::error!(
+                        object_id = %current_folder_id,
+                        tenant_id = %tenant_id,
+                        error_category = "file_listing",
+                        error = %error,
+                        "Failed to list files for AI index ACL refresh"
+                    );
+                    continue;
+                }
+            };
+
+            for file in files {
+                if file.mime_type == "text/markdown" {
+                    if let Err(error) = self
+                        .refresh_note_index_acl(file.id, user_id, tenant_id)
+                        .await
+                    {
+                        tracing::error!(
+                            object_id = %file.id,
+                            tenant_id = %tenant_id,
+                            error_category = "acl_refresh",
+                            error = %error,
+                            "Failed to refresh AI index ACL for folder note after share change"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Find or create the target folder under workspace.
     ///
     /// Legacy module root policy: new writes are always directed to the

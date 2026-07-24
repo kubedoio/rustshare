@@ -193,6 +193,10 @@ name = "e2e_sample"
 path = "tests/e2e_sample.rs"
 
 [[test]]
+name = "share_acl_propagation"
+path = "tests/share_acl_propagation.rs"
+
+[[test]]
 name = "mail_import_test"
 path = "../tests/mail_import_test.rs"
 

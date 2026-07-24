@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{
@@ -431,18 +432,20 @@ pub async fn add_member(
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
-    // Verify group exists
-    let group_exists_row = sqlx::query!(
-        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1) as exists",
-        group_id
+    // Verify group exists and capture tenant for ACL refresh.
+    let group_row = sqlx::query_as::<_, (bool, Option<Uuid>)>(
+        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1), tenant_id FROM user_groups WHERE id = $1"
     )
+    .bind(group_id)
     .fetch_one(&state.db_pool)
     .await
     .map_err(db_error)?;
-    let group_exists = group_exists_row.exists.unwrap_or(false);
-    if !group_exists {
+    if !group_row.0 {
         return Err(admin_not_found("Group not found"));
     }
+    let tenant_id = group_row
+        .1
+        .ok_or_else(|| admin_internal_error("Group missing tenant_id"))?;
 
     // Verify user exists
     let user_exists_row = sqlx::query!(
@@ -485,6 +488,14 @@ pub async fn add_member(
     )
     .await;
 
+    // Best-effort ACL refresh so newly added member can search group-shared notes.
+    let note_service = Arc::clone(&state.note_service);
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_group(group_id, tenant_id)
+            .await;
+    });
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -503,6 +514,15 @@ pub async fn remove_member(
     AdminUser { user_id: actor_id }: AdminUser,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
+    // Capture tenant_id before deleting so we can refresh ACLs afterwards.
+    let tenant_id =
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT tenant_id FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| admin_not_found("Group not found"))?;
+
     let result = sqlx::query!(
         "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
         group_id,
@@ -525,6 +545,14 @@ pub async fn remove_member(
         json!({"user_id": user_id}),
     )
     .await;
+
+    // Best-effort ACL refresh so removed member stops seeing group-shared notes in search.
+    let note_service = Arc::clone(&state.note_service);
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_group(group_id, tenant_id)
+            .await;
+    });
 
     Ok(StatusCode::NO_CONTENT)
 }
