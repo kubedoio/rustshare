@@ -574,6 +574,7 @@ pub async fn init_app() -> Result<AppState> {
     let trash_cleanup_config = TrashCleanupConfig::from_env();
     spawn_trash_cleanup_worker(
         Arc::clone(&metadata_store),
+        services.ai_service.clone(),
         trash_cleanup_config,
         shutdown_tx.subscribe(),
     );

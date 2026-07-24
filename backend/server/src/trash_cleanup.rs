@@ -5,6 +5,8 @@ use std::{sync::Arc, time::Duration};
 use rustshare_storage::MetadataStore;
 use tracing::{error, info, warn};
 
+use crate::state::AppAiService;
+
 #[derive(Debug, Clone)]
 pub struct TrashCleanupConfig {
     pub enabled: bool,
@@ -30,6 +32,7 @@ impl TrashCleanupConfig {
 
 pub fn spawn_trash_cleanup_worker(
     metadata_store: Arc<MetadataStore>,
+    ai_service: Option<Arc<AppAiService>>,
     config: TrashCleanupConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
@@ -51,7 +54,7 @@ pub fn spawn_trash_cleanup_worker(
                     break;
                 }
                 _ = tokio::time::sleep(config.interval) => {
-                    if let Err(error) = tick_trash_cleanup(&metadata_store).await {
+                    if let Err(error) = tick_trash_cleanup(&metadata_store, ai_service.clone()).await {
                         error!(error = %error, "Trash cleanup tick failed");
                     }
                 }
@@ -60,7 +63,10 @@ pub fn spawn_trash_cleanup_worker(
     });
 }
 
-async fn tick_trash_cleanup(metadata_store: &MetadataStore) -> anyhow::Result<()> {
+async fn tick_trash_cleanup(
+    metadata_store: &MetadataStore,
+    ai_service: Option<Arc<AppAiService>>,
+) -> anyhow::Result<()> {
     let users = metadata_store
         .list_users_with_trash_retention()
         .await
@@ -70,7 +76,7 @@ async fn tick_trash_cleanup(metadata_store: &MetadataStore) -> anyhow::Result<()
         return Ok(());
     }
 
-    let mut total_cleaned = 0u64;
+    let mut total_cleaned = 0usize;
 
     for (user_id, tenant_id, days) in users {
         match metadata_store
@@ -78,15 +84,29 @@ async fn tick_trash_cleanup(metadata_store: &MetadataStore) -> anyhow::Result<()
             .await
         {
             Ok(cleaned) => {
-                if cleaned > 0 {
+                if !cleaned.is_empty() {
                     info!(
                         user_id = %user_id,
-                        cleaned,
+                        cleaned = cleaned.len(),
                         retention_days = days,
                         "Auto-cleaned old trash items"
                     );
                 }
-                total_cleaned += cleaned;
+
+                if let Some(ref ai_service) = ai_service {
+                    for file_id in &cleaned {
+                        if let Err(e) = ai_service.remove_file(*file_id, tenant_id).await {
+                            warn!(
+                                file_id = %file_id,
+                                tenant_id = %tenant_id,
+                                error = %e,
+                                "Failed to remove file chunk from AI index during trash cleanup"
+                            );
+                        }
+                    }
+                }
+
+                total_cleaned += cleaned.len();
             }
             Err(e) => {
                 warn!(

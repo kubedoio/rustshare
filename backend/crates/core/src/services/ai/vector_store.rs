@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::indexing::{AclSearchFilter, IndexedDocument, NoteAclPayload};
+use super::indexing::{
+    validate_and_project, EmbeddingPolicy, IndexAclProjection, IndexVisibility, IndexedDocument,
+    NoteAclPayload, RetrievalPrincipal,
+};
 
 /// A persistent or ephemeral backend for indexed document chunks.
 #[async_trait::async_trait]
@@ -20,16 +23,7 @@ pub trait VectorStore: Send + Sync {
     /// Search for chunks similar to the query, pre-filtered by tenant and ACL.
     async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> anyhow::Result<Vec<(IndexedDocument, f32)>>;
-
-    /// Search for chunks similar to the query, scoped to a tenant only.
-    /// This preserves the legacy non-ACL search behavior for non-note content.
-    async fn search(
-        &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<(IndexedDocument, f32)>>;
@@ -54,10 +48,10 @@ pub trait VectorStore: Send + Sync {
     /// Count chunks for a tenant.
     async fn document_count(&self, tenant_id: Uuid) -> anyhow::Result<usize>;
 
-    /// Look up a single chunk by id.
+    /// Look up a single chunk by id, enforcing the caller's ACL.
     async fn get_chunk(
         &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         chunk_id: Uuid,
     ) -> anyhow::Result<Option<IndexedDocument>>;
 }
@@ -114,6 +108,56 @@ fn score_and_rank(
     results
 }
 
+/// Check whether a caller can access a note chunk according to its typed ACL
+/// projection.
+///
+/// This mirrors the semantics of the legacy `indexing::can_access` but operates
+/// on the canonical `IndexAclProjection` and `RetrievalPrincipal` types used by
+/// the permission-aware retrieval path.
+pub fn can_access(projection: &IndexAclProjection, principal: &RetrievalPrincipal) -> bool {
+    if projection.embedding_policy != EmbeddingPolicy::Allowed {
+        return false;
+    }
+
+    if let Some(min_version) = principal.min_acl_versions.get(&projection.object_id) {
+        if projection.acl_version < *min_version {
+            return false;
+        }
+    }
+
+    // Owner match.
+    if principal.user_id == projection.owner_id {
+        return true;
+    }
+
+    // Explicit principal match (owner, user, group, or workspace).
+    let caller_principals: std::collections::HashSet<_> =
+        principal.to_index_principals().into_iter().collect();
+    if projection
+        .read_principals
+        .iter()
+        .any(|p| caller_principals.contains(&p.to_string()))
+    {
+        return true;
+    }
+
+    // Workspace visibility match.
+    if projection.visibility == IndexVisibility::Workspace {
+        if let Some(wid) = principal.workspace_id {
+            if wid == projection.workspace_id {
+                return true;
+            }
+        }
+    }
+
+    // Public visibility match.
+    if projection.visibility == IndexVisibility::Public {
+        return true;
+    }
+
+    false
+}
+
 #[async_trait::async_trait]
 impl VectorStore for InMemoryVectorStore {
     async fn upsert_chunk(
@@ -132,35 +176,38 @@ impl VectorStore for InMemoryVectorStore {
 
     async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
+        principal: &RetrievalPrincipal,
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<(IndexedDocument, f32)>> {
-        use super::indexing::can_access;
-
         let docs = self.documents.lock().unwrap();
-        let tenant_docs = docs.get(&filter.tenant_id).cloned().unwrap_or_default();
+        let tenant_docs = docs.get(&principal.tenant_id).cloned().unwrap_or_default();
 
         let allowed = tenant_docs.into_values().filter(|doc| match &doc.acl {
-            Some(acl) => can_access(acl, filter),
-            None => true,
+            Some(acl) => match validate_and_project(acl) {
+                Ok(projection) => can_access(&projection, principal),
+                Err(e) => {
+                    tracing::warn!(
+                        chunk_id = %doc.chunk_id,
+                        note_id = %acl.note_id,
+                        tenant_id = %acl.tenant_id,
+                        error = %e,
+                        "Rejecting malformed ACL chunk in memory vector store"
+                    );
+                    false
+                }
+            },
+            None => {
+                tracing::warn!(
+                    chunk_id = %doc.chunk_id,
+                    tenant_id = %principal.tenant_id,
+                    "Rejecting legacy ACL-less chunk in memory vector store"
+                );
+                false
+            }
         });
-        Ok(score_and_rank(allowed, query_embedding, limit))
-    }
 
-    async fn search(
-        &self,
-        tenant_id: Uuid,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> anyhow::Result<Vec<(IndexedDocument, f32)>> {
-        let docs = self.documents.lock().unwrap();
-        let tenant_docs = docs.get(&tenant_id).cloned().unwrap_or_default();
-        Ok(score_and_rank(
-            tenant_docs.into_values(),
-            query_embedding,
-            limit,
-        ))
+        Ok(score_and_rank(allowed, query_embedding, limit))
     }
 
     async fn update_note_acl(
@@ -218,20 +265,52 @@ impl VectorStore for InMemoryVectorStore {
 
     async fn get_chunk(
         &self,
-        tenant_id: Uuid,
+        principal: &RetrievalPrincipal,
         chunk_id: Uuid,
     ) -> anyhow::Result<Option<IndexedDocument>> {
         let docs = self.documents.lock().unwrap();
-        Ok(docs
-            .get(&tenant_id)
-            .and_then(|tenant| tenant.get(&chunk_id).cloned()))
+        let Some(doc) = docs
+            .get(&principal.tenant_id)
+            .and_then(|tenant| tenant.get(&chunk_id).cloned())
+        else {
+            return Ok(None);
+        };
+
+        let Some(acl) = &doc.acl else {
+            tracing::warn!(
+                chunk_id = %doc.chunk_id,
+                tenant_id = %principal.tenant_id,
+                "Rejecting legacy ACL-less chunk in memory vector store"
+            );
+            return Ok(None);
+        };
+
+        match validate_and_project(acl) {
+            Ok(projection) => {
+                if can_access(&projection, principal) {
+                    Ok(Some(doc))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    chunk_id = %doc.chunk_id,
+                    note_id = %acl.note_id,
+                    tenant_id = %acl.tenant_id,
+                    error = %e,
+                    "Rejecting malformed ACL chunk in memory vector store"
+                );
+                Ok(None)
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
-    use super::super::indexing::{AclSearchFilter, IndexedDocument, NoteAclPayload};
+    use super::super::indexing::{IndexedDocument, NoteAclPayload, RetrievalPrincipal};
     use super::*;
 
     fn make_acl(
@@ -303,14 +382,15 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("rust").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.file_id, file_id);
     }
@@ -339,14 +419,15 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: stranger_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: stranger_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("secret").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert!(results.is_empty());
     }
 
@@ -381,16 +462,17 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: Uuid::new_v4(),
-            caller_group_ids: vec![group_id],
+            workspace_id: None,
+            user_id: Uuid::new_v4(),
+            group_ids: vec![group_id],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new()
             .generate("engineering")
             .await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -426,14 +508,15 @@ mod tests {
         let mut min_acl_versions = HashMap::new();
         min_acl_versions.insert(file_id, 2);
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions,
         };
         let query = SimpleEmbeddingGenerator::new().generate("shared").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert!(results.is_empty());
     }
 
@@ -462,14 +545,15 @@ mod tests {
             .unwrap();
         assert_eq!(updated, 1);
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: Uuid::new_v4(),
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: Uuid::new_v4(),
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let query = SimpleEmbeddingGenerator::new().generate("content").await;
-        let results = store.search_with_acl(&filter, &query, 10).await.unwrap();
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -521,5 +605,207 @@ mod tests {
         store.clear_tenant(tenant_a).await.unwrap();
         assert_eq!(store.document_count(tenant_a).await.unwrap(), 0);
         assert_eq!(store.document_count(tenant_b).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn in_memory_search_with_acl_rejects_missing_acl() {
+        let store = InMemoryVectorStore::new();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let doc = make_doc(
+            file_id,
+            tenant_id,
+            owner_id,
+            "legacy content without acl",
+            None,
+        )
+        .await;
+
+        // Upsert still stores the document so that re-indexing can add an ACL later.
+        store
+            .upsert_chunk(
+                tenant_id,
+                file_id,
+                &doc,
+                &make_acl(
+                    tenant_id, file_id, file_id, owner_id, "private", "allowed", 1,
+                ),
+            )
+            .await
+            .unwrap();
+
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let query = SimpleEmbeddingGenerator::new()
+            .generate("legacy content")
+            .await;
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
+        assert!(results.is_empty());
+
+        // get_chunk must also fail closed.
+        let chunk = store.get_chunk(&principal, file_id).await.unwrap();
+        assert!(chunk.is_none());
+    }
+
+    #[tokio::test]
+    async fn in_memory_search_with_acl_rejects_malformed_acl() {
+        let store = InMemoryVectorStore::new();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let mut acl = make_acl(
+            tenant_id, file_id, file_id, owner_id, "private", "allowed", 1,
+        );
+        // Invalid visibility makes validate_and_project fail.
+        acl.visibility = "not-a-visibility".to_string();
+        let doc = make_doc(
+            file_id,
+            tenant_id,
+            owner_id,
+            "malformed acl content",
+            Some(acl.clone()),
+        )
+        .await;
+
+        store
+            .upsert_chunk(tenant_id, file_id, &doc, &acl)
+            .await
+            .unwrap();
+
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let query = SimpleEmbeddingGenerator::new().generate("malformed").await;
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
+        assert!(results.is_empty());
+
+        let chunk = store.get_chunk(&principal, file_id).await.unwrap();
+        assert!(chunk.is_none());
+    }
+
+    #[tokio::test]
+    async fn in_memory_search_with_acl_accepts_workspace_member() {
+        let store = InMemoryVectorStore::new();
+        let tenant_id = Uuid::new_v4();
+        let workspace_id = tenant_id;
+        let owner_id = Uuid::new_v4();
+        let member_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let acl = make_acl(
+            tenant_id,
+            file_id,
+            file_id,
+            owner_id,
+            "workspace",
+            "allowed",
+            1,
+        );
+        let doc = make_doc(
+            file_id,
+            tenant_id,
+            owner_id,
+            "workspace visible content",
+            Some(acl.clone()),
+        )
+        .await;
+
+        store
+            .upsert_chunk(tenant_id, file_id, &doc, &acl)
+            .await
+            .unwrap();
+
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(workspace_id),
+            user_id: member_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let query = SimpleEmbeddingGenerator::new()
+            .generate("workspace visible")
+            .await;
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.file_id, file_id);
+
+        let chunk = store.get_chunk(&principal, file_id).await.unwrap();
+        assert!(chunk.is_some());
+        assert_eq!(chunk.unwrap().file_id, file_id);
+    }
+
+    #[tokio::test]
+    async fn in_memory_search_with_acl_excludes_other_tenant() {
+        let store = InMemoryVectorStore::new();
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_a = Uuid::new_v4();
+        let file_b = Uuid::new_v4();
+
+        let acl_a = make_acl(tenant_a, file_a, file_a, owner_id, "private", "allowed", 1);
+        let doc_a = make_doc(
+            file_a,
+            tenant_a,
+            owner_id,
+            "tenant a content",
+            Some(acl_a.clone()),
+        )
+        .await;
+        store
+            .upsert_chunk(tenant_a, file_a, &doc_a, &acl_a)
+            .await
+            .unwrap();
+
+        let acl_b = make_acl(tenant_b, file_b, file_b, owner_id, "private", "allowed", 1);
+        let doc_b = make_doc(
+            file_b,
+            tenant_b,
+            owner_id,
+            "tenant b content",
+            Some(acl_b.clone()),
+        )
+        .await;
+        store
+            .upsert_chunk(tenant_b, file_b, &doc_b, &acl_b)
+            .await
+            .unwrap();
+
+        // Query tenant_a using the owner identity; only the tenant_a chunk should be returned.
+        let principal = RetrievalPrincipal {
+            tenant_id: tenant_a,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let query = SimpleEmbeddingGenerator::new().generate("content").await;
+        let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.file_id, file_a);
+
+        // Querying as the same user but under tenant_b should return the tenant_b chunk.
+        let principal_b = RetrievalPrincipal {
+            tenant_id: tenant_b,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let results_b = store
+            .search_with_acl(&principal_b, &query, 10)
+            .await
+            .unwrap();
+        assert_eq!(results_b.len(), 1);
+        assert_eq!(results_b[0].0.file_id, file_b);
     }
 }

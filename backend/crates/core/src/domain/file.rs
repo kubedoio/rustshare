@@ -64,6 +64,17 @@ impl File {
     pub fn storage_key(&self) -> String {
         format!("blobs/{}", self.content_hash)
     }
+
+    /// Returns the workspace ID this file belongs to.
+    ///
+    /// In the current domain a tenant maps to exactly one workspace, so the
+    /// workspace identity is the tenant identity. This is the guaranteed
+    /// identity called out by the permission-aware indexing spec; when a
+    /// separate workspace scope is introduced this should return that value
+    /// instead of `tenant_id`.
+    pub fn workspace_id(&self) -> Uuid {
+        self.tenant_id
+    }
 }
 
 #[cfg(test)]

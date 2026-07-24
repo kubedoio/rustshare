@@ -14,13 +14,16 @@
 //! - A-06: Content boundaries respected
 //! - A-07: Tenant isolation maintained
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
-use super::ai::indexing::{ContentIndexer, IndexedDocument};
+use super::ai::indexing::{
+    ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
+};
 use super::ai::EmbeddingGenerator;
 
 /// Errors that can occur during AI operations.
@@ -174,8 +177,41 @@ where
             ));
         }
 
+        // Resolve the caller's group IDs for ACL pre-filtering.
+        let group_ids = match self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        // Build a retrieval principal for permission-aware search.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
         // Perform semantic search
-        let raw_results = self.indexer.search(tenant_id, query, limit * 3).await;
+        let raw_results = self
+            .indexer
+            .search_with_acl(&principal, query, limit * 3)
+            .await;
 
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
@@ -276,10 +312,35 @@ where
             return Err(AiError::PermissionDenied { user_id });
         }
 
+        // Build a retrieval principal for ACL-enforced lookup.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
+        let group_ids = self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            });
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
         // Get the indexed document
         let document = self
             .indexer
-            .get_document(file_id, tenant_id)
+            .get_document(file_id, &principal)
             .await
             .ok_or(AiError::FileNotFound(file_id))?;
 
@@ -390,7 +451,7 @@ where
         })
     }
 
-    /// Index a file for AI search.
+    /// Index a file for AI search with an ACL projection.
     ///
     /// # Arguments
     /// * `file_id` - The file ID
@@ -398,12 +459,10 @@ where
     /// * `file_path` - The full file path
     /// * `content` - The extracted text content
     /// * `mime_type` - The MIME type
-    /// * `owner_id` - The file owner
-    /// * `tenant_id` - The tenant ID
+    /// * `acl` - The canonical ACL projection for the object
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
-    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: FileId,
@@ -411,13 +470,10 @@ where
         file_path: String,
         content: String,
         mime_type: String,
-        owner_id: UserId,
-        tenant_id: Uuid,
+        acl: IndexAclProjection,
     ) -> Result<(), AiError> {
         self.indexer
-            .index_file(
-                file_id, file_name, file_path, content, mime_type, owner_id, tenant_id,
-            )
+            .index_file(file_id, file_name, file_path, content, mime_type, acl)
             .await
             .map_err(|e| AiError::Internal(e.to_string()))
     }
@@ -427,8 +483,23 @@ where
     /// # Arguments
     /// * `file_id` - The file ID
     /// * `tenant_id` - The tenant ID
-    pub async fn remove_file_from_index(&self, file_id: FileId, tenant_id: Uuid) {
-        self.indexer.remove_file(file_id, tenant_id).await;
+    pub async fn remove_file(&self, file_id: FileId, tenant_id: Uuid) -> anyhow::Result<()> {
+        self.indexer.remove_file(file_id, tenant_id).await
+    }
+
+    /// Remove every indexed chunk belonging to a note/file.
+    ///
+    /// # Arguments
+    /// * `tenant_id` - The tenant ID
+    /// * `note_id` - The note_id value stored in note_index_chunks.note_id
+    ///
+    /// Returns the number of chunks that were removed.
+    pub async fn remove_note_chunks(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.indexer.remove_note_chunks(tenant_id, note_id).await
     }
 }
 
@@ -562,7 +633,25 @@ fn generate_rag_answer(query: &str, results: &[SemanticSearchResult]) -> String 
 mod tests {
     use super::*;
     use crate::services::ai::embedding::SimpleEmbeddingGenerator;
+    use crate::services::ai::indexing::{
+        EmbeddingPolicy, IndexAclProjection, IndexPrincipal, IndexVisibility,
+    };
     use crate::services::{ContentIndexer, InMemoryVectorStore};
+
+    fn make_file_acl(tenant_id: Uuid, file_id: Uuid, owner_id: Uuid) -> IndexAclProjection {
+        IndexAclProjection {
+            tenant_id,
+            workspace_id: tenant_id,
+            object_id: file_id,
+            source_folder_id: None,
+            owner_id,
+            read_principals: vec![IndexPrincipal::Owner(owner_id)],
+            visibility: IndexVisibility::Private,
+            acl_hash: "hash-1".to_string(),
+            acl_version: 1,
+            embedding_policy: EmbeddingPolicy::Allowed,
+        }
+    }
 
     fn test_indexer() -> Arc<ContentIndexer<SimpleEmbeddingGenerator>> {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
@@ -714,17 +803,17 @@ mod tests {
         let service = create_test_service();
         let user_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
 
         // Index a document first
         service
             .index_file(
-                Uuid::new_v4(),
+                file_id,
                 "test.txt".to_string(),
                 "/test.txt".to_string(),
                 "Rust is a programming language with memory safety guarantees".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();
@@ -1009,8 +1098,7 @@ mod tests {
                 "/deleted.txt".to_string(),
                 "sensitive content".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();
@@ -1053,8 +1141,7 @@ mod tests {
                 "/revoked.txt".to_string(),
                 "revoked content".to_string(),
                 "text/plain".to_string(),
-                owner_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, owner_id),
             )
             .await
             .unwrap();
@@ -1099,8 +1186,7 @@ mod tests {
                 "/expired.txt".to_string(),
                 "expired content".to_string(),
                 "text/plain".to_string(),
-                owner_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, owner_id),
             )
             .await
             .unwrap();
@@ -1135,21 +1221,36 @@ mod tests {
             None,
         ));
 
-        let permission_resolver = Arc::new(PermissionResolver::new(ops));
-        let service = AiService::new(indexer, permission_resolver);
-
-        service
-            .index_file(
+        // Index with an ACL that grants the recipient direct read access.
+        indexer
+            .index_note(
                 file_id,
                 "shared.txt".to_string(),
                 "/shared.txt".to_string(),
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/plain".to_string(),
                 owner_id,
-                tenant_id,
+                IndexAclProjection {
+                    tenant_id,
+                    workspace_id: tenant_id,
+                    object_id: file_id,
+                    source_folder_id: None,
+                    owner_id,
+                    read_principals: vec![
+                        IndexPrincipal::Owner(owner_id),
+                        IndexPrincipal::User(recipient_id),
+                    ],
+                    visibility: IndexVisibility::Private,
+                    acl_hash: "hash-1".to_string(),
+                    acl_version: 1,
+                    embedding_policy: EmbeddingPolicy::Allowed,
+                },
             )
             .await
             .unwrap();
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
 
         let results = service
             .semantic_search("programming language", recipient_id, tenant_id, 10)
@@ -1204,8 +1305,7 @@ mod tests {
                 "/ghost.txt".to_string(),
                 "ghost content".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();

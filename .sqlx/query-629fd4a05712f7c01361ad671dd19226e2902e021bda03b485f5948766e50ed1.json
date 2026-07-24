@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH RECURSIVE trashed_folders AS (\n                SELECT id FROM folders\n                WHERE owner_id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3\n                UNION ALL\n                SELECT f.id FROM folders f\n                INNER JOIN trashed_folders tf ON f.parent_folder_id = tf.id\n                WHERE f.tenant_id = $2 AND f.owner_id = $1\n            )\n            SELECT files.id FROM files\n            INNER JOIN trashed_folders tf ON files.parent_folder_id = tf.id\n            WHERE files.tenant_id = $2 AND files.owner_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "629fd4a05712f7c01361ad671dd19226e2902e021bda03b485f5948766e50ed1"
+}

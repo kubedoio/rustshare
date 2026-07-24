@@ -1,4 +1,4 @@
-mod ai;
+pub mod ai;
 mod ai_service;
 mod chat_integration;
 mod email_service;
@@ -24,8 +24,9 @@ mod vault_service;
 mod vault_sync_service;
 
 pub use ai::{
-    can_access, AclSearchFilter, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore,
-    IndexedDocument, NoteAclPayload, SimpleEmbeddingGenerator, VectorStore,
+    can_access, validate_and_project, ContentIndexer, EmbeddingGenerator, EmbeddingPolicy,
+    InMemoryVectorStore, IndexAclProjection, IndexVisibility, IndexedDocument, NoteAclPayload,
+    RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
 };
 pub use ai_service::{
     AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,

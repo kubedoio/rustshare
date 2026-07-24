@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use rustshare_core::domain::SharePermissions;
+use rustshare_core::services::Resource;
+
+use std::sync::Arc;
 
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
@@ -88,6 +91,16 @@ pub async fn create_public_file_share(
         AppError::internal("File ID is missing after create_share")
     })?;
 
+    // Best-effort ACL refresh so the shared file becomes searchable by the grantee.
+    let note_service = Arc::clone(&state.note_service);
+    let tenant_id = auth.tenant_id;
+    let user_id = auth.user_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::File(file_id), user_id, tenant_id)
+            .await;
+    });
+
     Ok((
         StatusCode::CREATED,
         Json(ShareResponse {
@@ -151,6 +164,17 @@ pub async fn create_public_folder_share(
         );
         AppError::internal("Folder ID is missing after create_folder_share")
     })?;
+
+    // Best-effort ACL refresh so notes inside the shared folder become searchable
+    // by the grantee.
+    let note_service = Arc::clone(&state.note_service);
+    let tenant_id = auth.tenant_id;
+    let user_id = auth.user_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::Folder(folder_id), user_id, tenant_id)
+            .await;
+    });
 
     Ok((
         StatusCode::CREATED,
@@ -357,9 +381,26 @@ pub async fn list_user_shares(
 pub async fn revoke_share(
     State(state): State<AppState>,
     Path(share_id): Path<uuid::Uuid>,
-    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    AuthenticatedUser {
+        user_id, tenant_id, ..
+    }: AuthenticatedUser,
 ) -> Result<StatusCode, AppError> {
-    state.share_service.revoke_share(share_id, user_id).await?;
+    let share = state.share_service.revoke_share(share_id, user_id).await?;
+
+    // Best-effort ACL refresh so the revoked share stops being retrievable.
+    if let Some(resource_id) = share.resource_id() {
+        let resource = if share.file_id.is_some() {
+            Resource::File(resource_id)
+        } else {
+            Resource::Folder(resource_id)
+        };
+        let note_service = Arc::clone(&state.note_service);
+        tokio::spawn(async move {
+            note_service
+                .refresh_index_acl_for_resource(resource, user_id, tenant_id)
+                .await;
+        });
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

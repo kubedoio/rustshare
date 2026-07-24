@@ -11,6 +11,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use rustshare_core::services::Resource;
+use std::sync::Arc;
+
 use crate::{
     handlers::{AppError, AuthenticatedUser},
     AppState,
@@ -319,6 +322,16 @@ pub async fn create_file_group_share(
         .await
         .unwrap_or_else(|_| "Unknown".to_string());
 
+    // Best-effort ACL refresh so the shared file becomes searchable by group members.
+    let note_service = Arc::clone(&state.note_service);
+    let user_id = auth.user_id;
+    let tenant_id = auth.tenant_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::File(file_id), user_id, tenant_id)
+            .await;
+    });
+
     let response = GroupShareResponse {
         share_id: share.id.to_string(),
         resource_id: file_id.to_string(),
@@ -419,6 +432,17 @@ pub async fn create_folder_group_share(
         .await
         .unwrap_or_else(|_| "Unknown".to_string());
 
+    // Best-effort ACL refresh so notes inside the shared folder become searchable
+    // by group members.
+    let note_service = Arc::clone(&state.note_service);
+    let user_id = auth.user_id;
+    let tenant_id = auth.tenant_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::Folder(folder_id), user_id, tenant_id)
+            .await;
+    });
+
     let response = GroupShareResponse {
         share_id: share.id.to_string(),
         resource_id: folder_id.to_string(),
@@ -451,24 +475,39 @@ pub async fn revoke_group_share(
     auth: AuthenticatedUser,
     Path(share_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let result = state
+    let share = state
         .share_service
         .revoke_group_share(share_id, auth.user_id)
-        .await;
+        .await
+        .map_err(|e| match e {
+            rustshare_core::services::ShareError::ShareNotFound(_) => {
+                AppError::not_found("Share not found")
+            }
+            rustshare_core::services::ShareError::PermissionDenied { .. } => {
+                AppError::forbidden("Permission denied")
+            }
+            e => {
+                tracing::error!("Failed to revoke group share: {}", e);
+                AppError::internal("Failed to process share operation")
+            }
+        })?;
 
-    match result {
-        Ok(_) => (),
-        Err(rustshare_core::services::ShareError::ShareNotFound(_)) => {
-            return Err(AppError::not_found("Share not found"));
-        }
-        Err(rustshare_core::services::ShareError::PermissionDenied { .. }) => {
-            return Err(AppError::forbidden("Permission denied"));
-        }
-        Err(e) => {
-            tracing::error!("Failed to revoke group share: {}", e);
-            return Err(AppError::internal("Failed to process share operation"));
-        }
-    };
+    // Best-effort ACL refresh so the revoked share stops being retrievable.
+    if let Some(resource_id) = share.resource_id() {
+        let resource = if share.file_id.is_some() {
+            Resource::File(resource_id)
+        } else {
+            Resource::Folder(resource_id)
+        };
+        let note_service = Arc::clone(&state.note_service);
+        let user_id = auth.user_id;
+        let tenant_id = auth.tenant_id;
+        tokio::spawn(async move {
+            note_service
+                .refresh_index_acl_for_resource(resource, user_id, tenant_id)
+                .await;
+        });
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -541,6 +580,25 @@ pub async fn update_group_share_permission(
     } else {
         "folder"
     };
+
+    // Best-effort ACL refresh so the permission change is reflected in search.
+    let resource = if share.file_id.is_some() {
+        Some(Resource::File(resource_id))
+    } else if share.folder_id.is_some() {
+        Some(Resource::Folder(resource_id))
+    } else {
+        None
+    };
+    if let Some(resource) = resource {
+        let note_service = Arc::clone(&state.note_service);
+        let user_id = auth.user_id;
+        let tenant_id = auth.tenant_id;
+        tokio::spawn(async move {
+            note_service
+                .refresh_index_acl_for_resource(resource, user_id, tenant_id)
+                .await;
+        });
+    }
 
     let response = GroupShareResponse {
         share_id: share.id.to_string(),

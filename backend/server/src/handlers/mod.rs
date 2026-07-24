@@ -505,7 +505,7 @@ impl From<crate::services::note_service::NoteError> for AppError {
             NoteError::NotFound(_) => AppError::NotFound(err.to_string()),
             NoteError::PermissionDenied => AppError::Forbidden(err.to_string()),
             NoteError::InvalidName(_) => AppError::BadRequest(err.to_string()),
-            NoteError::Database(_) | NoteError::Storage(_) => {
+            NoteError::Database(_) | NoteError::Storage(_) | NoteError::InvalidAcl(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
         }

@@ -715,12 +715,15 @@ where
     /// DEPRECATED: Use ShareService::remove_recipient instead
     #[deprecated(since = "0.2.0", note = "Use ShareService::remove_recipient instead")]
     /// Remove a recipient from a share (Admin permission required).
+    ///
+    /// Returns the revoked share so callers can refresh dependent state such
+    /// as the AI index ACL projection.
     pub async fn remove_recipient(
         &self,
         share_id: ShareId,
         requesting_user: UserId,
         tenant_id: uuid::Uuid,
-    ) -> Result<(), ShareError> {
+    ) -> Result<Share, ShareError> {
         // Get the share
         let share = self
             .share_repo
@@ -830,6 +833,6 @@ where
             }
         }
 
-        Ok(())
+        Ok(share)
     }
 }

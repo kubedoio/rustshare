@@ -614,6 +614,15 @@ impl<Ops: PermissionResolverOps> PermissionResolver<Ops> {
         self.cache.write().await.clear();
     }
 
+    /// Resolve all group IDs that a user is a member of, scoped to a tenant.
+    pub async fn resolve_user_group_ids(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Uuid>> {
+        self.ops.get_user_group_ids(user_id, tenant_id).await
+    }
+
     /// Resolve the permission a user has on a resource (file or folder).
     ///
     /// Returns Some(permission) if the user has access, None otherwise.

@@ -6,6 +6,7 @@
 //! - Background indexing job support
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,8 +16,194 @@ use super::embedding::{Embedding, EmbeddingGenerator};
 use super::vector_store::VectorStore;
 use crate::okf::frontmatter::split_frontmatter;
 
+/// Visibility level for an indexed object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexVisibility {
+    Private,
+    Workspace,
+    Public,
+}
+
+impl std::fmt::Display for IndexVisibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Private => write!(f, "private"),
+            Self::Workspace => write!(f, "workspace"),
+            Self::Public => write!(f, "public"),
+        }
+    }
+}
+
+impl FromStr for IndexVisibility {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "private" => Ok(Self::Private),
+            "workspace" => Ok(Self::Workspace),
+            "public" => Ok(Self::Public),
+            _ => Err(anyhow::anyhow!("unknown visibility: {s}")),
+        }
+    }
+}
+
+/// Embedding policy for an indexed object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingPolicy {
+    #[default]
+    Allowed,
+    Denied,
+}
+
+impl std::fmt::Display for EmbeddingPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Allowed => write!(f, "allowed"),
+            Self::Denied => write!(f, "denied"),
+        }
+    }
+}
+
+impl FromStr for EmbeddingPolicy {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "allowed" => Ok(Self::Allowed),
+            "denied" => Ok(Self::Denied),
+            _ => Err(anyhow::anyhow!("unknown embedding policy: {s}")),
+        }
+    }
+}
+
+/// A typed principal that may appear in an indexed ACL.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum IndexPrincipal {
+    Owner(Uuid),
+    User(Uuid),
+    Group(Uuid),
+    Workspace(Uuid),
+    Public,
+}
+
+impl std::fmt::Display for IndexPrincipal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Owner(id) => write!(f, "owner:{id}"),
+            Self::User(id) => write!(f, "user:{id}"),
+            Self::Group(id) => write!(f, "group:{id}"),
+            Self::Workspace(id) => write!(f, "workspace:{id}"),
+            Self::Public => write!(f, "public"),
+        }
+    }
+}
+
+impl FromStr for IndexPrincipal {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "public" {
+            return Ok(Self::Public);
+        }
+        let (kind, id) = s
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("principal missing colon: {s}"))?;
+        let id =
+            Uuid::parse_str(id).map_err(|e| anyhow::anyhow!("invalid principal uuid {id}: {e}"))?;
+        match kind {
+            "owner" => Ok(Self::Owner(id)),
+            "user" => Ok(Self::User(id)),
+            "group" => Ok(Self::Group(id)),
+            "workspace" => Ok(Self::Workspace(id)),
+            _ => Err(anyhow::anyhow!("unknown principal kind: {kind}")),
+        }
+    }
+}
+
+/// Canonical ACL projection for an indexed object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexAclProjection {
+    pub tenant_id: Uuid,
+    pub workspace_id: Uuid,
+    pub object_id: Uuid,
+    pub source_folder_id: Option<Uuid>,
+    pub owner_id: Uuid,
+    pub read_principals: Vec<IndexPrincipal>,
+    pub visibility: IndexVisibility,
+    pub acl_hash: String,
+    pub acl_version: i64,
+    pub embedding_policy: EmbeddingPolicy,
+}
+
+/// Principal used at retrieval time.
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalPrincipal {
+    pub tenant_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub user_id: Uuid,
+    pub group_ids: Vec<Uuid>,
+    /// object_id -> minimum accepted acl_version.
+    pub min_acl_versions: HashMap<Uuid, i64>,
+}
+
+impl RetrievalPrincipal {
+    /// Return the principal strings to match against the stored ACL.
+    pub fn to_index_principals(&self) -> Vec<String> {
+        let mut out = vec![
+            format!("owner:{}", self.user_id),
+            format!("user:{}", self.user_id),
+        ];
+        for gid in &self.group_ids {
+            out.push(format!("group:{gid}"));
+        }
+        if let Some(wid) = self.workspace_id {
+            out.push(format!("workspace:{wid}"));
+        }
+        out
+    }
+}
+
+/// Validate a `NoteAclPayload` and project it into the typed `IndexAclProjection`.
+///
+/// Returns an error if any field is malformed or if the embedding policy is not
+/// `"allowed"`. This is the fail-closed validation used at retrieval time.
+pub fn validate_and_project(acl: &NoteAclPayload) -> anyhow::Result<IndexAclProjection> {
+    let visibility = IndexVisibility::from_str(&acl.visibility)?;
+    let embedding_policy = EmbeddingPolicy::from_str(&acl.embedding_policy)?;
+    if embedding_policy != EmbeddingPolicy::Allowed {
+        return Err(anyhow::anyhow!(
+            "embedding policy is not allowed for note_id={}",
+            acl.note_id
+        ));
+    }
+    let read_principals = acl
+        .read_acl
+        .iter()
+        .map(|s| IndexPrincipal::from_str(s))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    Ok(IndexAclProjection {
+        tenant_id: acl.tenant_id,
+        workspace_id: acl.workspace_id,
+        object_id: acl.note_id,
+        source_folder_id: acl.source_folder_id,
+        owner_id: acl.owner_id,
+        read_principals,
+        visibility,
+        acl_hash: acl.acl_hash.clone(),
+        acl_version: acl.acl_version,
+        embedding_policy,
+    })
+}
+
 /// Maximum content length to index per document (to prevent memory issues).
 const MAX_CONTENT_LENGTH: usize = 100_000;
+
+/// Truncate text to a maximum number of Unicode characters without splitting
+/// multi-byte code points.
+fn truncate_to_length(text: &str, max_len: usize) -> String {
+    text.chars().take(max_len).collect()
+}
 
 /// ACL payload stored on indexed note chunks.
 ///
@@ -35,10 +222,10 @@ pub struct NoteAclPayload {
     pub source_folder_id: Option<Uuid>,
     /// Owner of the note (the `note.md` file owner).
     pub owner_id: Uuid,
-    /// Resolved read principals, e.g. `["owner:<uuid>", "group_engineering"]`.
+    /// Resolved read principals, e.g. `["owner:<uuid>", "group:<uuid>"]`.
     ///
-    /// TODO(#118): wire in the real permission resolver instead of the
-    /// placeholder owner principal.
+    /// These principals are produced by the authoritative permission resolver
+    /// and must never be synthesized by indexing code.
     pub read_acl: Vec<String>,
     /// Visibility level: `"private"`, `"workspace"`, or `"public"`.
     pub visibility: String,
@@ -48,16 +235,6 @@ pub struct NoteAclPayload {
     pub acl_version: i64,
     /// Embedding policy: `"allowed"` or `"denied"`.
     pub embedding_policy: String,
-}
-
-/// Filter supplied by the caller during permission-aware search.
-#[derive(Debug, Clone, Default)]
-pub struct AclSearchFilter {
-    pub tenant_id: Uuid,
-    pub caller_user_id: Uuid,
-    pub caller_group_ids: Vec<Uuid>,
-    /// note_id -> minimum accepted acl_version.
-    pub min_acl_versions: HashMap<Uuid, i64>,
 }
 
 /// An indexed document with its embedding and metadata.
@@ -109,7 +286,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         }
     }
 
-    /// Index a file's content.
+    /// Index a file's content with an ACL projection.
     ///
     /// # Arguments
     /// * `file_id` - The file ID
@@ -117,12 +294,10 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// * `file_path` - The full file path
     /// * `content` - The extracted text content
     /// * `mime_type` - The MIME type
-    /// * `owner_id` - The file owner
-    /// * `tenant_id` - The tenant ID
+    /// * `acl` - The canonical ACL projection for the object
     ///
     /// # Returns
     /// Ok(()) if successfully indexed
-    #[allow(clippy::too_many_arguments)]
     pub async fn index_file(
         &self,
         file_id: Uuid,
@@ -130,17 +305,21 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         file_path: String,
         content: String,
         mime_type: String,
-        owner_id: Uuid,
-        tenant_id: Uuid,
+        acl: IndexAclProjection,
     ) -> anyhow::Result<()> {
-        let content = if content.len() > MAX_CONTENT_LENGTH {
-            content[..MAX_CONTENT_LENGTH].to_string()
-        } else {
-            content
-        };
+        if acl.embedding_policy == EmbeddingPolicy::Denied {
+            self.store
+                .remove_note_chunks(acl.tenant_id, acl.object_id)
+                .await?;
+            return Ok(());
+        }
+
+        let content = truncate_to_length(&content, MAX_CONTENT_LENGTH);
 
         let combined_text = format!("{} {} {}", file_name, file_path, content);
         let embedding = self.embedding_generator.generate(&combined_text).await;
+
+        let acl_payload = note_acl_payload_from_projection(file_id, &acl);
 
         let document = IndexedDocument {
             file_id,
@@ -149,40 +328,24 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             content,
             embedding,
             mime_type,
-            owner_id,
-            tenant_id,
+            owner_id: acl.owner_id,
+            tenant_id: acl.tenant_id,
             indexed_at: chrono::Utc::now(),
-            acl: None,
+            acl: Some(acl_payload.clone()),
             chunk_id: file_id,
         };
 
         self.store
-            .upsert_chunk(
-                tenant_id,
-                file_id,
-                &document,
-                &NoteAclPayload {
-                    tenant_id,
-                    workspace_id: tenant_id,
-                    note_id: file_id,
-                    source_file_id: file_id,
-                    source_folder_id: None,
-                    owner_id,
-                    read_acl: vec![format!("owner:{owner_id}")],
-                    visibility: "private".to_string(),
-                    acl_hash: String::new(),
-                    acl_version: 1,
-                    embedding_policy: "allowed".to_string(),
-                },
-            )
+            .upsert_chunk(acl.tenant_id, file_id, &document, &acl_payload)
             .await
     }
 
-    /// Index a note's content with an ACL payload.
+    /// Index a note's content with an ACL projection.
     ///
     /// Frontmatter is stripped before embedding generation so that YAML metadata
     /// does not dominate the semantic vector. If `acl.embedding_policy` is
-    /// `"denied"`, the note is removed from the index instead of inserted.
+    /// [`EmbeddingPolicy::Denied`], the note is removed from the index instead
+    /// of inserted.
     #[allow(clippy::too_many_arguments)]
     pub async fn index_note(
         &self,
@@ -192,21 +355,19 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         content: String,
         mime_type: String,
         owner_id: Uuid,
-        acl: NoteAclPayload,
+        acl: IndexAclProjection,
     ) -> anyhow::Result<()> {
-        if acl.embedding_policy == "denied" {
+        if acl.embedding_policy == EmbeddingPolicy::Denied {
             self.store
-                .remove_note_chunks(acl.tenant_id, acl.note_id)
+                .remove_note_chunks(acl.tenant_id, acl.object_id)
                 .await?;
             return Ok(());
         }
 
+        let payload = note_acl_payload_from_projection(file_id, &acl);
+
         let body = strip_frontmatter(&content);
-        let body = if body.len() > MAX_CONTENT_LENGTH {
-            body[..MAX_CONTENT_LENGTH].to_string()
-        } else {
-            body
-        };
+        let body = truncate_to_length(&body, MAX_CONTENT_LENGTH);
 
         let combined_text = format!("{} {} {}", file_name, file_path, body);
         let embedding = self.embedding_generator.generate(&combined_text).await;
@@ -221,30 +382,41 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
             owner_id,
             tenant_id: acl.tenant_id,
             indexed_at: chrono::Utc::now(),
-            acl: Some(acl.clone()),
+            acl: Some(payload.clone()),
             chunk_id: file_id,
         };
 
         self.store
-            .upsert_chunk(acl.tenant_id, file_id, &document, &acl)
+            .upsert_chunk(acl.tenant_id, file_id, &document, &payload)
             .await
     }
 
     /// Search for documents similar to the query, pre-filtered by ACL.
     ///
-    /// Documents without an ACL payload retain the legacy tenant-only behavior
-    /// for backward compatibility.
+    /// Documents without a valid, allowed ACL payload are rejected; retrieval
+    /// fails closed.
     pub async fn search_with_acl(
         &self,
-        filter: &AclSearchFilter,
+        principal: &RetrievalPrincipal,
         query: &str,
         limit: usize,
     ) -> Vec<(IndexedDocument, f32)> {
         let query_embedding = self.embedding_generator.generate(query).await;
-        self.store
-            .search_with_acl(filter, query_embedding.as_slice(), limit)
+        match self
+            .store
+            .search_with_acl(principal, query_embedding.as_slice(), limit)
             .await
-            .unwrap_or_default()
+        {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    error = %e,
+                    "AI index search failed; returning empty results"
+                );
+                Vec::new()
+            }
+        }
     }
 
     /// Update the ACL projection for every indexed chunk of a note.
@@ -256,20 +428,33 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         note_id: Uuid,
         new_acl: NoteAclPayload,
     ) -> usize {
-        self.store
+        match self
+            .store
             .update_note_acl(tenant_id, note_id, &new_acl)
             .await
-            .unwrap_or(0)
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    note_id = %note_id,
+                    error = %e,
+                    "Failed to update note ACL in index"
+                );
+                0
+            }
+        }
     }
 
     /// Remove every indexed chunk belonging to a note.
     ///
     /// Returns the number of chunks that were removed.
-    pub async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> usize {
-        self.store
-            .remove_note_chunks(tenant_id, note_id)
-            .await
-            .unwrap_or(0)
+    pub async fn remove_note_chunks(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.store.remove_note_chunks(tenant_id, note_id).await
     }
 
     /// Remove a file from the index.
@@ -277,45 +462,44 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Arguments
     /// * `file_id` - The file ID to remove
     /// * `tenant_id` - The tenant ID
-    pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) {
-        let _ = self.store.remove_chunk(tenant_id, file_id).await;
+    pub async fn remove_file(&self, file_id: Uuid, tenant_id: Uuid) -> anyhow::Result<()> {
+        self.store.remove_chunk(tenant_id, file_id).await
     }
 
-    /// Search for documents similar to the query.
-    ///
-    /// # Arguments
-    /// * `tenant_id` - The tenant ID to search within
-    /// * `query` - The search query
-    /// * `limit` - Maximum number of results
-    ///
-    /// # Returns
-    /// List of (document, similarity_score) sorted by relevance
-    pub async fn search(
-        &self,
-        tenant_id: Uuid,
-        query: &str,
-        limit: usize,
-    ) -> Vec<(IndexedDocument, f32)> {
-        let query_embedding = self.embedding_generator.generate(query).await;
-        self.store
-            .search(tenant_id, query_embedding.as_slice(), limit)
-            .await
-            .unwrap_or_default()
-    }
-
-    /// Get a document by file ID.
+    /// Get a document by file ID, enforcing the caller's ACL.
     ///
     /// # Arguments
     /// * `file_id` - The file ID
-    /// * `tenant_id` - The tenant ID
+    /// * `principal` - The authenticated retrieval principal
     ///
     /// # Returns
-    /// The indexed document if found
-    pub async fn get_document(&self, file_id: Uuid, tenant_id: Uuid) -> Option<IndexedDocument> {
-        self.store
-            .get_chunk(tenant_id, file_id)
-            .await
-            .unwrap_or(None)
+    /// The indexed document if found and the caller is authorized
+    pub async fn get_document(
+        &self,
+        file_id: Uuid,
+        principal: &RetrievalPrincipal,
+    ) -> Option<IndexedDocument> {
+        self.get_chunk(principal, file_id).await
+    }
+
+    /// Look up a single chunk by id, enforcing the caller's ACL.
+    async fn get_chunk(
+        &self,
+        principal: &RetrievalPrincipal,
+        chunk_id: Uuid,
+    ) -> Option<IndexedDocument> {
+        match self.store.get_chunk(principal, chunk_id).await {
+            Ok(doc) => doc,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    chunk_id = %chunk_id,
+                    error = %e,
+                    "Failed to get chunk from index"
+                );
+                None
+            }
+        }
     }
 
     /// Get all documents for a tenant.
@@ -334,7 +518,13 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Arguments
     /// * `tenant_id` - The tenant ID
     pub async fn clear_tenant(&self, tenant_id: Uuid) {
-        let _ = self.store.clear_tenant(tenant_id).await;
+        if let Err(e) = self.store.clear_tenant(tenant_id).await {
+            tracing::error!(
+                tenant_id = %tenant_id,
+                error = %e,
+                "Failed to clear tenant index"
+            );
+        }
     }
 
     /// Get the document count for a tenant.
@@ -345,7 +535,17 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     /// # Returns
     /// Number of indexed documents
     pub async fn document_count(&self, tenant_id: Uuid) -> usize {
-        self.store.document_count(tenant_id).await.unwrap_or(0)
+        match self.store.document_count(tenant_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    error = %e,
+                    "Failed to get document count from index"
+                );
+                0
+            }
+        }
     }
 
     /// Extract text content from a file based on its MIME type.
@@ -388,64 +588,26 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     }
 }
 
-/// Check whether a caller can access a note chunk according to its ACL.
+/// Convert a typed [`IndexAclProjection`] into the storage-level
+/// [`NoteAclPayload`].
 ///
-/// Access is granted when any of the following holds:
-/// - the caller is the document owner;
-/// - the note visibility is `"public"`;
-/// - the caller belongs to a group listed in `read_acl`;
-/// - `read_acl` contains an explicit `owner:<caller_user_id>` principal;
-/// - `read_acl` contains an explicit `user:<caller_user_id>` principal (direct
-///   user share).
-///
-/// Chunks with `embedding_policy != "allowed"` or a stale `acl_version` are
-/// rejected by the caller before this helper is invoked.
-pub fn can_access(acl: &NoteAclPayload, filter: &AclSearchFilter) -> bool {
-    if acl.embedding_policy != "allowed" {
-        return false;
+/// The storage payload keeps the stringified forms of enums and principals so
+/// existing vector-store implementations and database columns continue to work
+/// without migration.
+fn note_acl_payload_from_projection(file_id: Uuid, acl: &IndexAclProjection) -> NoteAclPayload {
+    NoteAclPayload {
+        tenant_id: acl.tenant_id,
+        workspace_id: acl.workspace_id,
+        note_id: acl.object_id,
+        source_file_id: file_id,
+        source_folder_id: acl.source_folder_id,
+        owner_id: acl.owner_id,
+        read_acl: acl.read_principals.iter().map(|p| p.to_string()).collect(),
+        visibility: acl.visibility.to_string(),
+        acl_hash: acl.acl_hash.clone(),
+        acl_version: acl.acl_version,
+        embedding_policy: acl.embedding_policy.to_string(),
     }
-
-    if let Some(min_version) = filter.min_acl_versions.get(&acl.note_id) {
-        if acl.acl_version < *min_version {
-            return false;
-        }
-    }
-
-    // Owner match.
-    if filter.caller_user_id == acl.owner_id {
-        return true;
-    }
-
-    // Explicit owner principal in the ACL list.
-    let owner_principal = format!("owner:{}", filter.caller_user_id);
-    if acl.read_acl.contains(&owner_principal) {
-        return true;
-    }
-
-    // Explicit direct-user principal in the ACL list.
-    let user_principal = format!("user:{}", filter.caller_user_id);
-    if acl.read_acl.contains(&user_principal) {
-        return true;
-    }
-
-    // Group membership match.
-    if !filter.caller_group_ids.is_empty() {
-        let group_principals: Vec<String> = filter
-            .caller_group_ids
-            .iter()
-            .map(|id| format!("group:{id}"))
-            .collect();
-        if acl.read_acl.iter().any(|p| group_principals.contains(p)) {
-            return true;
-        }
-    }
-
-    // Public visibility match.
-    if acl.visibility == "public" {
-        return true;
-    }
-
-    false
 }
 
 /// Strip YAML frontmatter from a Markdown document, returning the body.
@@ -511,37 +673,45 @@ mod tests {
         let indexer = ContentIndexer::new(generator, store);
 
         let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
 
         // Index some documents
+        let file_a = Uuid::new_v4();
         indexer
             .index_file(
-                Uuid::new_v4(),
+                file_a,
                 "rust_guide.md".to_string(),
                 "/docs/rust_guide.md".to_string(),
                 "Rust is a systems programming language with memory safety".to_string(),
                 "text/markdown".to_string(),
-                Uuid::new_v4(),
-                tenant_id,
+                make_acl_payload(tenant_id, file_a, file_a, owner_id, "private", "allowed", 1),
             )
             .await
             .unwrap();
 
+        let file_b = Uuid::new_v4();
         indexer
             .index_file(
-                Uuid::new_v4(),
+                file_b,
                 "python_guide.md".to_string(),
                 "/docs/python_guide.md".to_string(),
                 "Python is a high-level programming language".to_string(),
                 "text/markdown".to_string(),
-                Uuid::new_v4(),
-                tenant_id,
+                make_acl_payload(tenant_id, file_b, file_b, owner_id, "private", "allowed", 1),
             )
             .await
             .unwrap();
 
-        // Search for Rust-related content
+        // Search for Rust-related content as the owner
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
         let results = indexer
-            .search(tenant_id, "memory safety programming", 10)
+            .search_with_acl(&principal, "memory safety programming", 10)
             .await;
 
         assert!(!results.is_empty());
@@ -565,15 +735,22 @@ mod tests {
                 "/test.txt".to_string(),
                 "test content".to_string(),
                 "text/plain".to_string(),
-                Uuid::new_v4(),
-                tenant_id,
+                make_acl_payload(
+                    tenant_id,
+                    file_id,
+                    file_id,
+                    Uuid::new_v4(),
+                    "private",
+                    "allowed",
+                    1,
+                ),
             )
             .await
             .unwrap();
 
         assert_eq!(indexer.document_count(tenant_id).await, 1);
 
-        indexer.remove_file(file_id, tenant_id).await;
+        assert!(indexer.remove_file(file_id, tenant_id).await.is_ok());
 
         assert_eq!(indexer.document_count(tenant_id).await, 0);
     }
@@ -600,6 +777,7 @@ mod tests {
 
         let file_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
 
         indexer
             .index_file(
@@ -608,13 +786,21 @@ mod tests {
                 "/test.txt".to_string(),
                 "test content".to_string(),
                 "text/plain".to_string(),
-                Uuid::new_v4(),
-                tenant_id,
+                make_acl_payload(
+                    tenant_id, file_id, file_id, owner_id, "private", "allowed", 1,
+                ),
             )
             .await
             .unwrap();
 
-        let doc = indexer.get_document(file_id, tenant_id).await;
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+        };
+        let doc = indexer.get_document(file_id, &principal).await;
         assert!(doc.is_some());
         assert_eq!(doc.unwrap().file_id, file_id);
     }
@@ -622,46 +808,47 @@ mod tests {
     fn make_acl_payload(
         tenant_id: Uuid,
         note_id: Uuid,
-        source_file_id: Uuid,
+        _source_file_id: Uuid,
         owner_id: Uuid,
         visibility: &str,
         embedding_policy: &str,
         acl_version: i64,
-    ) -> NoteAclPayload {
-        NoteAclPayload {
+    ) -> IndexAclProjection {
+        IndexAclProjection {
             tenant_id,
             workspace_id: tenant_id,
-            note_id,
-            source_file_id,
+            object_id: note_id,
             source_folder_id: None,
             owner_id,
-            read_acl: vec![format!("owner:{}", owner_id)],
-            visibility: visibility.to_string(),
+            read_principals: vec![format!("owner:{}", owner_id).parse().unwrap()],
+            visibility: visibility.parse().unwrap(),
             acl_hash: format!("hash-{}", acl_version),
             acl_version,
-            embedding_policy: embedding_policy.to_string(),
+            embedding_policy: embedding_policy.parse().unwrap(),
         }
     }
 
     #[test]
     fn test_note_acl_payload_serializes() {
+        let file_id = Uuid::new_v4();
         let acl = make_acl_payload(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            Uuid::new_v4(),
+            file_id,
             Uuid::new_v4(),
             "private",
             "allowed",
             1,
         );
-        let json = serde_json::to_value(&acl).unwrap();
-        assert_eq!(json["tenant_id"], acl.tenant_id.to_string());
+        let payload = note_acl_payload_from_projection(file_id, &acl);
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["tenant_id"], payload.tenant_id.to_string());
         assert_eq!(json["visibility"], "private");
         assert_eq!(json["embedding_policy"], "allowed");
         assert_eq!(json["acl_version"], 1);
 
         let decoded: NoteAclPayload = serde_json::from_value(json).unwrap();
-        assert_eq!(acl, decoded);
+        assert_eq!(payload, decoded);
     }
 
     #[tokio::test]
@@ -692,10 +879,11 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let filter = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&filter, "confidential", 10).await;
@@ -768,13 +956,14 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id: tenant_a,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
-        let results = indexer.search_with_acl(&filter, "content", 10).await;
+        let results = indexer.search_with_acl(&principal, "content", 10).await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.acl.as_ref().unwrap().note_id, note_a);
     }
@@ -806,20 +995,22 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let filter = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: stranger_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: stranger_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&filter, "private", 10).await;
         assert!(results.is_empty());
 
         // The owner should still see it.
-        let owner_filter = AclSearchFilter {
+        let owner_filter = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&owner_filter, "private", 10).await;
@@ -841,9 +1032,9 @@ mod tests {
         let mut acl = make_acl_payload(
             tenant_id, note_id, file_id, owner_id, "private", "allowed", 1,
         );
-        acl.read_acl = vec![
-            format!("owner:{owner_id}"),
-            format!("user:{shared_user_id}"),
+        acl.read_principals = vec![
+            format!("owner:{owner_id}").parse().unwrap(),
+            format!("user:{shared_user_id}").parse().unwrap(),
         ];
 
         indexer
@@ -859,10 +1050,11 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = AclSearchFilter {
+        let filter = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: shared_user_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: shared_user_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer
@@ -907,13 +1099,14 @@ mod tests {
         min_acl_versions.insert(note_id, 2);
 
         let engineering_id = Uuid::new_v4();
-        let filter = AclSearchFilter {
+        let principal = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![engineering_id],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![engineering_id],
             min_acl_versions,
         };
-        let results = indexer.search_with_acl(&filter, "engineering", 10).await;
+        let results = indexer.search_with_acl(&principal, "engineering", 10).await;
         assert!(results.is_empty());
     }
 
@@ -947,17 +1140,22 @@ mod tests {
             tenant_id, note_id, file_id, owner_id, "public", "allowed", 2,
         );
         let engineering_id = Uuid::new_v4();
-        new_acl.read_acl = vec![format!("group:{engineering_id}")];
+        new_acl.read_principals = vec![format!("group:{engineering_id}").parse().unwrap()];
 
         let updated = indexer
-            .update_note_acl(tenant_id, note_id, new_acl.clone())
+            .update_note_acl(
+                tenant_id,
+                note_id,
+                note_acl_payload_from_projection(file_id, &new_acl),
+            )
             .await;
         assert_eq!(updated, 1);
 
-        let filter = AclSearchFilter {
+        let filter = RetrievalPrincipal {
             tenant_id,
-            caller_user_id: owner_id,
-            caller_group_ids: vec![],
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
             min_acl_versions: HashMap::new(),
         };
         let results = indexer.search_with_acl(&filter, "content", 10).await;
@@ -1012,5 +1210,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(indexer.document_count(tenant_id).await, 0);
+    }
+
+    #[test]
+    fn index_visibility_round_trip() {
+        for vis in [
+            IndexVisibility::Private,
+            IndexVisibility::Workspace,
+            IndexVisibility::Public,
+        ] {
+            let s = vis.to_string();
+            let parsed: IndexVisibility = s.parse().unwrap();
+            assert_eq!(parsed, vis);
+        }
+        assert!("unknown".parse::<IndexVisibility>().is_err());
+    }
+
+    #[test]
+    fn embedding_policy_round_trip() {
+        for policy in [EmbeddingPolicy::Allowed, EmbeddingPolicy::Denied] {
+            let s = policy.to_string();
+            let parsed: EmbeddingPolicy = s.parse().unwrap();
+            assert_eq!(parsed, policy);
+        }
+        assert_eq!(EmbeddingPolicy::default(), EmbeddingPolicy::Allowed);
+        assert!("blocked".parse::<EmbeddingPolicy>().is_err());
+    }
+
+    #[test]
+    fn index_principal_round_trip() {
+        let owner_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+
+        for principal in [
+            IndexPrincipal::Owner(owner_id),
+            IndexPrincipal::User(user_id),
+            IndexPrincipal::Group(group_id),
+            IndexPrincipal::Workspace(workspace_id),
+            IndexPrincipal::Public,
+        ] {
+            let s = principal.to_string();
+            let parsed: IndexPrincipal = s.parse().unwrap();
+            assert_eq!(parsed, principal);
+        }
+
+        assert_eq!(
+            "public".parse::<IndexPrincipal>().unwrap(),
+            IndexPrincipal::Public
+        );
+        assert!("garbage".parse::<IndexPrincipal>().is_err());
+        assert!("user:not-a-uuid".parse::<IndexPrincipal>().is_err());
+        assert!("unknown:00000000-0000-0000-0000-000000000000"
+            .parse::<IndexPrincipal>()
+            .is_err());
+    }
+
+    #[test]
+    fn index_principal_serializes_with_kind_and_id() {
+        let user_id = Uuid::new_v4();
+        let principal = IndexPrincipal::User(user_id);
+        let json = serde_json::to_value(&principal).unwrap();
+        assert_eq!(json["kind"], "user");
+        assert_eq!(json["id"], user_id.to_string());
+
+        let public = IndexPrincipal::Public;
+        let json = serde_json::to_value(&public).unwrap();
+        assert_eq!(json["kind"], "public");
+        assert!(json["id"].is_null());
+    }
+
+    #[test]
+    fn retrieval_principal_to_index_principals() {
+        let user_id = Uuid::new_v4();
+        let group_a = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+
+        let principal = RetrievalPrincipal {
+            tenant_id: Uuid::new_v4(),
+            workspace_id: Some(workspace_id),
+            user_id,
+            group_ids: vec![group_a],
+            min_acl_versions: HashMap::new(),
+        };
+
+        let principals = principal.to_index_principals();
+        assert!(principals.contains(&format!("owner:{user_id}")));
+        assert!(principals.contains(&format!("user:{user_id}")));
+        assert!(principals.contains(&format!("group:{group_a}")));
+        assert!(principals.contains(&format!("workspace:{workspace_id}")));
     }
 }

@@ -95,7 +95,25 @@ pub async fn empty_trash(
         .empty_trash(auth.user_id, auth.tenant_id)
         .await
     {
-        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
+        Ok(deleted_file_ids) => {
+            // Best-effort removal of any indexed chunks for files that were
+            // actually deleted. empty_trash permanently deletes files, so
+            // restore is not possible; cleanup is best-effort and must not
+            // fail the request.
+            if let Some(ref ai_service) = state.ai_service {
+                for file_id in deleted_file_ids {
+                    if let Err(e) = ai_service.remove_file(file_id, auth.tenant_id).await {
+                        tracing::warn!(
+                            file_id = %file_id,
+                            tenant_id = %auth.tenant_id,
+                            error = %e,
+                            "Failed to remove file chunk from AI index after trash empty"
+                        );
+                    }
+                }
+            }
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
         Err(e) => {
             tracing::error!("Failed to empty trash: {:?}", e);
             Err(AppError::internal("Failed to empty trash"))

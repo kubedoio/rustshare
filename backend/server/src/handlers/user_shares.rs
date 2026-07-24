@@ -21,6 +21,8 @@ use rustshare_core::{domain::SharePermissions, services::Resource};
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
+use std::sync::Arc;
+
 // Re-export folder/file with shares types from folders handler
 use super::folders::{
     FolderContentsWithShares, FolderTreeNode, FolderTreeWithShares, FolderWithShares,
@@ -139,6 +141,16 @@ pub async fn create_file_share(
         .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
         .await?;
 
+    // Best-effort ACL refresh so the shared file becomes searchable by the grantee.
+    let note_service = Arc::clone(&state.note_service);
+    let user_id = auth.user_id;
+    let tenant_id = auth.tenant_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::File(file_id), user_id, tenant_id)
+            .await;
+    });
+
     // Get recipient email for response (it was validated in the service)
     let response = UserShareResponse {
         share_id: share.id,
@@ -188,6 +200,17 @@ pub async fn create_folder_share(
             auth.user_id,
         )
         .await?;
+
+    // Best-effort ACL refresh so notes inside the shared folder become searchable
+    // by the grantee.
+    let note_service = Arc::clone(&state.note_service);
+    let user_id = auth.user_id;
+    let tenant_id = auth.tenant_id;
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_resource(Resource::Folder(folder_id), user_id, tenant_id)
+            .await;
+    });
 
     let response = UserShareResponse {
         share_id: share.id,
@@ -434,6 +457,25 @@ pub async fn update_recipient_permission(
         "folder"
     };
 
+    // Best-effort ACL refresh so the permission change is reflected in search.
+    let resource = if updated_share.file_id.is_some() {
+        Some(Resource::File(resource_id))
+    } else if updated_share.folder_id.is_some() {
+        Some(Resource::Folder(resource_id))
+    } else {
+        None
+    };
+    if let Some(resource) = resource {
+        let note_service = Arc::clone(&state.note_service);
+        let user_id = auth.user_id;
+        let tenant_id = auth.tenant_id;
+        tokio::spawn(async move {
+            note_service
+                .refresh_index_acl_for_resource(resource, user_id, tenant_id)
+                .await;
+        });
+    }
+
     let response = serde_json::json!({
         "share_id": updated_share.id,
         "resource_id": resource_id,
@@ -471,10 +513,27 @@ pub async fn remove_recipient(
     Path(share_id): Path<Uuid>,
     auth: AuthenticatedUser,
 ) -> Result<Response, AppError> {
-    state
+    let share = state
         .user_share_service
         .remove_recipient(share_id, auth.user_id, auth.tenant_id)
         .await?;
+
+    // Best-effort ACL refresh so the revoked share stops being retrievable.
+    if let Some(resource_id) = share.resource_id() {
+        let resource = if share.file_id.is_some() {
+            Resource::File(resource_id)
+        } else {
+            Resource::Folder(resource_id)
+        };
+        let note_service = Arc::clone(&state.note_service);
+        let user_id = auth.user_id;
+        let tenant_id = auth.tenant_id;
+        tokio::spawn(async move {
+            note_service
+                .refresh_index_acl_for_resource(resource, user_id, tenant_id)
+                .await;
+        });
+    }
 
     Ok((StatusCode::NO_CONTENT, ()).into_response())
 }

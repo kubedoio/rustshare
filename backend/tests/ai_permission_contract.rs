@@ -8,9 +8,10 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use rustshare_core::domain::{File, Share, SharePermissions};
+use rustshare_core::services::ai::indexing::IndexPrincipal;
 use rustshare_core::services::{
-    AiService, ContentIndexer, EmbeddingGenerator, InMemoryVectorStore, PermissionResolver,
-    PermissionResolverOps,
+    AiService, ContentIndexer, EmbeddingGenerator, EmbeddingPolicy, InMemoryVectorStore,
+    IndexAclProjection, IndexVisibility, PermissionResolver, PermissionResolverOps,
 };
 
 // Mock embedding generator
@@ -190,6 +191,21 @@ fn make_share(
     }
 }
 
+fn make_file_acl(tenant_id: Uuid, file_id: Uuid, owner_id: Uuid) -> IndexAclProjection {
+    IndexAclProjection {
+        tenant_id,
+        workspace_id: tenant_id,
+        object_id: file_id,
+        source_folder_id: None,
+        owner_id,
+        read_principals: vec![IndexPrincipal::Owner(owner_id)],
+        visibility: IndexVisibility::Private,
+        acl_hash: "hash-1".to_string(),
+        acl_version: 1,
+        embedding_policy: EmbeddingPolicy::Allowed,
+    }
+}
+
 fn build_service(
     ops: std::sync::Arc<MockPermissionOps>,
 ) -> AiService<MockEmbeddingGenerator, MockPermissionOps> {
@@ -230,8 +246,7 @@ async fn test_ai_excludes_revoked_shares() {
             "/shared.txt".to_string(),
             "shared content".to_string(),
             "text/plain".to_string(),
-            owner_id,
-            tenant_id,
+            make_file_acl(tenant_id, file_id, owner_id),
         )
         .await
         .unwrap();
@@ -271,8 +286,7 @@ async fn test_ai_excludes_expired_shares() {
             "/shared.txt".to_string(),
             "shared content".to_string(),
             "text/plain".to_string(),
-            owner_id,
-            tenant_id,
+            make_file_acl(tenant_id, file_id, owner_id),
         )
         .await
         .unwrap();
@@ -309,8 +323,7 @@ async fn test_ai_excludes_hidden_metadata() {
                 format!("/{}", name),
                 "hidden content".to_string(),
                 "text/plain".to_string(),
-                user_id,
-                tenant_id,
+                make_file_acl(tenant_id, file_id, user_id),
             )
             .await
             .unwrap();

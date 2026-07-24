@@ -13,7 +13,11 @@ use rustshare_core::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
         OkfNoteFrontmatter, RustshareFrontmatter,
     },
-    services::{FileService, FolderService, NoteAclPayload, PermissionResolver},
+    services::ai::indexing::IndexPrincipal,
+    services::{
+        EmbeddingPolicy, FileService, FolderService, IndexAclProjection, IndexVisibility,
+        PermissionResolver,
+    },
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
@@ -57,6 +61,8 @@ pub struct NoteMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acl_version: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict: Option<NoteConflict>,
 }
 
@@ -80,6 +86,7 @@ impl NoteMetadata {
             okf_id: None,
             acl_hash: None,
             acl_version: None,
+            embedding_policy: None,
             conflict: None,
         }
     }
@@ -204,6 +211,8 @@ pub enum NoteError {
     Database(String),
     #[error("Invalid name: {0}")]
     InvalidName(String),
+    #[error("Invalid ACL metadata: {0}")]
+    InvalidAcl(String),
 }
 
 impl From<rustshare_core::services::FileError> for NoteError {
@@ -684,26 +693,48 @@ impl NoteService {
             .map_err(|e| NoteError::Database(format!("Failed to resolve ACL principals: {e}")))
     }
 
-    /// Build the ACL payload used by the AI content indexer.
+    /// Build the ACL projection used by the AI content indexer.
+    ///
+    /// Returns an error if any resolved read principal cannot be parsed. Parsed
+    /// principals come from the authoritative permission resolver, so a parse
+    /// failure indicates corrupt metadata and must fail closed.
     pub fn build_acl_payload(
         file: &rustshare_core::domain::File,
         meta: &NoteMetadata,
         tenant_id: Uuid,
         read_acl: Vec<String>,
-    ) -> NoteAclPayload {
-        NoteAclPayload {
+    ) -> Result<IndexAclProjection, NoteError> {
+        let embedding_policy = meta
+            .embedding_policy
+            .as_deref()
+            .unwrap_or("allowed")
+            .parse()
+            .unwrap_or(EmbeddingPolicy::Denied);
+
+        let mut read_principals = Vec::with_capacity(read_acl.len());
+        for principal in read_acl {
+            let parsed: IndexPrincipal = principal.parse().map_err(|e| {
+                NoteError::InvalidAcl(format!("invalid read principal {principal}: {e}"))
+            })?;
+            read_principals.push(parsed);
+        }
+
+        Ok(IndexAclProjection {
             tenant_id,
-            workspace_id: tenant_id,
-            note_id: meta.okf_id.unwrap_or(file.id),
-            source_file_id: file.id,
+            workspace_id: file.workspace_id(),
+            object_id: meta.okf_id.unwrap_or(file.id),
             source_folder_id: file.parent_folder_id,
             owner_id: file.owner_id,
-            read_acl,
-            visibility: meta.visibility.as_str().to_string(),
+            read_principals,
+            visibility: meta
+                .visibility
+                .as_str()
+                .parse()
+                .unwrap_or(IndexVisibility::Private),
             acl_hash: meta.acl_hash.clone().unwrap_or_default(),
             acl_version: meta.acl_version.unwrap_or(1),
-            embedding_policy: "allowed".to_string(),
-        }
+            embedding_policy,
+        })
     }
 
     async fn emit_index_note(
@@ -717,11 +748,37 @@ impl NoteService {
             let read_acl = match self.resolve_note_read_principals(file, tenant_id).await {
                 Ok(acl) => acl,
                 Err(e) => {
-                    tracing::warn!("Failed to resolve ACL principals for {}: {}", file.id, e);
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        file_id = %file.id,
+                        error = %e,
+                        "Failed to resolve ACL principals for note index"
+                    );
                     return;
                 }
             };
-            let acl = Self::build_acl_payload(file, meta, tenant_id, read_acl);
+            let mut acl = match Self::build_acl_payload(file, meta, tenant_id, read_acl) {
+                Ok(acl) => acl,
+                Err(e) => {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        file_id = %file.id,
+                        error = %e,
+                        "Failed to build ACL projection for note index"
+                    );
+                    return;
+                }
+            };
+
+            // Compute a deterministic ACL hash and bump the version when the
+            // effective ACL state changes. This keeps indexed chunks in sync
+            // with the note's permission model.
+            let computed_hash = compute_index_acl_hash(&acl);
+            if computed_hash != acl.acl_hash {
+                acl.acl_version += 1;
+            }
+            acl.acl_hash = computed_hash;
+
             sink.index_note(
                 file.id,
                 file.name.clone(),
@@ -734,6 +791,223 @@ impl NoteService {
             .await;
         } else {
             tracing::debug!("No note index sink configured; skipping indexing");
+        }
+    }
+
+    /// Refresh the indexed ACL projection for a single note.
+    ///
+    /// This re-resolves the note's current read principals and re-indexes the
+    /// content with a fresh ACL projection. Callers should use this after share
+    /// or revoke events that may have changed the effective ACL without changing
+    /// the note content.
+    pub async fn refresh_note_index_acl(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        let Some(meta) = self.load_metadata(file_id, user_id, tenant_id).await? else {
+            return Ok(());
+        };
+        if meta.kind != "note" {
+            return Ok(());
+        }
+        let content = match self.object_store.get(&file.storage_key()).await {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            Err(_) => String::new(),
+        };
+        self.emit_index_note(&file, &meta, &content, tenant_id)
+            .await;
+        Ok(())
+    }
+
+    /// Remove a single note from the AI index.
+    pub async fn remove_note_from_index(
+        &self,
+        file_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        let file = self
+            .metadata_store
+            .find_file_by_id_unchecked(file_id)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?
+            .ok_or(NoteError::NotFound(file_id))?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        let note_id = if let Some(meta) = self
+            .load_metadata(file_id, file.owner_id, tenant_id)
+            .await?
+        {
+            meta.okf_id.unwrap_or(file_id)
+        } else {
+            file_id
+        };
+        if let Some(sink) = &self.index_sink {
+            sink.remove_note(tenant_id, note_id).await;
+        }
+        Ok(())
+    }
+
+    /// Refresh the indexed ACL projection for a resource after a share
+    /// lifecycle change.
+    ///
+    /// For a file, re-indexes it if it is a markdown note. For a folder,
+    /// re-indexes every markdown note in the folder tree. Errors are logged at
+    /// `error!` level and are not returned, because index refresh is
+    /// best-effort and must not fail the originating share request.
+    pub async fn refresh_index_acl_for_resource(
+        &self,
+        resource: rustshare_core::services::Resource,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) {
+        match resource {
+            rustshare_core::services::Resource::File(file_id) => {
+                if let Err(error) = self
+                    .refresh_note_index_acl(file_id, user_id, tenant_id)
+                    .await
+                {
+                    tracing::error!(
+                        object_id = %file_id,
+                        tenant_id = %tenant_id,
+                        error_category = "acl_refresh",
+                        error = %error,
+                        "Failed to refresh AI index ACL for file after share change"
+                    );
+                }
+            }
+            rustshare_core::services::Resource::Folder(folder_id) => {
+                self.refresh_folder_notes_index_acl(folder_id, user_id, tenant_id)
+                    .await;
+            }
+        }
+    }
+
+    /// Refresh the indexed ACL projection for every resource shared with a group.
+    ///
+    /// Call after group membership changes so the AI index reflects the new
+    /// effective ACL for all resources shared with that group. Errors are logged
+    /// and do not fail the originating request.
+    pub async fn refresh_index_acl_for_group(&self, group_id: Uuid, tenant_id: Uuid) {
+        let rows = match sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, UserId)>(
+            r#"
+            SELECT file_id, folder_id, created_by
+            FROM shares
+            WHERE recipient_group_id = $1
+              AND tenant_id = $2
+              AND revoked_at IS NULL
+            "#,
+        )
+        .bind(group_id)
+        .bind(tenant_id)
+        .fetch_all(&self.db_pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!(
+                    object_id = %group_id,
+                    tenant_id = %tenant_id,
+                    error_category = "group_share_lookup",
+                    error = %error,
+                    "Failed to list active shares for group ACL refresh"
+                );
+                return;
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        for (file_id, folder_id, created_by) in rows {
+            let resource = if let Some(file_id) = file_id {
+                rustshare_core::services::Resource::File(file_id)
+            } else if let Some(folder_id) = folder_id {
+                rustshare_core::services::Resource::Folder(folder_id)
+            } else {
+                continue;
+            };
+
+            let key = match resource {
+                rustshare_core::services::Resource::File(id) => (id, 0i32),
+                rustshare_core::services::Resource::Folder(id) => (id, 1i32),
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+
+            self.refresh_index_acl_for_resource(resource, created_by, tenant_id)
+                .await;
+        }
+    }
+
+    /// Refresh the indexed ACL projection for every markdown note in a folder tree.
+    async fn refresh_folder_notes_index_acl(
+        &self,
+        folder_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) {
+        let descendants = match self
+            .metadata_store
+            .find_descendant_folders_unchecked(folder_id)
+            .await
+        {
+            Ok(folders) => folders,
+            Err(error) => {
+                tracing::error!(
+                    object_id = %folder_id,
+                    tenant_id = %tenant_id,
+                    error_category = "folder_lookup",
+                    error = %error,
+                    "Failed to list descendant folders for AI index ACL refresh"
+                );
+                return;
+            }
+        };
+
+        let mut folder_ids = vec![folder_id];
+        folder_ids.extend(descendants.iter().map(|folder| folder.id));
+
+        for current_folder_id in folder_ids {
+            let files = match self
+                .metadata_store
+                .list_files_by_parent(Some(current_folder_id), tenant_id)
+                .await
+            {
+                Ok(files) => files,
+                Err(error) => {
+                    tracing::error!(
+                        object_id = %current_folder_id,
+                        tenant_id = %tenant_id,
+                        error_category = "file_listing",
+                        error = %error,
+                        "Failed to list files for AI index ACL refresh"
+                    );
+                    continue;
+                }
+            };
+
+            for file in files {
+                if file.mime_type == "text/markdown" {
+                    if let Err(error) = self
+                        .refresh_note_index_acl(file.id, user_id, tenant_id)
+                        .await
+                    {
+                        tracing::error!(
+                            object_id = %file.id,
+                            tenant_id = %tenant_id,
+                            error_category = "acl_refresh",
+                            error = %error,
+                            "Failed to refresh AI index ACL for folder note after share change"
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -1675,6 +1949,10 @@ impl NoteService {
             ..Default::default()
         };
         final_fm = merge_required_okf_keys(Some(final_fm), required);
+        meta.embedding_policy = final_fm
+            .rustshare
+            .as_ref()
+            .and_then(|rustshare| rustshare.embedding_policy.clone());
 
         // Serialize the document and write it back to note.md.
         let document = to_document(&final_fm, &new_body)
@@ -1866,10 +2144,15 @@ impl NoteService {
         }
         let is_folder_backed = Self::is_folder_backed_note(&file);
 
+        // Load metadata before deletion so we can preserve the OKF identity and
+        // clean up the index after the note is removed.
+        let meta = self.load_metadata(file_id, user_id, file.tenant_id).await?;
+        let note_id = meta.as_ref().and_then(|m| m.okf_id).unwrap_or(file_id);
+
         // If public, invalidate share index
-        if let Some(meta) = self.load_metadata(file_id, user_id, file.tenant_id).await? {
-            if let Some(share_id) = meta.public_share_id {
-                let _ = self.delete_public_share_index(&share_id).await;
+        if let Some(ref meta) = meta {
+            if let Some(ref share_id) = meta.public_share_id {
+                let _ = self.delete_public_share_index(share_id).await;
             }
 
             // Delete attachment files
@@ -1899,6 +2182,10 @@ impl NoteService {
             self.delete_metadata(file_id, user_id, file.tenant_id)
                 .await?;
             self.file_service.delete_file(file_id, user_id).await?;
+        }
+
+        if let Some(sink) = &self.index_sink {
+            sink.remove_note(tenant_id, note_id).await;
         }
 
         Ok(())
@@ -1947,6 +2234,9 @@ impl NoteService {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
             Err(_) => String::new(),
         };
+
+        self.emit_index_note(&moved_file, &meta, &content, tenant_id)
+            .await;
 
         Ok(Note {
             id: moved_file.id,
@@ -2101,6 +2391,9 @@ impl NoteService {
                 .await
                 .ok();
 
+            self.emit_index_note(&new_file, &meta, &duplicated_content, tenant_id)
+                .await;
+
             return Ok(Note {
                 id: new_file.id,
                 okf_id: Some(new_okf_id),
@@ -2142,6 +2435,9 @@ impl NoteService {
         meta.updated_at = Utc::now();
         self.save_metadata(new_file.id, user_id, tenant_id, &meta)
             .await?;
+
+        self.emit_index_note(&new_file, &meta, &original.content, tenant_id)
+            .await;
 
         Ok(Note {
             id: new_file.id,
@@ -2410,6 +2706,9 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
+        self.emit_index_note(&file, &meta, &content, tenant_id)
+            .await;
+
         Ok(Note {
             id: file.id,
             okf_id: meta.okf_id,
@@ -2470,6 +2769,30 @@ fn compute_acl_hash(tenant_id: Uuid, workspace_id: Uuid, okf_id: Uuid, visibilit
     let input = format!(
         "tenant:{}:workspace:{}:note:{}:{}",
         tenant_id, workspace_id, okf_id, visibility
+    );
+    hex::encode(Sha256::digest(input.as_bytes()))
+}
+
+/// Compute a deterministic hash of an index ACL projection.
+///
+/// Covers the fields that affect retrieval decisions so any change to the
+/// effective ACL produces a different hash and triggers an acl_version bump.
+fn compute_index_acl_hash(projection: &IndexAclProjection) -> String {
+    let mut principals: Vec<String> = projection
+        .read_principals
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+    principals.sort();
+    let input = format!(
+        "tenant:{}:workspace:{}:object:{}:owner:{}:visibility:{}:policy:{}:principals:[{}]",
+        projection.tenant_id,
+        projection.workspace_id,
+        projection.object_id,
+        projection.owner_id,
+        projection.visibility,
+        projection.embedding_policy,
+        principals.join(",")
     );
     hex::encode(Sha256::digest(input.as_bytes()))
 }
@@ -2710,19 +3033,55 @@ mod tests {
             &meta,
             tenant_id,
             vec![format!("owner:{owner_id}")],
-        );
+        )
+        .unwrap();
 
         assert_eq!(acl.tenant_id, tenant_id);
         assert_eq!(acl.workspace_id, tenant_id);
-        assert_eq!(acl.note_id, okf_id);
-        assert_eq!(acl.source_file_id, file.id);
+        assert_eq!(acl.object_id, okf_id);
         assert_eq!(acl.source_folder_id, Some(parent_id));
         assert_eq!(acl.owner_id, owner_id);
         assert_eq!(acl.acl_hash, "test-hash");
         assert_eq!(acl.acl_version, 3);
-        assert_eq!(acl.visibility, "public");
-        assert_eq!(acl.embedding_policy, "allowed");
-        assert_eq!(acl.read_acl, vec![format!("owner:{}", owner_id)]);
+        assert_eq!(acl.visibility, IndexVisibility::Public);
+        assert_eq!(acl.embedding_policy, EmbeddingPolicy::Allowed);
+        assert_eq!(
+            acl.read_principals,
+            vec![format!("owner:{}", owner_id).parse().unwrap()]
+        );
+    }
+
+    #[test]
+    fn build_acl_payload_fails_closed_on_invalid_embedding_policy() {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let okf_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+
+        let file = rustshare_core::domain::File::new(
+            "note.md".to_string(),
+            "/Workspace/Notes/Test/note.md".to_string(),
+            "hash".to_string(),
+            100,
+            "text/markdown".to_string(),
+            Some(parent_id),
+            owner_id,
+            tenant_id,
+        );
+
+        let mut meta = NoteMetadata::new("Test Note");
+        meta.okf_id = Some(okf_id);
+        meta.embedding_policy = Some("invalid-value".to_string());
+
+        let acl = NoteService::build_acl_payload(
+            &file,
+            &meta,
+            tenant_id,
+            vec![format!("owner:{owner_id}")],
+        )
+        .unwrap();
+
+        assert_eq!(acl.embedding_policy, EmbeddingPolicy::Denied);
     }
 
     #[test]
@@ -2755,9 +3114,14 @@ mod tests {
             &meta,
             tenant_id,
             vec![format!("owner:{owner_id}"), format!("user:{user_id}")],
-        );
+        )
+        .unwrap();
 
-        assert!(acl.read_acl.contains(&format!("owner:{owner_id}")));
-        assert!(acl.read_acl.contains(&format!("user:{user_id}")));
+        assert!(acl
+            .read_principals
+            .contains(&format!("owner:{owner_id}").parse().unwrap()));
+        assert!(acl
+            .read_principals
+            .contains(&format!("user:{user_id}").parse().unwrap()));
     }
 }

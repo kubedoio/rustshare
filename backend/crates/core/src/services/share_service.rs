@@ -214,6 +214,18 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         }
     }
 
+    /// Look up a share by ID, enforcing actor authorization.
+    pub async fn get_share_by_id(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: UserId,
+    ) -> Result<Option<Share>, ShareError> {
+        self.metadata_store
+            .get_share_by_id(share_id, actor_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))
+    }
+
     /// Generate a cryptographically secure 32-character alphanumeric token.
     ///
     /// Returns a unique token suitable for use as a share link identifier.
@@ -524,12 +536,13 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// - The share exists
     /// - The user owns the file
     ///
-    /// Returns unit or a ShareError.
+    /// Returns the revoked share so callers can refresh dependent state such
+    /// as the AI index ACL projection.
     pub async fn revoke_share(
         &self,
         share_id: uuid::Uuid,
         user_id: UserId,
-    ) -> Result<(), ShareError> {
+    ) -> Result<Share, ShareError> {
         // Get share by ID for an explicit authorization decision.
         let share = self
             .metadata_store
@@ -586,7 +599,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
-        Ok(())
+        Ok(share)
     }
 
     /// Update a share link.
@@ -1043,6 +1056,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// * `share_id` - ID of the share to revoke
     /// * `requesting_user` - User attempting to revoke
     ///
+    /// # Returns
+    /// The revoked share so callers can refresh dependent state such as the
+    /// AI index ACL projection.
+    ///
     /// # Errors
     /// * NotFoundById - if share doesn't exist
     /// * InvalidState - if not a group share
@@ -1051,7 +1068,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         &self,
         share_id: uuid::Uuid,
         requesting_user: UserId,
-    ) -> Result<(), ShareError> {
+    ) -> Result<Share, ShareError> {
         // Get the share (unchecked so admins who are not the creator can revoke)
         let share = self
             .metadata_store
@@ -1113,7 +1130,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
-        Ok(())
+        Ok(share)
     }
 
     /// Update group share permission
@@ -2848,5 +2865,87 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(ShareError::ShareNotFoundByToken(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ai_acl_refresh_revoke_share_returns_share() {
+        let (service, _event_store, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        let file = File::new(
+            "note.md".to_string(),
+            "/documents/note.md".to_string(),
+            "abc123".to_string(),
+            1024,
+            "text/markdown".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file);
+
+        let share = service
+            .create_share(
+                file_id,
+                owner_id,
+                SharePermissions::View,
+                None,
+                None,
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let revoked = service
+            .revoke_share(share.id, owner_id)
+            .await
+            .expect("revoke_share should return the revoked share");
+
+        assert_eq!(revoked.id, share.id);
+        assert_eq!(revoked.file_id, Some(file_id));
+        assert_eq!(revoked.tenant_id, tenant_id);
+    }
+
+    #[tokio::test]
+    async fn test_ai_acl_refresh_revoke_group_share_returns_share() {
+        let (service, _event_store, metadata_store) = setup_share_service();
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let share_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        let share = Share {
+            id: share_id,
+            file_id: Some(file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: None,
+            recipient_group_id: Some(group_id),
+            created_by: owner_id,
+            created_at: Utc::now(),
+            revoked_at: None,
+            tenant_id,
+        };
+        metadata_store.create_share(&share).await.unwrap();
+
+        let revoked = service
+            .revoke_group_share(share_id, owner_id)
+            .await
+            .expect("revoke_group_share should return the revoked share");
+
+        assert_eq!(revoked.id, share_id);
+        assert_eq!(revoked.file_id, Some(file_id));
+        assert_eq!(revoked.recipient_group_id, Some(group_id));
+        assert_eq!(revoked.tenant_id, tenant_id);
     }
 }
