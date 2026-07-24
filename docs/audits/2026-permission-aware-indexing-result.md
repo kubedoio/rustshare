@@ -118,6 +118,7 @@ This PR changes the permission boundary for AI indexing and retrieval. Unauthori
 
 ## Deferred risks
 
+- Folder parent relationships are not constrained to the same owner. Trash cleanup now scopes recursive traversal by tenant and owner, but preventing cross-owner folder trees at creation or migration time remains separate hardening work.
 - Generic file indexing (`AiService::index_file`) is not wired to uploads or vault sync; it accepts `IndexAclProjection` but has no production caller.
 - Folder-inherited permissions and explicit denial are modeled in the contract but rely on the authoritative `PermissionResolver` to produce correct `read_principals`.
 - Group membership changes take effect at retrieval time; object `acl_version` is not incremented on group membership changes.
