@@ -748,14 +748,24 @@ impl NoteService {
             let read_acl = match self.resolve_note_read_principals(file, tenant_id).await {
                 Ok(acl) => acl,
                 Err(e) => {
-                    tracing::warn!("Failed to resolve ACL principals for {}: {}", file.id, e);
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        file_id = %file.id,
+                        error = %e,
+                        "Failed to resolve ACL principals for note index"
+                    );
                     return;
                 }
             };
             let mut acl = match Self::build_acl_payload(file, meta, tenant_id, read_acl) {
                 Ok(acl) => acl,
                 Err(e) => {
-                    tracing::warn!("Failed to build ACL projection for note {}: {}", file.id, e);
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        file_id = %file.id,
+                        error = %e,
+                        "Failed to build ACL projection for note index"
+                    );
                     return;
                 }
             };

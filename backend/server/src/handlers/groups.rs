@@ -480,10 +480,18 @@ pub async fn revoke_group_share(
 
     // Best-effort refresh if the share targeted a file (note).
     if let Some(file_id) = share.file_id {
-        let _ = state
+        if let Err(e) = state
             .note_service
             .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                file_id = %file_id,
+                share_id = %share_id,
+                error = %e,
+                "Failed to refresh AI index ACL after group share revocation"
+            );
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -542,10 +550,18 @@ pub async fn update_group_share_permission(
 
     // Best-effort refresh of the AI index ACL if the share targeted a file.
     if let Some(file_id) = share.file_id {
-        let _ = state
+        if let Err(e) = state
             .note_service
             .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                file_id = %file_id,
+                share_id = %share_id,
+                error = %e,
+                "Failed to refresh AI index ACL after group share permission update"
+            );
+        }
     }
 
     // Get group name

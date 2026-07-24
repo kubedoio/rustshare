@@ -141,10 +141,18 @@ pub async fn create_file_share(
 
     // Best-effort refresh of the AI index ACL for this file.
     if let Some(file_id) = share.file_id {
-        let _ = state
+        if let Err(e) = state
             .note_service
             .refresh_note_index_acl(file_id, auth.user_id, auth.tenant_id)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                file_id = %file_id,
+                share_id = %share.id,
+                error = %e,
+                "Failed to refresh AI index ACL after file share creation"
+            );
+        }
     }
 
     // Get recipient email for response (it was validated in the service)
