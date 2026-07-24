@@ -82,6 +82,7 @@ jobs:
           RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
           AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
           RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
           RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
