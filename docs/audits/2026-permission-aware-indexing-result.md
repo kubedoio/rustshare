@@ -1,7 +1,7 @@
 # Permission-Aware AI Indexing Security Audit — Result
 
 > **Branch:** `security/permission-aware-indexing-audit`  
-> **Final commit:** `087a728f`  
+> **Final commit:** `29fdd5c7`  
 > **Status:** Implementation complete; awaiting human security review before merge.
 
 ## Summary
@@ -73,11 +73,13 @@ PR 175 and PR 176 completed the stabilization milestone. This security-focused b
 cargo fmt --all --check
 SQLX_OFFLINE=true cargo check --workspace --all-features
 SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings
-SQLX_OFFLINE=true cargo test -p rustshare-core --lib ai
-SQLX_OFFLINE=true cargo test -p rustshare-server --lib note_service
-SQLX_OFFLINE=true cargo test -p rustshare-server --test ai_permission_contract
 DATABASE_URL="postgresql://rustshare:1f7b27220d83a11de6bca8b63c0ca491a3001c0c73471eda@127.0.0.1:5432/rustshare" \
-    SQLX_OFFLINE=true cargo test -p rustshare-server --test ai_vector_store_permission_contract
+    SQLX_OFFLINE=true cargo test --workspace --all-features --lib
+DATABASE_URL="postgresql://rustshare:1f7b27220d83a11de6bca8b63c0ca491a3001c0c73471eda@127.0.0.1:5432/rustshare" \
+    SQLX_OFFLINE=true cargo test --workspace --all-features
+DATABASE_URL="postgresql://rustshare:1f7b27220d83a11de6bca8b63c0ca491a3001c0c73471eda@127.0.0.1:5432/rustshare" \
+    cargo sqlx prepare --workspace --check
+cargo deny --all-features check
 ```
 
 Results:
@@ -85,12 +87,10 @@ Results:
 - `cargo fmt --all --check` ✅
 - `cargo check --workspace --all-features` ✅
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` ✅
-- `cargo test -p rustshare-core --lib ai` — 131 passed ✅
-- `cargo test -p rustshare-server --lib note_service` — 8 passed ✅
-- `cargo test -p rustshare-server --test ai_permission_contract` — 3 passed ✅
-- `cargo test -p rustshare-server --test ai_vector_store_permission_contract` — 2 passed (in-memory + pgvector) ✅
-
-`cargo sqlx prepare --workspace --check` and `cargo deny --all-features check` are part of the final PR validation and will be run before merge.
+- `cargo test --workspace --all-features --lib` — 302 passed, 9 ignored ✅ (requires `DATABASE_URL` for auth handler tests)
+- `cargo test --workspace --all-features` — all runnable tests passed; 45 notes tests ignored because they require database + S3; `openapi_spec_is_fresh` initially failed and was resolved by regenerating the OpenAPI contract ✅
+- `cargo sqlx prepare --workspace --check` ✅
+- `cargo deny --all-features check` ✅ (passes; emits pre-existing duplicate `nom` version warnings, no advisories/bans/licenses/sources errors)
 
 ## Contradictions resolved
 

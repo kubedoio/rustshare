@@ -19918,6 +19918,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "embedding_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "excerpt": {
             "type": "string"
           },
