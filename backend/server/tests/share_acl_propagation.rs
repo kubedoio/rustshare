@@ -126,7 +126,7 @@ async fn insert_test_markdown_file(pool: &sqlx::PgPool, tenant_id: Uuid, owner_i
     let file_id = Uuid::new_v4();
     sqlx::query(
         r#"
-        INSERT INTO files (id, name, path, storage_key, content_hash, size, mime_type, owner_id, tenant_id, version)
+        INSERT INTO files (id, name, path, storage_key, content_hash, size, mime_type, owner_id, tenant_id, current_version)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#,
     )
