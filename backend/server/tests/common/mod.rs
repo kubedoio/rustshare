@@ -51,7 +51,8 @@ pub async fn setup_test_server() -> (AppState, String) {
             },
         )
         .await
-        .expect("Failed to create object store"),
+        .expect("Failed to create object store")
+        .with_blob_lock_pool(pool.clone()),
     );
 
     let jwt_manager = Arc::new(JwtManager::new(

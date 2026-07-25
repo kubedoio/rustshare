@@ -243,7 +243,8 @@ pub async fn setup_test_env() -> TestContext {
             },
         )
         .await
-        .expect("Failed to create object store"),
+        .expect("Failed to create object store")
+        .with_blob_lock_pool(pool.clone()),
     );
 
     let tenant_id = setup_test_tenant(&pool).await;
