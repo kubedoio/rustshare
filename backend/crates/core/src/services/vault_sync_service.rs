@@ -42,6 +42,21 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         }
     }
 
+    async fn enqueue_orphan_candidate(&self, object_key: &str, reason: &str) {
+        if let Err(error) = self
+            .store
+            .enqueue_object_gc_candidate(object_key, reason)
+            .await
+        {
+            tracing::error!(
+                object_key,
+                reason,
+                error = %error,
+                "Failed to enqueue vault blob GC candidate"
+            );
+        }
+    }
+
     // ─────────────────────────────────────────────
     // Vault management
     // ─────────────────────────────────────────────
@@ -253,15 +268,8 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             }
         }
 
-        // Blob is written to object store before the conditional DB update.
-        // This ordering is intentional: a dangling blob is harmless because
-        // content-addressed storage deduplicates by SHA-256, but a missing
-        // blob would break file references and violate data integrity.
-        // Under high contention orphaned blobs may accumulate because a
-        // conflict after the write leaves the blob unreferenced.
-        // TODO: Implement a background GC worker to reclaim orphaned blobs.
-        // The recommended long-term fix is a periodic garbage-collection
-        // task that scans for blobs with no referencing DB rows.
+        // Blob-first ordering prevents metadata from pointing at missing data.
+        // Any metadata failure below records a delayed, reference-checked GC candidate.
         let storage_key = format!("blobs/{}", req.sha256);
         self.object_store
             .put(&storage_key, req.content)
@@ -295,15 +303,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                         },
                         req.base_server_rev,
                     )
-                    .await?;
+                    .await;
                 match updated {
-                    Some(f) => f,
-                    None => {
+                    Ok(Some(f)) => f,
+                    Ok(None) => {
+                        self.enqueue_orphan_candidate(&storage_key, "vault_revision_conflict")
+                            .await;
                         return Err(VaultSyncError::Conflict {
                             client_rev: req.base_server_rev,
                             current_rev: file.server_rev,
                             server_sha256: file.sha256.clone(),
                         });
+                    }
+                    Err(error) => {
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "metadata_write_failure_after_blob_put",
+                        )
+                        .await;
+                        return Err(error);
                     }
                 }
             }
@@ -341,13 +359,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                             || msg.to_lowercase().contains("unique constraint") =>
                     {
                         // Unique violation → file was created concurrently.
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "vault_concurrent_create_conflict",
+                        )
+                        .await;
                         return Err(VaultSyncError::Conflict {
                             client_rev: req.base_server_rev,
                             current_rev: 0,
                             server_sha256: None,
                         });
                     }
-                    Err(e) => return Err(e),
+                    Err(error) => {
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "metadata_write_failure_after_blob_put",
+                        )
+                        .await;
+                        return Err(error);
+                    }
                 }
             }
             Err(e) => return Err(e),
@@ -966,6 +996,7 @@ mod tests {
         vaults: Mutex<HashMap<Uuid, Vault>>,
         files: Mutex<HashMap<(Uuid, String), VaultFile>>,
         devices: Mutex<HashMap<String, VaultDevice>>,
+        gc_candidates: Mutex<Vec<(String, String)>>,
     }
 
     impl MockVaultStore {
@@ -974,12 +1005,25 @@ mod tests {
                 vaults: Mutex::new(HashMap::new()),
                 files: Mutex::new(HashMap::new()),
                 devices: Mutex::new(HashMap::new()),
+                gc_candidates: Mutex::new(Vec::new()),
             }
         }
     }
 
     #[allow(async_fn_in_trait)]
     impl VaultStore for MockVaultStore {
+        async fn enqueue_object_gc_candidate(
+            &self,
+            object_key: &str,
+            reason: &str,
+        ) -> Result<(), VaultSyncError> {
+            self.gc_candidates
+                .lock()
+                .await
+                .push((object_key.to_string(), reason.to_string()));
+            Ok(())
+        }
+
         async fn create_vault(&self, vault: &Vault) -> Result<Vault, VaultSyncError> {
             let mut vaults = self.vaults.lock().await;
             if vaults.contains_key(&vault.id) {
@@ -1583,7 +1627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_file_update_existing() {
-        let (_, _, service) = setup();
+        let (store, _, service) = setup();
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let vault = service
@@ -1669,6 +1713,14 @@ mod tests {
             }
             _ => panic!("Expected Conflict, got {:?}", err),
         }
+        assert_eq!(
+            store.gc_candidates.lock().await.as_slice(),
+            &[(
+                "blobs/ddaaccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+                    .to_string(),
+                "vault_revision_conflict".to_string(),
+            )]
+        );
     }
 
     #[tokio::test]

@@ -6472,6 +6472,16 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
 
 #[allow(async_fn_in_trait, clippy::too_many_arguments)]
 impl rustshare_core::services::VaultStore for MetadataStore {
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.enqueue_object_gc_candidate(object_key, reason, 24)
+            .await
+            .map_err(|error| rustshare_core::services::VaultSyncError::Database(error.to_string()))
+    }
+
     async fn create_vault(
         &self,
         vault: &rustshare_core::domain::Vault,
