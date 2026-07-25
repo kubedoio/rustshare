@@ -243,6 +243,9 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 "SHA256 must be 64 hex characters".to_string(),
             ));
         }
+        // Canonicalize to lowercase so object keys and DB sha256 values always
+        // match the GC validator (which only accepts `blobs/<64 lowercase hex>`).
+        let sha256 = req.sha256.to_ascii_lowercase();
 
         // Verify vault exists and user is the owner.
         let vault = self.store.get_vault(req.vault_id, tenant_id).await?;
@@ -270,7 +273,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         // Blob-first ordering prevents metadata from pointing at missing data.
         // Any metadata failure below records a delayed, reference-checked GC candidate.
-        let storage_key = format!("blobs/{}", req.sha256);
+        let storage_key = format!("blobs/{}", sha256);
         let _blob_write_lock = self
             .object_store
             .acquire_blob_write_lock(&storage_key)
@@ -295,7 +298,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                             vault_id: req.vault_id,
                             relative_path: req.relative_path.clone(),
                             content_type: req.content_type.clone(),
-                            sha256: Some(req.sha256.clone()),
+                            sha256: Some(sha256.clone()),
                             size: Some(req.size),
                             server_rev: 0, // ignored — set inside transaction
                             mtime_client: None,
@@ -346,7 +349,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                     vault_id: req.vault_id,
                     relative_path: req.relative_path,
                     content_type: req.content_type,
-                    sha256: Some(req.sha256),
+                    sha256: Some(sha256),
                     size: Some(req.size),
                     server_rev: 0, // ignored — set inside transaction
                     mtime_client: None,
@@ -543,7 +546,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         let sha256 = {
             use sha2::{Digest, Sha256};
-            hex::encode(Sha256::digest(&content_bytes))
+            hex::encode(Sha256::digest(&content_bytes)).to_ascii_lowercase()
         };
 
         let device = self

@@ -131,9 +131,31 @@ async fn init_database(config: &AppConfig) -> Result<PgPool> {
     Ok(db_pool)
 }
 
+async fn init_blob_lock_pool(config: &AppConfig) -> Result<PgPool> {
+    // Separate, small pool for PostgreSQL advisory locks on content-addressed
+    // blobs. Isolating it from the main application pool prevents saturation
+    // deadlocks where a writer holds a main-pool connection as a lock guard
+    // while waiting for a second main-pool connection to persist metadata.
+    const MAX_CONNECTIONS: u32 = 16;
+
+    let pool = PgPoolOptions::new()
+        .max_connections(MAX_CONNECTIONS)
+        .min_connections(0)
+        .acquire_timeout(Duration::from_secs(5))
+        .max_lifetime(Some(Duration::from_secs(3600)))
+        .connect(&config.database_url)
+        .await?;
+    info!(
+        max_connections = MAX_CONNECTIONS,
+        "Blob lock pool configured"
+    );
+    Ok(pool)
+}
+
 async fn init_stores(
     config: &AppConfig,
     db_pool: PgPool,
+    blob_lock_pool: PgPool,
 ) -> Result<(Arc<MetadataStore>, Arc<EventStore>, Arc<ObjectStore>)> {
     let rustfs_endpoint = config.rustfs_endpoint.clone();
     let rustfs_region = config.rustfs_region.clone();
@@ -153,7 +175,7 @@ async fn init_stores(
                 object_store_options,
             )
             .await
-            .map(|store| store.with_blob_lock_pool(db_pool.clone()))
+            .map(|store| store.with_blob_lock_pool(blob_lock_pool))
             .map(Arc::new)
         }
     );
@@ -503,8 +525,10 @@ pub async fn init_app() -> Result<AppState> {
     info!("Starting RustShare server");
 
     let db_pool = init_database(&config).await?;
+    let blob_lock_pool = init_blob_lock_pool(&config).await?;
 
-    let (metadata_store, event_store, object_store) = init_stores(&config, db_pool.clone()).await?;
+    let (metadata_store, event_store, object_store) =
+        init_stores(&config, db_pool.clone(), blob_lock_pool).await?;
 
     let jwt_manager = init_jwt_manager(&config).await?;
 
