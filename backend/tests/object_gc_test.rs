@@ -1,6 +1,9 @@
 //! PostgreSQL and S3-compatible object GC contract tests.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use rustshare_server::object_gc::{tick, ObjectGcConfig};
@@ -9,7 +12,19 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-async fn setup() -> (PgPool, Arc<MetadataStore>, Arc<ObjectStore>) {
+static TEST_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+
+async fn setup() -> (
+    tokio::sync::OwnedMutexGuard<()>,
+    PgPool,
+    Arc<MetadataStore>,
+    Arc<ObjectStore>,
+) {
+    let test_guard = TEST_LOCK
+        .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
     let pool = PgPool::connect(&database_url)
@@ -46,6 +61,7 @@ async fn setup() -> (PgPool, Arc<MetadataStore>, Arc<ObjectStore>) {
     .with_blob_lock_pool(pool.clone());
 
     (
+        test_guard,
         pool.clone(),
         Arc::new(MetadataStore::new(pool)),
         Arc::new(object_store),
@@ -81,7 +97,7 @@ async fn make_due(pool: &PgPool, key: &str) {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn unreferenced_blob_is_deleted_after_two_reference_checks() {
-    let (pool, metadata, objects) = setup().await;
+    let (_test_guard, pool, metadata, objects) = setup().await;
     let content = Bytes::from(format!("object-gc-{}", Uuid::new_v4()));
     let key = blob(&content);
     objects.put(&key, content).await.expect("put blob");
@@ -108,7 +124,7 @@ async fn unreferenced_blob_is_deleted_after_two_reference_checks() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL"]
 async fn duplicate_candidates_coalesce_without_shortening_delay() {
-    let (pool, metadata, _) = setup().await;
+    let (_test_guard, pool, metadata, _) = setup().await;
     let key = blob(Uuid::new_v4().as_bytes());
     metadata
         .enqueue_object_gc_candidate(&key, "object_gc_test:coalesce-long", 48)
@@ -133,7 +149,7 @@ async fn duplicate_candidates_coalesce_without_shortening_delay() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL"]
 async fn concurrent_workers_lease_candidate_once() {
-    let (pool, metadata, _) = setup().await;
+    let (_test_guard, pool, metadata, _) = setup().await;
     let key = blob(Uuid::new_v4().as_bytes());
     metadata
         .enqueue_object_gc_candidate(&key, "object_gc_test:concurrency", 1)
@@ -157,7 +173,7 @@ async fn concurrent_workers_lease_candidate_once() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn global_references_protect_shared_blob() {
-    let (pool, metadata, objects) = setup().await;
+    let (_test_guard, pool, metadata, objects) = setup().await;
     let content = Bytes::from(format!("shared-object-gc-{}", Uuid::new_v4()));
     let key = blob(&content);
     let digest = key.strip_prefix("blobs/").expect("blob prefix");
@@ -296,7 +312,7 @@ async fn global_references_protect_shared_blob() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn missing_object_completes_idempotently() {
-    let (pool, metadata, objects) = setup().await;
+    let (_test_guard, pool, metadata, objects) = setup().await;
     let key = blob(Uuid::new_v4().as_bytes());
     metadata
         .enqueue_object_gc_candidate(&key, "object_gc_test:missing", 1)
@@ -320,7 +336,7 @@ async fn missing_object_completes_idempotently() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn invalid_key_is_never_deleted() {
-    let (pool, metadata, objects) = setup().await;
+    let (_test_guard, pool, metadata, objects) = setup().await;
     let key = format!("blobs/invalid-{}", Uuid::new_v4());
     objects
         .put(&key, Bytes::from_static(b"must remain"))
@@ -350,7 +366,7 @@ async fn invalid_key_is_never_deleted() {
 #[tokio::test]
 #[ignore = "Requires PostgreSQL"]
 async fn stale_processing_lease_is_reclaimed_after_restart() {
-    let (pool, metadata, _) = setup().await;
+    let (_test_guard, pool, metadata, _) = setup().await;
     let key = blob(Uuid::new_v4().as_bytes());
     metadata
         .enqueue_object_gc_candidate(&key, "object_gc_test:restart", 1)
