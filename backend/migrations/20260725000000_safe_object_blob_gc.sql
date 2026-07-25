@@ -43,7 +43,7 @@ BEGIN
             object_key, reason, first_seen_at, last_seen_at, not_before,
             state, created_at, updated_at
         ) VALUES (
-            old_key, 'reference_replaced', NOW(), NOW(), NOW() + INTERVAL '24 hours',
+            old_key, 'reference_replaced', NOW(), NOW(), NOW(),
             'pending', NOW(), NOW()
         )
         ON CONFLICT (object_key) DO UPDATE SET
@@ -93,7 +93,7 @@ BEGIN
             state, created_at, updated_at
         ) VALUES (
             'blobs/' || old_hash, 'reference_replaced', NOW(), NOW(),
-            NOW() + INTERVAL '24 hours', 'pending', NOW(), NOW()
+            NOW(), 'pending', NOW(), NOW()
         )
         ON CONFLICT (object_key) DO UPDATE SET
             reason = EXCLUDED.reason,

@@ -18,6 +18,7 @@ pub trait VaultStore: Send + Sync {
         &self,
         object_key: &str,
         reason: &str,
+        grace_period_hours: i64,
     ) -> Result<(), VaultSyncError>;
 
     /// Create a new vault.

@@ -6508,8 +6508,9 @@ impl rustshare_core::services::VaultStore for MetadataStore {
         &self,
         object_key: &str,
         reason: &str,
+        grace_period_hours: i64,
     ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
-        self.enqueue_object_gc_candidate(object_key, reason, 24)
+        self.enqueue_object_gc_candidate(object_key, reason, grace_period_hours)
             .await
             .map_err(|error| rustshare_core::services::VaultSyncError::Database(error.to_string()))
     }
