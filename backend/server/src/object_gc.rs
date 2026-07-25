@@ -162,16 +162,23 @@ async fn process_candidate(
     if let Err(error) = result {
         metrics::counter!("object_gc_delete_failures_total").increment(1);
         let error_text = bounded_error(&error);
-        let backoff = retry_backoff_seconds(candidate.attempt_count, config.max_backoff_seconds);
-        if let Err(record_error) = metadata_store
-            .retry_object_gc_candidate(&candidate.object_key, worker_id, &error_text, backoff)
-            .await
-        {
-            error!(candidate_id = %candidate.id, error = %record_error, "Failed to record object GC retry");
-        }
         if candidate.attempt_count >= config.max_attempts {
+            if let Err(record_error) = metadata_store
+                .hold_object_gc_candidate(&candidate.object_key, worker_id, &error_text)
+                .await
+            {
+                error!(candidate_id = %candidate.id, error = %record_error, "Failed to hold exhausted object GC candidate");
+            }
             error!(candidate_id = %candidate.id, attempt = candidate.attempt_count, error = %error, "Object GC candidate exceeded maximum attempts");
         } else {
+            let backoff =
+                retry_backoff_seconds(candidate.attempt_count, config.max_backoff_seconds);
+            if let Err(record_error) = metadata_store
+                .retry_object_gc_candidate(&candidate.object_key, worker_id, &error_text, backoff)
+                .await
+            {
+                error!(candidate_id = %candidate.id, error = %record_error, "Failed to record object GC retry");
+            }
             warn!(candidate_id = %candidate.id, attempt = candidate.attempt_count, error = %error, "Object GC candidate deferred");
         }
     }

@@ -69,8 +69,8 @@ Workers lease bounded batches using `FOR UPDATE SKIP LOCKED`, identify ownership
 with `locked_by`, and reclaim expired processing leases. Invalid/non-lowercase
 keys are recorded without a delete call. Reference and existence query errors
 retry. Explicit missing objects complete as `missing`; successful deletes
-complete as `deleted`. Retry uses bounded exponential backoff with jitter and
-keeps maximum-attempt candidates operator-visible.
+complete as `deleted`. Retry uses bounded exponential backoff with jitter;
+maximum-attempt candidates move to `operator_hold` and remain operator-visible.
 
 Shutdown stops new ticks; an interrupted candidate is recovered by lease
 expiry. Multiple instances are safe, and a late expired worker cannot complete
@@ -133,7 +133,7 @@ Known remaining risks:
 
 - terminal candidate pruning is deferred until table-growth measurements exist;
 - bucket-wide reconciliation is deferred and must only create candidates;
-- maximum-attempt candidates continue conservative retries and require alerting;
+- operator-held maximum-attempt candidates require alerting and explicit re-enqueue;
 - the safety boundary depends on future content-addressed writers using the
   shared object-store lock API.
 

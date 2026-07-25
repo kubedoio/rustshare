@@ -396,3 +396,43 @@ async fn stale_processing_lease_is_reclaimed_after_restart() {
         Some("replacement-worker")
     );
 }
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn exhausted_candidate_moves_to_operator_hold() {
+    let (_test_guard, pool, metadata, _) = setup().await;
+    let key = blob(Uuid::new_v4().as_bytes());
+    metadata
+        .enqueue_object_gc_candidate(&key, "object_gc_test:attempt-cap", 1)
+        .await
+        .expect("enqueue candidate");
+    make_due(&pool, &key).await;
+
+    let leased = metadata
+        .lease_object_gc_candidates(1, 60, "exhausting-worker", 1)
+        .await
+        .expect("lease candidate");
+    assert_eq!(leased[0].attempt_count, 1);
+    assert!(metadata
+        .hold_object_gc_candidate(&key, "exhausting-worker", "permanent test failure")
+        .await
+        .expect("hold candidate"));
+
+    let leased_again = metadata
+        .lease_object_gc_candidates(1, 60, "later-worker", 1)
+        .await
+        .expect("lease after hold");
+    assert!(leased_again
+        .iter()
+        .all(|candidate| candidate.object_key != key));
+    let (state, operator_hold, error): (String, bool, Option<String>) = sqlx::query_as(
+        "SELECT state, operator_hold, last_error FROM object_gc_queue WHERE object_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .expect("held candidate state");
+    assert_eq!(state, "operator_hold");
+    assert!(operator_hold);
+    assert_eq!(error.as_deref(), Some("permanent test failure"));
+}

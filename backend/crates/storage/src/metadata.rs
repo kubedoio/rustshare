@@ -4322,6 +4322,32 @@ impl MetadataStore {
         Ok(result.rows_affected() == 1)
     }
 
+    pub async fn hold_object_gc_candidate(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+        error: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE object_gc_queue SET
+                state = 'operator_hold',
+                operator_hold = TRUE,
+                locked_at = NULL,
+                locked_by = NULL,
+                last_error = LEFT($3, 1000),
+                updated_at = NOW()
+            WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .bind(error)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn object_gc_backlog(&self) -> Result<(i64, Option<i64>)> {
         let row = sqlx::query_as::<_, (i64, Option<i64>)>(
             r#"

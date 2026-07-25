@@ -770,8 +770,14 @@ impl BrainstormingService {
             tenant_id,
         );
 
+        let storage_key = file.storage_key();
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_lock(&storage_key)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
         self.object_store
-            .put(&file.storage_key(), content)
+            .put(&storage_key, content)
             .await
             .map_err(|e| BrainstormError::Storage(e.to_string()))?;
         self.metadata_store
@@ -792,8 +798,14 @@ impl BrainstormingService {
         file.modified_at = Utc::now();
         file.current_version += 1;
 
+        let storage_key = file.storage_key();
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_lock(&storage_key)
+            .await
+            .map_err(|e| BrainstormError::Storage(e.to_string()))?;
         self.object_store
-            .put(&file.storage_key(), content)
+            .put(&storage_key, content)
             .await
             .map_err(|e| BrainstormError::Storage(e.to_string()))?;
         self.metadata_store

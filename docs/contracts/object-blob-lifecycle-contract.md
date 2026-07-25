@@ -107,8 +107,9 @@ candidate.
 
 Transient database or object-store failures increment `attempt_count`, record
 a bounded safe error, and schedule exponential backoff with jitter. Backoff and
-attempts are capped. Reaching the configured maximum leaves the candidate in a
-visible retry/permanent-failure condition; it is never reported as completed.
+attempts are capped. Reaching the configured maximum moves the candidate to
+`operator_hold`; it is never reported as completed or leased again unless an
+operator explicitly re-enqueues it through the safe candidate path.
 
 Shutdown stops claiming work. An in-flight row remains recoverable through its
 lease timeout.
@@ -133,4 +134,3 @@ can disable GC with `RUSTSHARE_OBJECT_GC_ENABLED=false` and inspect backlog,
 age, outcomes, and failures through metrics. This phase exposes no manual
 delete endpoint. A later reconciliation scan or manual retry must reuse the
 same eligibility path.
-

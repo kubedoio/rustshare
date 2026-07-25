@@ -552,6 +552,11 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         // Write blob before conditional DB update (same rationale as upload_file).
         let storage_key = format!("blobs/{}", sha256);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|error| VaultSyncError::Storage(error.to_string()))?;
         self.object_store
             .put(&storage_key, content_bytes)
             .await
@@ -582,7 +587,19 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 },
                 expected_revision,
             )
-            .await?;
+            .await;
+
+        let updated = match updated {
+            Ok(updated) => updated,
+            Err(error) => {
+                self.enqueue_orphan_candidate(
+                    &storage_key,
+                    "metadata_write_failure_after_blob_put",
+                )
+                .await;
+                return Err(error);
+            }
+        };
 
         match updated {
             Some(f) => Ok(VaultFileContentSavedResponse {
@@ -591,6 +608,8 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 updated_at: f.updated_at,
             }),
             None => {
+                self.enqueue_orphan_candidate(&storage_key, "vault_revision_conflict")
+                    .await;
                 let current = self
                     .store
                     .get_file_including_deleted(vault_id, relative_path, tenant_id)
@@ -992,6 +1011,7 @@ mod tests {
     use crate::services::{ObjectStoreOps, VaultStore, VaultSyncError};
     use bytes::Bytes;
     use chrono::Utc;
+    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -3292,7 +3312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_file_content_for_webui_conflict() {
-        let (_, _, service) = setup();
+        let (store, _, service) = setup();
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
@@ -3328,6 +3348,11 @@ mod tests {
             }
             _ => panic!("Expected Conflict, got {:?}", err),
         }
+        let expected_key = format!("blobs/{}", hex::encode(Sha256::digest(b"v2")));
+        assert_eq!(
+            store.gc_candidates.lock().await.as_slice(),
+            &[(expected_key, "vault_revision_conflict".to_string())]
+        );
     }
 
     #[tokio::test]
