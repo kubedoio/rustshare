@@ -271,6 +271,11 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         // Blob-first ordering prevents metadata from pointing at missing data.
         // Any metadata failure below records a delayed, reference-checked GC candidate.
         let storage_key = format!("blobs/{}", req.sha256);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|error| VaultSyncError::Storage(error.to_string()))?;
         self.object_store
             .put(&storage_key, req.content)
             .await

@@ -182,7 +182,7 @@ pub trait UploadObjectStore: Send + Sync {
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<String, UploadError>;
+    ) -> Result<(String, Box<dyn Send>), UploadError>;
 }
 
 /// Metadata store operations for upload service
@@ -634,7 +634,7 @@ where
         // Assemble chunks into the final object without materializing the full
         // file in memory. The object store computes the final SHA-256 while
         // streaming the chunks.
-        let final_hash = self
+        let (final_hash, _blob_write_lock) = self
             .object_store
             .assemble_chunks_to_prefix(session_id, session.total_chunks(), "blobs/")
             .await?;
@@ -1084,13 +1084,16 @@ mod tests {
             session_id: Uuid,
             total_chunks: u32,
             final_key_prefix: &str,
-        ) -> Result<String, UploadError> {
+        ) -> Result<(String, Box<dyn Send>), UploadError> {
             self.assembled.lock().unwrap().push((
                 session_id,
                 total_chunks,
                 final_key_prefix.to_string(),
             ));
-            Ok(crate::validation::calculate_sha256(&Bytes::new()))
+            Ok((
+                crate::validation::calculate_sha256(&Bytes::new()),
+                Box::new(()),
+            ))
         }
     }
 

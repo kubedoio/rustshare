@@ -101,7 +101,7 @@ impl UploadObjectStore for ObjectStore {
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<String, UploadError> {
+    ) -> Result<(String, Box<dyn Send>), UploadError> {
         let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
             .await
             .map_err(|e| UploadError::Storage(format!("Failed to create temp file: {e}")))?
@@ -140,12 +140,16 @@ impl UploadObjectStore for ObjectStore {
 
         let final_hash = hex::encode(hasher.finalize());
         let final_key = format!("{final_key_prefix}{final_hash}");
+        let blob_write_lock = self
+            .acquire_blob_lock(&final_key)
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))?;
 
         self.put_from_path(&final_key, temp_file.path())
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
 
-        Ok(final_hash)
+        Ok((final_hash, Box::new(blob_write_lock)))
     }
 }
 

@@ -4476,6 +4476,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "md5",
+ "metrics",
  "rustshare-core",
  "serde",
  "serde_json",

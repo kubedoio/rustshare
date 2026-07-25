@@ -4,6 +4,7 @@ use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Transaction};
 use std::pin::Pin;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -17,6 +18,7 @@ pub struct ObjectStore {
     client: S3Client,
     bucket: String,
     public_endpoint: Option<S3Client>,
+    blob_lock_pool: Option<PgPool>,
 }
 
 /// Object store startup options.
@@ -81,7 +83,34 @@ impl ObjectStore {
             client,
             bucket,
             public_endpoint: Some(presign_client),
+            blob_lock_pool: None,
         })
+    }
+
+    /// Attach the database pool used for cross-process blob writer/GC locks.
+    pub fn with_blob_lock_pool(mut self, pool: PgPool) -> Self {
+        self.blob_lock_pool = Some(pool);
+        self
+    }
+
+    /// Hold the shared per-key lock until the returned transaction is dropped.
+    pub async fn acquire_blob_lock(
+        &self,
+        key: &str,
+    ) -> Result<Option<Transaction<'static, Postgres>>> {
+        if expected_blob_sha256(key).is_none() {
+            return Ok(None);
+        }
+        let pool = self
+            .blob_lock_pool
+            .as_ref()
+            .context("content-addressed blob locking is not configured")?;
+        let mut transaction = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 7277856))")
+            .bind(key)
+            .execute(&mut *transaction)
+            .await?;
+        Ok(Some(transaction))
     }
 
     /// Put object in storage
@@ -484,6 +513,10 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool
 // This lives next to the concrete type so the storage crate root stays small.
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ObjectStoreOps for ObjectStore {
+    async fn acquire_blob_write_lock(&self, key: &str) -> anyhow::Result<Box<dyn Send>> {
+        Ok(Box::new(self.acquire_blob_lock(key).await?))
+    }
+
     async fn put(&self, key: &str, data: bytes::Bytes) -> anyhow::Result<()> {
         self.put(key, data).await
     }

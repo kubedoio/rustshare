@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
+use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
@@ -152,6 +153,7 @@ async fn init_stores(
                 object_store_options,
             )
             .await
+            .map(|store| store.with_blob_lock_pool(db_pool.clone()))
             .map(Arc::new)
         }
     );
@@ -560,6 +562,14 @@ pub async fn init_app() -> Result<AppState> {
     info!("Prometheus metrics recorder installed");
 
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+
+    let object_gc_config = ObjectGcConfig::from_env()?;
+    spawn_object_gc_worker(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        object_gc_config,
+        shutdown_tx.subscribe(),
+    );
 
     let replication_worker_config = ReplicationWorkerConfig::from_env();
     spawn_replication_worker(

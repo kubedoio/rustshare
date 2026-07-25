@@ -362,6 +362,11 @@ impl MailService {
         let source_hash = hex::encode(Sha256::digest(&raw_source));
         let source_key = format!("blobs/{source_hash}");
         let source_size = raw_source.len() as i64;
+        let _source_blob_lock = self
+            .object_store
+            .acquire_blob_lock(&source_key)
+            .await
+            .map_err(|error| MailError::Storage(error.to_string()))?;
 
         // Persist the raw source blob first (content-addressed and safe to write
         // even if another worker wins the race).
@@ -487,10 +492,17 @@ impl MailService {
                 let key = format!("blobs/{hash}");
                 let bytes = bytes::Bytes::from(att.data);
 
-                self.object_store
-                    .put(&key, bytes.clone())
-                    .await
-                    .map_err(|e| MailError::Storage(e.to_string()))?;
+                {
+                    let _blob_lock = self
+                        .object_store
+                        .acquire_blob_lock(&key)
+                        .await
+                        .map_err(|error| MailError::Storage(error.to_string()))?;
+                    self.object_store
+                        .put(&key, bytes.clone())
+                        .await
+                        .map_err(|e| MailError::Storage(e.to_string()))?;
+                }
 
                 let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
                 let safe_filename = safe_attachment_artifact_filename(&filename, idx);
@@ -604,6 +616,11 @@ impl MailService {
         let hash = hex::encode(Sha256::digest(&bytes));
         let key = format!("blobs/{hash}");
         let size_bytes = bytes.len() as i64;
+        let _blob_lock = self
+            .object_store
+            .acquire_blob_lock(&key)
+            .await
+            .map_err(|error| MailError::Storage(error.to_string()))?;
         self.object_store
             .put(&key, bytes::Bytes::from(bytes))
             .await

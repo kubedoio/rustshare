@@ -4173,7 +4173,7 @@ impl MetadataStore {
                 object_key, reason, first_seen_at, last_seen_at, not_before,
                 state, created_at, updated_at
             ) VALUES (
-                $1, $2, NOW(), NOW(), NOW() + make_interval(hours => $3),
+                $1, $2, NOW(), NOW(), NOW() + ($3 * INTERVAL '1 hour'),
                 'pending', NOW(), NOW()
             )
             ON CONFLICT (object_key) DO UPDATE SET
@@ -4190,9 +4190,11 @@ impl MetadataStore {
         )
         .bind(object_key)
         .bind(reason)
-        .bind(grace_period_hours as f64)
+        .bind(grace_period_hours)
         .execute(&self.pool)
         .await?;
+        metrics::counter!("object_gc_candidates_enqueued_total", "reason" => reason.to_string())
+            .increment(1);
         Ok(())
     }
 
@@ -4201,6 +4203,7 @@ impl MetadataStore {
         limit: i64,
         lease_seconds: i64,
         worker_id: &str,
+        grace_period_hours: i64,
     ) -> Result<Vec<ObjectGcCandidate>> {
         sqlx::query_as::<_, ObjectGcCandidate>(
             r#"
@@ -4208,7 +4211,9 @@ impl MetadataStore {
                 SELECT object_key
                 FROM object_gc_queue
                 WHERE not_before <= NOW()
+                  AND last_seen_at <= NOW() - ($4 * INTERVAL '1 hour')
                   AND operator_hold = FALSE
+                  AND object_key LIKE 'blobs/%'
                   AND (
                     state IN ('pending', 'retry')
                     OR (state = 'processing' AND locked_at < NOW() - make_interval(secs => $2))
@@ -4232,6 +4237,7 @@ impl MetadataStore {
         .bind(limit)
         .bind(lease_seconds as f64)
         .bind(worker_id)
+        .bind(grace_period_hours)
         .fetch_all(&self.pool)
         .await
         .map_err(Into::into)
