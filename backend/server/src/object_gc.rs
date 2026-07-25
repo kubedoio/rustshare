@@ -191,9 +191,8 @@ async fn process_locked_candidate(
     let first = metadata_store
         .count_blob_references(&candidate.object_key)
         .await
-        .map_err(|error| {
+        .inspect_err(|_| {
             metrics::counter!("object_gc_reference_check_failures_total").increment(1);
-            error
         })
         .context("first blob reference check failed")?;
     if first.total() > 0 {
@@ -219,9 +218,8 @@ async fn process_locked_candidate(
     let second = metadata_store
         .count_blob_references(&candidate.object_key)
         .await
-        .map_err(|error| {
+        .inspect_err(|_| {
             metrics::counter!("object_gc_reference_check_failures_total").increment(1);
-            error
         })
         .context("second blob reference check failed")?;
     if !deletion_allowed(&first, &second) {

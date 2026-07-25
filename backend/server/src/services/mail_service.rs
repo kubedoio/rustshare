@@ -442,6 +442,10 @@ impl MailService {
             ));
         }
 
+        // The mail row now protects the source blob. Release this direct-writer
+        // lock before FileService writes the same content-addressed source file.
+        drop(_source_blob_lock);
+
         // Create the mail artifact folder and source file only after we won the
         // unique-source insert race. If any later step fails, remove the row so
         // a retry does not treat the UID as already imported while artifacts are
@@ -491,18 +495,6 @@ impl MailService {
                 let hash = hex::encode(Sha256::digest(&att.data));
                 let key = format!("blobs/{hash}");
                 let bytes = bytes::Bytes::from(att.data);
-
-                {
-                    let _blob_lock = self
-                        .object_store
-                        .acquire_blob_lock(&key)
-                        .await
-                        .map_err(|error| MailError::Storage(error.to_string()))?;
-                    self.object_store
-                        .put(&key, bytes.clone())
-                        .await
-                        .map_err(|e| MailError::Storage(e.to_string()))?;
-                }
 
                 let filename = att.filename.unwrap_or_else(|| format!("attachment-{idx}"));
                 let safe_filename = safe_attachment_artifact_filename(&filename, idx);
@@ -4642,7 +4634,8 @@ mod tests {
                 },
             )
             .await
-            .expect("failed to create object store"),
+            .expect("failed to create object store")
+            .with_blob_lock_pool(pool.clone()),
         );
 
         let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
