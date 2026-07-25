@@ -16,8 +16,9 @@ pub mod upload_impl;
 
 pub use event_store::EventStore;
 pub use metadata::{
-    MetadataStore, PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig,
-    ShareAccessLogEntry, UserSecurityEvent, UserSecurityEventRecord,
+    BlobReferenceSummary, MetadataStore, ObjectGcCandidate, PublicShareAccessLogEntry,
+    ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,
+    UserSecurityEventRecord,
 };
 pub use object_store::{ObjectStore, ObjectStoreOptions};
 
