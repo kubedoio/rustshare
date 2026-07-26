@@ -37,13 +37,17 @@ CREATE OR REPLACE FUNCTION queue_removed_object_key() RETURNS trigger AS $$
 DECLARE
     old_key TEXT := to_jsonb(OLD) ->> TG_ARGV[0];
     new_key TEXT := CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE to_jsonb(NEW) ->> TG_ARGV[0] END;
+    not_before_at TIMESTAMPTZ := CASE
+        WHEN old_key ~ '^blobs/[0-9a-f]{64}$' THEN NOW()
+        ELSE NOW() + INTERVAL '24 hours'
+    END;
 BEGIN
     IF old_key IS NOT NULL AND old_key IS DISTINCT FROM new_key THEN
         INSERT INTO object_gc_queue (
             object_key, reason, first_seen_at, last_seen_at, not_before,
             state, created_at, updated_at
         ) VALUES (
-            old_key, 'reference_replaced', NOW(), NOW(), NOW(),
+            old_key, 'reference_replaced', NOW(), NOW(), not_before_at,
             'pending', NOW(), NOW()
         )
         ON CONFLICT (object_key) DO UPDATE SET
