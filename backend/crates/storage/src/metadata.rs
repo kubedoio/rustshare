@@ -4180,8 +4180,8 @@ impl MetadataStore {
                 reason = EXCLUDED.reason,
                 last_seen_at = NOW(),
                 not_before = GREATEST(object_gc_queue.not_before, EXCLUDED.not_before),
-                state = CASE WHEN object_gc_queue.operator_hold
-                    THEN 'operator_hold' ELSE 'pending' END,
+                state = 'pending',
+                operator_hold = FALSE,
                 locked_at = NULL,
                 locked_by = NULL,
                 completed_at = NULL,
@@ -4292,6 +4292,29 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() == 1)
+    }
+
+    /// Verify that a candidate is still leased to this worker in `processing`
+    /// state. Used before destructive operations so a stale worker does not
+    /// delete an object after losing its lease.
+    pub async fn has_valid_object_gc_lease(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+    ) -> Result<bool> {
+        sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM object_gc_queue
+                WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            )
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     pub async fn retry_object_gc_candidate(

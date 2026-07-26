@@ -195,6 +195,16 @@ async fn process_locked_candidate(
         .await
         .context("failed to acquire blob GC lock")?;
 
+    // The lease may have expired or been re-enqueued while we waited for the
+    // per-key advisory lock; skip work we no longer own.
+    if !metadata_store
+        .has_valid_object_gc_lease(&candidate.object_key, worker_id)
+        .await
+        .context("failed to validate object GC lease")?
+    {
+        return Ok(());
+    }
+
     let first = metadata_store
         .count_blob_references(&candidate.object_key)
         .await
@@ -234,6 +244,16 @@ async fn process_locked_candidate(
         metadata_store
             .complete_object_gc_candidate(&candidate.object_key, worker_id, "referenced")
             .await?;
+        return Ok(());
+    }
+
+    // Revalidate immediately before the destructive delete so a stale worker
+    // does not delete after losing its lease to another worker or a re-enqueue.
+    if !metadata_store
+        .has_valid_object_gc_lease(&candidate.object_key, worker_id)
+        .await
+        .context("failed to revalidate object GC lease")?
+    {
         return Ok(());
     }
 
