@@ -4369,7 +4369,7 @@ impl MetadataStore {
             SELECT object_key FROM object_gc_queue
             WHERE not_before <= NOW()
               AND state IN ('pending', 'retry')
-              AND object_key !~ '^blobs/[0-9a-f]{64}$'
+              AND object_key !~* '^blobs/[0-9a-f]{64}$'
             ORDER BY not_before LIMIT $1
             "#,
         )

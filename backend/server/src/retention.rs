@@ -276,6 +276,15 @@ mod tests {
             "blobs/{}",
             "a".repeat(64)
         )));
+        assert!(is_content_addressed_blob_key(&format!(
+            "blobs/{}",
+            "A".repeat(64)
+        )));
+        assert!(is_content_addressed_blob_key(&format!(
+            "blobs/{}{}",
+            "a".repeat(32),
+            "A".repeat(32)
+        )));
         assert!(!is_content_addressed_blob_key("blobs/not-a-sha256"));
         assert!(!is_content_addressed_blob_key(&format!(
             "mail/{}",
