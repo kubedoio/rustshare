@@ -31,7 +31,7 @@ jsonwebtoken.workspace = true
 # Crypto for session hashing
 sha2 = "0.11"
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 
 [dev-dependencies]
 libc = "0.2"
