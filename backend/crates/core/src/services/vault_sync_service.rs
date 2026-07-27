@@ -31,14 +31,36 @@ use crate::services::{ObjectStoreOps, VaultStore, VaultSyncError};
 pub struct VaultSyncService<S: VaultStore, O: ObjectStoreOps> {
     store: Arc<S>,
     object_store: Arc<O>,
+    gc_grace_period_hours: i64,
 }
 
 impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
     /// Create a new `VaultSyncService`.
     pub fn new(store: Arc<S>, object_store: Arc<O>) -> Self {
+        let gc_grace_period_hours = std::env::var("RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(24)
+            .max(1);
         Self {
             store,
             object_store,
+            gc_grace_period_hours,
+        }
+    }
+
+    async fn enqueue_orphan_candidate(&self, object_key: &str, reason: &str) {
+        if let Err(error) = self
+            .store
+            .enqueue_object_gc_candidate(object_key, reason, self.gc_grace_period_hours)
+            .await
+        {
+            tracing::error!(
+                object_key,
+                reason,
+                error = %error,
+                "Failed to enqueue vault blob GC candidate"
+            );
         }
     }
 
@@ -228,6 +250,9 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 "SHA256 must be 64 hex characters".to_string(),
             ));
         }
+        // Canonicalize to lowercase so object keys and DB sha256 values always
+        // match the GC validator (which only accepts `blobs/<64 lowercase hex>`).
+        let sha256 = req.sha256.to_ascii_lowercase();
 
         // Verify vault exists and user is the owner.
         let vault = self.store.get_vault(req.vault_id, tenant_id).await?;
@@ -253,16 +278,14 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
             }
         }
 
-        // Blob is written to object store before the conditional DB update.
-        // This ordering is intentional: a dangling blob is harmless because
-        // content-addressed storage deduplicates by SHA-256, but a missing
-        // blob would break file references and violate data integrity.
-        // Under high contention orphaned blobs may accumulate because a
-        // conflict after the write leaves the blob unreferenced.
-        // TODO: Implement a background GC worker to reclaim orphaned blobs.
-        // The recommended long-term fix is a periodic garbage-collection
-        // task that scans for blobs with no referencing DB rows.
-        let storage_key = format!("blobs/{}", req.sha256);
+        // Blob-first ordering prevents metadata from pointing at missing data.
+        // Any metadata failure below records a delayed, reference-checked GC candidate.
+        let storage_key = format!("blobs/{}", sha256);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|error| VaultSyncError::Storage(error.to_string()))?;
         self.object_store
             .put(&storage_key, req.content)
             .await
@@ -282,7 +305,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                             vault_id: req.vault_id,
                             relative_path: req.relative_path.clone(),
                             content_type: req.content_type.clone(),
-                            sha256: Some(req.sha256.clone()),
+                            sha256: Some(sha256.clone()),
                             size: Some(req.size),
                             server_rev: 0, // ignored — set inside transaction
                             mtime_client: None,
@@ -295,15 +318,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                         },
                         req.base_server_rev,
                     )
-                    .await?;
+                    .await;
                 match updated {
-                    Some(f) => f,
-                    None => {
+                    Ok(Some(f)) => f,
+                    Ok(None) => {
+                        self.enqueue_orphan_candidate(&storage_key, "vault_revision_conflict")
+                            .await;
                         return Err(VaultSyncError::Conflict {
                             client_rev: req.base_server_rev,
                             current_rev: file.server_rev,
                             server_sha256: file.sha256.clone(),
                         });
+                    }
+                    Err(error) => {
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "metadata_write_failure_after_blob_put",
+                        )
+                        .await;
+                        return Err(error);
                     }
                 }
             }
@@ -323,7 +356,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                     vault_id: req.vault_id,
                     relative_path: req.relative_path,
                     content_type: req.content_type,
-                    sha256: Some(req.sha256),
+                    sha256: Some(sha256),
                     size: Some(req.size),
                     server_rev: 0, // ignored — set inside transaction
                     mtime_client: None,
@@ -341,13 +374,25 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                             || msg.to_lowercase().contains("unique constraint") =>
                     {
                         // Unique violation → file was created concurrently.
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "vault_concurrent_create_conflict",
+                        )
+                        .await;
                         return Err(VaultSyncError::Conflict {
                             client_rev: req.base_server_rev,
                             current_rev: 0,
                             server_sha256: None,
                         });
                     }
-                    Err(e) => return Err(e),
+                    Err(error) => {
+                        self.enqueue_orphan_candidate(
+                            &storage_key,
+                            "metadata_write_failure_after_blob_put",
+                        )
+                        .await;
+                        return Err(error);
+                    }
                 }
             }
             Err(e) => return Err(e),
@@ -508,7 +553,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         let sha256 = {
             use sha2::{Digest, Sha256};
-            hex::encode(Sha256::digest(&content_bytes))
+            hex::encode(Sha256::digest(&content_bytes)).to_ascii_lowercase()
         };
 
         let device = self
@@ -517,6 +562,11 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
 
         // Write blob before conditional DB update (same rationale as upload_file).
         let storage_key = format!("blobs/{}", sha256);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|error| VaultSyncError::Storage(error.to_string()))?;
         self.object_store
             .put(&storage_key, content_bytes)
             .await
@@ -547,7 +597,19 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 },
                 expected_revision,
             )
-            .await?;
+            .await;
+
+        let updated = match updated {
+            Ok(updated) => updated,
+            Err(error) => {
+                self.enqueue_orphan_candidate(
+                    &storage_key,
+                    "metadata_write_failure_after_blob_put",
+                )
+                .await;
+                return Err(error);
+            }
+        };
 
         match updated {
             Some(f) => Ok(VaultFileContentSavedResponse {
@@ -556,6 +618,8 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                 updated_at: f.updated_at,
             }),
             None => {
+                self.enqueue_orphan_candidate(&storage_key, "vault_revision_conflict")
+                    .await;
                 let current = self
                     .store
                     .get_file_including_deleted(vault_id, relative_path, tenant_id)
@@ -957,6 +1021,7 @@ mod tests {
     use crate::services::{ObjectStoreOps, VaultStore, VaultSyncError};
     use bytes::Bytes;
     use chrono::Utc;
+    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -966,6 +1031,7 @@ mod tests {
         vaults: Mutex<HashMap<Uuid, Vault>>,
         files: Mutex<HashMap<(Uuid, String), VaultFile>>,
         devices: Mutex<HashMap<String, VaultDevice>>,
+        gc_candidates: Mutex<Vec<(String, String)>>,
     }
 
     impl MockVaultStore {
@@ -974,12 +1040,26 @@ mod tests {
                 vaults: Mutex::new(HashMap::new()),
                 files: Mutex::new(HashMap::new()),
                 devices: Mutex::new(HashMap::new()),
+                gc_candidates: Mutex::new(Vec::new()),
             }
         }
     }
 
     #[allow(async_fn_in_trait)]
     impl VaultStore for MockVaultStore {
+        async fn enqueue_object_gc_candidate(
+            &self,
+            object_key: &str,
+            reason: &str,
+            _grace_period_hours: i64,
+        ) -> Result<(), VaultSyncError> {
+            self.gc_candidates
+                .lock()
+                .await
+                .push((object_key.to_string(), reason.to_string()));
+            Ok(())
+        }
+
         async fn create_vault(&self, vault: &Vault) -> Result<Vault, VaultSyncError> {
             let mut vaults = self.vaults.lock().await;
             if vaults.contains_key(&vault.id) {
@@ -1583,7 +1663,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_file_update_existing() {
-        let (_, _, service) = setup();
+        let (store, _, service) = setup();
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let vault = service
@@ -1669,6 +1749,14 @@ mod tests {
             }
             _ => panic!("Expected Conflict, got {:?}", err),
         }
+        assert_eq!(
+            store.gc_candidates.lock().await.as_slice(),
+            &[(
+                "blobs/ddaaccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+                    .to_string(),
+                "vault_revision_conflict".to_string(),
+            )]
+        );
     }
 
     #[tokio::test]
@@ -3235,7 +3323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_file_content_for_webui_conflict() {
-        let (_, _, service) = setup();
+        let (store, _, service) = setup();
         let tenant_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let vault = create_web_editable_vault(&service, tenant_id, owner_id).await;
@@ -3271,6 +3359,11 @@ mod tests {
             }
             _ => panic!("Expected Conflict, got {:?}", err),
         }
+        let expected_key = format!("blobs/{}", hex::encode(Sha256::digest(b"v2")));
+        assert_eq!(
+            store.gc_candidates.lock().await.as_slice(),
+            &[(expected_key, "vault_revision_conflict".to_string())]
+        );
     }
 
     #[tokio::test]

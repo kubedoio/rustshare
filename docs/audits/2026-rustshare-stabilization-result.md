@@ -27,6 +27,8 @@ Deferred (out of scope for stabilization):
 - AI indexing ACL boundary changes.
 - Upload-only share service-layer enforcement.
 - Vault-sync orphaned blob cleanup.
+
+Resolution note (2026-07-25): the deferred vault-sync blob lifecycle risk is addressed by `storage/vault-orphan-blob-gc`; see `2026-vault-blob-gc-result.md`. This does not alter the historical stabilization scope.
 - Permission-model changes.
 - Authentication or cryptographic changes.
 
@@ -152,6 +154,8 @@ The following items remain explicitly deferred and are documented in the bug inv
 - AI indexing ACL boundary.
 - Upload-only share service-layer enforcement.
 - Vault-sync orphaned blobs.
+
+Resolution note (2026-07-25): resolved by the dedicated safe object-GC phase; deletion remains disabled by default pending operator enablement and human review.
 - AI readiness behavior.
 - Dependency duplicate advisories are tracked by `cargo deny`; current warnings do not fail the check.
 

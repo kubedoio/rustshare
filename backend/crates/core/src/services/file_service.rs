@@ -163,6 +163,11 @@ pub trait MetadataStoreOps: Send + Sync {
 /// This trait abstracts RustFS/object storage to allow for testing without storage dependencies.
 #[allow(async_fn_in_trait)]
 pub trait ObjectStoreOps: Send + Sync {
+    /// Acquire the cross-process exclusion guard for a content-addressed write.
+    async fn acquire_blob_write_lock(&self, _key: &str) -> Result<Box<dyn Send>> {
+        Ok(Box::new(()))
+    }
+
     /// Upload data to object storage.
     async fn put(&self, key: &str, data: Bytes) -> Result<()>;
 
@@ -459,6 +464,11 @@ where
 
         // 3. Write to RustFS at "blobs/{hash}" (skip if the blob already exists)
         let storage_key = format!("blobs/{}", content_hash);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|e| FileError::Storage(e.to_string()))?;
         let blob_exists = self
             .object_store
             .exists(&storage_key)
@@ -776,6 +786,11 @@ where
 
         // 4. Write to RustFS (skip if same content - deduplication)
         let storage_key = format!("blobs/{}", new_content_hash);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|e| FileError::Storage(e.to_string()))?;
         let blob_exists = self
             .object_store
             .exists(&storage_key)
@@ -1325,6 +1340,11 @@ where
 
         // 5. Write to RustFS (skip if same content - deduplication)
         let storage_key = format!("blobs/{}", new_content_hash);
+        let _blob_write_lock = self
+            .object_store
+            .acquire_blob_write_lock(&storage_key)
+            .await
+            .map_err(|e| FileError::Storage(e.to_string()))?;
         let blob_exists = self
             .object_store
             .exists(&storage_key)

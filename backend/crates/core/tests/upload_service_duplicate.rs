@@ -147,8 +147,11 @@ impl UploadObjectStore for MockUploadObjectStore {
         _session_id: Uuid,
         _total_chunks: u32,
         _final_key_prefix: &str,
-    ) -> Result<String, UploadError> {
-        Ok(rustshare_core::validation::calculate_sha256(&Bytes::new()))
+    ) -> Result<(String, Box<dyn Send>), UploadError> {
+        Ok((
+            rustshare_core::validation::calculate_sha256(&Bytes::new()),
+            Box::new(()),
+        ))
     }
 }
 
@@ -226,6 +229,15 @@ impl UploadMetadataStore for MockUploadMetadataStore {
         version: &FileVersion,
     ) -> Result<(), UploadError> {
         self.created_versions.lock().unwrap().push(version.clone());
+        Ok(())
+    }
+
+    async fn enqueue_object_gc_candidate(
+        &self,
+        _object_key: &str,
+        _reason: &str,
+        _grace_period_hours: i64,
+    ) -> Result<(), UploadError> {
         Ok(())
     }
 }

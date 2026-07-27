@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
+use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
@@ -130,9 +131,48 @@ async fn init_database(config: &AppConfig) -> Result<PgPool> {
     Ok(db_pool)
 }
 
+async fn init_blob_lock_pool(config: &AppConfig) -> Result<PgPool> {
+    // Separate, small pool for PostgreSQL advisory locks on content-addressed
+    // blobs. Isolating it from the main application pool prevents saturation
+    // deadlocks where a writer holds a main-pool connection as a lock guard
+    // while waiting for a second main-pool connection to persist metadata.
+    // Capacity and wait policy are configurable so concurrent content-addressed
+    // uploads queue instead of failing when every lock connection is busy.
+    let max_connections = env_u32("RUSTSHARE_BLOB_LOCK_POOL_MAX_CONNECTIONS", 16);
+    let acquire_timeout_secs = env_u64("RUSTSHARE_BLOB_LOCK_POOL_ACQUIRE_TIMEOUT_SECONDS", 30);
+
+    let pool = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(0)
+        .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
+        .max_lifetime(Some(Duration::from_secs(3600)))
+        .connect(&config.database_url)
+        .await?;
+    info!(
+        max_connections,
+        acquire_timeout_secs, "Blob lock pool configured"
+    );
+    Ok(pool)
+}
+
+fn env_u32(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 async fn init_stores(
     config: &AppConfig,
     db_pool: PgPool,
+    blob_lock_pool: PgPool,
 ) -> Result<(Arc<MetadataStore>, Arc<EventStore>, Arc<ObjectStore>)> {
     let rustfs_endpoint = config.rustfs_endpoint.clone();
     let rustfs_region = config.rustfs_region.clone();
@@ -152,6 +192,7 @@ async fn init_stores(
                 object_store_options,
             )
             .await
+            .map(|store| store.with_blob_lock_pool(blob_lock_pool))
             .map(Arc::new)
         }
     );
@@ -501,8 +542,10 @@ pub async fn init_app() -> Result<AppState> {
     info!("Starting RustShare server");
 
     let db_pool = init_database(&config).await?;
+    let blob_lock_pool = init_blob_lock_pool(&config).await?;
 
-    let (metadata_store, event_store, object_store) = init_stores(&config, db_pool.clone()).await?;
+    let (metadata_store, event_store, object_store) =
+        init_stores(&config, db_pool.clone(), blob_lock_pool).await?;
 
     let jwt_manager = init_jwt_manager(&config).await?;
 
@@ -560,6 +603,14 @@ pub async fn init_app() -> Result<AppState> {
     info!("Prometheus metrics recorder installed");
 
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+
+    let object_gc_config = ObjectGcConfig::from_env()?;
+    spawn_object_gc_worker(
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        object_gc_config,
+        shutdown_tx.subscribe(),
+    );
 
     let replication_worker_config = ReplicationWorkerConfig::from_env();
     spawn_replication_worker(

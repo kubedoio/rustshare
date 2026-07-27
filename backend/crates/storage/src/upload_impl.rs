@@ -101,7 +101,7 @@ impl UploadObjectStore for ObjectStore {
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<String, UploadError> {
+    ) -> Result<(String, Box<dyn Send>), UploadError> {
         let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
             .await
             .map_err(|e| UploadError::Storage(format!("Failed to create temp file: {e}")))?
@@ -140,12 +140,16 @@ impl UploadObjectStore for ObjectStore {
 
         let final_hash = hex::encode(hasher.finalize());
         let final_key = format!("{final_key_prefix}{final_hash}");
+        let blob_write_lock = self
+            .acquire_blob_lock(&final_key)
+            .await
+            .map_err(|e| UploadError::Storage(e.to_string()))?;
 
         self.put_from_path(&final_key, temp_file.path())
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
 
-        Ok(final_hash)
+        Ok((final_hash, Box::new(blob_write_lock)))
     }
 }
 
@@ -194,6 +198,17 @@ impl UploadMetadataStore for MetadataStore {
         version: &rustshare_core::domain::FileVersion,
     ) -> Result<(), UploadError> {
         self.create_file_version(version)
+            .await
+            .map_err(|e| UploadError::Database(e.to_string()))
+    }
+
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<(), UploadError> {
+        self.enqueue_object_gc_candidate(object_key, reason, grace_period_hours)
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }

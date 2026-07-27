@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
+
 - Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.
 - Corrected Kanban comment actor attribution so the comment author matches the authenticated actor.
 - Made the internal-mail-server validation tests deterministic by serializing environment-variable mutations with an async mutex and restoring values after each test.

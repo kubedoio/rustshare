@@ -18,6 +18,7 @@ production launch. Repository-level implementation does not close these gates.
 | Multi-tenant isolation | High | Repository-level `tenant_id` filtering for files, folders, shares, notifications, vaults, and share links; `X-Tenant-ID` support for anonymous public routes. |
 | Webhook security | High | HMAC-SHA256 signature verification; replay-age checks; SSRF hardening; HTTPS-only webhook registration. |
 | Object storage integrity | High | Content-addressed `blobs/{sha256}` uploads/downloads are SHA-256 verified; bucket creation is explicit and disabled by default. |
+| Object blob lifecycle | High | Durable candidates, 24-hour default grace, global reference checks, per-key writer/GC locks, leases, and idempotent deletion; deletion remains operator-disabled by default. |
 | CI/CD & secrets hygiene | High | Hardcoded secrets removed from workflows; per-run generated secrets; `secret-scan` gate. |
 | Code quality & test coverage | High | Ignored backend tests fixed or removed; clippy clean across all targets; cargo audit advisories addressed. |
 | Backup, restore, and recovery | High | Bundled scripts for backup, restore, verification, and isolated restore drills; runbooks exist. |
@@ -102,6 +103,7 @@ not applicable only with a documented reason and release-owner approval.
   - `METRICS_API_TOKEN` — rotate if `/metrics` is exposed.
 - [ ] Disable dev-only overrides such as `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` and `RUSTSHARE_METADATA_BACKEND=localfs` in production.
 - [ ] Provision the object-storage bucket out-of-band in production; keep `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=false`.
+- [ ] Review the blob-deletion boundary, then explicitly set `RUSTSHARE_OBJECT_GC_ENABLED=true`; monitor candidate backlog and failures before increasing batch size.
 
 See [Deployment Guide](DEPLOYMENT.md) and [Security Incident Runbook](runbooks/security-incident.md) for rotation procedures.
 

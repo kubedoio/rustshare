@@ -13,6 +13,14 @@ use uuid::Uuid;
 /// This trait abstracts the metadata store to allow for testing without database dependencies.
 #[allow(async_fn_in_trait, clippy::too_many_arguments)]
 pub trait VaultStore: Send + Sync {
+    /// Record a durable reason to check a content-addressed object after its grace period.
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<(), VaultSyncError>;
+
     /// Create a new vault.
     async fn create_vault(&self, vault: &Vault) -> Result<Vault, VaultSyncError>;
 

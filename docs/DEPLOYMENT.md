@@ -245,6 +245,13 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `RUSTFS_PUBLIC_ENDPOINT` | `http://localhost:9000` | Public-facing object storage URL |
 | `RUSTFS_BUCKET` | `rustshare-files` | Object storage bucket |
 | `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` | `false` | Whether the backend should create a missing object-storage bucket at startup. Keep disabled in production and provision buckets out-of-band. |
+| `RUSTSHARE_OBJECT_GC_ENABLED` | `false` | Enable asynchronous deletion of globally unreferenced `blobs/<sha256>` objects. Candidate enqueueing is always active. |
+| `RUSTSHARE_OBJECT_GC_INTERVAL_SECONDS` | `300` | Worker interval; minimum 10 seconds. |
+| `RUSTSHARE_OBJECT_GC_BATCH_SIZE` | `50` | Maximum candidates per tick; range 1–1000. |
+| `RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS` | `24` | Minimum delay since the most recent candidate observation. |
+| `RUSTSHARE_OBJECT_GC_MAX_ATTEMPTS` | `10` | Attempt threshold for operator-alert logging; candidates remain visible and retry safely. |
+| `RUSTSHARE_OBJECT_GC_LEASE_SECONDS` | `900` | Processing lease before another worker may reclaim a candidate. |
+| `RUSTSHARE_OBJECT_GC_MAX_BACKOFF_SECONDS` | `86400` | Maximum retry delay. |
 | `RUSTSHARE_METADATA_BACKEND` | `postgres` | Metadata store backend (`postgres`, `rustfs`, `dual_write`, `rustfs_reads`, `localfs`) |
 | `PASSWORD_LOGIN_ENABLED` | `true` | Whether password login is available |
 | `OIDC_ISSUER_URL` | — | OIDC provider URL |

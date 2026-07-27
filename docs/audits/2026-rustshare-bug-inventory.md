@@ -101,6 +101,8 @@ Severity levels:
 
 ## 6. Contended vault-sync writes can leave orphaned blobs
 
+**Resolution note (storage/vault-orphan-blob-gc, 2026-07-25):** Resolved by durable candidate enqueueing on vault conflict/database failure, global reference-aware GC, a configurable grace period, exclusive leases, and a cross-process per-key lock shared by blob writers and GC. Real PostgreSQL/RustFS tests cover coalescing, shared references, concurrent workers, stale-lease recovery, invalid keys, missing objects, and deletion. Human approval of the deletion boundary remains required before merge.
+
 - **Severity**: Medium
 - **Component**: Vault synchronization (`backend/crates/core/src/services/vault_sync_service.rs:262`)
 - **Reproduction**: Review the TODO marker and conflict-resolution path.
@@ -186,7 +188,7 @@ Severity levels:
 | 3 | S3 bucket bootstrap | Low | Verified, no change |
 | 4 | AI indexing ACL placeholder | High | Defer — security-sensitive |
 | 5 | Upload-only share service-layer enforcement | Medium | Consider if small; human review required |
-| 6 | Vault-sync orphaned blobs | Medium | Defer |
+| 6 | Vault-sync orphaned blobs | Medium | Resolved in `storage/vault-orphan-blob-gc`; human review required |
 | 7 | Kanban hard-coded actor | Low / Medium | Fix within stabilization |
 | 8 | AI readiness stub | Low | Defer or trivial fix |
 | 9 | Skipped FileThumbnail tests | Low | Fix if time permits |

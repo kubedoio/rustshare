@@ -182,7 +182,7 @@ pub trait UploadObjectStore: Send + Sync {
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<String, UploadError>;
+    ) -> Result<(String, Box<dyn Send>), UploadError>;
 }
 
 /// Metadata store operations for upload service
@@ -220,6 +220,14 @@ pub trait UploadMetadataStore: Send + Sync {
         &self,
         file: &File,
         version: &crate::domain::FileVersion,
+    ) -> Result<(), UploadError>;
+
+    /// Queue an object for reference-aware garbage collection.
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
     ) -> Result<(), UploadError>;
 }
 
@@ -634,7 +642,7 @@ where
         // Assemble chunks into the final object without materializing the full
         // file in memory. The object store computes the final SHA-256 while
         // streaming the chunks.
-        let final_hash = self
+        let (final_hash, _blob_write_lock) = self
             .object_store
             .assemble_chunks_to_prefix(session_id, session.total_chunks(), "blobs/")
             .await?;
@@ -642,9 +650,30 @@ where
         // Verify final hash if expected
         if let Some(expected_hash) = &session.file_hash {
             if expected_hash != &final_hash {
-                self.object_store
-                    .delete_object(&format!("blobs/{final_hash}"))
-                    .await?;
+                // Never delete the assembled blob here: it is valid
+                // content-addressed data that may already exist and be
+                // referenced by other files. Queue it for reference-aware
+                // garbage collection instead; it is reclaimed once proven
+                // unreferenced.
+                let grace_hours = std::env::var("RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(24)
+                    .max(1);
+                if let Err(error) = self
+                    .metadata_store
+                    .enqueue_object_gc_candidate(
+                        &format!("blobs/{final_hash}"),
+                        "upload_hash_mismatch",
+                        grace_hours,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        error = %error,
+                        "Failed to enqueue hash-mismatch blob for garbage collection"
+                    );
+                }
                 return Err(UploadError::FileHashVerificationFailed);
             }
         }
@@ -1084,13 +1113,16 @@ mod tests {
             session_id: Uuid,
             total_chunks: u32,
             final_key_prefix: &str,
-        ) -> Result<String, UploadError> {
+        ) -> Result<(String, Box<dyn Send>), UploadError> {
             self.assembled.lock().unwrap().push((
                 session_id,
                 total_chunks,
                 final_key_prefix.to_string(),
             ));
-            Ok(crate::validation::calculate_sha256(&Bytes::new()))
+            Ok((
+                crate::validation::calculate_sha256(&Bytes::new()),
+                Box::new(()),
+            ))
         }
     }
 
@@ -1099,6 +1131,7 @@ mod tests {
         created_files: Mutex<Vec<File>>,
         updated_files: Mutex<Vec<File>>,
         created_versions: Mutex<Vec<FileVersion>>,
+        enqueued_gc_candidates: Mutex<Vec<String>>,
     }
 
     impl MockUploadMetadataStore {
@@ -1108,6 +1141,7 @@ mod tests {
                 created_files: Mutex::new(Vec::new()),
                 updated_files: Mutex::new(Vec::new()),
                 created_versions: Mutex::new(Vec::new()),
+                enqueued_gc_candidates: Mutex::new(Vec::new()),
             }
         }
     }
@@ -1153,6 +1187,19 @@ mod tests {
             version: &FileVersion,
         ) -> Result<(), UploadError> {
             self.created_versions.lock().unwrap().push(version.clone());
+            Ok(())
+        }
+
+        async fn enqueue_object_gc_candidate(
+            &self,
+            object_key: &str,
+            _reason: &str,
+            _grace_period_hours: i64,
+        ) -> Result<(), UploadError> {
+            self.enqueued_gc_candidates
+                .lock()
+                .unwrap()
+                .push(object_key.to_string());
             Ok(())
         }
     }
@@ -1258,7 +1305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_upload_deletes_final_blob_when_expected_hash_mismatches() {
+    async fn complete_upload_queues_final_blob_for_gc_when_expected_hash_mismatches() {
         let owner_id = Uuid::new_v4();
         let tenant_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
@@ -1286,7 +1333,7 @@ mod tests {
         let service = UploadService::new(
             repo,
             object_store.clone(),
-            metadata_store,
+            metadata_store.clone(),
             event_store,
             broadcaster,
         );
@@ -1297,9 +1344,18 @@ mod tests {
             result,
             Err(UploadError::FileHashVerificationFailed)
         ));
+        // The assembled blob is valid content-addressed data that may be
+        // shared with other files; it must not be deleted here. It is queued
+        // for reference-aware garbage collection instead.
+        let expected_key = "blobs/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(object_store.deleted_objects.lock().unwrap().is_empty());
         assert_eq!(
-            object_store.deleted_objects.lock().unwrap().as_slice(),
-            &["blobs/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+            metadata_store
+                .enqueued_gc_candidates
+                .lock()
+                .unwrap()
+                .as_slice(),
+            &[expected_key]
         );
     }
 

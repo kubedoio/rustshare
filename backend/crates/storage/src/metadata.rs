@@ -35,6 +35,38 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ObjectGcCandidate {
+    pub id: Uuid,
+    pub object_key: String,
+    pub reason: String,
+    pub attempt_count: i32,
+    pub locked_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct BlobReferenceSummary {
+    pub files: i64,
+    pub file_versions: i64,
+    pub vault_files: i64,
+    pub mail_messages: i64,
+    pub mail_message_parts: i64,
+    pub mail_attachments: i64,
+    pub replication_jobs: i64,
+}
+
+impl BlobReferenceSummary {
+    pub fn total(&self) -> i64 {
+        self.files
+            + self.file_versions
+            + self.vault_files
+            + self.mail_messages
+            + self.mail_message_parts
+            + self.mail_attachments
+            + self.replication_jobs
+    }
+}
+
 impl MetadataStore {
     /// Get access to the underlying database pool
     pub fn pool(&self) -> &PgPool {
@@ -4129,57 +4161,272 @@ impl MetadataStore {
         Ok(result.rows_affected())
     }
 
-    /// Return queued objects whose grace period has elapsed.
-    ///
-    /// Content-addressed `blobs/<sha256>` keys stay queued but are never
-    /// returned: deleting them can race a concurrent writer until object
-    /// writers and GC share a cross-process lease, and returning them would
-    /// starve every other candidate behind a permanently skipped batch.
-    pub async fn list_ready_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
-        let keys = sqlx::query_scalar::<_, String>(
+    /// Delete terminal-state object GC queue rows older than the given number
+    /// of days so the table does not grow monotonically.
+    pub async fn clean_terminal_object_gc_candidates(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query(
             r#"
-            SELECT q.object_key
-            FROM object_gc_queue q
-            WHERE q.not_before <= NOW()
-              AND q.object_key !~ '^blobs/[0-9a-fA-F]{64}$'
-            ORDER BY q.not_before
-            LIMIT $1
+            DELETE FROM object_gc_queue
+            WHERE state IN ('deleted', 'missing', 'referenced', 'invalid_key')
+              AND completed_at < NOW() - ($1 * INTERVAL '1 day')
+            "#,
+        )
+        .bind(days as f64)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO object_gc_queue (
+                object_key, reason, first_seen_at, last_seen_at, not_before,
+                state, created_at, updated_at
+            ) VALUES (
+                $1, $2, NOW(), NOW(), NOW() + ($3 * INTERVAL '1 hour'),
+                'pending', NOW(), NOW()
+            )
+            ON CONFLICT (object_key) DO UPDATE SET
+                reason = EXCLUDED.reason,
+                last_seen_at = NOW(),
+                not_before = GREATEST(object_gc_queue.not_before, EXCLUDED.not_before),
+                state = 'pending',
+                operator_hold = FALSE,
+                locked_at = NULL,
+                locked_by = NULL,
+                completed_at = NULL,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(object_key)
+        .bind(reason)
+        .bind(grace_period_hours)
+        .execute(&self.pool)
+        .await?;
+        metrics::counter!("object_gc_candidates_enqueued_total", "reason" => reason.to_string())
+            .increment(1);
+        Ok(())
+    }
+
+    pub async fn lease_object_gc_candidates(
+        &self,
+        limit: i64,
+        lease_seconds: i64,
+        worker_id: &str,
+        grace_period_hours: i64,
+    ) -> Result<Vec<ObjectGcCandidate>> {
+        sqlx::query_as::<_, ObjectGcCandidate>(
+            r#"
+            WITH due AS (
+                SELECT object_key
+                FROM object_gc_queue
+                WHERE not_before <= NOW()
+                  AND last_seen_at <= NOW() - ($4 * INTERVAL '1 hour')
+                  AND operator_hold = FALSE
+                  AND object_key LIKE 'blobs/%'
+                  AND (
+                    state IN ('pending', 'retry')
+                    OR (state = 'processing' AND locked_at < NOW() - make_interval(secs => $2))
+                  )
+                ORDER BY not_before, created_at
+                LIMIT $1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE object_gc_queue q SET
+                state = 'processing',
+                locked_at = NOW(),
+                locked_by = $3,
+                last_attempt_at = NOW(),
+                attempt_count = q.attempt_count + 1,
+                updated_at = NOW()
+            FROM due
+            WHERE q.object_key = due.object_key
+            RETURNING q.id, q.object_key, q.reason, q.attempt_count, q.locked_by
             "#,
         )
         .bind(limit)
+        .bind(lease_seconds as f64)
+        .bind(worker_id)
+        .bind(grace_period_hours)
         .fetch_all(&self.pool)
-        .await?;
-        Ok(keys)
+        .await
+        .map_err(Into::into)
     }
 
-    /// Check every durable reference immediately before deleting an object.
-    pub async fn is_unreferenced_object_gc_candidate(&self, object_key: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, bool>(
+    pub async fn count_blob_references(&self, object_key: &str) -> Result<BlobReferenceSummary> {
+        sqlx::query_as::<_, BlobReferenceSummary>(
             r#"
-            SELECT EXISTS (
-                SELECT 1
-                FROM object_gc_queue q
-                WHERE q.object_key = $1
-                  AND q.not_before <= NOW()
-                  AND NOT EXISTS (SELECT 1 FROM files f WHERE f.storage_key = q.object_key)
-                  AND NOT EXISTS (SELECT 1 FROM file_versions fv WHERE fv.storage_key = q.object_key)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM mail_messages m
-                      WHERE m.blob_key = q.object_key OR m.object_key = q.object_key
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM mail_message_parts p WHERE p.blob_key = q.object_key
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM mail_attachments a WHERE a.blob_key = q.object_key
-                  )
-            )
+            SELECT
+                (SELECT COUNT(*) FROM files WHERE storage_key = $1) AS files,
+                (SELECT COUNT(*) FROM file_versions WHERE storage_key = $1) AS file_versions,
+                (SELECT COUNT(*) FROM vault_files
+                    WHERE $1 = 'blobs/' || sha256) AS vault_files,
+                (SELECT COUNT(*) FROM mail_messages
+                    WHERE blob_key = $1 OR object_key = $1) AS mail_messages,
+                (SELECT COUNT(*) FROM mail_message_parts
+                    WHERE blob_key = $1) AS mail_message_parts,
+                (SELECT COUNT(*) FROM mail_attachments
+                    WHERE blob_key = $1) AS mail_attachments,
+                (SELECT COUNT(*) FROM replication_jobs
+                    WHERE storage_key = $1
+                      AND status IN ('queued', 'retrying', 'syncing', 'failed')) AS replication_jobs
             "#,
         )
         .bind(object_key)
         .fetch_one(&self.pool)
         .await
         .map_err(Into::into)
+    }
+
+    pub async fn complete_object_gc_candidate(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+        state: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE object_gc_queue SET
+                state = $3,
+                locked_at = NULL,
+                locked_by = NULL,
+                completed_at = NOW(),
+                last_error = NULL,
+                updated_at = NOW()
+            WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .bind(state)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Verify that a candidate is still leased to this worker in `processing`
+    /// state. Used before destructive operations so a stale worker does not
+    /// delete an object after losing its lease.
+    pub async fn has_valid_object_gc_lease(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+    ) -> Result<bool> {
+        sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM object_gc_queue
+                WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            )
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn retry_object_gc_candidate(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+        error: &str,
+        backoff_seconds: i64,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE object_gc_queue SET
+                state = 'retry',
+                locked_at = NULL,
+                locked_by = NULL,
+                not_before = NOW() + make_interval(secs => $4),
+                last_error = LEFT($3, 1000),
+                updated_at = NOW()
+            WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .bind(error)
+        .bind(backoff_seconds as f64)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn hold_object_gc_candidate(
+        &self,
+        object_key: &str,
+        worker_id: &str,
+        error: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE object_gc_queue SET
+                state = 'operator_hold',
+                operator_hold = TRUE,
+                locked_at = NULL,
+                locked_by = NULL,
+                last_error = LEFT($3, 1000),
+                updated_at = NOW()
+            WHERE object_key = $1 AND locked_by = $2 AND state = 'processing'
+            "#,
+        )
+        .bind(object_key)
+        .bind(worker_id)
+        .bind(error)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn object_gc_backlog(&self) -> Result<(i64, Option<i64>)> {
+        let row = sqlx::query_as::<_, (i64, Option<i64>)>(
+            r#"
+            SELECT COUNT(*)::BIGINT,
+                EXTRACT(EPOCH FROM NOW() - MIN(first_seen_at))::BIGINT
+            FROM object_gc_queue
+            WHERE state IN ('pending', 'retry', 'processing')
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Legacy retention cleanup path for non-content-addressed objects.
+    pub async fn list_ready_object_gc_candidates(&self, limit: i64) -> Result<Vec<String>> {
+        sqlx::query_scalar(
+            r#"
+            SELECT object_key FROM object_gc_queue
+            WHERE not_before <= NOW()
+              AND state IN ('pending', 'retry')
+              AND operator_hold = FALSE
+              AND object_key !~* '^blobs/[0-9a-f]{64}$'
+            ORDER BY not_before LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn is_unreferenced_object_gc_candidate(&self, object_key: &str) -> Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM object_gc_queue WHERE object_key = $1 AND not_before <= NOW())",
+        )
+        .bind(object_key)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists && self.count_blob_references(object_key).await?.total() == 0)
     }
 
     pub async fn remove_object_gc_candidate(&self, object_key: &str) -> Result<()> {
@@ -6297,6 +6544,17 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
 
 #[allow(async_fn_in_trait, clippy::too_many_arguments)]
 impl rustshare_core::services::VaultStore for MetadataStore {
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> anyhow::Result<(), rustshare_core::services::VaultSyncError> {
+        self.enqueue_object_gc_candidate(object_key, reason, grace_period_hours)
+            .await
+            .map_err(|error| rustshare_core::services::VaultSyncError::Database(error.to_string()))
+    }
+
     async fn create_vault(
         &self,
         vault: &rustshare_core::domain::Vault,

@@ -23,6 +23,7 @@ bytes = "1.5"
 md5 = "0.8"
 futures = "0.3"
 tempfile = "3"
+metrics = "0.24"
 
 # JWT for session management
 jsonwebtoken.workspace = true

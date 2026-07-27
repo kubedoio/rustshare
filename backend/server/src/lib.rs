@@ -8,6 +8,7 @@ pub mod handlers;
 pub mod mail_import_worker;
 pub mod metrics;
 pub mod middleware;
+pub mod object_gc;
 pub mod oidc;
 pub mod oidc_runtime;
 pub mod openapi;

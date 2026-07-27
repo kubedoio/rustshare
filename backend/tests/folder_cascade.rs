@@ -56,8 +56,9 @@ async fn setup_test_env() -> (
                 auto_create_bucket: true,
             },
         )
-            .await
-            .expect("Failed to create object store"),
+        .await
+        .expect("Failed to create object store")
+        .with_blob_lock_pool(pool.clone()),
     );
 
     (pool, event_store, metadata_store, object_store)

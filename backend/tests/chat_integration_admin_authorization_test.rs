@@ -85,7 +85,8 @@ async fn setup_app_state(pool: PgPool) -> AppState {
             },
         )
         .await
-        .expect("Failed to create object store"),
+        .expect("Failed to create object store")
+        .with_blob_lock_pool(pool.clone()),
     );
 
     let jwt_manager = Arc::new(rustshare_auth::JwtManager::new(
