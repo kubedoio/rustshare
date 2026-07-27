@@ -33,21 +33,25 @@ impl ObjectGcConfig {
         let lease_seconds = env_parse("RUSTSHARE_OBJECT_GC_LEASE_SECONDS", 900i64)?;
         let max_backoff_seconds = env_parse("RUSTSHARE_OBJECT_GC_MAX_BACKOFF_SECONDS", 86_400i64)?;
 
-        anyhow::ensure!(
-            interval_seconds >= MIN_INTERVAL_SECONDS,
-            "RUSTSHARE_OBJECT_GC_INTERVAL_SECONDS must be at least {MIN_INTERVAL_SECONDS}"
-        );
-        anyhow::ensure!(
-            (1..=MAX_BATCH_SIZE).contains(&batch_size),
-            "RUSTSHARE_OBJECT_GC_BATCH_SIZE must be between 1 and {MAX_BATCH_SIZE}"
-        );
-        anyhow::ensure!(grace_period_hours >= 1, "GC grace period must be positive");
-        anyhow::ensure!(max_attempts >= 1, "GC max attempts must be positive");
-        anyhow::ensure!(lease_seconds >= 30, "GC lease must be at least 30 seconds");
-        anyhow::ensure!(
-            max_backoff_seconds >= MIN_INTERVAL_SECONDS as i64,
-            "GC max backoff must be at least {MIN_INTERVAL_SECONDS} seconds"
-        );
+        // Validate only when the worker is enabled: a bogus leftover GC env
+        // var must not prevent the server from starting while GC is off.
+        if enabled {
+            anyhow::ensure!(
+                interval_seconds >= MIN_INTERVAL_SECONDS,
+                "RUSTSHARE_OBJECT_GC_INTERVAL_SECONDS must be at least {MIN_INTERVAL_SECONDS}"
+            );
+            anyhow::ensure!(
+                (1..=MAX_BATCH_SIZE).contains(&batch_size),
+                "RUSTSHARE_OBJECT_GC_BATCH_SIZE must be between 1 and {MAX_BATCH_SIZE}"
+            );
+            anyhow::ensure!(grace_period_hours >= 1, "GC grace period must be positive");
+            anyhow::ensure!(max_attempts >= 1, "GC max attempts must be positive");
+            anyhow::ensure!(lease_seconds >= 30, "GC lease must be at least 30 seconds");
+            anyhow::ensure!(
+                max_backoff_seconds >= MIN_INTERVAL_SECONDS as i64,
+                "GC max backoff must be at least {MIN_INTERVAL_SECONDS} seconds"
+            );
+        }
 
         Ok(Self {
             enabled,

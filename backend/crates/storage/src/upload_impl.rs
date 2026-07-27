@@ -201,4 +201,15 @@ impl UploadMetadataStore for MetadataStore {
             .await
             .map_err(|e| UploadError::Database(e.to_string()))
     }
+
+    async fn enqueue_object_gc_candidate(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<(), UploadError> {
+        self.enqueue_object_gc_candidate(object_key, reason, grace_period_hours)
+            .await
+            .map_err(|e| UploadError::Database(e.to_string()))
+    }
 }

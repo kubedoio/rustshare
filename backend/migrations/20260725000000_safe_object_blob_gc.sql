@@ -55,11 +55,11 @@ BEGIN
             last_seen_at = NOW(),
             not_before = GREATEST(object_gc_queue.not_before, EXCLUDED.not_before),
             state = 'pending',
-            operator_hold = FALSE,
             locked_at = NULL,
             locked_by = NULL,
             completed_at = NULL,
-            updated_at = NOW();
+            updated_at = NOW()
+        WHERE object_gc_queue.operator_hold = FALSE;
     END IF;
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
@@ -80,7 +80,8 @@ BEGIN
             completed_at = NOW(),
             last_error = NULL,
             updated_at = NOW()
-        WHERE object_key = new_key;
+        WHERE object_key = new_key
+          AND operator_hold = FALSE;
     END IF;
     RETURN NEW;
 END;
@@ -105,11 +106,11 @@ BEGIN
             last_seen_at = NOW(),
             not_before = GREATEST(object_gc_queue.not_before, EXCLUDED.not_before),
             state = 'pending',
-            operator_hold = FALSE,
             locked_at = NULL,
             locked_by = NULL,
             completed_at = NULL,
-            updated_at = NOW();
+            updated_at = NOW()
+        WHERE object_gc_queue.operator_hold = FALSE;
     END IF;
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
@@ -128,7 +129,8 @@ BEGIN
             completed_at = NOW(),
             last_error = NULL,
             updated_at = NOW()
-        WHERE object_key = 'blobs/' || NEW.sha256;
+        WHERE object_key = 'blobs/' || NEW.sha256
+          AND operator_hold = FALSE;
     END IF;
     RETURN NEW;
 END;

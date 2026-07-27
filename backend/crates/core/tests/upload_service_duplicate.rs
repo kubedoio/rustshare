@@ -231,6 +231,15 @@ impl UploadMetadataStore for MockUploadMetadataStore {
         self.created_versions.lock().unwrap().push(version.clone());
         Ok(())
     }
+
+    async fn enqueue_object_gc_candidate(
+        &self,
+        _object_key: &str,
+        _reason: &str,
+        _grace_period_hours: i64,
+    ) -> Result<(), UploadError> {
+        Ok(())
+    }
 }
 
 struct MockEventStore {

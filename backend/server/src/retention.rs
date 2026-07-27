@@ -17,6 +17,7 @@ pub struct RetentionConfig {
     pub oidc_state_days: i64,
     pub device_pair_days: i64,
     pub webhook_log_days: i64,
+    pub object_gc_terminal_days: i64,
 }
 
 impl RetentionConfig {
@@ -32,6 +33,7 @@ impl RetentionConfig {
             oidc_state_days: env_i64("RETENTION_OIDC_STATE_DAYS", 1),
             device_pair_days: env_i64("RETENTION_DEVICE_PAIR_DAYS", 7),
             webhook_log_days: env_i64("RETENTION_WEBHOOK_LOG_DAYS", 30),
+            object_gc_terminal_days: env_i64("RETENTION_OBJECT_GC_TERMINAL_DAYS", 7),
         }
     }
 }
@@ -222,6 +224,21 @@ async fn tick_retention_cleanup(
         }
         Err(e) => {
             warn!(error = %e, category = "webhook_logs", "Retention cleanup failed");
+        }
+    }
+
+    match store
+        .clean_terminal_object_gc_candidates(config.object_gc_terminal_days)
+        .await
+    {
+        Ok(cleaned) => {
+            if cleaned > 0 {
+                info!(cleaned, category = "object_gc_queue", "Retention cleanup");
+            }
+            total_cleaned += cleaned;
+        }
+        Err(e) => {
+            warn!(error = %e, category = "object_gc_queue", "Retention cleanup failed");
         }
     }
 

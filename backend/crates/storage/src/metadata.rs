@@ -4161,6 +4161,22 @@ impl MetadataStore {
         Ok(result.rows_affected())
     }
 
+    /// Delete terminal-state object GC queue rows older than the given number
+    /// of days so the table does not grow monotonically.
+    pub async fn clean_terminal_object_gc_candidates(&self, days: i64) -> Result<u64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM object_gc_queue
+            WHERE state IN ('deleted', 'missing', 'referenced', 'invalid_key')
+              AND completed_at < NOW() - ($1 * INTERVAL '1 day')
+            "#,
+        )
+        .bind(days as f64)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn enqueue_object_gc_candidate(
         &self,
         object_key: &str,
@@ -4392,6 +4408,7 @@ impl MetadataStore {
             SELECT object_key FROM object_gc_queue
             WHERE not_before <= NOW()
               AND state IN ('pending', 'retry')
+              AND operator_hold = FALSE
               AND object_key !~* '^blobs/[0-9a-f]{64}$'
             ORDER BY not_before LIMIT $1
             "#,
