@@ -136,20 +136,37 @@ async fn init_blob_lock_pool(config: &AppConfig) -> Result<PgPool> {
     // blobs. Isolating it from the main application pool prevents saturation
     // deadlocks where a writer holds a main-pool connection as a lock guard
     // while waiting for a second main-pool connection to persist metadata.
-    const MAX_CONNECTIONS: u32 = 16;
+    // Capacity and wait policy are configurable so concurrent content-addressed
+    // uploads queue instead of failing when every lock connection is busy.
+    let max_connections = env_u32("RUSTSHARE_BLOB_LOCK_POOL_MAX_CONNECTIONS", 16);
+    let acquire_timeout_secs = env_u64("RUSTSHARE_BLOB_LOCK_POOL_ACQUIRE_TIMEOUT_SECONDS", 30);
 
     let pool = PgPoolOptions::new()
-        .max_connections(MAX_CONNECTIONS)
+        .max_connections(max_connections)
         .min_connections(0)
-        .acquire_timeout(Duration::from_secs(5))
+        .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
         .max_lifetime(Some(Duration::from_secs(3600)))
         .connect(&config.database_url)
         .await?;
     info!(
-        max_connections = MAX_CONNECTIONS,
-        "Blob lock pool configured"
+        max_connections,
+        acquire_timeout_secs, "Blob lock pool configured"
     );
     Ok(pool)
+}
+
+fn env_u32(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
 }
 
 async fn init_stores(

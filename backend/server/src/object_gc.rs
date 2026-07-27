@@ -273,12 +273,12 @@ fn deletion_allowed(first: &BlobReferenceSummary, second: &BlobReferenceSummary)
     first.total() == 0 && second.total() == 0
 }
 
+/// Content-addressed keys are `blobs/<64 hex>`. Uppercase hex is accepted
+/// because vault uploads predating SHA normalization stored legacy uppercase
+/// keys; those objects must remain GC-eligible instead of being stranded.
 pub(crate) fn is_content_addressed_blob_key(key: &str) -> bool {
     key.strip_prefix("blobs/").is_some_and(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
     })
 }
 
@@ -307,16 +307,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn key_validation_accepts_only_canonical_blob_keys() {
+    fn key_validation_accepts_canonical_and_legacy_uppercase_blob_keys() {
         assert!(is_content_addressed_blob_key(&format!(
             "blobs/{}",
             "a".repeat(64)
+        )));
+        // Legacy vault uploads preserved client casing before SHA normalization.
+        assert!(is_content_addressed_blob_key(&format!(
+            "blobs/{}",
+            "A".repeat(64)
+        )));
+        assert!(is_content_addressed_blob_key(&format!(
+            "blobs/{}",
+            "aAbB0123".repeat(8)
         )));
         for key in [
             "",
             "blobs/",
             "blobs/../secret",
-            "blobs/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "temp/uploads/00000000-0000-0000-0000-000000000000/0",
             "https://store/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ] {

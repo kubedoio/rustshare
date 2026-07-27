@@ -38,7 +38,7 @@ DECLARE
     old_key TEXT := to_jsonb(OLD) ->> TG_ARGV[0];
     new_key TEXT := CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE to_jsonb(NEW) ->> TG_ARGV[0] END;
     not_before_at TIMESTAMPTZ := CASE
-        WHEN old_key ~ '^blobs/[0-9a-f]{64}$' THEN NOW()
+        WHEN old_key ~* '^blobs/[0-9a-f]{64}$' THEN NOW()
         ELSE NOW() + INTERVAL '24 hours'
     END;
 BEGIN
