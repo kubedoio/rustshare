@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WebUI bug-bash fixes for issue #186 (WB-001 through WB-012): the login page shows "Invalid email or password" instead of a raw "Unauthorized"; dashboard recent activity uses grammatical "You created …" copy and neutral "A file"/"A folder" labels instead of "Unknown"; the files toolbar's icon-only New folder/Upload buttons have accessible names; the note editor header no longer overlaps or clips its actions at 390px; imported mail stays reachable in "Saved to RustShare" without an IMAP account; the mail module restores its list context (mailbox/account/folder/search) after a detail round-trip; the mail bulk-action bar and remote attachment chips wrap/truncate at narrow widths; the shares page fits 390px viewports; the admin sidebar collapses behind a hamburger below md; and date/time display is unified through the shared `format.ts` policy (relative for lists/feeds, one absolute format for details).
+
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
 - Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.
