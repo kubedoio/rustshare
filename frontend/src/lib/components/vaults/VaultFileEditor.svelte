@@ -7,7 +7,7 @@
 	import type { VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
 	import { sha256Hex } from '$lib/utils/sha256';
-	import { Save, CircleAlert, Check, Loader, RotateCcw, Copy, Download } from 'lucide-svelte';
+	import { Save, CircleAlert, Check, Loader, RotateCcw, Copy, Download, X } from 'lucide-svelte';
 
 	interface Props {
 		vaultId: string;
@@ -17,13 +17,16 @@
 		dirty?: boolean;
 	}
 
-	let { vaultId, policy, file, dirty = $bindable(false) }: Props = $props();
+	let { vaultId, policy, file = $bindable(), dirty = $bindable(false) }: Props = $props();
 
 	let localContent = $state('');
 	// Revision the user is editing against; sent as expected_revision.
 	let editBaseRev = $state<number | null>(null);
 	// Latest known server revision, updated by refetches without resetting the editor.
 	let currentServerRev = $state<number | null>(null);
+	// The server rejected a save with an unstructured 409 (no current_rev): the
+	// file was tombstoned and can never be saved again from this editor.
+	let tombstoneConflict = $state(false);
 	let saveError = $state<string | null>(null);
 	let saveSuccess = $state(false);
 	let successTimeout = $state<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +68,7 @@
 			saveError = null;
 			saveSuccess = false;
 			conflictCopied = false;
+			tombstoneConflict = false;
 		}
 	});
 
@@ -112,6 +116,7 @@
 		mutationFn: () => {
 			if (!file || editBaseRev === null) throw new Error('No file loaded');
 			if (hasConflict) throw new Error('File changed since opened');
+			if (tombstoneConflict) throw new Error('File was deleted on the server');
 			return saveVaultFileContent(vaultId, file.path, {
 				content: localContent,
 				expected_revision: editBaseRev
@@ -148,12 +153,16 @@
 					currentServerRev =
 						currentServerRev === null ? currentRev : Math.max(currentServerRev, currentRev);
 					saveError = null;
+					queryClient.invalidateQueries({ queryKey: ['vault-file-content', vaultId, file?.path] });
 				} else {
-					// Unstructured 409 (e.g. the file was tombstoned): no revision to
-					// adopt, so keep the local text and tell the user how to recover.
-					saveError = 'This file was changed elsewhere. Copy your changes, reload, and try again.';
+					// Unstructured 409 (no current_rev): the file was tombstoned on the
+					// server, so it can never be saved again and reloading would 404.
+					// Keep the local text and show the tombstone recovery panel
+					// (copy/download/close) instead of a reload action.
+					saveError = null;
+					tombstoneConflict = true;
+					queryClient.invalidateQueries({ queryKey: ['vault-manifest', vaultId] });
 				}
-				queryClient.invalidateQueries({ queryKey: ['vault-file-content', vaultId, file?.path] });
 			} else if (err.status === 403) {
 				saveError = 'You do not have permission to edit this file.';
 			} else {
@@ -216,6 +225,13 @@
 		URL.revokeObjectURL(url);
 	}
 
+	// Dismissing a tombstoned file deselects it; the file-switch reset effect
+	// then clears the editor. The local text stays copyable/downloadable until
+	// the user chooses to close.
+	function closeFile() {
+		file = null;
+	}
+
 	// Warn before losing unsaved changes on tab close/refresh or in-app navigation.
 	function handleBeforeUnload(event: BeforeUnloadEvent) {
 		if (isDirty) {
@@ -248,7 +264,12 @@
 		file !== null && isEditableVaultFile(file) && isEditableVaultPolicy(policy)
 	);
 	const canSave = $derived(
-		canEdit && isDirty && editBaseRev !== null && !hasConflict && !$saveMutation.isPending
+		canEdit &&
+			isDirty &&
+			editBaseRev !== null &&
+			!hasConflict &&
+			!tombstoneConflict &&
+			!$saveMutation.isPending
 	);
 
 	function handleKeyDown(event: KeyboardEvent) {
@@ -350,6 +371,40 @@
 					>
 						<RotateCcw class="h-3 w-3" />
 						<span>Reload server version</span>
+					</button>
+				</div>
+			</div>
+		{/if}
+
+		{#if tombstoneConflict}
+			<div class="space-y-2 rounded-xl border border-error/20 bg-error/10 p-3 text-sm text-error">
+				<div class="flex items-start gap-2">
+					<CircleAlert class="mt-0.5 h-4 w-4 shrink-0" />
+					<div>
+						<p class="font-medium">This file was deleted on the server.</p>
+						<p class="mt-0.5">
+							It can no longer be saved. Your changes are still in the editor below. Copy or
+							download them before closing this file.
+						</p>
+					</div>
+				</div>
+				<div class="flex flex-wrap gap-2 pl-6">
+					<button class="btn btn-error btn-xs rounded-lg" onclick={copyMyChanges}>
+						{#if conflictCopied}
+							<Check class="h-3 w-3" />
+							<span>Copied!</span>
+						{:else}
+							<Copy class="h-3 w-3" />
+							<span>Copy my changes</span>
+						{/if}
+					</button>
+					<button class="btn btn-error btn-xs rounded-lg" onclick={downloadMyVersion}>
+						<Download class="h-3 w-3" />
+						<span>Download my version</span>
+					</button>
+					<button class="btn btn-outline btn-error btn-xs rounded-lg" onclick={closeFile}>
+						<X class="h-3 w-3" />
+						<span>Close file</span>
 					</button>
 				</div>
 			</div>

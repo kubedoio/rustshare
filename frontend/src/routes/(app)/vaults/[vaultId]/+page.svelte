@@ -295,7 +295,7 @@
 			<VaultFileEditor
 				vaultId={vaultId!}
 				policy={vault.write_policy}
-				file={selectedFile}
+				bind:file={selectedFile}
 				bind:dirty={editorDirty}
 			/>
 		</div>

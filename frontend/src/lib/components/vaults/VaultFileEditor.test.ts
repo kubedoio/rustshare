@@ -128,22 +128,15 @@ describe('VaultFileEditor', () => {
 		});
 	});
 
-	it('shows conflict message when save fails with 409', async () => {
-		vi.spyOn(vaultsApi, 'getVaultFileContent')
-			.mockResolvedValueOnce({
-				path: 'note.md',
-				content: '# Hello',
-				server_rev: 1,
-				content_type: 'text/markdown',
-				size: 7
-			})
-			.mockResolvedValueOnce({
-				path: 'note.md',
-				content: '# Changed elsewhere',
-				server_rev: 2,
-				content_type: 'text/markdown',
-				size: 19
-			});
+	it('shows the tombstone panel when save fails with a 409 without current_rev', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			content: '# Hello',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 7
+		});
+		// Tombstone conflicts come back as a plain 409 with no current_rev.
 		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({ status: 409 });
 
 		const file: VaultManifestEntry = {
@@ -155,18 +148,134 @@ describe('VaultFileEditor', () => {
 		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
 
 		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
-		await fireEvent.input(textarea, { target: { value: '# Conflict' } });
-
-		const saveButton = screen.getByRole('button', { name: /save/i });
-		await fireEvent.click(saveButton);
+		await fireEvent.input(textarea, { target: { value: '# My local work' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
 		await waitFor(() => {
-			expect(
-				screen.getByText(
-					'This file was changed elsewhere. Copy your changes, reload, and try again.'
-				)
-			).toBeTruthy();
+			expect(screen.getByText('This file was deleted on the server.')).toBeTruthy();
 		});
+		expect(screen.getByRole('button', { name: /copy my changes/i })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /download my version/i })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /close file/i })).toBeTruthy();
+		// A reload would 404, so no reload action is offered.
+		expect(screen.queryByRole('button', { name: /reload server version/i })).toBeNull();
+		// The file can never be saved again.
+		expect(screen.getByRole<HTMLButtonElement>('button', { name: /save/i }).disabled).toBe(true);
+		// Local unsaved text stays in the editor.
+		expect(screen.getByDisplayValue('# My local work')).toBeTruthy();
+	});
+
+	it('copies local changes to the clipboard from the tombstone panel', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			content: '# Hello',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 7
+		});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({ status: 409 });
+		const writeText = vi.mocked(navigator.clipboard.writeText);
+		writeText.mockClear();
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# My local work' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		const copyButton = await waitFor(() =>
+			screen.getByRole('button', { name: /copy my changes/i })
+		);
+		await fireEvent.click(copyButton);
+
+		await waitFor(() => {
+			expect(writeText).toHaveBeenCalledWith('# My local work');
+		});
+		await waitFor(() => {
+			expect(screen.getByText('Copied!')).toBeTruthy();
+		});
+	});
+
+	it('downloads the local version as the file name from the tombstone panel', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
+			path: 'notes/note.md',
+			content: '# Hello',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 7
+		});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({ status: 409 });
+
+		// URL.createObjectURL / revokeObjectURL are mocked globally in test-setup.
+		const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+		const createObjectURL = vi.mocked(URL.createObjectURL);
+		const revokeObjectURL = vi.mocked(URL.revokeObjectURL);
+		createObjectURL.mockClear();
+		revokeObjectURL.mockClear();
+
+		const file: VaultManifestEntry = {
+			path: 'notes/note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# My local work' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		const downloadButton = await waitFor(() =>
+			screen.getByRole('button', { name: /download my version/i })
+		);
+		await fireEvent.click(downloadButton);
+
+		expect(createObjectURL).toHaveBeenCalledTimes(1);
+		expect(createObjectURL.mock.calls[0][0]).toBeInstanceOf(Blob);
+		expect(clickSpy).toHaveBeenCalledTimes(1);
+		const anchor = clickSpy.mock.contexts[0] as HTMLAnchorElement;
+		expect(anchor.download).toBe('note.md');
+		expect(anchor.href).toContain('blob:');
+		expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+		expect(revokeObjectURL.mock.calls[0][0]).toContain('blob:');
+	});
+
+	it('closes the file and clears the editor from the tombstone panel', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			content: '# Hello',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 7
+		});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockRejectedValueOnce({ status: 409 });
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const textarea = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(textarea, { target: { value: '# My local work' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		const closeButton = await waitFor(() => screen.getByRole('button', { name: /close file/i }));
+		await fireEvent.click(closeButton);
+
+		await waitFor(() => {
+			expect(screen.getByText('Select a file from the manifest to view or edit.')).toBeTruthy();
+		});
+		expect(screen.queryByDisplayValue('# My local work')).toBeNull();
+		expect(screen.queryByText('This file was deleted on the server.')).toBeNull();
 	});
 
 	it('marks the editor stale when save fails with a 409 current revision', async () => {
