@@ -214,6 +214,14 @@
 	});
 
 	$effect(() => {
+		// With zero IMAP accounts the remote mailbox is unusable; land on the
+		// Saved to RustShare mailbox so imported mail stays reachable.
+		if ($accountsQuery.data && $accountsQuery.data.length === 0 && mailboxView === 'remote') {
+			mailboxView = 'saved';
+		}
+	});
+
+	$effect(() => {
 		foldersQuery.setOptions({
 			queryKey: ['mail-folders', selectedAccountId],
 			queryFn: () => mailApi.listFolders(selectedAccountId!),
@@ -641,48 +649,54 @@
 			message={$accountsQuery.error?.message ?? 'Unknown error'}
 			onRetry={() => $accountsQuery.refetch()}
 		/>
-	{:else if ($accountsQuery.data ?? []).length === 0}
-		<div
-			class="mx-auto my-12 max-w-md rounded-xl border border-dashed border-base-300 p-10 text-center"
-		>
-			<Mail size={36} class="mx-auto mb-4 text-brand-500" />
-			<h2 class="text-xl font-bold">No mail account configured</h2>
-			<p class="mt-2 text-sm text-base-content/60">Configure an IMAP/SMTP account to use Mail.</p>
-			<a href="/settings?tab=mail" class="btn btn-primary mt-6">Open Mail settings</a>
-		</div>
 	{:else}
+		{@const hasAccounts = ($accountsQuery.data ?? []).length > 0}
+		{#if !hasAccounts}
+			<div
+				class="mx-auto mb-4 flex max-w-2xl flex-wrap items-center gap-3 rounded-xl border border-dashed border-base-300 p-4"
+			>
+				<Mail size={20} class="shrink-0 text-brand-500" />
+				<p class="min-w-0 flex-1 text-sm text-base-content/70">
+					No mail account configured — mail you import is still available in Saved to RustShare
+					below.
+				</p>
+				<a href="/settings?tab=mail" class="btn btn-primary btn-sm shrink-0">Open Mail settings</a>
+			</div>
+		{/if}
 		<section
 			class="flex h-[calc(100vh-10rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
 		>
 			<header class="flex flex-wrap items-center gap-2 border-b border-base-300 p-2">
-				<div class="min-w-48">
-					<select
-						class="select select-bordered select-sm w-full"
-						aria-label="Mail account"
-						bind:value={selectedAccountId}
-						onchange={() => {
-							selectedFolder = null;
-							mailboxView = 'remote';
-						}}
-					>
-						{#each $accountsQuery.data ?? [] as account}
-							<option value={account.id}>{account.name}</option>
-						{/each}
-					</select>
-					<p
-						class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
-							? 'text-error'
-							: 'text-base-content/50'}"
-					>
-						{selectedAccount?.last_error
-							? `Error: ${selectedAccount.last_error}`
-							: syncing
-								? 'Synchronizing…'
-								: selectedAccount?.last_connected_at
-									? `Connected ${formatDate(selectedAccount.last_connected_at)}`
-									: 'Not synchronized yet'}
-					</p>
-				</div>
+				{#if hasAccounts}
+					<div class="min-w-48">
+						<select
+							class="select select-bordered select-sm w-full"
+							aria-label="Mail account"
+							bind:value={selectedAccountId}
+							onchange={() => {
+								selectedFolder = null;
+								mailboxView = 'remote';
+							}}
+						>
+							{#each $accountsQuery.data ?? [] as account}
+								<option value={account.id}>{account.name}</option>
+							{/each}
+						</select>
+						<p
+							class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
+								? 'text-error'
+								: 'text-base-content/50'}"
+						>
+							{selectedAccount?.last_error
+								? `Error: ${selectedAccount.last_error}`
+								: syncing
+									? 'Synchronizing…'
+									: selectedAccount?.last_connected_at
+										? `Connected ${formatDate(selectedAccount.last_connected_at)}`
+										: 'Not synchronized yet'}
+						</p>
+					</div>
+				{/if}
 				<form class="relative min-w-44 flex-1" onsubmit={submitSearch}>
 					<Search
 						size={14}
@@ -706,15 +720,17 @@
 							size={16}
 						/>{:else}<ArrowDownNarrowWide size={16} />{/if}
 				</button>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm btn-square"
-					aria-label="Synchronize mail"
-					onclick={syncMailbox}
-					disabled={syncing}
-				>
-					<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
-				</button>
+				{#if hasAccounts}
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm btn-square"
+						aria-label="Synchronize mail"
+						onclick={syncMailbox}
+						disabled={syncing}
+					>
+						<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
+					</button>
+				{/if}
 				<div class="relative">
 					<button
 						type="button"
@@ -809,20 +825,22 @@
 							{/each}
 						{/if}
 						<div class="my-2 border-t border-base-300"></div>
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
-							'drafts'
-								? 'bg-brand-500/10 font-semibold text-brand-700'
-								: ''}"
-							aria-current={mailboxView === 'drafts' ? 'page' : undefined}
-							onclick={() => selectMailbox('drafts')}
-						>
-							<FileText size={15} /><span class="flex-1 text-left">Drafts</span
-							>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
-									>{($draftsQuery.data ?? []).length}</span
-								>{/if}
-						</button>
+						{#if hasAccounts}
+							<button
+								type="button"
+								class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
+								'drafts'
+									? 'bg-brand-500/10 font-semibold text-brand-700'
+									: ''}"
+								aria-current={mailboxView === 'drafts' ? 'page' : undefined}
+								onclick={() => selectMailbox('drafts')}
+							>
+								<FileText size={15} /><span class="flex-1 text-left">Drafts</span
+								>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
+										>{($draftsQuery.data ?? []).length}</span
+									>{/if}
+							</button>
+						{/if}
 						<button
 							type="button"
 							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
