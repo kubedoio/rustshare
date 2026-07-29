@@ -401,18 +401,21 @@
 	async function runForSelection(
 		action: (uid: number) => Promise<void>,
 		success: string,
-		verb: string
+		verb: string,
+		actionLabel: string
 	) {
 		if (!selectedActionUids.length || actionPending) return;
 		actionPending = true;
 		const uids = selectedActionUids;
 		const failedUids: number[] = [];
+		let firstError: unknown = null;
 		try {
 			for (const uid of uids) {
 				try {
 					await action(uid);
-				} catch {
+				} catch (error) {
 					failedUids.push(uid);
+					firstError ??= error;
 				}
 			}
 			// Keep failed items selected so the user can retry them.
@@ -430,6 +433,10 @@
 			await Promise.all([$foldersQuery.refetch(), $accountMessagesQuery.refetch()]);
 			if (failedUids.length === 0) {
 				toastStore.show(success, 'success');
+			} else if (uids.length === 1) {
+				// A single failed action deserves the server's real error, not a summary.
+				const detail = firstError instanceof Error ? firstError.message : 'Unknown error';
+				toastStore.show(`${actionLabel} failed: ${detail}`, 'error');
 			} else {
 				toastStore.show(
 					`${verb} ${uids.length - failedUids.length} of ${uids.length} messages; ${failedUids.length} failed`,
@@ -451,7 +458,8 @@
 					uidvalidity
 				),
 			message.is_flagged ? 'Star removed' : 'Message starred',
-			message.is_flagged ? 'Unstarred' : 'Starred'
+			message.is_flagged ? 'Unstarred' : 'Starred',
+			message.is_flagged ? 'Unstar' : 'Star'
 		);
 	}
 
@@ -460,7 +468,8 @@
 			(uid) =>
 				mailApi.moveMessage(selectedAccountId!, uid, selectedFolder!, destination, uidvalidity),
 			selectedUids.length ? 'Messages moved' : 'Message moved',
-			'Moved'
+			'Moved',
+			'Move'
 		);
 		moveOpen = false;
 	}
@@ -481,7 +490,8 @@
 					archiveFolder.name
 				),
 			selectedUids.length ? 'Messages archived' : 'Message archived',
-			'Archived'
+			'Archived',
+			'Archive'
 		);
 	}
 
@@ -945,7 +955,8 @@
 										(uid) =>
 											mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
 										'Message deleted',
-										'Deleted'
+										'Deleted',
+										'Delete'
 									)}><Trash2 size={15} /></button
 							>
 						</div>
@@ -1022,7 +1033,8 @@
 								(uid) =>
 									mailApi.markMessageRead(selectedAccountId!, uid, selectedFolder!, uidvalidity),
 								'Marked read',
-								'Marked read'
+								'Marked read',
+								'Mark read'
 							)}>Read</button
 					>
 					<button
@@ -1033,7 +1045,8 @@
 								(uid) =>
 									mailApi.markMessageUnread(selectedAccountId!, uid, selectedFolder!, uidvalidity),
 								'Marked unread',
-								'Marked unread'
+								'Marked unread',
+								'Mark unread'
 							)}>Unread</button
 					>
 					<button
@@ -1043,7 +1056,8 @@
 							runForSelection(
 								(uid) => mailApi.starMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
 								'Messages starred',
-								'Starred'
+								'Starred',
+								'Star'
 							)}>Star</button
 					>
 					<button
@@ -1067,7 +1081,8 @@
 								(uid) =>
 									mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
 								'Messages deleted',
-								'Deleted'
+								'Deleted',
+								'Delete'
 							)}>Delete</button
 					>
 				</div>

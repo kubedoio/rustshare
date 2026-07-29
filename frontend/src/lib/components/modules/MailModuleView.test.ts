@@ -209,6 +209,56 @@ describe('MailModuleView', () => {
 		);
 	});
 
+	it('shows the server error message when a single archive fails', async () => {
+		mocks.archiveMessage.mockRejectedValue(new Error('Folder UIDVALIDITY changed for INBOX'));
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Archive message' }));
+
+		await waitFor(() =>
+			expect(
+				get(toastStore).some(
+					(toast) =>
+						toast.type === 'error' &&
+						toast.message === 'Archive failed: Folder UIDVALIDITY changed for INBOX'
+				)
+			).toBe(true)
+		);
+	});
+
+	it('keeps the failure summary for bulk archive failures', async () => {
+		const secondMessage = {
+			...message,
+			uid: 43,
+			subject: 'Second message',
+			is_seen: true,
+			is_flagged: false,
+			imported_message_id: null
+		};
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: [message, secondMessage]
+		});
+		mocks.archiveMessage.mockRejectedValue(new Error('boom'));
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all messages' }));
+		const bulkBar = screen.getByText('2 selected').closest('div')!;
+		await fireEvent.click(within(bulkBar).getByRole('button', { name: 'Archive' }));
+
+		await waitFor(() =>
+			expect(
+				get(toastStore).some(
+					(toast) =>
+						toast.type === 'error' && toast.message === 'Archived 0 of 2 messages; 2 failed'
+				)
+			).toBe(true)
+		);
+		expect(get(toastStore).some((toast) => toast.message.startsWith('Archive failed:'))).toBe(
+			false
+		);
+	});
+
 	it('shows an error toast and skips the API call when no archive folder exists', async () => {
 		mocks.listFolders.mockResolvedValue([folders[0]]);
 		render(MailModuleView, { module: testModule });

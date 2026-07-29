@@ -235,6 +235,14 @@ pub enum MailError {
     Database(String),
     #[error("IMAP error: {0}")]
     Imap(String),
+    /// COPY+delete move fallback where the COPY succeeded but deleting the
+    /// source message failed. The destination mailbox now holds a copy of the
+    /// message, so a blind retry would create a duplicate. async-imap 0.11
+    /// does not expose the UIDPLUS COPYUID response from UID COPY
+    /// (`Session::uid_copy` returns `Result<()>`), so the copied message
+    /// cannot be rolled back programmatically; surface the state instead.
+    #[error("Partial move: {0}")]
+    PartialMove(String),
     #[error("SMTP send failed")]
     Smtp,
     #[error("Import cancelled")]
@@ -3889,10 +3897,18 @@ async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
                 .copy_message(folder, uid, destination_folder)
                 .await
                 .map_err(imap_to_mail_error)?;
-            session
-                .delete_message(folder, uid)
-                .await
-                .map_err(imap_to_mail_error)
+            // The IMAP client cannot report the COPYUID of the copy, so a
+            // failed source delete cannot be rolled back. Return a distinct
+            // error so the caller (and user) knows the destination already
+            // holds a copy and a retry would duplicate the message.
+            session.delete_message(folder, uid).await.map_err(|e| {
+                let reason = imap_to_mail_error(e);
+                MailError::PartialMove(format!(
+                    "Message was copied to '{destination_folder}' but could not be removed \
+                         from '{folder}': {reason}. The destination now holds a copy of the \
+                         message; remove it manually before retrying to avoid duplicates."
+                ))
+            })
         }
         MailboxMutation::Delete => {
             if !session
@@ -4364,7 +4380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mailbox_mutation_move_fallback_surfaces_delete_failure() {
+    async fn mailbox_mutation_move_fallback_reports_partial_move_on_delete_failure() {
         let mut session = MockMailboxSession {
             uidvalidity: Some(9),
             supports_move: false,
@@ -4382,9 +4398,18 @@ mod tests {
             MailboxMutation::Move("Archive"),
         )
         .await
-        .expect_err("failing STORE during fallback should surface an error");
+        .expect_err("failing delete after a successful copy should report a partial move");
 
+        assert!(
+            matches!(err, MailError::PartialMove(_)),
+            "expected PartialMove, got {err:?}"
+        );
+        assert!(err.to_string().contains("copied to 'Archive'"));
         assert!(err.to_string().contains("UID STORE failed"));
+        assert!(err.to_string().contains("now holds a copy"));
+        // The copy happened, and no cleanup was attempted against the
+        // destination (the client cannot identify the copied message without
+        // COPYUID), so a retry would duplicate it — hence the distinct error.
         assert_eq!(
             session.calls,
             vec![
