@@ -22,16 +22,28 @@
 		serverActivityStore.fetch(6);
 	});
 
-	function getActivityName(activity: { fileName: string; artifactId?: string }): string {
+	function getActivityName(activity: {
+		fileName: string;
+		artifactId?: string;
+		resourceType?: string;
+		type?: string;
+	}): string {
 		if (activity.fileName && activity.fileName !== 'Unknown') {
 			return activity.fileName;
 		}
 
 		if (activity.artifactId) {
-			return nameLookup?.get(activity.artifactId) ?? activity.fileName;
+			const resolved = nameLookup?.get(activity.artifactId);
+			if (resolved) {
+				return resolved;
+			}
 		}
 
-		return activity.fileName;
+		// Neutral fallback instead of the raw 'Unknown' placeholder (share events
+		// arrive without a resource name). Folders get their own label when known.
+		return activity.resourceType === 'folder' || activity.type?.startsWith('folder_')
+			? 'A folder'
+			: 'A file';
 	}
 </script>
 
