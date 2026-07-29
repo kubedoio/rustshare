@@ -283,6 +283,49 @@ describe('MailModuleView', () => {
 		expect(mocks.goto).toHaveBeenCalledWith('/modules/mail/messages/saved-1');
 	});
 
+	it('shows the saved mailbox when no IMAP account is configured', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [
+				{
+					id: 'saved-1',
+					subject: 'Imported report',
+					from_name: 'Bob',
+					from_address: 'bob@example.com',
+					to_addresses: [],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: null,
+					imported_at: '2026-07-20T09:00:00Z',
+					size_bytes: 1,
+					has_attachments: false,
+					source_mode: 'upload'
+				}
+			],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+		render(MailModuleView, { module: testModule });
+
+		// Imported mail stays reachable without an IMAP account…
+		expect(await screen.findByRole('button', { name: /Imported report/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+		// …and the account-setup prompt is a secondary hint, not a hard gate.
+		expect(screen.getByText(/No mail account configured/)).toBeTruthy();
+		expect(screen.getByRole('link', { name: 'Open Mail settings' })).toBeTruthy();
+		// Account-dependent chrome is hidden.
+		expect(screen.queryByLabelText('Mail account')).toBeNull();
+		expect(screen.queryByRole('button', { name: /Drafts/ })).toBeNull();
+	});
+
+	it('keeps the three-pane remote view when an account exists', async () => {
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByLabelText('Mail account')).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Inbox/ })).toBeTruthy();
+		expect(screen.queryByText(/No mail account configured/)).toBeNull();
+	});
+
 	it('renders a folder error with inline retry', async () => {
 		mocks.listFolders.mockRejectedValue(new Error('offline'));
 		render(MailModuleView, { module: testModule });
