@@ -43,28 +43,36 @@ git clone <repository-url>
 cd rustshare
 ```
 
-### 2. Set required secrets
+### 2. Generate required secrets (REQUIRED)
 
-Copy the example environment file and edit it:
+`.env.example` ships with **empty** secrets, and the backend refuses to start
+until they are set. Copy the example file, then generate strong secrets into
+it with the pre-flight script:
 
 ```bash
 cp .env.example .env
-```
-
-Or generate secrets automatically with the pre-flight script:
-
-```bash
 ./scripts/pre-flight.sh
 ```
 
-At minimum, change these values in `.env` for any non-local deployment. Generate real secret values with [`scripts/pre-flight.sh`](../../scripts/pre-flight.sh):
+The script appends the generated values to `.env`. If you prefer to edit
+`.env` manually, generate real values with `openssl rand -base64 32` (or
+`openssl rand -hex 32` where noted in `.env.example`) for at least:
 
 ```bash
-JWT_SECRET=<generate-with-scripts/pre-flight.sh>
-RUSTSHARE_SECRET_ENCRYPTION_KEY=<generate-with-scripts/pre-flight.sh>
+JWT_SECRET=<openssl rand -base64 32>
+RUSTSHARE_SECRET_ENCRYPTION_KEY=<openssl rand -base64 32>
+POSTGRES_PASSWORD=<openssl rand -hex 32>
+DATABASE_URL=postgres://rustshare:<POSTGRES_PASSWORD>@postgres:5432/rustshare
+RUSTFS_ROOT_USER=<alphanumeric access key>
+RUSTFS_ROOT_PASSWORD=<openssl rand -hex 32>
+AWS_ACCESS_KEY_ID=<same as RUSTFS_ROOT_USER>
+AWS_SECRET_ACCESS_KEY=<same as RUSTFS_ROOT_PASSWORD>
+RUSTSHARE_CHAT_WEBHOOK_SECRET=<openssl rand -base64 32>
 ```
 
-For local testing, fill in the secret values in `.env` (or run `scripts/pre-flight.sh`); the compose stack will not start without them.
+Skipping this step and running `docker compose up -d` with the verbatim
+`.env.example` values fails: the backend exits with a configuration
+validation error (see [First-start failures](#first-start-failures)).
 
 ### 3. Build and start the stack
 
@@ -72,7 +80,15 @@ For local testing, fill in the secret values in `.env` (or run `scripts/pre-flig
 docker compose up -d
 ```
 
-The first build will compile both the frontend and backend, so it may take several minutes.
+The first build compiles both the frontend and backend, so it may take
+several minutes. Once the images are built, a normal stack start takes
+roughly a minute: PostgreSQL and RustFS must report healthy before the
+backend runs migrations and seeds the bootstrap accounts. Wait for all
+containers to be healthy:
+
+```bash
+docker compose ps
+```
 
 ### 4. Verify health
 
@@ -381,6 +397,34 @@ See [docs/PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for the full launch 
 ---
 
 ## Troubleshooting
+
+### First-start failures
+
+The most common causes of a failed first `docker compose up -d`:
+
+- **Backend exits immediately with a configuration validation error.**
+  `docker compose logs backend` lists the offending variables, e.g.
+  `JWT_SECRET must be at least 32 characters` or `DATABASE_URL is required`.
+  Cause: secrets were left empty (or a weak default was kept) in `.env`.
+  Fix: run `./scripts/pre-flight.sh` (or fill in the values manually as in
+  [step 2](#2-generate-required-secrets-required)) and recreate the backend:
+  `docker compose up -d --force-recreate backend`.
+
+- **Backend exits with an object storage / bucket error.**
+  The backend checks the `RUSTFS_BUCKET` bucket at startup and refuses to
+  start when the RustFS endpoint is unreachable or the credentials are
+  rejected (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` must match
+  `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD`). Fix: verify RustFS is healthy
+  (`docker compose logs rustfs`) and that the credentials line up, then
+  restart the backend.
+
+- **No admin password was configured.**
+  When `RUSTSHARE_ADMIN_PASSWORD` is empty in `.env`, the backend generates a
+  random admin password at bootstrap and writes it to a secure file inside
+  the backend container. Retrieve it with:
+  `docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt`
+  (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`). Change the
+  password after first login.
 
 ### "Welcome to SvelteKit" or blank page
 

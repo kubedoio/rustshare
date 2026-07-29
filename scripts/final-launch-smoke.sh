@@ -24,6 +24,7 @@ requires credentials that match the deployed backend. Do not hardcode
 production credentials; pass them via environment variables or .env.
 
 What it verifies:
+- nginx health endpoint and proxied backend readiness endpoint
 - admin password login and cookie session
 - viewer password login
 - root listing
@@ -32,6 +33,8 @@ What it verifies:
 - internal share visibility for the recipient
 - public file link download
 - upload-only public folder upload
+- public link revocation removes public access
+- internal share revocation removes recipient access
 - replication summary endpoint
 
 Environment overrides:
@@ -319,6 +322,8 @@ trap cleanup EXIT
 
 LOGIN_ADMIN="${TMP_DIR}/login-admin.json"
 LOGIN_VIEWER="${TMP_DIR}/login-viewer.json"
+HEALTH_RESPONSE="${TMP_DIR}/health.txt"
+HEALTH_READY_RESPONSE="${TMP_DIR}/health-ready.json"
 ROOT_RESPONSE="${TMP_DIR}/root.json"
 CREATE_FOLDER_RESPONSE="${TMP_DIR}/create-folder.json"
 UPLOAD_RESPONSE="${TMP_DIR}/upload.json"
@@ -328,6 +333,10 @@ SHARE_SESSION_RESPONSE="${TMP_DIR}/share-session.json"
 SHARED_FILE_RESPONSE="${TMP_DIR}/shared-file.bin"
 INTERNAL_SHARE_RESPONSE="${TMP_DIR}/internal-share.json"
 VIEWER_RECEIVED_RESPONSE="${TMP_DIR}/viewer-received.json"
+REVOKE_PUBLIC_SHARE_RESPONSE="${TMP_DIR}/revoke-public-share.txt"
+REVOKED_SESSION_RESPONSE="${TMP_DIR}/revoked-session.json"
+REVOKE_INTERNAL_SHARE_RESPONSE="${TMP_DIR}/revoke-internal-share.txt"
+VIEWER_RECEIVED_AFTER_REVOKE_RESPONSE="${TMP_DIR}/viewer-received-after-revoke.json"
 UPLOAD_ONLY_SHARE_RESPONSE="${TMP_DIR}/upload-only-share.json"
 UPLOAD_ONLY_SESSION_RESPONSE="${TMP_DIR}/upload-only-session.json"
 PUBLIC_UPLOAD_RESPONSE="${TMP_DIR}/public-upload.json"
@@ -341,6 +350,24 @@ PRIVATE_FILE_PATH="${TMP_DIR}/phase6-private.txt"
 PUBLIC_UPLOAD_FILE_PATH="${TMP_DIR}/phase6-public-upload.txt"
 printf 'phase-6-private-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PRIVATE_FILE_PATH}"
 printf 'phase-6-public-upload-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PUBLIC_UPLOAD_FILE_PATH}"
+
+echo "0. Verifying nginx health and proxied backend readiness..."
+# /health is answered by nginx itself; /health/ready is proxied to the backend
+# and reports 503 until the database and object storage are reachable.
+curl -fsS "${BASE_URL}/health" >"${HEALTH_RESPONSE}"
+READY_ATTEMPTS=0
+until curl -fsS "${BASE_URL}/health/ready" >"${HEALTH_READY_RESPONSE}" 2>/dev/null; do
+	READY_ATTEMPTS=$((READY_ATTEMPTS + 1))
+	if [[ "${READY_ATTEMPTS}" -ge 30 ]]; then
+		echo "Backend readiness check failed: ${BASE_URL}/health/ready did not return 2xx within 60s" >&2
+		if [[ -s "${HEALTH_READY_RESPONSE}" ]]; then
+			cat "${HEALTH_READY_RESPONSE}" >&2
+			echo >&2
+		fi
+		exit 1
+	fi
+	sleep 2
+done
 
 echo "1. Logging in as admin..."
 if ! try_login_with_password "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${ADMIN_COOKIES}" "${LOGIN_ADMIN}" >/dev/null 2>&1; then
@@ -417,6 +444,7 @@ print(json.dumps({"recipient_email": sys.argv[1], "permission": "View"}))
 PY
 )"
 csrf_json_request "POST" "${API_BASE_URL}/files/${SMOKE_FILE_ID}/share" "${INTERNAL_SHARE_PAYLOAD}" "${ADMIN_COOKIES}" "${INTERNAL_SHARE_RESPONSE}"
+INTERNAL_SHARE_ID="$(json_get "${INTERNAL_SHARE_RESPONSE}" "share_id")"
 run_json_request "GET" "${API_BASE_URL}/shares/received" "" "${VIEWER_COOKIES}" "${VIEWER_RECEIVED_RESPONSE}"
 python3 - "${VIEWER_RECEIVED_RESPONSE}" "${SMOKE_FILE_ID}" <<'PY'
 import json
@@ -475,16 +503,47 @@ if not any(item.get("name") == "phase6-public-upload.txt" for item in payload.ge
     raise SystemExit(1)
 PY
 
-echo "10. Checking replication visibility..."
+echo "10. Revoking the public file link and verifying access is gone..."
+csrf_json_request "DELETE" "${API_BASE_URL}/shares/${PUBLIC_FILE_SHARE_ID}" "" "${ADMIN_COOKIES}" "${REVOKE_PUBLIC_SHARE_RESPONSE}"
+REVOKED_SESSION_STATUS="$(
+	curl -sS -o "${REVOKED_SESSION_RESPONSE}" -w "%{http_code}" \
+		-X POST -H "Content-Type: application/json" --data "{}" \
+		"${API_BASE_URL}/public/share/${PUBLIC_FILE_SHARE_TOKEN}/session"
+)"
+if [[ "${REVOKED_SESSION_STATUS}" != "404" && "${REVOKED_SESSION_STATUS}" != "410" ]]; then
+	echo "Expected 404 or 410 for a revoked public share, got ${REVOKED_SESSION_STATUS}" >&2
+	if [[ -s "${REVOKED_SESSION_RESPONSE}" ]]; then
+		cat "${REVOKED_SESSION_RESPONSE}" >&2
+		echo >&2
+	fi
+	exit 1
+fi
+
+echo "11. Revoking the internal share and verifying recipient access is gone..."
+csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${REVOKE_INTERNAL_SHARE_RESPONSE}"
+run_json_request "GET" "${API_BASE_URL}/shares/received" "" "${VIEWER_COOKIES}" "${VIEWER_RECEIVED_AFTER_REVOKE_RESPONSE}"
+python3 - "${VIEWER_RECEIVED_AFTER_REVOKE_RESPONSE}" "${SMOKE_FILE_ID}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    shares = json.load(handle)
+
+target = sys.argv[2]
+if any(item.get("resource_id") == target for item in shares):
+    raise SystemExit(1)
+PY
+
+echo "12. Checking replication visibility..."
 run_json_request "GET" "${API_BASE_URL}/admin/replication/summary" "" "${ADMIN_COOKIES}" "${REPLICATION_SUMMARY_RESPONSE}"
 json_get "${REPLICATION_SUMMARY_RESPONSE}" "job_states" >/dev/null
 json_get "${REPLICATION_SUMMARY_RESPONSE}" "version_states" >/dev/null
 json_get "${REPLICATION_SUMMARY_RESPONSE}" "target_states" >/dev/null
 
-echo "11. Cleaning up the smoke folder..."
+echo "13. Cleaning up the smoke folder..."
 csrf_json_request "DELETE" "${API_BASE_URL}/folders/${SMOKE_FOLDER_ID}" "" "${ADMIN_COOKIES}" "${DELETE_FOLDER_RESPONSE}"
 
-echo "12. Verifying logout..."
+echo "14. Verifying logout..."
 csrf_json_request "POST" "${API_BASE_URL}/auth/logout" "{}" "${ADMIN_COOKIES}" "${LOGOUT_RESPONSE}"
 POST_LOGOUT_STATUS="$(
 	curl -sS -o "${POST_LOGOUT_ME_RESPONSE}" -w "%{http_code}" \

@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Treated empty or whitespace-only `RUSTSHARE_ADMIN_PASSWORD` and `RUSTSHARE_DEMO_VIEWER_*` values as unset during bootstrap: Docker Compose forwards `${VAR}` references as set-but-empty when `.env` leaves them blank, which previously created the admin with an empty password and skipped the random bootstrap-password file. Refs #154, #132.
+- Distinguished a confirmed missing object-storage bucket from unreachable endpoints or rejected credentials at startup: only a real NotFound/NoSuchBucket (HTTP 404) falls into the bucket-creation path, while connection and 403 errors now fail fast with an actionable endpoint/credentials message. Refs #154, #132.
+- Documented secret generation (`scripts/pre-flight.sh` or manual values) as a required quickstart step in README.md and docs/DEPLOYMENT.md, added expected startup duration and a first-start troubleshooting subsection (secret validation errors, unreachable RustFS, bootstrap admin password retrieval). Refs #154, #132.
+- Extended `scripts/final-launch-smoke.sh` with nginx health and proxied backend readiness assertions and with share revocation coverage (public link returns 404/410 after revocation; internal share disappears from the recipient's list). Refs #154, #132.
+- Added a backend liveness healthcheck (`/health` via wget) and `restart: unless-stopped` policies for postgres, rustfs, backend, and nginx to the base `docker-compose.yml`; nginx now proxies `/health/ready` to the backend. Refs #154, #132.
+
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
 - Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.

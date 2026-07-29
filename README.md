@@ -79,14 +79,15 @@ It is not presented as a fully mature enterprise content platform yet. It is a p
 git clone https://github.com/kubedoio/rustshare.git
 cd rustshare
 cp .env.example .env
-# Or generate strong secrets:
-# ./scripts/pre-flight.sh
+# REQUIRED: .env.example ships with empty secrets and the backend refuses to
+# start without them. Generate strong secrets (this edits .env in place):
+./scripts/pre-flight.sh
 docker compose up -d
 ```
 
-Then visit `http://localhost`.
+The first build compiles both the frontend and the backend, so it can take several minutes. Wait for the backend container to become healthy (`docker compose ps`), then visit `http://localhost`.
 
-> For validation, run `./scripts/final-launch-smoke.sh`. For production deployment details, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+> For validation, run `./scripts/final-launch-smoke.sh`. For production deployment details and first-start troubleshooting, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Development Setup
 
