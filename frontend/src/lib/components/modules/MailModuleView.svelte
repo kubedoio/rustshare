@@ -1209,8 +1209,7 @@
 														uidvalidity
 													)}
 													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
-														>{attachment.filename ||
-															`Attachment ${attachment.index + 1}`}</span
+														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
 													>
 													{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
 															class="badge badge-ghost badge-sm shrink-0">#{attachment.index + 1}</span

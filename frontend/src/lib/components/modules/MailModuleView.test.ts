@@ -498,7 +498,9 @@ describe('MailModuleView', () => {
 		expect(bar.className).toContain('max-w-[calc(100vw-2rem)]');
 		// All bulk actions stay in the reachable (wrapped) bar.
 		for (const label of ['Read', 'Unread', 'Star', 'Save', 'Move', 'Delete']) {
-			expect(bar.querySelector(`button`) && screen.getByRole('button', { name: label })).toBeTruthy();
+			expect(
+				bar.querySelector(`button`) && screen.getByRole('button', { name: label })
+			).toBeTruthy();
 		}
 	});
 
@@ -690,8 +692,7 @@ describe('MailModuleView', () => {
 	});
 
 	it('truncates long remote attachment names with a tooltip', async () => {
-		const longName =
-			'quarterly-financial-report-attachment-with-a-very-long-name-2026-final.xlsx';
+		const longName = 'quarterly-financial-report-attachment-with-a-very-long-name-2026-final.xlsx';
 		mocks.getRemoteMessageBody.mockResolvedValue({
 			...body,
 			attachments: [
