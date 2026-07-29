@@ -2013,6 +2013,7 @@ pub async fn list_mail_message_parts(
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MailMessagePartQuery {
     /// Load remote images in sanitized HTML parts (blocked by default).
     #[serde(default)]
