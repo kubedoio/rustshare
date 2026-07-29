@@ -17,7 +17,7 @@ vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 
 vi.mock('$app/stores', () => ({
 	page: {
-		subscribe: (fn: any) => {
+		subscribe: (fn: (value: { url: { pathname: string } }) => void) => {
 			fn({ url: { pathname: '/admin/users' } });
 			return () => {};
 		}
@@ -26,7 +26,7 @@ vi.mock('$app/stores', () => ({
 
 vi.mock('$lib/stores/auth', () => ({
 	authStore: {
-		subscribe: (fn: any) => {
+		subscribe: (fn: (state: typeof mocks.authState) => void) => {
 			fn(mocks.authState);
 			return () => {};
 		}
