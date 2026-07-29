@@ -1002,8 +1002,7 @@
 														uidvalidity
 													)}
 													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
-														>{attachment.filename ||
-															`Attachment ${attachment.index + 1}`}</span
+														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
 													>
 													<span class="shrink-0 text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
