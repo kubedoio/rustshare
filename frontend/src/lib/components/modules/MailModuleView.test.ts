@@ -108,6 +108,7 @@ const body = {
 describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		localStorage.clear();
 		queryClient.clear();
 		mocks.listAccounts.mockResolvedValue([account]);
 		mocks.listFolders.mockResolvedValue(folders);
@@ -291,5 +292,111 @@ describe('MailModuleView', () => {
 			await screen.findByText('Folders could not be synchronized.', {}, { timeout: 4_000 })
 		).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+	});
+
+	it('requests the remote list newest-first by default', async () => {
+		render(MailModuleView, { module: testModule });
+
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_desc'
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Sort: newest first' })).toBeTruthy();
+	});
+
+	it('re-fetches oldest-first when the sort control is toggled', async () => {
+		render(MailModuleView, { module: testModule });
+		await screen.findByRole('button', { name: /Bob.*Quarterly update/ });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Sort: newest first' }));
+
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Sort: oldest first' })).toBeTruthy();
+		expect(localStorage.getItem('mail-sort-order')).toBe('date_asc');
+	});
+
+	it('reads the persisted sort preference on mount', async () => {
+		localStorage.setItem('mail-sort-order', 'date_asc');
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByRole('button', { name: 'Sort: oldest first' })).toBeTruthy();
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+	});
+
+	it('keeps the sort order across a search submit', async () => {
+		render(MailModuleView, { module: testModule });
+		await screen.findByRole('button', { name: /Bob.*Quarterly update/ });
+		await fireEvent.click(screen.getByRole('button', { name: 'Sort: newest first' }));
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+
+		const input = screen.getByRole('textbox', { name: 'Search mail' });
+		await fireEvent.input(input, { target: { value: 'quarterly' } });
+		await fireEvent.submit(input.closest('form')!);
+
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'quarterly',
+				'date_asc'
+			)
+		);
+	});
+
+	it('passes the sort order to the Saved view', async () => {
+		localStorage.setItem('mail-sort-order', 'date_asc');
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Saved to RustShare' }));
+
+		await waitFor(() =>
+			expect(mocks.listMessagesPage).toHaveBeenCalledWith('', null, null, 'date_asc')
+		);
+	});
+
+	it('renders the sort control for an empty mailbox', async () => {
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: []
+		});
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByText('No messages in this folder.')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Sort: newest first' })).toBeTruthy();
 	});
 });
