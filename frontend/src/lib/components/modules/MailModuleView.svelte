@@ -15,6 +15,7 @@
 		type SaveDraftRequest,
 		type SendOutboundMailRequest
 	} from '$lib/api/mail';
+	import { apiClient } from '$lib/api/client';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
@@ -173,8 +174,12 @@
 	let bodyRender = $derived.by(() => {
 		const body = $remoteBodyQuery.data;
 		if (!body?.html) return null;
+		// cid: references are rewritten to attachment download URLs on our own
+		// API before sanitization; exempt that base URL so blocked mode does
+		// not strip them as "remote" images when the API URL is absolute.
 		return sanitizeEmailHtml(rewriteRemoteCidUrls(body.html, body), {
-			allowRemoteImages: remoteImagesAllowed
+			allowRemoteImages: remoteImagesAllowed,
+			localUrlPrefixes: [apiClient.getBaseURL()]
 		});
 	});
 	let safeBodyHtml = $derived(bodyRender?.html ?? null);

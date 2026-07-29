@@ -178,6 +178,28 @@ describe('Email Sanitization (remote images)', () => {
 		expect(blockedRemoteImages).toBe(0);
 		expect(html).toContain('src="cid:logo@example.com"');
 	});
+
+	it('does not block absolute URLs under a local URL prefix (rewritten cid: attachments)', () => {
+		const raw =
+			'<img src="http://localhost:8080/api/v1/mail/accounts/a/messages/1/attachments/2?folder=INBOX">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw, {
+			localUrlPrefixes: ['http://localhost:8080/api/v1']
+		});
+		expect(blockedRemoteImages).toBe(0);
+		expect(html).toContain(
+			'src="http://localhost:8080/api/v1/mail/accounts/a/messages/1/attachments/2?folder=INBOX"'
+		);
+	});
+
+	it('still blocks truly external absolute URLs when local URL prefixes are set', () => {
+		const raw = '<img src="https://tracker.example/pixel.gif">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw, {
+			localUrlPrefixes: ['http://localhost:8080/api/v1']
+		});
+		expect(blockedRemoteImages).toBe(1);
+		expect(html).toContain('data-rustshare-blocked-src="https://tracker.example/pixel.gif"');
+		expect(html).not.toContain(' src="https://tracker.example');
+	});
 });
 
 describe('Filename Safety', () => {
