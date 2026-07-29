@@ -7073,6 +7073,15 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "load_remote_images",
+            "in": "path",
+            "description": "Load remote images in sanitized HTML parts (blocked by default).",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

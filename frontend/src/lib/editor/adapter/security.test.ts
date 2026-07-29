@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeHtml, isSafeFilename, isSafeUrl } from './security';
+import { sanitizeHtml, sanitizeEmailHtml, isSafeFilename, isSafeUrl } from './security';
 
 describe('Sanitization', () => {
 	it('removes script tags', () => {
@@ -69,6 +69,114 @@ describe('Sanitization', () => {
 		const html = '<p>Text with <s>strikethrough</s> word</p>';
 		const safe = sanitizeHtml(html);
 		expect(safe).toContain('<s>strikethrough</s>');
+	});
+});
+
+describe('Email Sanitization (remote images)', () => {
+	it('blocks remote images and moves the URL to a marker attribute', () => {
+		const raw = '<p>Hi</p><img alt="tracker" src="https://tracker.example/pixel.gif">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(1);
+		expect(html).toContain('data-rustshare-blocked-src="https://tracker.example/pixel.gif"');
+		expect(html).not.toContain(' src="https://tracker.example');
+	});
+
+	it('counts multiple blocked remote images only', () => {
+		const raw =
+			'<img src="https://a.example/1.png"><img src="//b.example/2.png"><img src="cid:inline"><img src="/local.png">';
+		const { blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(2);
+	});
+
+	it('blocks remote images with uppercase schemes', () => {
+		const raw = '<img src="HTTPS://tracker.example/pixel.gif">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(1);
+		expect(html).not.toContain(' src="HTTPS://tracker.example');
+	});
+
+	it('keeps remote images when explicitly allowed', () => {
+		const raw = '<img alt="t" src="https://tracker.example/pixel.gif">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw, { allowRemoteImages: true });
+		expect(blockedRemoteImages).toBe(0);
+		expect(html).toContain('src="https://tracker.example/pixel.gif"');
+	});
+
+	it('strips srcset in blocked mode', () => {
+		const raw =
+			'<img src="https://cdn.example/a.png" srcset="https://cdn.example/a.png 1x, https://cdn.example/a@2x.png 2x">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(1);
+		expect(html).not.toContain('srcset');
+	});
+
+	it('keeps remote srcset only when explicitly allowed', () => {
+		const raw = '<img src="https://cdn.example/a.png" srcset="https://cdn.example/a.png 1x">';
+		const allowed = sanitizeEmailHtml(raw, { allowRemoteImages: true });
+		expect(allowed.html).toContain('srcset="https://cdn.example/a.png 1x"');
+	});
+
+	it('blocks tracking-pixel-sized remote images', () => {
+		const raw = '<img src="https://tracker.example/open.gif" width="1" height="1">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(1);
+		expect(html).not.toContain(' src="https://tracker.example/open.gif"');
+		expect(html).toContain('data-rustshare-blocked-src="https://tracker.example/open.gif"');
+	});
+
+	it('handles malformed HTML without crashing or leaking remote loads', () => {
+		// Unterminated tag: parser drops it entirely; no remote src may survive.
+		const broken = sanitizeEmailHtml('<p>Unclosed<img src="https://tracker.example/x.png"');
+		expect(broken.html).not.toContain('tracker.example');
+		// Malformed markup around a complete remote image: still blocked.
+		const nested = sanitizeEmailHtml('<img src="https://tracker.example/x.png"><div><p>broken');
+		expect(nested.blockedRemoteImages).toBe(1);
+		expect(nested.html).not.toContain(' src="https://tracker.example');
+	});
+
+	it('removes scripts and event handlers in blocked mode', () => {
+		const raw = '<img src="https://t.example/x.png" onerror="alert(1)"><script>alert(1)</script>';
+		const { html } = sanitizeEmailHtml(raw);
+		expect(html).not.toContain('<script>');
+		expect(html).not.toContain('onerror');
+	});
+
+	it('removes scripts and event handlers when remote images are allowed', () => {
+		const raw = '<img src="https://t.example/x.png" onerror="alert(1)"><script>alert(1)</script>';
+		const { html } = sanitizeEmailHtml(raw, { allowRemoteImages: true });
+		expect(html).not.toContain('<script>');
+		expect(html).not.toContain('onerror');
+		expect(html).toContain('src="https://t.example/x.png"');
+	});
+
+	it('removes javascript: URLs in both modes', () => {
+		const raw = '<a href="javascript:alert(1)">Click</a>';
+		expect(sanitizeEmailHtml(raw).html).not.toContain('javascript:');
+		expect(sanitizeEmailHtml(raw, { allowRemoteImages: true }).html).not.toContain('javascript:');
+	});
+
+	it('keeps the existing data: URI policy in both modes', () => {
+		// DOMPurify's default policy allows data: URIs on <img>; that policy is
+		// unchanged and data: sources are not counted as blocked remote images.
+		const raw = '<img src="data:image/png;base64,AAAA">';
+		const blocked = sanitizeEmailHtml(raw);
+		expect(blocked.blockedRemoteImages).toBe(0);
+		expect(blocked.html).toContain('src="data:image/png;base64,AAAA"');
+		const allowed = sanitizeEmailHtml(raw, { allowRemoteImages: true });
+		expect(allowed.html).toContain('src="data:image/png;base64,AAAA"');
+	});
+
+	it('passes plain text through unchanged', () => {
+		const { html, blockedRemoteImages } = sanitizeEmailHtml('Hello, plain text');
+		expect(html).toBe('Hello, plain text');
+		expect(blockedRemoteImages).toBe(0);
+	});
+
+	it('keeps cid: embedded image sources', () => {
+		const raw = '<img src="cid:logo@example.com">';
+		const { html, blockedRemoteImages } = sanitizeEmailHtml(raw);
+		expect(blockedRemoteImages).toBe(0);
+		expect(html).toContain('src="cid:logo@example.com"');
 	});
 });
 

@@ -568,6 +568,21 @@ export const mailApi = {
 		return apiClient.requestText(`/mail/messages/${messageId}/parts/${partId}`);
 	},
 
+	getPartContentWithMeta: async (
+		messageId: string,
+		partId: string,
+		opts?: { loadRemoteImages?: boolean }
+	): Promise<{ content: string; blockedRemoteImages: boolean }> => {
+		const query = opts?.loadRemoteImages ? '?load_remote_images=true' : '';
+		const { text, headers } = await apiClient.requestTextWithHeaders(
+			`/mail/messages/${messageId}/parts/${partId}${query}`
+		);
+		return {
+			content: text,
+			blockedRemoteImages: headers.get('X-Mail-Blocked-Remote-Images') === '1'
+		};
+	},
+
 	listAttachments: async (messageId: string): Promise<MailAttachment[]> => {
 		const res = await apiClient.get<ListMailMessageAttachmentsResponse>(
 			`/mail/messages/${messageId}/attachments`

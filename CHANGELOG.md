@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened the production Compose contract by requiring same-host external TLS termination on a dedicated loopback port, preserving the validated upstream HTTPS scheme, probing dependency readiness, and pinning RustFS to an immutable image digest.
 - Audited and hardened permission-aware AI indexing. All indexed note chunks now carry a canonical `IndexAclProjection` resolved from the authoritative permission model; retrieval pre-filters by tenant, caller principals, visibility, and embedding policy; missing, malformed, stale, and cross-tenant ACL data fail closed; share revocation and note lifecycle events propagate to the index without requiring a full rebuild. Added backend-agnostic contract tests against both `InMemoryVectorStore` and `PgVectorStore`.
+- Mail module: remote images in message previews and imported message bodies are now blocked by default so opening a message never triggers external image requests, with a privacy notice and an explicit per-message "Load remote images" action in both the IMAP preview and the imported message page. `cid:` embedded images now resolve in the IMAP preview via the attachment download endpoint, and remote `srcset` candidates are stripped alongside `src`. The imported-parts endpoint gained an opt-in `load_remote_images=true` query parameter and reports blocked images via the `X-Mail-Blocked-Remote-Images` response header. Refs #181.
 
 ### Documentation
 
