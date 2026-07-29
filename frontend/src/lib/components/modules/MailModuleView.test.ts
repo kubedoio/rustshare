@@ -689,6 +689,30 @@ describe('MailModuleView', () => {
 		expect((screen.getByLabelText('Search mail') as HTMLInputElement).value).toBe('quarterly');
 	});
 
+	it('truncates long remote attachment names with a tooltip', async () => {
+		const longName =
+			'quarterly-financial-report-attachment-with-a-very-long-name-2026-final.xlsx';
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			attachments: [
+				{
+					index: 0,
+					filename: longName,
+					mime_type: 'application/vnd.ms-excel',
+					size_bytes: 4096,
+					content_id: null
+				}
+			]
+		});
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		const chip = await screen.findByRole('link', { name: new RegExp('quarterly-financial') });
+		expect(chip.getAttribute('title')).toBe(longName);
+		expect(chip.className).toContain('max-w-full');
+		expect(chip.querySelector('.truncate')).toBeTruthy();
+	});
+
 	it('renders a folder error with inline retry', async () => {
 		mocks.listFolders.mockRejectedValue(new Error('offline'));
 		render(MailModuleView, { module: testModule });

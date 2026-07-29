@@ -1199,7 +1199,8 @@
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
 											{#each $remoteBodyQuery.data.attachments as attachment, attachmentIndex}<a
-													class="btn btn-outline btn-sm"
+													class="btn btn-outline btn-sm max-w-full"
+													title={attachment.filename || `Attachment ${attachment.index + 1}`}
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
 														selectedMessage.uid,
@@ -1207,11 +1208,14 @@
 														selectedFolder!,
 														uidvalidity
 													)}
-													><Paperclip size={13} />{attachment.filename ||
-														`Attachment ${attachment.index + 1}`}{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
-															class="badge badge-ghost badge-sm">#{attachment.index + 1}</span
+													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
+														>{attachment.filename ||
+															`Attachment ${attachment.index + 1}`}</span
+													>
+													{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
+															class="badge badge-ghost badge-sm shrink-0">#{attachment.index + 1}</span
 														>{/if}
-													<span class="text-base-content/45"
+													<span class="shrink-0 text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
 													></a
 												>{/each}
