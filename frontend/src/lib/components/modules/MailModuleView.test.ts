@@ -194,6 +194,21 @@ describe('MailModuleView', () => {
 		await waitFor(() => expect(mocks.starMessage).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7));
 	});
 
+	it('wraps the bulk-action bar so it fits narrow viewports', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(
+			await screen.findByRole('checkbox', { name: 'Select message Quarterly update' })
+		);
+
+		const bar = screen.getByText('1 selected').parentElement!;
+		expect(bar.className).toContain('flex-wrap');
+		expect(bar.className).toContain('max-w-[calc(100vw-2rem)]');
+		// All bulk actions stay in the reachable (wrapped) bar.
+		for (const label of ['Read', 'Unread', 'Star', 'Save', 'Move', 'Delete']) {
+			expect(bar.querySelector(`button`) && screen.getByRole('button', { name: label })).toBeTruthy();
+		}
+	});
+
 	it('saves selected UIDs to RustShare', async () => {
 		render(MailModuleView, { module: testModule });
 		await fireEvent.click(

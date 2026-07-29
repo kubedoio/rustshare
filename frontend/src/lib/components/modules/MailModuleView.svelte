@@ -1016,7 +1016,7 @@
 
 			{#if selectedUids.length}
 				<div
-					class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+					class="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 				>
 					<span class="px-2 text-sm font-semibold">{selectedUids.length} selected</span>
 					<button
