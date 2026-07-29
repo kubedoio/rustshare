@@ -107,6 +107,8 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 - Demo viewer: `viewer@localhost` — password from `RUSTSHARE_DEMO_VIEWER_PASSWORD` in `.env`
 
 > If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve the admin password from the secure bootstrap file inside the backend container: `docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt` (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`).
+>
+> **Record the admin password immediately.** The bootstrap file lives in container-local storage and does **not** survive container recreation (`docker compose down`, `--force-recreate`). Once the container is recreated, an unrecorded auto-generated password is unrecoverable. For a durable credential, set `RUSTSHARE_ADMIN_PASSWORD` in `.env` **before first start** (an empty value is treated as unset and triggers auto-generation).
 
 ---
 
@@ -239,7 +241,7 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
 | `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Run `scripts/pre-flight.sh` (user: alphanumeric access key; password: `openssl rand -hex 32`) | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
 | `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
-| `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file. | Rotate after first login and whenever the admin credential is suspected to be exposed. |
+| `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file (record it immediately; the bootstrap file does not survive container recreation). | Rotate after first login and whenever the admin credential is suspected to be exposed. |
 | `RUSTSHARE_DEMO_VIEWER_PASSWORD` | Run `scripts/pre-flight.sh` (`openssl rand -hex 32`) | Rotate if demo mode is enabled in production (not recommended). |
 
 ### Optional secrets
@@ -421,10 +423,14 @@ The most common causes of a failed first `docker compose up -d`:
 - **No admin password was configured.**
   When `RUSTSHARE_ADMIN_PASSWORD` is empty in `.env`, the backend generates a
   random admin password at bootstrap and writes it to a secure file inside
-  the backend container. Retrieve it with:
+  the backend container. Retrieve it **immediately after first start** with:
   `docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt`
-  (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`). Change the
-  password after first login.
+  (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`). The bootstrap
+  file lives in container-local storage and does **not** survive container
+  recreation (`docker compose down`, `--force-recreate`) — an unrecorded
+  auto-generated password is unrecoverable afterward. For a durable
+  credential, set `RUSTSHARE_ADMIN_PASSWORD` in `.env` **before first start**
+  (an empty value is treated as unset). Change the password after first login.
 
 ### "Welcome to SvelteKit" or blank page
 

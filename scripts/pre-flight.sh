@@ -396,11 +396,15 @@ echo
 
 echo
 warn "Admin password is NOT stored in .env"
-echo "  On first boot, the backend will generate a random admin password"
-echo "  and write it to a secure file inside the container. Retrieve it with:"
-echo "    docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt"
+echo "  On first boot, the backend generates a random admin password ONCE and"
+echo "  writes it to a bootstrap file inside the container. The file lives in"
+echo "  container-local storage and does NOT survive container recreation —"
+echo "  record the password immediately after first start:"
+echo "    docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt"
 echo "  The path is configurable via RUSTSHARE_BOOTSTRAP_PASSWORD_FILE."
-echo "  Log in, then change the password immediately."
+echo "  Durable alternative: set RUSTSHARE_ADMIN_PASSWORD in .env BEFORE first"
+echo "  start (an empty value is treated as unset). Log in, then change the"
+echo "  password immediately."
 echo
 
 if [[ "${TOTAL_ISSUES}" -gt 0 ]]; then

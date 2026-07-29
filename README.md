@@ -87,6 +87,14 @@ docker compose up -d
 
 The first build compiles both the frontend and the backend, so it can take several minutes. Wait for the backend container to become healthy (`docker compose ps`), then visit `http://localhost`.
 
+> **Admin password — record it immediately.** Unless you set `RUSTSHARE_ADMIN_PASSWORD` in `.env` before first start, the backend generates a random admin password ONCE at first boot and writes it to a bootstrap file inside the backend container. Retrieve it right away:
+>
+> ```bash
+> docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt
+> ```
+>
+> The bootstrap file lives in container-local storage and does **not** survive container recreation — after `docker compose down` / `--force-recreate`, an unrecorded auto-generated password is unrecoverable. For a durable credential, set `RUSTSHARE_ADMIN_PASSWORD` in `.env` before the first `docker compose up -d` (an empty value is treated as unset and triggers auto-generation).
+
 > For validation, run `./scripts/final-launch-smoke.sh`. For production deployment details and first-start troubleshooting, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Development Setup
