@@ -60,7 +60,13 @@
 			goto(redirectTo);
 		} catch (error: any) {
 			showError = true;
-			errorMessage = error.message || 'Login failed. Please try again.';
+			// A bare 401 (no server-provided message) means the credentials were rejected;
+			// surface a user-meaningful message instead of the raw status text.
+			const isBareUnauthorized =
+				error?.status === 401 && (!error?.message || error.message === 'Unauthorized');
+			errorMessage = isBareUnauthorized
+				? 'Invalid email or password'
+				: error.message || 'Login failed. Please try again.';
 		} finally {
 			isLoading = false;
 			authStore.setLoading(false);
