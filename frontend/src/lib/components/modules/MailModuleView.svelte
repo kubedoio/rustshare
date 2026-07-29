@@ -992,7 +992,8 @@
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
 											{#each $remoteBodyQuery.data.attachments as attachment}<a
-													class="btn btn-outline btn-sm"
+													class="btn btn-outline btn-sm max-w-full"
+													title={attachment.filename || `Attachment ${attachment.index + 1}`}
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
 														selectedMessage.uid,
@@ -1000,9 +1001,11 @@
 														selectedFolder!,
 														uidvalidity
 													)}
-													><Paperclip size={13} />{attachment.filename ||
-														`Attachment ${attachment.index + 1}`}
-													<span class="text-base-content/45"
+													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
+														>{attachment.filename ||
+															`Attachment ${attachment.index + 1}`}</span
+													>
+													<span class="shrink-0 text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
 													></a
 												>{/each}
