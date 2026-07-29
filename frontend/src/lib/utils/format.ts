@@ -14,6 +14,14 @@ export function formatFileSize(bytes: number): string {
 	}).format(value);
 }
 
+/**
+ * Date/time display policy (WB-012):
+ * - List/feed contexts use the relative formatter `formatDate` below.
+ * - Detail contexts use one canonical absolute format via
+ *   `formatAbsoluteDateTime` (date + time) or `formatAbsoluteDate`
+ *   (date only). Screens must not call toLocaleString/toLocaleDateString
+ *   inline — import from here instead.
+ */
 export function formatDate(dateString: string): string {
 	const date = new Date(dateString);
 	const now = new Date();
@@ -33,6 +41,28 @@ export function formatDate(dateString: string): string {
 		day: 'numeric',
 		hour: 'numeric',
 		minute: '2-digit'
+	}).format(date);
+}
+
+/** Canonical absolute date+time for detail contexts (e.g. "Jul 29, 2026, 8:01 PM"). */
+export function formatAbsoluteDateTime(dateInput: Date | string): string {
+	const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+	return new Intl.DateTimeFormat('en-US', {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit'
+	}).format(date);
+}
+
+/** Canonical absolute date-only format for detail contexts (e.g. "Jul 29, 2026"). */
+export function formatAbsoluteDate(dateInput: Date | string): string {
+	const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+	return new Intl.DateTimeFormat('en-US', {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric'
 	}).format(date);
 }
 

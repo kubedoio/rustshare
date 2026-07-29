@@ -2,6 +2,7 @@
 	import { createMutation } from '$lib/query-compat';
 	import type { AdminUser } from '$lib/api/admin';
 	import { disableAdminUser, enableAdminUser, deleteAdminUser } from '$lib/api/admin';
+	import { formatAbsoluteDate } from '$lib/utils/format';
 
 	let {
 		users = [],
@@ -61,7 +62,7 @@
 	});
 
 	function formatDate(dateStr: string) {
-		return new Date(dateStr).toLocaleDateString();
+		return formatAbsoluteDate(dateStr);
 	}
 
 	function formatBytes(bytes: number) {

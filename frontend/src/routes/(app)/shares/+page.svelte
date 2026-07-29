@@ -9,6 +9,7 @@
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { queryClient } from '$lib/query-client';
+	import { formatAbsoluteDateTime } from '$lib/utils/format';
 	import {
 		Activity,
 		Clock3,
@@ -110,13 +111,7 @@
 	}
 
 	function formatDate(dateString: string): string {
-		return new Date(dateString).toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+		return formatAbsoluteDateTime(dateString);
 	}
 
 	function getExpiryStatusText(expiresAt: string | null): string {
@@ -141,13 +136,7 @@
 	}
 
 	function formatAccessTime(dateString: string): string {
-		return new Date(dateString).toLocaleString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+		return formatAbsoluteDateTime(dateString);
 	}
 
 	function isExpired(expiresAt: string | null): boolean {
