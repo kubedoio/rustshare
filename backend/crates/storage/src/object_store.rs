@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
@@ -291,6 +293,27 @@ impl ObjectStore {
         request.send().await?;
         Ok(())
     }
+}
+
+/// Whether an error returned by [`ObjectStore::get`] or
+/// [`ObjectStore::get_stream`] means the object is confirmed missing (S3
+/// `NoSuchKey` / 404), as opposed to an infrastructure failure such as an
+/// unreachable store, access denied, or a failed integrity check.
+///
+/// Only a confirmed-missing error may be treated as "not found"; anything
+/// else must be surfaced as a storage failure. Mirrors the code matching in
+/// [`ObjectStore::exists`].
+pub fn is_missing_object_error(error: &anyhow::Error) -> bool {
+    let Some(sdk_error) = error.downcast_ref::<SdkError<GetObjectError>>() else {
+        return false;
+    };
+    sdk_error
+        .as_service_error()
+        .is_some_and(is_missing_get_object_error)
+}
+
+fn is_missing_get_object_error(error: &GetObjectError) -> bool {
+    error.is_no_such_key() || matches!(error.meta().code(), Some("NoSuchKey") | Some("NotFound"))
 }
 
 fn expected_blob_sha256(key: &str) -> Option<&str> {
@@ -737,6 +760,29 @@ mod tests {
         );
 
         store.delete(&key).await.unwrap();
+    }
+
+    #[test]
+    fn missing_object_error_matches_no_such_key() {
+        let error =
+            GetObjectError::NoSuchKey(aws_sdk_s3::types::error::NoSuchKey::builder().build());
+        assert!(super::is_missing_get_object_error(&error));
+    }
+
+    #[test]
+    fn missing_object_error_rejects_other_service_errors() {
+        let error = GetObjectError::InvalidObjectState(
+            aws_sdk_s3::types::error::InvalidObjectState::builder().build(),
+        );
+        assert!(!super::is_missing_get_object_error(&error));
+    }
+
+    #[test]
+    fn missing_object_error_rejects_non_sdk_errors() {
+        // Infrastructure and integrity failures (e.g. from verify_blob_bytes)
+        // are not AWS service errors and must not be treated as "missing".
+        let error = anyhow::anyhow!("object integrity check failed");
+        assert!(!super::is_missing_object_error(&error));
     }
 
     #[tokio::test]

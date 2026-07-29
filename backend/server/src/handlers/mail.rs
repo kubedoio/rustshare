@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::{Multipart, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
+use crate::services::mail_service::MailAttachmentBody;
 use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
@@ -205,6 +207,30 @@ fn strip_filename_control_chars(name: &str) -> String {
     name.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// Truncate `name` to at most `max_chars` characters, preserving the final
+/// extension when there is room for it so a truncated download keeps its file
+/// type. Mirrors the storage-side `truncate_filename` helper in mail_service,
+/// but stays self-contained for the response side.
+fn truncate_preserving_extension(name: &str, max_chars: usize) -> String {
+    if name.chars().count() <= max_chars {
+        return name.to_string();
+    }
+
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.chars().count() < max_chars => {
+            let stem_len = max_chars - ext.chars().count() - 1;
+            format!(
+                "{}.{}",
+                stem.chars().take(stem_len).collect::<String>(),
+                ext
+            )
+        }
+        // No usable extension (none, empty stem, or an absurdly long
+        // extension): cap the whole name plainly.
+        _ => name.chars().take(max_chars).collect(),
+    }
+}
+
 /// Sanitize the Unicode original carried in `filename*`: strip control
 /// characters, neutralize path separators, and collapse dot runs so no `..`
 /// traversal residue or leading dot survives. Unicode letters are preserved.
@@ -270,10 +296,7 @@ fn ascii_fallback_filename(name: &str) -> String {
         }
     }
     let trimmed = out.trim_end_matches([' ', '.']);
-    let capped: String = trimmed
-        .chars()
-        .take(CONTENT_DISPOSITION_FALLBACK_MAX_CHARS)
-        .collect();
+    let capped = truncate_preserving_extension(trimmed, CONTENT_DISPOSITION_FALLBACK_MAX_CHARS);
     let capped = capped.trim_end_matches([' ', '.']);
     if capped.is_empty() {
         return "attachment".to_string();
@@ -289,10 +312,10 @@ fn ascii_fallback_filename(name: &str) -> String {
 /// RFC 5987 `filename*` that preserves the (control-stripped) Unicode
 /// original. Guaranteed to contain no CR/LF and never to be empty.
 fn content_disposition_attachment(filename: &str) -> HeaderValue {
-    let mut cleaned: String = safe_unicode_filename(filename)
-        .chars()
-        .take(CONTENT_DISPOSITION_ORIGINAL_MAX_CHARS)
-        .collect();
+    let mut cleaned = truncate_preserving_extension(
+        &safe_unicode_filename(filename),
+        CONTENT_DISPOSITION_ORIGINAL_MAX_CHARS,
+    );
     let cleaned_trimmed = cleaned.trim_end_matches('.');
     cleaned = if cleaned_trimmed.is_empty() {
         "attachment".to_string()
@@ -2342,7 +2365,7 @@ pub async fn download_mail_message_attachment(
     Path((message_id, attachment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Response, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
-    let (attachment, bytes) = state
+    let (attachment, body) = state
         .mail_service
         .download_attachment(auth.tenant_id, auth.user_id, message_id, attachment_id)
         .await?;
@@ -2350,9 +2373,24 @@ pub async fn download_mail_message_attachment(
         tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
     }
 
-    let headers =
+    let mut headers =
         attachment_download_headers(attachment.mime_type.as_deref(), &attachment.filename);
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    match body {
+        MailAttachmentBody::Buffered(bytes) => Ok((StatusCode::OK, headers, bytes).into_response()),
+        MailAttachmentBody::Stream {
+            content_length,
+            stream,
+        } => {
+            if let Some(len) = content_length {
+                headers.insert(
+                    header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&len.to_string())
+                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
+                );
+            }
+            Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
+        }
+    }
 }
 
 /// Best-effort audit event for mutations performed directly on the remote
@@ -3556,5 +3594,71 @@ mod tests {
         assert_eq!(ascii_fallback_filename("  spaced  .pdf  "), "spaced .pdf");
         assert_eq!(ascii_fallback_filename(".hidden"), "hidden");
         assert_eq!(ascii_fallback_filename("file."), "file");
+    }
+
+    // ========================================================================
+    // Extension-preserving truncation
+    // ========================================================================
+
+    use super::truncate_preserving_extension;
+
+    #[test]
+    fn truncate_keeps_extension_for_long_names() {
+        let name = format!("{}.pdf", "a".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(truncated.ends_with(".pdf"), "{truncated}");
+    }
+
+    #[test]
+    fn truncate_plainly_when_no_extension() {
+        let name = "a".repeat(500);
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(!truncated.contains('.'));
+    }
+
+    #[test]
+    fn truncate_keeps_final_extension_for_multi_dot_names() {
+        let name = format!("{}.tar.gz", "a".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(truncated.ends_with(".gz"), "{truncated}");
+    }
+
+    #[test]
+    fn truncate_caps_absurdly_long_extension_plainly() {
+        // An extension longer than the whole cap cannot be preserved; fall
+        // back to a plain cap instead of overflowing or panicking.
+        let name = format!("name.{}", "d".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+    }
+
+    #[test]
+    fn truncate_leaves_short_names_untouched() {
+        assert_eq!(
+            truncate_preserving_extension("report.pdf", 200),
+            "report.pdf"
+        );
+        assert_eq!(truncate_preserving_extension(".pdf", 200), ".pdf");
+    }
+
+    #[test]
+    fn disposition_long_name_keeps_extension_in_both_params() {
+        let header = disposition_string(&format!("{}.pdf", "a".repeat(500)));
+        let fallback = header
+            .split("filename=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("legacy filename parameter");
+        assert!(fallback.ends_with(".pdf"), "fallback: {header}");
+        assert_eq!(fallback.len(), 100, "fallback must stay capped: {header}");
+        let star = header
+            .split("filename*=UTF-8''")
+            .nth(1)
+            .expect("filename* parameter");
+        assert!(star.ends_with(".pdf"), "filename*: {header}");
+        assert_eq!(star.len(), 200, "filename* must stay capped: {header}");
     }
 }
