@@ -214,7 +214,7 @@
 			</div>
 		</div>
 
-		<div class="grid gap-4 md:grid-cols-3">
+		<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
 			<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 				<div class="flex items-start justify-between">
 					<div>
@@ -303,7 +303,7 @@
 				</a>
 			</div>
 		{:else if $sharesQuery.data}
-			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+			<div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
 				<div class="space-y-4">
 					{#each $sharesQuery.data as share}
 						{@const shareUrl = getShareUrl(share.share_token)}
@@ -417,7 +417,7 @@
 									</div>
 								{/if}
 
-								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+								<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
 										<p
 											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"
