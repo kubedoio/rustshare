@@ -93,25 +93,35 @@ export class ApiClient {
 		// Handle 401 Unauthorized
 		if (response.status === 401) {
 			let errorMessage = 'Unauthorized';
+			let details: Record<string, unknown> | undefined;
 			try {
 				const errorData = await response.json();
-				errorMessage = errorData.error || errorData.message || errorMessage;
+				if (errorData && typeof errorData === 'object') {
+					details = errorData as Record<string, unknown>;
+					if (typeof details.error === 'string') errorMessage = details.error;
+					else if (typeof details.message === 'string') errorMessage = details.message;
+				}
 			} catch {
 				// keep default message if body isn't JSON
 			}
-			throw new ApiError(401, errorMessage);
+			throw new ApiError(401, errorMessage, details);
 		}
 
 		// Handle other errors
 		if (!response.ok) {
 			let errorMessage = 'Request failed';
+			let details: Record<string, unknown> | undefined;
 			try {
 				const errorData = await response.json();
-				errorMessage = errorData.error || errorData.message || errorMessage;
+				if (errorData && typeof errorData === 'object') {
+					details = errorData as Record<string, unknown>;
+					if (typeof details.error === 'string') errorMessage = details.error;
+					else if (typeof details.message === 'string') errorMessage = details.message;
+				}
 			} catch {
 				errorMessage = response.statusText || errorMessage;
 			}
-			throw new ApiError(response.status, errorMessage);
+			throw new ApiError(response.status, errorMessage, details);
 		}
 
 		return response;

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made WebUI vault Markdown editing reliable and conflict-safe (#185): structured 409 conflict bodies (`current_rev`, `server_sha256`) now propagate through the frontend API client; a dirty editor warns on refresh/tab close (`beforeunload`), in-app navigation (`beforeNavigate`), and file switching; conflicts show a recovery panel (copy changes to clipboard, download local version, reload server version after confirmation) instead of reload-and-lose; conflicts whose server content is identical to the editor content (SHA-256 match) silently adopt the server revision instead of alarming the user; added HTTP integration coverage for the `/content/*` vault-sync endpoints.
+
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
 - Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.
