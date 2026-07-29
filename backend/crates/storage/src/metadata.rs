@@ -546,6 +546,33 @@ impl MetadataStore {
         Ok(rows)
     }
 
+    /// Find a single mail attachment by ID, scoped to the owning user and tenant.
+    pub async fn find_mail_attachment_by_id(
+        &self,
+        attachment_id: Uuid,
+        message_id: Uuid,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Option<MailAttachment>> {
+        let row = sqlx::query_as::<_, MailAttachment>(
+            r#"
+            SELECT
+                a.id, a.tenant_id, a.message_id, a.file_id, a.filename, a.mime_type,
+                a.size_bytes, a.part_index, a.content_disposition, a.content_id, a.blob_key, a.created_at
+            FROM mail_attachments a
+            JOIN mail_messages m ON m.id = a.message_id
+            WHERE a.id = $1 AND a.message_id = $2 AND m.tenant_id = $3 AND m.owner_id = $4
+            "#,
+        )
+        .bind(attachment_id)
+        .bind(message_id)
+        .bind(tenant_id)
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Find a mail message by ID.
     ///
     /// This method does not enforce tenant or ownership checks. Callers must

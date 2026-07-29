@@ -411,6 +411,17 @@ export const mailApi = {
 		return `${apiClient.getBaseURL()}/mail/accounts/${accountId}/messages/${uid}/attachments/${index}?${params}`;
 	},
 
+	remoteSourceUrl: (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): string => {
+		const params = new URLSearchParams({ folder });
+		if (source_uidvalidity != null) params.set('source_uidvalidity', String(source_uidvalidity));
+		return `${apiClient.getBaseURL()}/mail/accounts/${accountId}/messages/${uid}/source?${params}`;
+	},
+
 	starMessage: async (
 		accountId: string,
 		uid: number,
@@ -593,6 +604,10 @@ export const mailApi = {
 
 	downloadSourceUrl: (messageId: string): string => {
 		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/source`;
+	},
+
+	attachmentDownloadUrl: (messageId: string, attachmentId: string): string => {
+		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/attachments/${attachmentId}`;
 	},
 
 	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {

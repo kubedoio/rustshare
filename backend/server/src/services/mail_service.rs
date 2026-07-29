@@ -1053,6 +1053,81 @@ impl MailService {
             .map_err(|e| MailError::Database(e.to_string()))
     }
 
+    /// Download a single attachment's stored bytes, scoped to the owning user
+    /// and tenant.
+    ///
+    /// Prefers the content-addressed object-store blob; falls back to the
+    /// linked file's content when no usable blob exists. A missing blob is
+    /// reported as `NotFound` (404) rather than a storage error so callers
+    /// cannot distinguish storage layout from absence.
+    pub async fn download_attachment(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        attachment_id: Uuid,
+    ) -> Result<(MailAttachment, bytes::Bytes), MailError> {
+        // Verify the caller can access the message first so cross-tenant
+        // requests are rejected before any storage access happens. Map a
+        // tenant/owner mismatch to NotFound so this endpoint does not leak
+        // message existence (unlike the older read endpoints, which use 403).
+        self.get_message(tenant_id, owner_id, message_id)
+            .await
+            .map_err(|err| match err {
+                MailError::PermissionDenied => MailError::NotFound(message_id),
+                other => other,
+            })?;
+        let attachment = self
+            .metadata_store
+            .find_mail_attachment_by_id(attachment_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(attachment_id))?;
+
+        if let Some(blob_key) = &attachment.blob_key {
+            match self.object_store.get(blob_key).await {
+                Ok(bytes) => return Ok((attachment, bytes)),
+                Err(e) => {
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        error = %e,
+                        "mail attachment blob missing from object store; trying file fallback"
+                    );
+                }
+            }
+        }
+
+        if let Some(file_id) = attachment.file_id {
+            let fallback = async {
+                let file = self
+                    .file_service
+                    .get_file(file_id, owner_id)
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))?;
+                self.object_store
+                    .get(&file.storage_key())
+                    .await
+                    .map_err(|e| MailError::Storage(e.to_string()))
+            }
+            .await;
+            match fallback {
+                Ok(bytes) => return Ok((attachment, bytes)),
+                Err(e) => {
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        file_id = %file_id,
+                        error = %e,
+                        "mail attachment file fallback failed"
+                    );
+                }
+            }
+        }
+
+        // No readable bytes anywhere: report NotFound (404) so a missing blob
+        // is indistinguishable from a missing attachment.
+        Err(MailError::NotFound(attachment_id))
+    }
+
     // ============================================================================
     // Mail accounts
     // ============================================================================

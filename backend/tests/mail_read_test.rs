@@ -793,3 +793,294 @@ async fn reading_part_and_source_appends_viewed_event() {
     cleanup_user(&state.db_pool, user.id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
+
+/// Multi-attachment EML: plain body plus three attachments — ASCII name,
+/// RFC 2047 encoded-word Unicode name, and a zero-byte payload.
+fn multi_attachment_eml() -> Vec<u8> {
+    // "first bytes" and "pdf-bytes" base64-encoded; the second filename is the
+    // RFC 2047 encoded-word for "我的報告.pdf".
+    "From: sender@example.com\r\n\
+     To: recipient@example.com\r\n\
+     Subject: Multi attachments\r\n\
+     Message-ID: <multi-attach@example.com>\r\n\
+     Date: Mon, 06 Jul 2026 14:00:00 +0000\r\n\
+     MIME-Version: 1.0\r\n\
+     Content-Type: multipart/mixed; boundary=\"mixboundary\"\r\n\
+     \r\n\
+     --mixboundary\r\n\
+     Content-Type: text/plain; charset=utf-8\r\n\
+     \r\n\
+     See attached files.\r\n\
+     --mixboundary\r\n\
+     Content-Type: text/plain; name=\"first.txt\"\r\n\
+     Content-Disposition: attachment; filename=\"first.txt\"\r\n\
+     Content-Transfer-Encoding: base64\r\n\
+     \r\n\
+     Zmlyc3QgYnl0ZXM=\r\n\
+     --mixboundary\r\n\
+     Content-Type: application/pdf; name=\"=?UTF-8?B?5oiR55qE5aCx5ZGKLnBkZg==?=\"\r\n\
+     Content-Disposition: attachment; filename=\"=?UTF-8?B?5oiR55qE5aCx5ZGKLnBkZg==?=\"\r\n\
+     Content-Transfer-Encoding: base64\r\n\
+     \r\n\
+     cGRmLWJ5dGVz\r\n\
+     --mixboundary\r\n\
+     Content-Type: application/octet-stream; name=\"empty.bin\"\r\n\
+     Content-Disposition: attachment; filename=\"empty.bin\"\r\n\
+     Content-Transfer-Encoding: base64\r\n\
+     \r\n\
+     \r\n\
+     --mixboundary--\r\n"
+        .as_bytes()
+        .to_vec()
+}
+
+async fn list_attachment_ids(
+    app: axum::Router,
+    message_id: Uuid,
+    token: &str,
+) -> Vec<serde_json::Value> {
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{message_id}/attachments"))
+        .method("GET")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    parsed["attachments"]
+        .as_array()
+        .expect("attachments array")
+        .clone()
+}
+
+async fn get_attachment(
+    app: axum::Router,
+    message_id: Uuid,
+    attachment_id: &str,
+    token: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .uri(format!(
+            "/api/v1/mail/messages/{message_id}/attachments/{attachment_id}"
+        ))
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    if let Some(token) = token {
+        builder
+            .headers_mut()
+            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+    }
+    app.oneshot(builder).await.unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn download_imported_attachments_serves_exact_bytes_with_safe_headers() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_att_dl", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+
+    let message = state
+        .mail_service
+        .import_eml(tenant_id, user.id, user.id, multi_attachment_eml())
+        .await
+        .expect("import_eml should succeed");
+
+    let app = build_app(state.clone());
+    let attachments = list_attachment_ids(app.clone(), message.id, &token).await;
+    assert_eq!(attachments.len(), 3, "expected three attachments");
+
+    // Each attachment is independently downloadable with its exact bytes.
+    let first = attachments
+        .iter()
+        .find(|a| a["filename"] == "first.txt")
+        .expect("first.txt attachment");
+    let response = get_attachment(
+        app.clone(),
+        message.id,
+        first["id"].as_str().unwrap(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/plain"
+    );
+    assert_eq!(
+        response.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    let disposition = response
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        disposition.starts_with("attachment; filename=\"first.txt\"; filename*=UTF-8''first.txt"),
+        "unexpected disposition: {disposition}"
+    );
+    assert!(
+        !disposition.contains("blobs/"),
+        "disposition must not leak storage keys: {disposition}"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body.to_vec(), b"first bytes");
+
+    // Unicode filename: ASCII-safe fallback plus RFC 5987 original.
+    let unicode = attachments
+        .iter()
+        .find(|a| a["filename"] == "我的報告.pdf")
+        .expect("unicode-named attachment");
+    let response = get_attachment(
+        app.clone(),
+        message.id,
+        unicode["id"].as_str().unwrap(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/pdf"
+    );
+    let disposition = response
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        disposition.contains("filename=\"____.pdf\""),
+        "ASCII fallback expected: {disposition}"
+    );
+    assert!(
+        disposition.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A.pdf"),
+        "RFC 5987 original expected: {disposition}"
+    );
+    assert!(
+        !disposition.bytes().any(|b| b < 0x20 || b == 0x7f),
+        "no control characters allowed: {disposition:?}"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body.to_vec(), b"pdf-bytes");
+
+    // Zero-byte attachment downloads as an empty 200 body.
+    let empty = attachments
+        .iter()
+        .find(|a| a["filename"] == "empty.bin")
+        .expect("empty.bin attachment");
+    let response = get_attachment(
+        app.clone(),
+        message.id,
+        empty["id"].as_str().unwrap(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(body.is_empty(), "zero-byte attachment should be empty");
+
+    // Source download keeps its clearly separate .eml disposition.
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages/{}/source", message.id))
+        .method("GET")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "message/rfc822"
+    );
+    let disposition = response
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        disposition.contains(&format!("filename=\"message-{}.eml\"", message.id)),
+        "source disposition should carry the .eml name: {disposition}"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn download_imported_attachment_not_found_and_authorization() {
+    let state = setup_test_env().await;
+    let tenant_a = create_test_tenant(&state.db_pool).await;
+    let user_a = create_test_user(&state, "mail_att_owner", tenant_a).await;
+    enable_mail_module(&state, tenant_a, user_a.id).await;
+    let token_a = create_auth_token(&state, user_a.id, tenant_a);
+
+    let tenant_b = create_test_tenant(&state.db_pool).await;
+    let user_b = create_test_user(&state, "mail_att_intruder", tenant_b).await;
+    enable_mail_module(&state, tenant_b, user_b.id).await;
+    let token_b = create_auth_token(&state, user_b.id, tenant_b);
+
+    let message = state
+        .mail_service
+        .import_eml(tenant_a, user_a.id, user_a.id, multi_attachment_eml())
+        .await
+        .expect("import_eml should succeed");
+
+    let app = build_app(state.clone());
+    let attachments = list_attachment_ids(app.clone(), message.id, &token_a).await;
+    let first_id = attachments[0]["id"].as_str().unwrap().to_string();
+
+    // Unauthenticated request is rejected.
+    let response = get_attachment(app.clone(), message.id, &first_id, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // Cross-tenant request is indistinguishable from a missing attachment.
+    let response = get_attachment(app.clone(), message.id, &first_id, Some(&token_b)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Unknown attachment ID on a known message is a 404.
+    let response = get_attachment(
+        app.clone(),
+        message.id,
+        &Uuid::new_v4().to_string(),
+        Some(&token_a),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Attachment whose blob vanished from the object store (and with no file
+    // fallback) is a 404, not a storage error.
+    sqlx::query("UPDATE mail_attachments SET blob_key = $1, file_id = NULL WHERE id = $2")
+        .bind("blobs/definitely-missing-blob")
+        .bind(Uuid::parse_str(&first_id).unwrap())
+        .execute(&state.db_pool)
+        .await
+        .expect("update attachment blob_key");
+    let response = get_attachment(app.clone(), message.id, &first_id, Some(&token_a)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    cleanup_user(&state.db_pool, user_a.id).await;
+    cleanup_user(&state.db_pool, user_b.id).await;
+    cleanup_tenant(&state.db_pool, tenant_a).await;
+    cleanup_tenant(&state.db_pool, tenant_b).await;
+}

@@ -5998,6 +5998,104 @@
         }
       }
     },
+    "/api/v1/mail/accounts/{id}/messages/{uid}/source": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Download the raw RFC 822 source of a remote IMAP message as `.eml`.",
+        "operationId": "download_remote_mail_message_source",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "IMAP UID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "folder",
+            "in": "path",
+            "description": "IMAP folder containing the message.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_uidvalidity",
+            "in": "path",
+            "description": "UIDVALIDITY observed when the folder was listed; guards against stale UIDs.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw RFC 822 message source"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Message not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Folder UIDVALIDITY changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mail/accounts/{id}/messages/{uid}/star": {
       "post": {
         "tags": [
@@ -6767,6 +6865,63 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mail/messages/{id}/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "Mail"
+        ],
+        "summary": "Download one attachment of an imported mail message.",
+        "description": "Serves the exact stored bytes (object-store blob, falling back to the\nlinked file content). The response never exposes the storage blob key.",
+        "operationId": "download_mail_message_attachment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Mail message ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment bytes"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Message or attachment not found",
             "content": {
               "application/json": {
                 "schema": {

@@ -36,7 +36,8 @@ vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn().mockResolvedValue([]) }
 vi.mock('$lib/api/mail', () => ({
 	mailApi: {
 		...mocks,
-		remoteAttachmentUrl: vi.fn(() => '/attachment')
+		remoteAttachmentUrl: vi.fn(() => '/attachment'),
+		remoteSourceUrl: vi.fn(() => '/eml-source')
 	}
 }));
 
@@ -291,5 +292,50 @@ describe('MailModuleView', () => {
 			await screen.findByText('Folders could not be synchronized.', {}, { timeout: 4_000 })
 		).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+	});
+
+	it('offers a raw .eml download for the selected remote message', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		const link = await screen.findByRole('link', { name: 'Download .eml' });
+		expect(link.getAttribute('href')).toBe('/eml-source');
+		const { mailApi } = await import('$lib/api/mail');
+		expect(mailApi.remoteSourceUrl).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7);
+	});
+
+	it('distinguishes duplicate attachment filenames by index and shows sizes', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			attachments: [
+				{
+					index: 0,
+					filename: 'dup.pdf',
+					mime_type: 'application/pdf',
+					size_bytes: 2048,
+					content_id: null
+				},
+				{
+					index: 1,
+					filename: 'dup.pdf',
+					mime_type: 'application/pdf',
+					size_bytes: 1024,
+					content_id: null
+				},
+				{ index: 2, filename: null, mime_type: 'image/png', size_bytes: 500, content_id: null }
+			]
+		});
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		expect(await screen.findByText('#1')).toBeTruthy();
+		expect(screen.getByText('#2')).toBeTruthy();
+		expect(screen.getByText('Attachment 3')).toBeTruthy();
+		expect(screen.getByText('2 KB')).toBeTruthy();
+		expect(screen.getByText('1 KB')).toBeTruthy();
+		expect(screen.getByText('500 B')).toBeTruthy();
+		const chips = screen.getAllByRole('link', { name: /dup\.pdf|Attachment 3/ });
+		expect(chips).toHaveLength(3);
+		for (const chip of chips) expect(chip.getAttribute('href')).toBe('/attachment');
 	});
 });

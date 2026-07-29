@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed mail attachment filenames, metadata, and downloads (#183): imported mail attachments can now be downloaded via `GET /api/v1/mail/messages/{id}/attachments/{attachment_id}` serving the exact stored bytes (object-store blob with linked-file fallback; missing blobs and cross-tenant access return 404), and remote IMAP messages now expose a raw `.eml` download via `GET /api/v1/mail/accounts/{id}/messages/{uid}/source`. The message detail page offers a per-attachment Download action, the remote viewer gains a Download .eml toolbar action, and duplicate attachment filenames are distinguished by an index badge.
+
+### Security
+
+- Sanitized response filenames on every mail download path (remote/imported attachment, imported/remote `.eml` source) with one shared Content-Disposition builder: an ASCII-only, injection-proof `filename=` fallback (control characters stripped, quotes/backslashes/slashes neutralized, `..` traversal collapsed, length capped, Windows reserved device names prefixed) plus an RFC 5987 `filename*` carrying the safe Unicode original. Storage blob keys are never exposed in responses (#183).
+
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
 - Separated the Notes filename from the first Markdown H1: the note name is now independently editable, changing the H1 does not rename the note, and renaming the note does not rewrite the H1.

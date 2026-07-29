@@ -413,6 +413,11 @@
 							<div class="max-w-full rounded-lg border border-base-300 px-3 py-2 text-sm">
 								<div class="flex items-center gap-2">
 									<span class="truncate font-medium">{attachment.filename}</span>
+									<a
+										class="btn btn-outline btn-xs"
+										href={mailApi.attachmentDownloadUrl(messageId!, attachment.id)}
+										download><Download size={12} /> Download</a
+									>
 									{#if attachment.file_id}
 										<button
 											type="button"
