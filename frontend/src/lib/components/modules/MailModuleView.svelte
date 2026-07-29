@@ -398,17 +398,44 @@
 			: [...selectedUids, uid];
 	}
 
-	async function runForSelection(action: (uid: number) => Promise<void>, success: string) {
-		if (!selectedActionUids.length) return;
+	async function runForSelection(
+		action: (uid: number) => Promise<void>,
+		success: string,
+		verb: string
+	) {
+		if (!selectedActionUids.length || actionPending) return;
 		actionPending = true;
+		const uids = selectedActionUids;
+		const failedUids: number[] = [];
 		try {
-			await Promise.all(selectedActionUids.map(action));
-			selectedUids = [];
-			selectedMessage = null;
-			await $accountMessagesQuery.refetch();
-			toastStore.show(success, 'success');
-		} catch (error) {
-			toastStore.show(error instanceof Error ? error.message : 'Mail action failed', 'error');
+			for (const uid of uids) {
+				try {
+					await action(uid);
+				} catch {
+					failedUids.push(uid);
+				}
+			}
+			// Keep failed items selected so the user can retry them.
+			if (selectedUids.length) {
+				selectedUids = selectedUids.filter((uid) => failedUids.includes(uid));
+			}
+			if (
+				selectedMessage &&
+				uids.includes(selectedMessage.uid) &&
+				!failedUids.includes(selectedMessage.uid)
+			) {
+				selectedMessage = null;
+			}
+			// Reconcile counts and unread state from the IMAP-authoritative state.
+			await Promise.all([$foldersQuery.refetch(), $accountMessagesQuery.refetch()]);
+			if (failedUids.length === 0) {
+				toastStore.show(success, 'success');
+			} else {
+				toastStore.show(
+					`${verb} ${uids.length - failedUids.length} of ${uids.length} messages; ${failedUids.length} failed`,
+					'error'
+				);
+			}
 		} finally {
 			actionPending = false;
 		}
@@ -423,7 +450,8 @@
 					selectedFolder!,
 					uidvalidity
 				),
-			message.is_flagged ? 'Star removed' : 'Message starred'
+			message.is_flagged ? 'Star removed' : 'Message starred',
+			message.is_flagged ? 'Unstarred' : 'Starred'
 		);
 	}
 
@@ -431,9 +459,30 @@
 		await runForSelection(
 			(uid) =>
 				mailApi.moveMessage(selectedAccountId!, uid, selectedFolder!, destination, uidvalidity),
-			'Message moved'
+			selectedUids.length ? 'Messages moved' : 'Message moved',
+			'Moved'
 		);
 		moveOpen = false;
+	}
+
+	async function archiveSelected() {
+		const archiveFolder = ($foldersQuery.data ?? []).find((folder) => folder.role === 'archive');
+		if (!archiveFolder) {
+			toastStore.show('No archive folder found on this account', 'error');
+			return;
+		}
+		await runForSelection(
+			(uid) =>
+				mailApi.archiveMessage(
+					selectedAccountId!,
+					uid,
+					selectedFolder!,
+					uidvalidity,
+					archiveFolder.name
+				),
+			selectedUids.length ? 'Messages archived' : 'Message archived',
+			'Archived'
+		);
 	}
 
 	async function confirmSave() {
@@ -853,6 +902,8 @@
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
+								title={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
+								disabled={actionPending}
 								onclick={() => toggleStar(selectedMessage!)}
 								><Star
 									size={15}
@@ -863,23 +914,38 @@
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label="Save to RustShare"
+								title="Save to RustShare"
+								disabled={actionPending}
 								onclick={() => (saveOpen = true)}><Check size={15} /></button
 							>
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label="Move message"
+								title="Move message"
+								disabled={actionPending}
 								onclick={() => (moveOpen = true)}><Folder size={15} /></button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Archive message"
+								title="Archive message"
+								disabled={actionPending}
+								onclick={archiveSelected}><Archive size={15} /></button
 							>
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm btn-square text-error"
 								aria-label="Delete message"
+								title="Delete message"
+								disabled={actionPending}
 								onclick={() =>
 									runForSelection(
 										(uid) =>
 											mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-										'Message deleted'
+										'Message deleted',
+										'Deleted'
 									)}><Trash2 size={15} /></button
 							>
 						</div>
@@ -950,39 +1016,58 @@
 					<span class="px-2 text-sm font-semibold">{selectedUids.length} selected</span>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.markMessageRead(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Marked read',
 								'Marked read'
 							)}>Read</button
 					>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.markMessageUnread(selectedAccountId!, uid, selectedFolder!, uidvalidity),
+								'Marked unread',
 								'Marked unread'
 							)}>Unread</button
 					>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) => mailApi.starMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Messages starred'
+								'Messages starred',
+								'Starred'
 							)}>Star</button
 					>
-					<button class="btn btn-ghost btn-sm" onclick={() => (saveOpen = true)}>Save</button>
-					<button class="btn btn-ghost btn-sm" onclick={() => (moveOpen = true)}>Move</button>
+					<button
+						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
+						onclick={() => (saveOpen = true)}>Save</button
+					>
+					<button
+						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
+						onclick={() => (moveOpen = true)}>Move</button
+					>
+					<button class="btn btn-ghost btn-sm" disabled={actionPending} onclick={archiveSelected}
+						>Archive</button
+					>
 					<button
 						class="btn btn-ghost btn-sm text-error"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Messages deleted'
+								'Messages deleted',
+								'Deleted'
 							)}>Delete</button
 					>
 				</div>

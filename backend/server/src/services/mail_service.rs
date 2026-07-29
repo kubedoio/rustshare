@@ -3867,13 +3867,30 @@ async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
             .await
             .map_err(imap_to_mail_error),
         MailboxMutation::Move(destination_folder) => {
-            if !session.supports_move().await.map_err(imap_to_mail_error)? {
+            if session.supports_move().await.map_err(imap_to_mail_error)? {
+                return session
+                    .move_message(folder, uid, destination_folder)
+                    .await
+                    .map_err(imap_to_mail_error);
+            }
+            // Servers without UID MOVE fall back to COPY + delete. UIDPLUS is
+            // required so the EXPUNGE stays scoped to this UID only.
+            if !session
+                .supports_uidplus()
+                .await
+                .map_err(imap_to_mail_error)?
+            {
                 return Err(MailError::InvalidSource(
-                    "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
+                    "Server supports neither MOVE nor UIDPLUS; cannot move the message safely"
+                        .to_string(),
                 ));
             }
             session
-                .move_message(folder, uid, destination_folder)
+                .copy_message(folder, uid, destination_folder)
+                .await
+                .map_err(imap_to_mail_error)?;
+            session
+                .delete_message(folder, uid)
                 .await
                 .map_err(imap_to_mail_error)
         }
@@ -4071,6 +4088,7 @@ mod tests {
         supports_uidplus: bool,
         folder_status: crate::services::imap_client::FolderStatus,
         calls: Vec<String>,
+        fail_delete: bool,
     }
 
     #[async_trait::async_trait]
@@ -4125,8 +4143,22 @@ mod tests {
             Ok(self.supports_uidplus)
         }
 
+        async fn copy_message(
+            &mut self,
+            folder: &str,
+            uid: u32,
+            destination_folder: &str,
+        ) -> Result<(), ImapError> {
+            self.calls
+                .push(format!("copy:{folder}:{uid}:{destination_folder}"));
+            Ok(())
+        }
+
         async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
             self.calls.push(format!("delete:{folder}:{uid}"));
+            if self.fail_delete {
+                return Err(ImapError::CommandFailed("UID STORE failed".to_string()));
+            }
             Ok(())
         }
     }
@@ -4139,6 +4171,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err = run_imap_mailbox_mutation(
@@ -4163,6 +4196,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4235,6 +4269,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4268,13 +4303,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mailbox_mutation_rejects_move_without_move_capability() {
+    async fn mailbox_mutation_move_falls_back_to_copy_delete_without_move_capability() {
         let mut session = MockMailboxSession {
             uidvalidity: Some(9),
             supports_move: false,
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
+        };
+
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect("MOVE-less server with UIDPLUS should fall back to COPY+delete");
+
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "supports_move",
+                "supports_uidplus",
+                "copy:Inbox:42:Archive",
+                "delete:Inbox:42",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_rejects_move_without_move_or_uidplus() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: false,
+            supports_uidplus: false,
+            folder_status: Default::default(),
+            calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err = run_imap_mailbox_mutation(
@@ -4285,10 +4354,47 @@ mod tests {
             MailboxMutation::Move("Archive"),
         )
         .await
-        .expect_err("MOVE-less server should fail");
+        .expect_err("server without MOVE or UIDPLUS should fail");
 
-        assert!(err.to_string().contains("does not support MOVE"));
-        assert_eq!(session.calls, vec!["select:Inbox", "supports_move"]);
+        assert!(err.to_string().contains("neither MOVE nor UIDPLUS"));
+        assert_eq!(
+            session.calls,
+            vec!["select:Inbox", "supports_move", "supports_uidplus"]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_move_fallback_surfaces_delete_failure() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: false,
+            supports_uidplus: true,
+            folder_status: Default::default(),
+            calls: Vec::new(),
+            fail_delete: true,
+        };
+
+        let err = run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect_err("failing STORE during fallback should surface an error");
+
+        assert!(err.to_string().contains("UID STORE failed"));
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "supports_move",
+                "supports_uidplus",
+                "copy:Inbox:42:Archive",
+                "delete:Inbox:42",
+            ]
+        );
     }
 
     #[tokio::test]
@@ -4299,6 +4405,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4355,6 +4462,7 @@ mod tests {
             supports_uidplus: false,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err =
@@ -4374,6 +4482,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(&mut session, "Trash", Some(9), 42, MailboxMutation::Delete)

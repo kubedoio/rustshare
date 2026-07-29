@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryClient } from '$lib/query-client';
+import { toastStore } from '$lib/stores/toast';
 import type { ModuleDefinition } from '$lib/modules/registry';
 import MailModuleView from './MailModuleView.svelte';
 
@@ -13,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 	markMessageRead: vi.fn(),
 	markMessageUnread: vi.fn(),
 	moveMessage: vi.fn(),
+	archiveMessage: vi.fn(),
 	deleteMessage: vi.fn(),
 	starMessage: vi.fn(),
 	unstarMessage: vi.fn(),
@@ -109,6 +112,7 @@ describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		queryClient.clear();
+		toastStore.clear();
 		mocks.listAccounts.mockResolvedValue([account]);
 		mocks.listFolders.mockResolvedValue(folders);
 		mocks.listAccountMessages.mockResolvedValue({
@@ -130,6 +134,7 @@ describe('MailModuleView', () => {
 		mocks.markMessageRead.mockResolvedValue(undefined);
 		mocks.markMessageUnread.mockResolvedValue(undefined);
 		mocks.moveMessage.mockResolvedValue(undefined);
+		mocks.archiveMessage.mockResolvedValue(undefined);
 		mocks.deleteMessage.mockResolvedValue(undefined);
 		mocks.starMessage.mockResolvedValue(undefined);
 		mocks.unstarMessage.mockResolvedValue(undefined);
@@ -180,6 +185,126 @@ describe('MailModuleView', () => {
 		await waitFor(() =>
 			expect(mocks.moveMessage).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 'Archive', 7)
 		);
+	});
+
+	it('disables the current folder as a move destination', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Move message' }));
+
+		const currentOption = screen
+			.getAllByRole('button', { name: /Inbox/ })
+			.find((button) => button.textContent?.includes('Current'));
+		expect(currentOption).toBeTruthy();
+		expect((currentOption as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it('archives the selected message into the archive-role folder', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Archive message' }));
+
+		await waitFor(() =>
+			expect(mocks.archiveMessage).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7, 'Archive')
+		);
+	});
+
+	it('shows an error toast and skips the API call when no archive folder exists', async () => {
+		mocks.listFolders.mockResolvedValue([folders[0]]);
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Archive message' }));
+
+		expect(mocks.archiveMessage).not.toHaveBeenCalled();
+		expect(
+			get(toastStore).some(
+				(toast) =>
+					toast.type === 'error' && toast.message === 'No archive folder found on this account'
+			)
+		).toBe(true);
+	});
+
+	it('bulk archives selected messages with a success summary toast', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(
+			await screen.findByRole('checkbox', { name: 'Select message Quarterly update' })
+		);
+		const bulkBar = screen.getByText('1 selected').closest('div')!;
+		await fireEvent.click(within(bulkBar).getByRole('button', { name: 'Archive' }));
+
+		await waitFor(() =>
+			expect(mocks.archiveMessage).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7, 'Archive')
+		);
+		await waitFor(() =>
+			expect(
+				get(toastStore).some(
+					(toast) => toast.type === 'success' && toast.message === 'Messages archived'
+				)
+			).toBe(true)
+		);
+	});
+
+	it('reports partial bulk archive failures and keeps failed UIDs selected', async () => {
+		const secondMessage = {
+			...message,
+			uid: 43,
+			subject: 'Second message',
+			is_seen: true,
+			is_flagged: false,
+			imported_message_id: null
+		};
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: [message, secondMessage]
+		});
+		mocks.archiveMessage.mockImplementation((_accountId: string, uid: number) =>
+			uid === 43 ? Promise.reject(new Error('boom')) : Promise.resolve(undefined)
+		);
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all messages' }));
+		const bulkBar = screen.getByText('2 selected').closest('div')!;
+		await fireEvent.click(within(bulkBar).getByRole('button', { name: 'Archive' }));
+
+		await waitFor(() =>
+			expect(
+				get(toastStore).some(
+					(toast) =>
+						toast.type === 'error' && toast.message === 'Archived 1 of 2 messages; 1 failed'
+				)
+			).toBe(true)
+		);
+		expect(mocks.archiveMessage).toHaveBeenCalledTimes(2);
+		expect(screen.getByText('1 selected')).toBeTruthy();
+		expect(
+			(screen.getByRole('checkbox', { name: 'Select message Second message' }) as HTMLInputElement)
+				.checked
+		).toBe(true);
+		expect(
+			(
+				screen.getByRole('checkbox', {
+					name: 'Select message Quarterly update'
+				}) as HTMLInputElement
+			).checked
+		).toBe(false);
+	});
+
+	it('ignores repeated archive clicks while a request is in flight', async () => {
+		let resolveArchive: (() => void) | undefined;
+		mocks.archiveMessage.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveArchive = resolve;
+				})
+		);
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		const archiveButton = await screen.findByRole('button', { name: 'Archive message' });
+		await fireEvent.click(archiveButton);
+		await fireEvent.click(archiveButton);
+		resolveArchive!();
+
+		await waitFor(() => expect(mocks.archiveMessage).toHaveBeenCalledTimes(1));
 	});
 
 	it('shows bulk actions and applies them to selected UIDs', async () => {
