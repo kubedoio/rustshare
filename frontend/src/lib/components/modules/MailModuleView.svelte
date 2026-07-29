@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		mailApi,
@@ -87,6 +89,57 @@
 	let composeReferences = $state<string[] | null>(null);
 	let composeSaveError = $state('');
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
+
+	// Persisted list context so a detail round-trip (Back from
+	// /modules/mail/messages/[id]) restores the previous mailbox state.
+	// Selection (selectedUids) and scroll position are deliberately not
+	// persisted: selection is volatile and scroll restore is impractical with
+	// the query-backed virtual lists.
+	const MAIL_LIST_STATE_KEY = 'rustshare:mail-module:list-state';
+	interface PersistedMailListState {
+		mailboxView: MailboxView;
+		selectedAccountId: string | null;
+		selectedFolder: string | null;
+		search: string;
+	}
+
+	onMount(() => {
+		try {
+			const raw = sessionStorage.getItem(MAIL_LIST_STATE_KEY);
+			if (!raw) return;
+			const saved = JSON.parse(raw) as Partial<PersistedMailListState>;
+			if (
+				saved.mailboxView === 'remote' ||
+				saved.mailboxView === 'drafts' ||
+				saved.mailboxView === 'saved'
+			) {
+				mailboxView = saved.mailboxView;
+			}
+			if (saved.selectedAccountId !== undefined) selectedAccountId = saved.selectedAccountId;
+			if (saved.selectedFolder !== undefined) selectedFolder = saved.selectedFolder;
+			if (typeof saved.search === 'string') {
+				search = saved.search;
+				searchInput = saved.search;
+			}
+		} catch {
+			// Malformed or unavailable sessionStorage: start from defaults.
+		}
+	});
+
+	$effect(() => {
+		if (!browser) return;
+		const state: PersistedMailListState = {
+			mailboxView,
+			selectedAccountId,
+			selectedFolder,
+			search
+		};
+		try {
+			sessionStorage.setItem(MAIL_LIST_STATE_KEY, JSON.stringify(state));
+		} catch {
+			// Persistence is best-effort (private mode / quota).
+		}
+	});
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],

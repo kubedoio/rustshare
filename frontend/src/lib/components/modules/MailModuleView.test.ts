@@ -109,6 +109,7 @@ describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		queryClient.clear();
+		sessionStorage.clear();
 		mocks.listAccounts.mockResolvedValue([account]);
 		mocks.listFolders.mockResolvedValue(folders);
 		mocks.listAccountMessages.mockResolvedValue({
@@ -324,6 +325,60 @@ describe('MailModuleView', () => {
 		expect(await screen.findByLabelText('Mail account')).toBeTruthy();
 		expect(screen.getByRole('button', { name: /Inbox/ })).toBeTruthy();
 		expect(screen.queryByText(/No mail account configured/)).toBeNull();
+	});
+
+	it('persists the list context to sessionStorage', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Saved to RustShare' }));
+
+		await waitFor(() => {
+			const raw = sessionStorage.getItem('rustshare:mail-module:list-state');
+			expect(raw).toBeTruthy();
+			const saved = JSON.parse(raw!);
+			expect(saved.mailboxView).toBe('saved');
+			expect(saved.selectedAccountId).toBe('acct-1');
+		});
+	});
+
+	it('restores the list context from sessionStorage on mount', async () => {
+		sessionStorage.setItem(
+			'rustshare:mail-module:list-state',
+			JSON.stringify({
+				mailboxView: 'saved',
+				selectedAccountId: 'acct-1',
+				selectedFolder: 'Archive',
+				search: 'quarterly'
+			})
+		);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [
+				{
+					id: 'saved-1',
+					subject: 'Saved mail',
+					from_name: 'Bob',
+					from_address: 'bob@example.com',
+					to_addresses: [],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: null,
+					imported_at: '2026-07-20T09:00:00Z',
+					size_bytes: 1,
+					has_attachments: false,
+					source_mode: 'imap_selected'
+				}
+			],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+		render(MailModuleView, { module: testModule });
+
+		// The saved mailbox is selected with the previous search applied.
+		expect(await screen.findByRole('button', { name: /Saved mail/ })).toBeTruthy();
+		await waitFor(() => expect(mocks.listMessagesPage).toHaveBeenCalledWith('quarterly'));
+		expect(
+			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
+		).toBe('page');
+		expect((screen.getByLabelText('Search mail') as HTMLInputElement).value).toBe('quarterly');
 	});
 
 	it('renders a folder error with inline retry', async () => {
