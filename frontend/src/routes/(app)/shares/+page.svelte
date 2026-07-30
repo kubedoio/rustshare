@@ -9,6 +9,7 @@
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import OfflineBanner from '$lib/components/common/OfflineBanner.svelte';
 	import { queryClient } from '$lib/query-client';
+	import { formatAbsoluteDateTime } from '$lib/utils/format';
 	import {
 		Activity,
 		Clock3,
@@ -110,13 +111,7 @@
 	}
 
 	function formatDate(dateString: string): string {
-		return new Date(dateString).toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+		return formatAbsoluteDateTime(dateString);
 	}
 
 	function getExpiryStatusText(expiresAt: string | null): string {
@@ -141,13 +136,7 @@
 	}
 
 	function formatAccessTime(dateString: string): string {
-		return new Date(dateString).toLocaleString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+		return formatAbsoluteDateTime(dateString);
 	}
 
 	function isExpired(expiresAt: string | null): boolean {
@@ -214,7 +203,7 @@
 			</div>
 		</div>
 
-		<div class="grid gap-4 md:grid-cols-3">
+		<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
 			<div class="rounded-[1.5rem] border border-base-300/70 bg-base-100 p-5 shadow-sm">
 				<div class="flex items-start justify-between">
 					<div>
@@ -303,7 +292,7 @@
 				</a>
 			</div>
 		{:else if $sharesQuery.data}
-			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+			<div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
 				<div class="space-y-4">
 					{#each $sharesQuery.data as share}
 						{@const shareUrl = getShareUrl(share.share_token)}
@@ -417,7 +406,7 @@
 									</div>
 								{/if}
 
-								<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+								<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">
 										<p
 											class="text-xs font-semibold tracking-[0.14em] text-base-content/45 uppercase"

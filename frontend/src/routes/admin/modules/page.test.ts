@@ -100,4 +100,12 @@ describe('AdminModulesPage', () => {
 
 		await screen.findByText('okf-markdown');
 	});
+
+	it('keeps every module field reachable when the table is wider than the panel', async () => {
+		render(AdminModulesPage);
+
+		const table = await screen.findByRole('table');
+		expect(table.parentElement?.classList.contains('overflow-x-auto')).toBe(true);
+		expect(table.classList.contains('min-w-max')).toBe(true);
+	});
 });

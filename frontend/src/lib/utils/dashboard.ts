@@ -83,45 +83,50 @@ export function getUserInitials(name: string | undefined): string {
 	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/**
+ * Verb phrase for the recent-activity feed. Verbs are active past tense so
+ * they compose grammatically with the feed's hard-coded "You" actor
+ * ("You created …", "You shared …").
+ */
 export function getActivityVerb(type: string): string {
 	switch (type) {
 		case 'file_uploaded':
 		case 'folder_created':
-			return 'was created';
+			return 'created';
 		case 'file_modified':
-			return 'was updated';
+			return 'updated';
 		case 'file_downloaded':
-			return 'was downloaded';
+			return 'downloaded';
 		case 'file_deleted':
 		case 'folder_deleted':
-			return 'was deleted';
+			return 'deleted';
 		case 'file_renamed':
 		case 'folder_renamed':
-			return 'was renamed';
+			return 'renamed';
 		case 'file_moved':
 		case 'folder_moved':
-			return 'was moved';
+			return 'moved';
 		case 'file_restored':
-			return 'was restored';
+			return 'restored';
 		case 'share_created':
-			return 'was shared';
+			return 'shared';
 		case 'share_revoked':
-			return 'share was revoked';
+			return 'revoked a share of';
 		case 'share_updated':
-			return 'share was updated';
+			return 'updated a share of';
 		case 'share_received':
-			return 'was shared with you';
+			return 'received a share of';
 		case 'share_permission_changed':
-			return 'permissions were changed';
+			return 'changed share permissions on';
 		case 'share_revoked_from_user':
-			return 'access was revoked';
+			return 'revoked access to';
 		case 'note_created':
 		case 'meeting_created':
 		case 'standup_created':
 		case 'kanban_created':
 		case 'decision_created':
 		case 'brainstorm_created':
-			return 'was created';
+			return 'created';
 		case 'note_edited':
 		case 'note_modified':
 		case 'meeting_note_modified':
@@ -129,9 +134,9 @@ export function getActivityVerb(type: string): string {
 		case 'kanban_modified':
 		case 'decision_modified':
 		case 'brainstorm_board_modified':
-			return 'was updated';
+			return 'updated';
 		default:
-			return 'was updated';
+			return 'updated';
 	}
 }
 

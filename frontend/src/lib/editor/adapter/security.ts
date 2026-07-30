@@ -86,6 +86,111 @@ export function sanitizeHtml(html: string): string {
 }
 
 /**
+ * Attribute used to remember the original URL of a blocked remote image.
+ * DOMPurify allows data-* attributes by default, so the marker survives
+ * sanitization if the HTML is sanitized again downstream.
+ */
+export const BLOCKED_REMOTE_IMAGE_ATTR = 'data-rustshare-blocked-src';
+
+const REMOTE_IMAGE_SRC_PATTERN = /^(?:https?:)?\/\//i;
+
+/**
+ * Email sanitization config used when the user explicitly asked to load
+ * remote images: identical to SANITIZE_CONFIG, but also keeps `srcset`
+ * (DOMPurify still strips dangerous URI values from it).
+ */
+const EMAIL_SANITIZE_CONFIG_ALLOW_REMOTE = {
+	...SANITIZE_CONFIG,
+	ALLOWED_ATTR: [...SANITIZE_CONFIG.ALLOWED_ATTR, 'srcset']
+};
+
+export interface SanitizedEmailHtml {
+	html: string;
+	/** Number of images whose remote source was blocked. */
+	blockedRemoteImages: number;
+}
+
+export interface SanitizeEmailHtmlOptions {
+	allowRemoteImages?: boolean;
+	/**
+	 * URL prefixes identifying first-party image sources (e.g. the API base
+	 * URL). In blocked mode, images whose `src` starts with one of these
+	 * prefixes are treated as local and kept; relative sources are never
+	 * blocked either.
+	 */
+	localUrlPrefixes?: string[];
+}
+
+/**
+ * Normalizes local URL prefixes (lowercase, no trailing slash) for
+ * case-insensitive prefix matching.
+ */
+function normalizeLocalUrlPrefixes(prefixes: string[] | undefined): string[] {
+	if (!prefixes) return [];
+	return prefixes
+		.map((prefix) => prefix.trim().replace(/\/+$/, '').toLowerCase())
+		.filter((prefix) => prefix.length > 0);
+}
+
+/**
+ * Returns true when `src` points at one of the local URL prefixes, i.e. a
+ * first-party URL that must not be treated as a remote image.
+ */
+function isLocalImageSrc(srcLower: string, localPrefixes: string[]): boolean {
+	return localPrefixes.some((prefix) => srcLower === prefix || srcLower.startsWith(`${prefix}/`));
+}
+
+/**
+ * Sanitizes an email HTML body. By default remote images are blocked: their
+ * URL is moved to BLOCKED_REMOTE_IMAGE_ATTR, `src`/`srcset` are removed, and
+ * the count of blocked images is reported. Pass `allowRemoteImages: true`
+ * only after an explicit per-message user action. Absolute URLs under
+ * `localUrlPrefixes` (e.g. the API base URL, used by rewritten cid:
+ * attachment sources) are first-party and never blocked.
+ */
+export function sanitizeEmailHtml(
+	html: string,
+	opts: SanitizeEmailHtmlOptions = {}
+): SanitizedEmailHtml {
+	const allowRemoteImages = opts.allowRemoteImages ?? false;
+	const localPrefixes = normalizeLocalUrlPrefixes(opts.localUrlPrefixes);
+	const config = allowRemoteImages ? EMAIL_SANITIZE_CONFIG_ALLOW_REMOTE : SANITIZE_CONFIG;
+	const sanitized = DOMPurify.sanitize(html, config) as unknown as string;
+	if (allowRemoteImages) {
+		return { html: sanitized, blockedRemoteImages: 0 };
+	}
+	let blockedRemoteImages = 0;
+	if (typeof document === 'undefined') {
+		const blocked = sanitized.replace(/<img\b[^>]*>/gi, (tag) => {
+			const match = /\ssrc=(["'])((?:https?:)?\/\/[^"']*)\1/i.exec(tag);
+			if (!match) return tag;
+			if (isLocalImageSrc(match[2].trim().toLowerCase(), localPrefixes)) return tag;
+			blockedRemoteImages += 1;
+			return tag
+				.replace(/\ssrcset=("[^"]*"|'[^']*')/i, '')
+				.replace(
+					/\ssrc=(["'])(?:https?:)?\/\/[^"']*\1/i,
+					` ${BLOCKED_REMOTE_IMAGE_ATTR}="${match[2]}"`
+				);
+		});
+		return { html: blocked, blockedRemoteImages };
+	}
+	const template = document.createElement('template');
+	template.innerHTML = sanitized;
+	for (const img of template.content.querySelectorAll('img')) {
+		const src = (img.getAttribute('src') ?? '').trim();
+		const srcLower = src.toLowerCase();
+		if (REMOTE_IMAGE_SRC_PATTERN.test(srcLower) && !isLocalImageSrc(srcLower, localPrefixes)) {
+			img.setAttribute(BLOCKED_REMOTE_IMAGE_ATTR, src);
+			img.removeAttribute('src');
+			img.removeAttribute('srcset');
+			blockedRemoteImages += 1;
+		}
+	}
+	return { html: template.innerHTML, blockedRemoteImages };
+}
+
+/**
  * Validates a filename to prevent path traversal and ensure it's safe.
  */
 export function isSafeFilename(filename: string): boolean {

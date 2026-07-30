@@ -175,20 +175,47 @@ describe('getUserInitials', () => {
 });
 
 describe('getActivityVerb', () => {
-	it("returns 'was created' for file_uploaded", () => {
-		expect(getActivityVerb('file_uploaded')).toBe('was created');
+	it("returns 'created' for file_uploaded", () => {
+		expect(getActivityVerb('file_uploaded')).toBe('created');
 	});
 
-	it("returns 'was updated' for file_modified", () => {
-		expect(getActivityVerb('file_modified')).toBe('was updated');
+	it("returns 'updated' for file_modified", () => {
+		expect(getActivityVerb('file_modified')).toBe('updated');
 	});
 
-	it("returns 'was shared' for share_created", () => {
-		expect(getActivityVerb('share_created')).toBe('was shared');
+	it("returns 'shared' for share_created", () => {
+		expect(getActivityVerb('share_created')).toBe('shared');
 	});
 
-	it("returns 'was updated' for unknown type", () => {
-		expect(getActivityVerb('unknown')).toBe('was updated');
+	it("returns 'updated' for unknown type", () => {
+		expect(getActivityVerb('unknown')).toBe('updated');
+	});
+
+	it('composes grammatically with the "You" actor', () => {
+		for (const type of [
+			'file_uploaded',
+			'folder_created',
+			'file_modified',
+			'file_deleted',
+			'file_renamed',
+			'file_moved',
+			'file_restored',
+			'share_created',
+			'share_revoked',
+			'share_updated',
+			'share_received',
+			'share_permission_changed',
+			'share_revoked_from_user',
+			'note_created',
+			'note_modified',
+			'meeting_created',
+			'standup_modified',
+			'kanban_created',
+			'decision_modified',
+			'brainstorm_board_modified'
+		]) {
+			expect(`You ${getActivityVerb(type)}`).not.toMatch(/^You (was|were|share was|access was)/);
+		}
 	});
 });
 

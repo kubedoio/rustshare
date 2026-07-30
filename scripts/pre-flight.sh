@@ -65,8 +65,8 @@ env_get() {
 	fi
 	local value
 	value="${line#*=}"
-	# Strip inline shell comments and surrounding whitespace.
-	value="$(printf '%s' "${value}" | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+	# Strip surrounding whitespace. A # inside a quoted value is data, not a comment.
+	value="$(printf '%s' "${value}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 	# Strip matching surrounding quotes.
 	if [[ "${value}" == \"*\" ]]; then
 		value="${value#\"}"
@@ -74,6 +74,8 @@ env_get() {
 	elif [[ "${value}" == \'*\' ]]; then
 		value="${value#\'}"
 		value="${value%\'}"
+	else
+		value="$(printf '%s' "${value}" | sed 's/[[:space:]]#.*//' | sed 's/[[:space:]]*$//')"
 	fi
 	printf '%s' "${value}"
 }

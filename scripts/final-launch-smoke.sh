@@ -19,13 +19,15 @@ env_file_get() {
 	fi
 	local value
 	value="${line#*=}"
-	value="$(printf '%s' "${value}" | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+	value="$(printf '%s' "${value}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 	if [[ "${value}" == \"*\" ]]; then
 		value="${value#\"}"
 		value="${value%\"}"
 	elif [[ "${value}" == \'*\' ]]; then
 		value="${value#\'}"
 		value="${value%\'}"
+	else
+		value="$(printf '%s' "${value}" | sed 's/[[:space:]]#.*//' | sed 's/[[:space:]]*$//')"
 	fi
 	printf '%s' "${value}"
 }
