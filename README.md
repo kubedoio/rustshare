@@ -87,6 +87,9 @@ docker compose up -d
 
 The first build compiles both the frontend and the backend, so it can take several minutes. Wait for the backend container to become healthy (`docker compose ps`), then visit `http://localhost`.
 
+This Docker Compose quickstart has been validated on Ubuntu 22.04 LTS, Ubuntu
+24.04 LTS, and Debian 12.
+
 > **Admin password — record it immediately.** Unless you set `RUSTSHARE_ADMIN_PASSWORD` in `.env` before first start, the backend generates a random admin password ONCE at first boot and writes it to a bootstrap file inside the backend container. Retrieve it right away:
 >
 > ```bash

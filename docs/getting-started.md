@@ -19,13 +19,20 @@ cp .env.example .env
 docker compose up -d
 ```
 
+This Docker Compose quickstart has been validated on Ubuntu 22.04 LTS, Ubuntu
+24.04 LTS, and Debian 12.
+
 Open http://localhost and sign in:
 
-> **Admin credentials** come from your `.env` file. If you ran `scripts/pre-flight.sh`, passwords were auto-generated. Retrieve them from the container logs:
+> **Admin credentials** come from your `.env` file. If you left
+> `RUSTSHARE_ADMIN_PASSWORD` empty, retrieve the generated password immediately
+> from the secure bootstrap file:
 > ```bash
-> docker logs rustshare-backend-1 | grep "Bootstrap admin password"
+> docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt
 > ```
-> Or check the values of `RUSTSHARE_ADMIN_PASSWORD` and `RUSTSHARE_DEMO_VIEWER_PASSWORD` in your `.env` file.
+> The file does not survive container recreation. Record the password before
+> running `docker compose down` or using `--force-recreate`. Alternatively, set
+> `RUSTSHARE_ADMIN_PASSWORD` in `.env` before the first start.
 
 ## What Just Happened
 

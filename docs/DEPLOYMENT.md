@@ -36,6 +36,11 @@ This keeps the production runtime simple: one backend container serves both the 
 
 ## Quick Start
 
+The documented Docker Compose workflow has been validated on Ubuntu 22.04 LTS,
+Ubuntu 24.04 LTS, and Debian 12. Other distributions with a supported Docker
+Engine and Docker Compose plugin may work but are not part of the validated
+quickstart matrix.
+
 ### 1. Clone and enter the repository
 
 ```bash
