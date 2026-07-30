@@ -8,6 +8,7 @@
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import { formatAbsoluteDate } from '$lib/utils/format';
 	import {
 		FileText,
 		Folder,
@@ -209,7 +210,7 @@
 									{/if}
 								</div>
 								<span class="hidden text-xs text-base-content/55 md:block">
-									{new Date(share.created_at).toLocaleDateString()}
+									{formatAbsoluteDate(share.created_at)}
 								</span>
 								{#if share.share_token}
 									<span class="badge badge-sm badge-success">Active</span>
@@ -253,7 +254,7 @@
 										: 'Internal only'}
 								</p>
 								<p class="text-xs text-base-content/45">
-									Created {new Date(selectedShare.created_at).toLocaleDateString()}
+									Created {formatAbsoluteDate(selectedShare.created_at)}
 								</p>
 							</div>
 						</div>
@@ -284,8 +285,7 @@
 									{#if selectedShare.expires_at}
 										<div class="mt-2 flex items-center justify-between">
 											<span>Expires</span>
-											<span class="font-medium"
-												>{new Date(selectedShare.expires_at).toLocaleDateString()}</span
+											<span class="font-medium">{formatAbsoluteDate(selectedShare.expires_at)}</span
 											>
 										</div>
 									{/if}
@@ -295,7 +295,7 @@
 								<h4 class="mb-2 text-sm font-semibold">Activity</h4>
 								<p class="flex items-center gap-2 text-xs text-base-content/55">
 									<Clock size={14} />
-									Created {new Date(selectedShare.created_at).toLocaleDateString()}
+									Created {formatAbsoluteDate(selectedShare.created_at)}
 								</p>
 							</section>
 						</div>

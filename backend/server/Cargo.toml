@@ -224,6 +224,10 @@ path = "../tests/mail_smtp_send_test.rs"
 name = "object_gc_test"
 path = "../tests/object_gc_test.rs"
 
+[[test]]
+name = "vault_webui_content_test"
+path = "../tests/vault_webui_content_test.rs"
+
 [dev-dependencies]
 tokio-tungstenite = "0.30"
 rustshare-crypto = { path = "../crates/crypto" }

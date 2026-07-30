@@ -4,7 +4,7 @@
 //! Key: 32-byte key derived from RUSTSHARE_SECRET_ENCRYPTION_KEY env var (loaded at startup).
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, Generate, KeyInit},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -66,7 +66,7 @@ pub fn encrypt_secret(
 ) -> Result<String, EncryptionError> {
     // new_from_slice is infallible for a 32-byte key (AES-256 requires exactly 32 bytes)
     let cipher = Aes256Gcm::new(key.as_bytes().into());
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Nonce::generate();
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|_| EncryptionError::EncryptionFailed)?;

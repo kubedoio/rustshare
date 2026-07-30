@@ -21,6 +21,14 @@
 			goto('/dashboard');
 		}
 	});
+
+	// Mobile sidebar: below md the sidebar collapses behind a hamburger toggle
+	// and opens as an overlay, matching the app shell's mobile nav pattern.
+	let sidebarOpen = $state(false);
+
+	function closeSidebar() {
+		sidebarOpen = false;
+	}
 </script>
 
 {#if $authStore.isLoading}
@@ -29,8 +37,22 @@
 	</div>
 {:else if $authStore.user?.is_admin}
 	<div class="flex h-screen overflow-hidden">
+		<!-- Mobile overlay -->
+		{#if sidebarOpen}
+			<button
+				type="button"
+				class="fixed inset-0 z-40 cursor-default bg-black/60 backdrop-blur-sm md:hidden"
+				onclick={closeSidebar}
+				aria-label="Close admin navigation"
+			></button>
+		{/if}
+
 		<!-- Admin Sidebar -->
-		<aside class="flex h-screen w-64 flex-shrink-0 flex-col bg-neutral text-neutral-content">
+		<aside
+			class="h-screen w-64 flex-shrink-0 flex-col bg-neutral text-neutral-content md:static md:flex {sidebarOpen
+				? 'fixed inset-y-0 left-0 z-50 flex'
+				: 'hidden'}"
+		>
 			<div class="flex items-center gap-2 border-b border-neutral-700 p-4">
 				<a href="/files" class="text-xl font-bold transition-opacity hover:opacity-80">RustShare</a>
 				<span class="ml-auto badge badge-sm badge-warning">Admin</span>
@@ -48,6 +70,7 @@
 								class="flex items-center gap-2 rounded-lg px-3 py-2 transition-colors hover:bg-neutral-700"
 								class:bg-neutral-600={$page.url.pathname.startsWith(item.href)}
 								class:font-semibold={$page.url.pathname.startsWith(item.href)}
+								onclick={closeSidebar}
 							>
 								{#if item.icon === 'users'}
 									<svg
@@ -208,6 +231,27 @@
 			<header
 				class="flex flex-shrink-0 items-center gap-3 border-b border-base-300 bg-base-100 px-6 py-3"
 			>
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm btn-square md:hidden"
+					aria-label="Open admin navigation"
+					onclick={() => (sidebarOpen = true)}
+				>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						class="h-5 w-5"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="1.5"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+						/>
+					</svg>
+				</button>
 				<h1 class="text-lg font-semibold text-base-content">Admin Panel</h1>
 				<span class="badge badge-warning">Admin</span>
 				<div class="ml-auto flex items-center gap-2 text-sm text-base-content/60">

@@ -59,8 +59,17 @@
 	);
 
 	let selectedFile = $state<VaultManifestEntry | null>(null);
+	let editorDirty = $state(false);
 
 	function selectFile(file: VaultManifestEntry) {
+		if (
+			editorDirty &&
+			selectedFile !== null &&
+			file.path !== selectedFile.path &&
+			!confirm('You have unsaved changes. Discard them and switch files?')
+		) {
+			return;
+		}
 		selectedFile = file;
 	}
 
@@ -283,7 +292,12 @@
 		</div>
 
 		<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 shadow-sm lg:p-8">
-			<VaultFileEditor vaultId={vaultId!} policy={vault.write_policy} file={selectedFile} />
+			<VaultFileEditor
+				vaultId={vaultId!}
+				policy={vault.write_policy}
+				bind:file={selectedFile}
+				bind:dirty={editorDirty}
+			/>
 		</div>
 	{:else}
 		<ErrorState title="Vault not found" message="The requested vault does not exist." />

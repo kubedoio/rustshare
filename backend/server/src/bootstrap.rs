@@ -654,18 +654,7 @@ pub async fn init_app() -> Result<AppState> {
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
 
         let (admin_password, is_user_provided_password) =
-            match std::env::var("RUSTSHARE_ADMIN_PASSWORD") {
-                Ok(pwd) => (pwd, true),
-                Err(_) => {
-                    const CHARSET: &[u8] =
-                        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-                    let mut rng = rand::rng();
-                    let password: String = (0..32)
-                        .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
-                        .collect();
-                    (password, false)
-                }
-            };
+            resolve_admin_password(std::env::var("RUSTSHARE_ADMIN_PASSWORD").ok());
 
         let password_hash = PasswordHasher::hash(&admin_password)?;
         let admin_user = User::new(
@@ -783,6 +772,28 @@ pub async fn init_app() -> Result<AppState> {
     Ok(state)
 }
 
+/// Resolve the bootstrap admin password from the environment value.
+///
+/// Returns the user-provided password and `true` when one is configured, or a
+/// newly generated random password and `false` otherwise. Empty or
+/// whitespace-only values are treated as unset because Docker Compose forwards
+/// `${RUSTSHARE_ADMIN_PASSWORD}` references as set-but-empty when `.env`
+/// leaves the variable blank.
+fn resolve_admin_password(env_value: Option<String>) -> (String, bool) {
+    match env_value.filter(|pwd| !pwd.trim().is_empty()) {
+        Some(pwd) => (pwd, true),
+        None => {
+            const CHARSET: &[u8] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            let mut rng = rand::rng();
+            let password: String = (0..32)
+                .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
+                .collect();
+            (password, false)
+        }
+    }
+}
+
 /// Write the generated bootstrap admin password to a secure file.
 ///
 /// The file is created with restrictive permissions (0600 on Unix) and the
@@ -815,6 +826,35 @@ pub fn default_storage_quota_bytes() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_admin_password_uses_configured_password() {
+        let (password, is_user_provided) =
+            resolve_admin_password(Some("my-configured-password".to_string()));
+        assert_eq!(password, "my-configured-password");
+        assert!(is_user_provided);
+    }
+
+    #[test]
+    fn resolve_admin_password_generates_when_unset() {
+        let (password, is_user_provided) = resolve_admin_password(None);
+        assert_eq!(password.len(), 32);
+        assert!(!is_user_provided);
+    }
+
+    #[test]
+    fn resolve_admin_password_generates_when_empty_or_whitespace() {
+        // Docker Compose forwards `${RUSTSHARE_ADMIN_PASSWORD}` as set-but-empty
+        // when `.env` leaves it blank; std::env::var then returns Ok("").
+        for blank in ["", "   ", "\t\n"] {
+            let (password, is_user_provided) = resolve_admin_password(Some(blank.to_string()));
+            assert_eq!(password.len(), 32, "blank value {blank:?} must be unset");
+            assert!(
+                !is_user_provided,
+                "blank value {blank:?} must trigger generation"
+            );
+        }
+    }
 
     #[test]
     fn bootstrap_password_file_is_written_with_restrictive_permissions() {

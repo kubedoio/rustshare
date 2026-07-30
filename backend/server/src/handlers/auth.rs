@@ -328,6 +328,13 @@ pub async fn log_user_security_event(
     state.metadata_store.create_user_security_event(event).await
 }
 
+/// Treat empty or whitespace-only environment values as unset. Docker Compose
+/// forwards `${VAR}` references as set-but-empty when `.env` leaves the
+/// variable blank, and `std::env::var` then returns `Ok("")`.
+fn non_empty_env_value(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
 pub async fn ensure_optional_seed_user(
     metadata_store: &Arc<MetadataStore>,
     username_env: &str,
@@ -337,17 +344,21 @@ pub async fn ensure_optional_seed_user(
     is_admin: bool,
     default_tenant_id: uuid::Uuid,
 ) -> anyhow::Result<()> {
-    let username = std::env::var(username_env);
-    let email = std::env::var(email_env);
-    let password = std::env::var(password_env);
+    // Docker Compose forwards `${VAR}` references as set-but-empty when `.env`
+    // leaves them blank, so treat empty or whitespace-only values as unset.
+    let username = non_empty_env_value(std::env::var(username_env).ok());
+    let email = non_empty_env_value(std::env::var(email_env).ok());
+    let password = non_empty_env_value(std::env::var(password_env).ok());
 
-    if username.is_err() && email.is_err() && password.is_err() {
+    if username.is_none() && email.is_none() && password.is_none() {
         return Ok(());
     }
 
-    let username = username.with_context(|| format!("Missing required env {}", username_env))?;
-    let email = email.with_context(|| format!("Missing required env {}", email_env))?;
-    let password = password.with_context(|| format!("Missing required env {}", password_env))?;
+    let username =
+        username.with_context(|| format!("Missing or empty required env {}", username_env))?;
+    let email = email.with_context(|| format!("Missing or empty required env {}", email_env))?;
+    let password =
+        password.with_context(|| format!("Missing or empty required env {}", password_env))?;
 
     if metadata_store
         .find_user_by_email_and_tenant(&email, default_tenant_id)
@@ -399,6 +410,18 @@ mod tests {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn non_empty_env_value_treats_blank_values_as_unset() {
+        assert_eq!(non_empty_env_value(None), None);
+        assert_eq!(non_empty_env_value(Some(String::new())), None);
+        assert_eq!(non_empty_env_value(Some("   ".to_string())), None);
+        assert_eq!(non_empty_env_value(Some("\t\n".to_string())), None);
+        assert_eq!(
+            non_empty_env_value(Some("viewer-secret".to_string())),
+            Some("viewer-secret".to_string())
+        );
+    }
 
     async fn test_db_pool() -> sqlx::PgPool {
         // Load a local .env file if present, then require DATABASE_URL to be set.

@@ -35,6 +35,7 @@
 		generateUniqueFilename
 	} from '$lib/editor/adapter/attachments';
 	import { extractH1, splitFrontmatter } from '$lib/editor/adapter/frontmatter';
+	import { formatAbsoluteDate, formatAbsoluteDateTime } from '$lib/utils/format';
 	import type {
 		NoteAttachment,
 		NoteMetadata,
@@ -123,10 +124,10 @@
 	let modifiedAt = $derived(
 		item?.modified_at
 			? key === 'meetings' && item?.metadata?.date
-				? `Date: ${new Date(item.metadata.date).toLocaleDateString()}${item.metadata.attendees?.length ? ` • ${item.metadata.attendees.length} attendee${item.metadata.attendees.length === 1 ? '' : 's'}` : ''} • Last edited ${new Date(item.modified_at).toLocaleString()}`
+				? `Date: ${formatAbsoluteDate(item.metadata.date)}${item.metadata.attendees?.length ? ` • ${item.metadata.attendees.length} attendee${item.metadata.attendees.length === 1 ? '' : 's'}` : ''} • Last edited ${formatAbsoluteDateTime(item.modified_at)}`
 				: key === 'decisions' && item?.name?.match(/^DEC-\d+/)
-					? `${item.name.match(/^DEC-\d+/)?.[0]} • Last edited ${new Date(item.modified_at).toLocaleString()}`
-					: `Last edited ${new Date(item.modified_at).toLocaleString()}`
+					? `${item.name.match(/^DEC-\d+/)?.[0]} • Last edited ${formatAbsoluteDateTime(item.modified_at)}`
+					: `Last edited ${formatAbsoluteDateTime(item.modified_at)}`
 			: ''
 	);
 

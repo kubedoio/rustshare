@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	formatFileSize,
 	formatDate,
+	formatAbsoluteDate,
+	formatAbsoluteDateTime,
 	getMimeTypeIcon,
 	formatDistanceToNow
 } from '$lib/utils/format';
@@ -70,6 +72,43 @@ describe('format utilities', () => {
 			const formatted1 = formatDate(date);
 			const formatted2 = formatDate(date);
 			expect(formatted1).toBe(formatted2);
+		});
+	});
+
+	describe('formatAbsoluteDateTime', () => {
+		it('formats date and time in the canonical detail format', () => {
+			const formatted = formatAbsoluteDateTime('2026-07-29T20:01:00Z');
+
+			expect(formatted).toMatch(/Jul/);
+			expect(formatted).toMatch(/29/);
+			expect(formatted).toMatch(/2026/);
+			expect(formatted).toMatch(/\d{1,2}:\d{2}/); // time portion
+		});
+
+		it('accepts Date instances', () => {
+			const date = new Date('2026-01-05T09:30:00Z');
+			expect(formatAbsoluteDateTime(date)).toBe(formatAbsoluteDateTime(date.toISOString()));
+		});
+
+		it('is deterministic for the same input', () => {
+			const input = '2026-07-29T20:01:00Z';
+			expect(formatAbsoluteDateTime(input)).toBe(formatAbsoluteDateTime(input));
+		});
+	});
+
+	describe('formatAbsoluteDate', () => {
+		it('formats date only in the canonical detail format', () => {
+			const formatted = formatAbsoluteDate('2026-07-29T20:01:00Z');
+
+			expect(formatted).toMatch(/Jul/);
+			expect(formatted).toMatch(/29/);
+			expect(formatted).toMatch(/2026/);
+			expect(formatted).not.toMatch(/\d{1,2}:\d{2}/); // no time portion
+		});
+
+		it('accepts Date instances', () => {
+			const date = new Date('2026-01-05T09:30:00Z');
+			expect(formatAbsoluteDate(date)).toBe(formatAbsoluteDate(date.toISOString()));
 		});
 	});
 
