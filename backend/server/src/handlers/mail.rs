@@ -1,16 +1,18 @@
 use axum::{
+    body::Body,
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
-use rustshare_core::domain::{LinkTargetType, MailTlsMode};
+use rustshare_core::domain::{LinkTargetType, MailSortOrder, MailTlsMode};
 use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
+use crate::services::mail_service::MailAttachmentBody;
 use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
@@ -178,6 +180,178 @@ fn require_destination_folder(destination: Option<&str>) -> Result<&str, AppErro
         .ok_or_else(|| AppError::bad_request("A destination folder is required"))
 }
 
+// ============================================================================
+// Response-side filename sanitization (Content-Disposition)
+// ============================================================================
+//
+// These helpers guard every mail download path (remote attachment, imported
+// attachment, imported source, remote source) against header injection and
+// unsafe filenames. They are response-side only; the storage-side sanitizer
+// `safe_attachment_artifact_filename` in mail_service keeps its own semantics.
+
+/// Maximum length of the ASCII `filename=` fallback, in characters.
+const CONTENT_DISPOSITION_FALLBACK_MAX_CHARS: usize = 100;
+/// Maximum length of the Unicode original carried in `filename*`, in characters.
+const CONTENT_DISPOSITION_ORIGINAL_MAX_CHARS: usize = 200;
+
+/// Percent-encoding set that preserves RFC 3986 unreserved characters.
+const FILENAME_STAR_SAFE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
+
+/// Drop control characters (including CR, LF, and DEL) so a filename can never
+/// inject extra headers or split the response.
+fn strip_filename_control_chars(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Truncate `name` to at most `max_chars` characters, preserving the final
+/// extension when there is room for it so a truncated download keeps its file
+/// type. Mirrors the storage-side `truncate_filename` helper in mail_service,
+/// but stays self-contained for the response side.
+fn truncate_preserving_extension(name: &str, max_chars: usize) -> String {
+    if name.chars().count() <= max_chars {
+        return name.to_string();
+    }
+
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.chars().count() < max_chars => {
+            let stem_len = max_chars - ext.chars().count() - 1;
+            format!(
+                "{}.{}",
+                stem.chars().take(stem_len).collect::<String>(),
+                ext
+            )
+        }
+        // No usable extension (none, empty stem, or an absurdly long
+        // extension): cap the whole name plainly.
+        _ => name.chars().take(max_chars).collect(),
+    }
+}
+
+/// Sanitize the Unicode original carried in `filename*`: strip control
+/// characters, neutralize path separators, and collapse dot runs so no `..`
+/// traversal residue or leading dot survives. Unicode letters are preserved.
+fn safe_unicode_filename(name: &str) -> String {
+    let stripped = strip_filename_control_chars(name);
+    let mut out = String::with_capacity(stripped.len());
+    let mut last_was_dot = true; // trims leading dots
+    for ch in stripped.chars() {
+        let mapped = if matches!(ch, '/' | '\\') { '_' } else { ch };
+        if mapped == '.' {
+            if last_was_dot {
+                continue;
+            }
+            last_was_dot = true;
+        } else {
+            last_was_dot = false;
+        }
+        out.push(mapped);
+    }
+    out.trim_end_matches('.').to_string()
+}
+
+/// Whether `name` collides with a reserved DOS device name (CON, PRN, AUX,
+/// NUL, COM1-9, LPT1-9), ignoring case and any extension.
+fn is_windows_reserved_name(name: &str) -> bool {
+    let base = name.split('.').next().unwrap_or(name).trim_end();
+    let upper = base.to_ascii_uppercase();
+    match upper.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            upper.len() == 4
+                && (upper.starts_with("COM") || upper.starts_with("LPT"))
+                && upper.as_bytes()[3].is_ascii_digit()
+                && upper.as_bytes()[3] != b'0'
+        }
+    }
+}
+
+/// Build the ASCII-only fallback used for the legacy `filename=` parameter.
+///
+/// Replaces quotes, backslashes, slashes, and non-ASCII characters with `_`,
+/// collapses whitespace and dot runs (no `..` traversal residue), trims
+/// leading/trailing dots and spaces, caps the length, and never returns an
+/// empty or Windows-reserved name.
+fn ascii_fallback_filename(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_was_space = true; // trims leading whitespace
+    let mut last_was_dot = true; // trims leading dots
+    for ch in name.chars() {
+        let mapped = match ch {
+            c if c.is_ascii_whitespace() => ' ',
+            c if c.is_ascii() && !c.is_ascii_control() && !matches!(c, '"' | '\\' | '/') => c,
+            _ => '_',
+        };
+        match mapped {
+            ' ' if last_was_space => {}
+            '.' if last_was_dot => {}
+            _ => {
+                last_was_space = mapped == ' ';
+                last_was_dot = mapped == '.';
+                out.push(mapped);
+            }
+        }
+    }
+    let trimmed = out.trim_end_matches([' ', '.']);
+    let capped = truncate_preserving_extension(trimmed, CONTENT_DISPOSITION_FALLBACK_MAX_CHARS);
+    let capped = capped.trim_end_matches([' ', '.']);
+    if capped.is_empty() {
+        return "attachment".to_string();
+    }
+    if is_windows_reserved_name(capped) {
+        return format!("_{capped}");
+    }
+    capped.to_string()
+}
+
+/// Build a safe `attachment` Content-Disposition header value for a mail
+/// download: an ASCII-only, injection-proof legacy `filename=` plus an
+/// RFC 5987 `filename*` that preserves the (control-stripped) Unicode
+/// original. Guaranteed to contain no CR/LF and never to be empty.
+fn content_disposition_attachment(filename: &str) -> HeaderValue {
+    let mut cleaned = truncate_preserving_extension(
+        &safe_unicode_filename(filename),
+        CONTENT_DISPOSITION_ORIGINAL_MAX_CHARS,
+    );
+    let cleaned_trimmed = cleaned.trim_end_matches('.');
+    cleaned = if cleaned_trimmed.is_empty() {
+        "attachment".to_string()
+    } else {
+        cleaned_trimmed.to_string()
+    };
+    if is_windows_reserved_name(&cleaned) {
+        cleaned = format!("_{cleaned}");
+    }
+    let value = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        ascii_fallback_filename(&cleaned),
+        percent_encoding::percent_encode(cleaned.as_bytes(), FILENAME_STAR_SAFE)
+    );
+    // The sanitization above guarantees ASCII-only output without quotes or
+    // control characters, so this can only fail on a programming error.
+    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("attachment"))
+}
+
+/// Insert the standard download headers (Content-Type from the stored MIME
+/// type with a safe fallback, plus the sanitized Content-Disposition) into a
+/// fresh header map. `X-Content-Type-Options: nosniff` is added by the
+/// security-headers middleware for all responses.
+fn attachment_download_headers(mime_type: Option<&str>, filename: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let content_type = mime_type
+        .and_then(|value| HeaderValue::from_str(value).ok())
+        .unwrap_or_else(|| HeaderValue::from_static("application/octet-stream"));
+    headers.insert(header::CONTENT_TYPE, content_type);
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        content_disposition_attachment(filename),
+    );
+    headers
+}
+
 #[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
 pub struct CreateMailImportJobRequest {
     #[validate(length(min = 1, max = 512))]
@@ -337,6 +511,20 @@ pub async fn upload_mail(
     ))
 }
 
+/// Parse the optional `sort` query parameter shared by both mail list
+/// endpoints. A missing value defaults to `date_desc` (newest first);
+/// unknown values are rejected with a 400 instead of silently falling back.
+fn parse_mail_sort_order(sort: Option<&str>) -> Result<MailSortOrder, AppError> {
+    match sort {
+        None => Ok(MailSortOrder::DateDesc),
+        Some(value) => MailSortOrder::parse(value).ok_or_else(|| {
+            AppError::bad_request(format!(
+                "Invalid sort value '{value}': expected 'date_desc' or 'date_asc'"
+            ))
+        }),
+    }
+}
+
 /// List imported mail messages.
 #[utoipa::path(
     get,
@@ -345,6 +533,7 @@ pub async fn upload_mail(
     params(ListImportedMailMessagesQuery),
     responses(
         (status = 200, description = "Mail messages", body = ListMailMessagesResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -355,6 +544,7 @@ pub async fn list_mail_messages(
 ) -> Result<Json<ListMailMessagesResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
 
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let cursor = match (query.cursor_at, query.cursor_id) {
         (Some(at), Some(id)) => Some((at, id)),
@@ -377,6 +567,7 @@ pub async fn list_mail_messages(
                 .filter(|value| !value.trim().is_empty()),
             cursor,
             limit + 1,
+            sort,
         )
         .await?;
     let has_more = page.len() > limit as usize;
@@ -389,7 +580,9 @@ pub async fn list_mail_messages(
     let next_cursor = has_more.then(|| messages.last()).flatten();
 
     Ok(Json(ListMailMessagesResponse {
-        next_cursor_at: next_cursor.map(|message| message.imported_at),
+        // The cursor is the row's coalesced sort value so the keyset
+        // predicate matches the ORDER BY exactly.
+        next_cursor_at: next_cursor.map(|message| message.sent_at.unwrap_or(message.imported_at)),
         next_cursor_id: next_cursor.map(|message| message.id),
         messages,
     }))
@@ -458,6 +651,10 @@ pub struct ListImportedMailMessagesQuery {
     pub limit: Option<i64>,
     pub cursor_at: Option<DateTime<Utc>>,
     pub cursor_id: Option<Uuid>,
+    /// Sort order: `date_desc` (default, newest message date first) or
+    /// `date_asc` (oldest first). Message date is the Date header with the
+    /// import timestamp as fallback. Unknown values are rejected with 400.
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -834,8 +1031,12 @@ pub struct ListMailMessagesQuery {
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
+    /// UID of the last message returned by the previous date-sorted page.
     cursor: Option<i64>,
     search: Option<String>,
+    /// Sort order: `date_desc` (default, newest first) or `date_asc`
+    /// (oldest first). Unknown values are rejected with 400.
+    sort: Option<String>,
 }
 
 fn default_message_limit() -> i64 {
@@ -1106,6 +1307,12 @@ pub async fn list_mail_account_folders(
 }
 
 /// List message summaries in an IMAP folder.
+///
+/// Ordering is arrival-based: IMAP UIDs increase as messages arrive, so
+/// `sort=date_desc` (default) walks from the highest UID down and
+/// `sort=date_asc` from the lowest UID up; the `cursor` parameter acts as a
+/// `before_uid` for `date_desc` and an `after_uid` for `date_asc`. Within
+/// each returned page the summaries are refined by their parsed Date header.
 #[utoipa::path(
     get,
     path = "/api/v1/mail/accounts/{id}/messages",
@@ -1128,6 +1335,7 @@ pub async fn list_mail_account_messages(
     Query(query): Query<ListMailMessagesQuery>,
 ) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     if query.folder.trim().is_empty() {
         return Err(AppError::bad_request("Missing folder query parameter"));
     }
@@ -1153,6 +1361,7 @@ pub async fn list_mail_account_messages(
                 .search
                 .as_deref()
                 .filter(|value| !value.trim().is_empty()),
+            sort,
         )
         .await?;
 
@@ -1183,11 +1392,13 @@ pub async fn list_mail_account_messages(
             summary_to_response(summary, imported_message_id)
         })
         .collect();
-    let next_cursor = messages
-        .iter()
-        .map(|message| message.uid)
-        .min()
-        .map(i64::from);
+    let next_cursor = match sort {
+        // The cursor continues the UID traversal: below the lowest UID on the
+        // page for date_desc, above the highest for date_asc.
+        MailSortOrder::DateDesc => messages.iter().map(|message| message.uid).min(),
+        MailSortOrder::DateAsc => messages.iter().map(|message| message.uid).max(),
+    }
+    .map(i64::from);
 
     Ok(Json(MailMessageSummaryListResponse {
         uidvalidity: uidvalidity.map(i64::from),
@@ -1560,19 +1771,56 @@ pub async fn download_remote_mail_attachment(
         .filename
         .clone()
         .unwrap_or_else(|| format!("attachment-{index}"));
-    let content_disposition = super::public_shares::build_content_disposition(&filename);
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&attachment.mime_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&content_disposition)
-            .map_err(|e| AppError::internal(e.to_string()))?,
-    );
+    let headers = attachment_download_headers(Some(&attachment.mime_type), &filename);
     Ok((StatusCode::OK, headers, attachment.data).into_response())
+}
+
+/// Download the raw RFC 822 source of a remote IMAP message as `.eml`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/accounts/{id}/messages/{uid}/source",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail account ID"),
+        ("uid" = i64, Path, description = "IMAP UID"),
+        RemoteMailMessageQuery,
+    ),
+    responses(
+        (status = 200, description = "Raw RFC 822 message source"),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Message not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Folder UIDVALIDITY changed", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn download_remote_mail_message_source(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((account_id, uid)): Path<(Uuid, i64)>,
+    Query(query): Query<RemoteMailMessageQuery>,
+) -> Result<Response, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    validate_remote_message_query(&query)?;
+    let uid = validate_imap_uid(uid)?;
+
+    // NOTE: this re-fetches the full RFC 822 source on every download, the
+    // same path the body endpoint uses. Acceptable for interactive downloads
+    // (messages are capped at 25 MB); revisit if it becomes a hotspot.
+    let remote = state
+        .mail_service
+        .fetch_imap_message_source(
+            auth.tenant_id,
+            auth.user_id,
+            account_id,
+            &query.folder,
+            query.source_uidvalidity,
+            uid,
+        )
+        .await?;
+
+    let filename = format!("message-{uid}.eml");
+    let headers = attachment_download_headers(Some("message/rfc822"), &filename);
+    Ok((StatusCode::OK, headers, remote.rfc822).into_response())
 }
 
 #[utoipa::path(
@@ -1937,27 +2185,35 @@ pub async fn delete_mail_archive_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn sanitize_email_html(html: &str) -> String {
+/// Sanitize stored message HTML. When `allow_remote_images` is false (the
+/// default), remote `<img src>` values are stripped to protect privacy; the
+/// returned bool reports whether any image was blocked.
+fn sanitize_email_html(html: &str, allow_remote_images: bool) -> (String, bool) {
     let schemes: std::collections::HashSet<&str> = ["http", "https", "mailto", "cid", "data"]
         .into_iter()
         .collect();
-    ammonia::Builder::default()
+    let blocked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocked_flag = blocked.clone();
+    let clean = ammonia::Builder::default()
         .url_schemes(schemes)
-        .attribute_filter(|element, attribute, value| {
+        .attribute_filter(move |element, attribute, value| {
             let source = value.trim_start();
-            if element == "img"
+            if !allow_remote_images
+                && element == "img"
                 && attribute == "src"
                 && (source.starts_with("//")
                     || source.split_once(':').is_some_and(|(scheme, _)| {
                         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
                     }))
             {
+                blocked_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             Some(value.into())
         })
         .clean(html)
-        .to_string()
+        .to_string();
+    (clean, blocked.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn rewrite_cid_urls(html: &str, attachments: &[rustshare_core::domain::MailAttachment]) -> String {
@@ -2004,6 +2260,14 @@ pub async fn list_mail_message_parts(
     }))
 }
 
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MailMessagePartQuery {
+    /// Load remote images in sanitized HTML parts (blocked by default).
+    #[serde(default)]
+    pub load_remote_images: bool,
+}
+
 /// Get the content of a single message part. HTML parts are sanitized before delivery.
 #[utoipa::path(
     get,
@@ -2012,6 +2276,7 @@ pub async fn list_mail_message_parts(
     params(
         ("id" = Uuid, Path, description = "Mail message ID"),
         ("part_id" = Uuid, Path, description = "Part ID"),
+        MailMessagePartQuery,
     ),
     responses(
         (status = 200, description = "Part content"),
@@ -2023,6 +2288,7 @@ pub async fn get_mail_message_part(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path((message_id, part_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<MailMessagePartQuery>,
 ) -> Result<Response, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     let (part, bytes) = state
@@ -2037,7 +2303,10 @@ pub async fn get_mail_message_part(
             .mail_service
             .list_attachments(auth.tenant_id, auth.user_id, message_id)
             .await?;
-        let sanitized = sanitize_email_html(&rewrite_cid_urls(html, &attachments));
+        let (sanitized, blocked_remote_images) = sanitize_email_html(
+            &rewrite_cid_urls(html, &attachments),
+            query.load_remote_images,
+        );
         if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await {
             tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
         }
@@ -2050,6 +2319,12 @@ pub async fn get_mail_message_part(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("sandbox"),
         );
+        if blocked_remote_images {
+            headers.insert(
+                HeaderName::from_static("x-mail-blocked-remote-images"),
+                HeaderValue::from_static("1"),
+            );
+        }
         return Ok((StatusCode::OK, headers, sanitized).into_response());
     } else if let Some(charset) = &part.charset {
         format!("{}; charset={}", part.content_type, charset)
@@ -2096,17 +2371,7 @@ pub async fn download_mail_message_source(
         tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
     }
 
-    let content_disposition = super::public_shares::build_content_disposition(&filename);
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("message/rfc822"),
-    );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&content_disposition)
-            .map_err(|e| AppError::internal(e.to_string()))?,
-    );
+    let headers = attachment_download_headers(Some("message/rfc822"), &filename);
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
@@ -2138,6 +2403,58 @@ pub async fn list_mail_message_attachments(
             .map(MailAttachmentResponse::from)
             .collect(),
     }))
+}
+
+/// Download one attachment of an imported mail message.
+///
+/// Serves the exact stored bytes (object-store blob, falling back to the
+/// linked file content). The response never exposes the storage blob key.
+#[utoipa::path(
+    get,
+    path = "/api/v1/mail/messages/{id}/attachments/{attachment_id}",
+    tag = "Mail",
+    params(
+        ("id" = Uuid, Path, description = "Mail message ID"),
+        ("attachment_id" = Uuid, Path, description = "Attachment ID"),
+    ),
+    responses(
+        (status = 200, description = "Attachment bytes"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Message or attachment not found", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn download_mail_message_attachment(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path((message_id, attachment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Response, AppError> {
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let (attachment, body) = state
+        .mail_service
+        .download_attachment(auth.tenant_id, auth.user_id, message_id, attachment_id)
+        .await?;
+    if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "attachment").await {
+        tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
+    }
+
+    let mut headers =
+        attachment_download_headers(attachment.mime_type.as_deref(), &attachment.filename);
+    match body {
+        MailAttachmentBody::Buffered(bytes) => Ok((StatusCode::OK, headers, bytes).into_response()),
+        MailAttachmentBody::Stream {
+            content_length,
+            stream,
+        } => {
+            if let Some(len) = content_length {
+                headers.insert(
+                    header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&len.to_string())
+                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
+                );
+            }
+            Ok((StatusCode::OK, headers, Body::from_stream(stream)).into_response())
+        }
+    }
 }
 
 /// Best-effort audit event for mutations performed directly on the remote
@@ -2928,13 +3245,64 @@ pub async fn send_draft_handler(
 #[cfg(test)]
 mod tests {
     use super::{
-        remove_reply_all_sender, require_destination_folder, rewrite_cid_urls, sanitize_email_html,
-        validate_send_outbound_mail_request, CreateMailImportJobRequest,
-        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+        parse_mail_sort_order, remove_reply_all_sender, require_destination_folder,
+        rewrite_cid_urls, sanitize_email_html, validate_send_outbound_mail_request,
+        CreateMailImportJobRequest, CreateOrUpdateSmtpSettingsRequest,
+        ListImportedMailMessagesQuery, ListMailMessagesQuery, SendOutboundMailRequest,
     };
+    use crate::handlers::AppError;
     use chrono::Utc;
+    use rustshare_core::domain::MailSortOrder;
     use uuid::Uuid;
     use validator::Validate;
+
+    #[test]
+    fn mail_sort_order_defaults_to_newest_first() {
+        assert_eq!(
+            parse_mail_sort_order(None).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_desc")).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_asc")).unwrap(),
+            MailSortOrder::DateAsc
+        );
+    }
+
+    #[test]
+    fn mail_sort_order_rejects_unknown_values() {
+        let err = parse_mail_sort_order(Some("subject")).expect_err("invalid sort should fail");
+        assert!(
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("date_desc")),
+            "error should name the valid values, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn imported_messages_query_deserializes_sort_param() {
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r#"{"sort": "date_asc"}"#).expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r"{}").expect("missing sort should deserialize");
+        assert!(query.sort.is_none());
+    }
+
+    #[test]
+    fn account_messages_query_deserializes_sort_param() {
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX", "sort": "date_asc"}"#)
+                .expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX"}"#).expect("should deserialize");
+        assert!(query.sort.is_none());
+    }
 
     #[test]
     fn archive_and_trash_require_an_explicit_destination() {
@@ -3114,7 +3482,7 @@ mod tests {
     fn sanitize_email_html_strips_scripts() {
         let raw =
             r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, _) = sanitize_email_html(raw, false);
         assert!(!clean.contains("<script>"));
         assert!(!clean.contains("javascript:"));
         assert!(clean.contains("<p>Hello</p>"));
@@ -3123,13 +3491,60 @@ mod tests {
     #[test]
     fn sanitize_email_html_blocks_remote_images() {
         let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img alt="upper" src="HTTPS://tracker.example/upper.gif"><img src="//tracker.example/relative.gif"><img src="cid:inline">"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "blocked flag should report removed remote images");
         assert!(!clean.contains("https://tracker.example"));
         assert!(!clean.contains("HTTPS://tracker.example"));
         assert!(!clean.contains("//tracker.example"));
         assert!(clean.contains(r#"<img alt="tracker">"#));
         assert!(clean.contains(r#"<img alt="upper">"#));
         assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_reports_no_block_without_remote_images() {
+        let raw = r#"<p>Hello</p><img src="cid:inline">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(!blocked, "no remote images means no blocked flag");
+        assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_explicit_load_keeps_remote_images() {
+        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img src="//tracker.example/relative.gif">"#;
+        let (clean, blocked) = sanitize_email_html(raw, true);
+        assert!(!blocked, "allow mode never reports blocked images");
+        assert!(clean.contains(r#"<img alt="tracker" src="https://tracker.example/pixel.gif">"#));
+        assert!(clean.contains(r#"<img src="//tracker.example/relative.gif">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_scripts_in_allow_mode() {
+        let raw = r#"<img src="https://tracker.example/pixel.gif" onerror="alert(1)"><script>alert('xss')</script>"#;
+        let (clean, _) = sanitize_email_html(raw, true);
+        assert!(!clean.contains("<script>"));
+        assert!(!clean.contains("onerror"));
+        assert!(clean.contains("https://tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_srcset_in_both_modes() {
+        let raw = r#"<img src="cid:inline" srcset="https://tracker.example/pixel.gif 1x, https://tracker.example/pixel@2x.gif 2x">"#;
+        let (blocked_mode, _) = sanitize_email_html(raw, false);
+        let (allow_mode, _) = sanitize_email_html(raw, true);
+        assert!(!blocked_mode.contains("srcset"));
+        assert!(!allow_mode.contains("srcset"));
+        assert!(!blocked_mode.contains("tracker.example"));
+        assert!(!allow_mode.contains("tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_blocks_tracking_pixel() {
+        let raw =
+            r#"<p>Hi</p><img src="https://tracker.example/open.gif" width="1" height="1" alt="">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "tracking pixel should be reported as blocked");
+        assert!(!clean.contains("tracker.example"));
     }
 
     #[test]
@@ -3154,5 +3569,258 @@ mod tests {
             rewrite_cid_urls(r#"<img src="cid:logo">"#, &[attachment]),
             format!(r#"<img src="/api/v1/files/{file_id}/preview">"#)
         );
+    }
+
+    // ========================================================================
+    // Content-Disposition response filename sanitization
+    // ========================================================================
+
+    use super::{ascii_fallback_filename, content_disposition_attachment};
+
+    fn disposition_string(filename: &str) -> String {
+        content_disposition_attachment(filename)
+            .to_str()
+            .expect("header value must be valid ASCII")
+            .to_string()
+    }
+
+    #[test]
+    fn disposition_plain_ascii_roundtrips() {
+        let header = disposition_string("report final.pdf");
+        assert_eq!(
+            header,
+            "attachment; filename=\"report final.pdf\"; filename*=UTF-8''report%20final.pdf"
+        );
+    }
+
+    #[test]
+    fn disposition_unicode_has_ascii_fallback_and_rfc5987_original() {
+        let header = disposition_string("我的報告.pdf");
+        assert!(
+            header.contains("filename=\"____.pdf\""),
+            "non-ASCII chars must become '_' in the legacy fallback: {header}"
+        );
+        assert!(
+            header.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A.pdf"),
+            "RFC 5987 filename* must preserve the percent-encoded original: {header}"
+        );
+        assert!(header.is_ascii(), "header must be ASCII-only: {header}");
+    }
+
+    #[test]
+    fn disposition_rfc2047_decoded_input_is_resanitized() {
+        // "=?UTF-8?B?...?=" already decoded by mailparse to "Böse Datei.txt".
+        let header = disposition_string("Böse Datei.txt");
+        assert!(header.contains("filename=\"B_se Datei.txt\""), "{header}");
+        assert!(
+            header.contains("filename*=UTF-8''B%C3%B6se%20Datei.txt"),
+            "{header}"
+        );
+    }
+
+    #[test]
+    fn disposition_empty_and_missing_names_fall_back() {
+        for name in ["", "   ", "\r\n", "..", "...", "\u{0}\u{7f}"] {
+            let header = disposition_string(name);
+            assert!(
+                header.contains("filename=\"attachment\""),
+                "input {name:?} must fall back to a safe name: {header}"
+            );
+        }
+    }
+
+    #[test]
+    fn disposition_caps_very_long_names() {
+        let long = format!("{}.txt", "a".repeat(500));
+        let header = disposition_string(&long);
+        let fallback = header
+            .split("filename=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("legacy filename parameter");
+        assert_eq!(fallback.len(), 100, "fallback must be capped: {header}");
+        let star = header
+            .split("filename*=UTF-8''")
+            .nth(1)
+            .expect("filename* parameter");
+        assert_eq!(
+            star.len(),
+            200,
+            "filename* original must be capped: {header}"
+        );
+    }
+
+    #[test]
+    fn disposition_strips_path_traversal() {
+        for name in [
+            "../../etc/passwd",
+            "..\\..\\windows\\system32\\evil.dll",
+            "/etc/passwd",
+            "..//..//secret",
+        ] {
+            let header = disposition_string(name);
+            assert!(
+                !header.contains(".."),
+                "no traversal residue for {name:?}: {header}"
+            );
+            assert!(!header.contains('/'), "no slash for {name:?}: {header}");
+            assert!(
+                !header.contains('\\'),
+                "no backslash for {name:?}: {header}"
+            );
+            assert!(
+                !header.contains("filename=\"."),
+                "no leading dot for {name:?}: {header}"
+            );
+        }
+        let header = disposition_string("../../etc/passwd");
+        assert!(header.contains("filename=\"_._etc_passwd\""), "{header}");
+    }
+
+    #[test]
+    fn disposition_never_contains_cr_lf_or_control_chars() {
+        for name in [
+            "evil\r\nSet-Cookie: session=attacker.pdf",
+            "line\nfeed.txt",
+            "car\rriage.txt",
+            "nul\u{0}byte.txt",
+            "del\u{7f}char.txt",
+            "tab\tname.txt",
+        ] {
+            let header = disposition_string(name);
+            assert!(
+                !header.bytes().any(|b| b < 0x20 || b == 0x7f),
+                "header injection via {name:?}: {header:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn disposition_neutralizes_quotes_and_backslashes() {
+        let header = disposition_string("evil\", x-injected: yes\\harm.txt");
+        assert!(!header.contains('\\'), "no backslashes remain: {header}");
+        let fallback = header
+            .split("filename=\"")
+            .nth(1)
+            .and_then(|rest| rest.split("\"; ").next())
+            .expect("legacy filename parameter");
+        assert!(
+            !fallback.contains('"'),
+            "fallback must not break quoting: {header}"
+        );
+        assert_eq!(fallback, "evil_, x-injected: yes_harm.txt");
+    }
+
+    #[test]
+    fn disposition_prefixes_windows_reserved_names() {
+        for (name, expected) in [
+            ("CON", "_CON"),
+            ("con.txt", "_con.txt"),
+            ("NUL", "_NUL"),
+            ("aux.tar.gz", "_aux.tar.gz"),
+            ("COM1", "_COM1"),
+            ("lpt9.png", "_lpt9.png"),
+        ] {
+            let header = disposition_string(name);
+            assert!(
+                header.contains(&format!("filename=\"{expected}\"")),
+                "{name} must be prefixed: {header}"
+            );
+            assert!(
+                header.contains(&format!("filename*=UTF-8''{expected}")),
+                "filename* must also be prefixed for {name}: {header}"
+            );
+        }
+        // Non-reserved lookalikes stay untouched.
+        for name in ["console.log", "COM10.txt", "null.txt", "connection"] {
+            let header = disposition_string(name);
+            assert!(
+                header.contains(&format!("filename=\"{name}\"")),
+                "{name} must not be rewritten: {header}"
+            );
+        }
+    }
+
+    #[test]
+    fn disposition_fallback_is_deterministic_for_duplicate_names() {
+        // Duplicate names are distinguished by the caller (attachment index in
+        // the UI / fallback name); the helper itself is deterministic.
+        assert_eq!(disposition_string("a.pdf"), disposition_string("a.pdf"));
+        assert!(disposition_string("attachment-1").contains("attachment-1"));
+        assert!(disposition_string("attachment-2").contains("attachment-2"));
+    }
+
+    #[test]
+    fn ascii_fallback_collapses_whitespace_and_dots() {
+        assert_eq!(ascii_fallback_filename("a  \t b...txt"), "a b.txt");
+        assert_eq!(ascii_fallback_filename("  spaced  .pdf  "), "spaced .pdf");
+        assert_eq!(ascii_fallback_filename(".hidden"), "hidden");
+        assert_eq!(ascii_fallback_filename("file."), "file");
+    }
+
+    // ========================================================================
+    // Extension-preserving truncation
+    // ========================================================================
+
+    use super::truncate_preserving_extension;
+
+    #[test]
+    fn truncate_keeps_extension_for_long_names() {
+        let name = format!("{}.pdf", "a".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(truncated.ends_with(".pdf"), "{truncated}");
+    }
+
+    #[test]
+    fn truncate_plainly_when_no_extension() {
+        let name = "a".repeat(500);
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(!truncated.contains('.'));
+    }
+
+    #[test]
+    fn truncate_keeps_final_extension_for_multi_dot_names() {
+        let name = format!("{}.tar.gz", "a".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+        assert!(truncated.ends_with(".gz"), "{truncated}");
+    }
+
+    #[test]
+    fn truncate_caps_absurdly_long_extension_plainly() {
+        // An extension longer than the whole cap cannot be preserved; fall
+        // back to a plain cap instead of overflowing or panicking.
+        let name = format!("name.{}", "d".repeat(500));
+        let truncated = truncate_preserving_extension(&name, 200);
+        assert_eq!(truncated.chars().count(), 200);
+    }
+
+    #[test]
+    fn truncate_leaves_short_names_untouched() {
+        assert_eq!(
+            truncate_preserving_extension("report.pdf", 200),
+            "report.pdf"
+        );
+        assert_eq!(truncate_preserving_extension(".pdf", 200), ".pdf");
+    }
+
+    #[test]
+    fn disposition_long_name_keeps_extension_in_both_params() {
+        let header = disposition_string(&format!("{}.pdf", "a".repeat(500)));
+        let fallback = header
+            .split("filename=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("legacy filename parameter");
+        assert!(fallback.ends_with(".pdf"), "fallback: {header}");
+        assert_eq!(fallback.len(), 100, "fallback must stay capped: {header}");
+        let star = header
+            .split("filename*=UTF-8''")
+            .nth(1)
+            .expect("filename* parameter");
+        assert!(star.ends_with(".pdf"), "filename*: {header}");
+        assert_eq!(star.len(), 200, "filename* must stay capped: {header}");
     }
 }

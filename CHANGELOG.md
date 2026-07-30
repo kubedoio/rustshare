@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic ascending/descending date sorting for mail lists (#182): both the imported ("Saved to RustShare") list and the remote IMAP folder list accept `sort=date_desc` (default, newest first) or `sort=date_asc` (oldest first), reject unknown values with a 400, and order deterministically by message date with an id/UID tiebreak. The Mail UI gains a sort toggle whose preference is persisted globally in `localStorage`.
+
 ### Changed
 
 - Consolidated the root and backend Cargo workspaces into one unified workspace with a single `Cargo.lock`, removing the nested `backend/Cargo.toml` workspace and eliminating ambiguous dependency resolution.
@@ -20,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated CI so documentation-only and frontend-only changes no longer trigger the full Rust workflow; the DCO check now runs in its own always-on workflow.
 
 ### Fixed
+
+- Fixed mail attachment filenames, metadata, and downloads (#183): imported mail attachments can now be downloaded via `GET /api/v1/mail/messages/{id}/attachments/{attachment_id}` serving the exact stored bytes (object-store blob with linked-file fallback; missing blobs and cross-tenant access return 404), and remote IMAP messages now expose a raw `.eml` download via `GET /api/v1/mail/accounts/{id}/messages/{uid}/source`. The message detail page offers a per-attachment Download action, the remote viewer gains a Download .eml toolbar action, and duplicate attachment filenames are distinguished by an index badge.
+
+### Security
+
+- Sanitized response filenames on every mail download path (remote/imported attachment, imported/remote `.eml` source) with one shared Content-Disposition builder: an ASCII-only, injection-proof `filename=` fallback (control characters stripped, quotes/backslashes/slashes neutralized, `..` traversal collapsed, length capped, Windows reserved device names prefixed) plus an RFC 5987 `filename*` carrying the safe Unicode original. Storage blob keys are never exposed in responses (#183).
 
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
@@ -32,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened the production Compose contract by requiring same-host external TLS termination on a dedicated loopback port, preserving the validated upstream HTTPS scheme, probing dependency readiness, and pinning RustFS to an immutable image digest.
 - Audited and hardened permission-aware AI indexing. All indexed note chunks now carry a canonical `IndexAclProjection` resolved from the authoritative permission model; retrieval pre-filters by tenant, caller principals, visibility, and embedding policy; missing, malformed, stale, and cross-tenant ACL data fail closed; share revocation and note lifecycle events propagate to the index without requiring a full rebuild. Added backend-agnostic contract tests against both `InMemoryVectorStore` and `PgVectorStore`.
+- Mail module: remote images in message previews and imported message bodies are now blocked by default so opening a message never triggers external image requests, with a privacy notice and an explicit per-message "Load remote images" action in both the IMAP preview and the imported message page. `cid:` embedded images now resolve in the IMAP preview via the attachment download endpoint, and remote `srcset` candidates are stripped alongside `src`. The imported-parts endpoint gained an opt-in `load_remote_images=true` query parameter and reports blocked images via the `X-Mail-Blocked-Remote-Images` response header. Refs #181.
 
 ### Documentation
 

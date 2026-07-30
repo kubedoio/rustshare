@@ -21,6 +21,12 @@ export interface MailMessage {
 export type MailSourceMode =
 	'eml_upload' | 'imap_selected' | 'imap_archive' | 'inbound_address' | 'outbound' | 'draft';
 
+/**
+ * Sort order for mail list endpoints. `date_desc` (newest message date first)
+ * is the server default; omitted params mean `date_desc`.
+ */
+export type MailSortOrder = 'date_desc' | 'date_asc';
+
 export interface MailMessagePart {
 	id: string;
 	part_index: number;
@@ -299,12 +305,14 @@ export const mailApi = {
 		folder: string,
 		limit = 100,
 		cursor?: number | null,
-		search = ''
+		search = '',
+		sort?: MailSortOrder
 	): Promise<ListMailAccountMessagesResponse> => {
 		const cursorParam = cursor ? `&cursor=${cursor}` : '';
 		const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+		const sortParam = sort ? `&sort=${sort}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}${sortParam}`
 		);
 	},
 
@@ -411,6 +419,17 @@ export const mailApi = {
 		return `${apiClient.getBaseURL()}/mail/accounts/${accountId}/messages/${uid}/attachments/${index}?${params}`;
 	},
 
+	remoteSourceUrl: (
+		accountId: string,
+		uid: number,
+		folder: string,
+		source_uidvalidity?: number | null
+	): string => {
+		const params = new URLSearchParams({ folder });
+		if (source_uidvalidity != null) params.set('source_uidvalidity', String(source_uidvalidity));
+		return `${apiClient.getBaseURL()}/mail/accounts/${accountId}/messages/${uid}/source?${params}`;
+	},
+
 	starMessage: async (
 		accountId: string,
 		uid: number,
@@ -493,10 +512,12 @@ export const mailApi = {
 	listMessagesPage: async (
 		search = '',
 		cursorAt?: string | null,
-		cursorId?: string | null
+		cursorId?: string | null,
+		sort?: MailSortOrder
 	): Promise<ListMailMessagesResponse> => {
 		const params = new URLSearchParams({ limit: '50' });
 		if (search) params.set('search', search);
+		if (sort) params.set('sort', sort);
 		if (cursorAt && cursorId) {
 			params.set('cursor_at', cursorAt);
 			params.set('cursor_id', cursorId);
@@ -568,6 +589,21 @@ export const mailApi = {
 		return apiClient.requestText(`/mail/messages/${messageId}/parts/${partId}`);
 	},
 
+	getPartContentWithMeta: async (
+		messageId: string,
+		partId: string,
+		opts?: { loadRemoteImages?: boolean }
+	): Promise<{ content: string; blockedRemoteImages: boolean }> => {
+		const query = opts?.loadRemoteImages ? '?load_remote_images=true' : '';
+		const { text, headers } = await apiClient.requestTextWithHeaders(
+			`/mail/messages/${messageId}/parts/${partId}${query}`
+		);
+		return {
+			content: text,
+			blockedRemoteImages: headers.get('X-Mail-Blocked-Remote-Images') === '1'
+		};
+	},
+
 	listAttachments: async (messageId: string): Promise<MailAttachment[]> => {
 		const res = await apiClient.get<ListMailMessageAttachmentsResponse>(
 			`/mail/messages/${messageId}/attachments`
@@ -593,6 +629,10 @@ export const mailApi = {
 
 	downloadSourceUrl: (messageId: string): string => {
 		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/source`;
+	},
+
+	attachmentDownloadUrl: (messageId: string, attachmentId: string): string => {
+		return `${apiClient.getBaseURL()}/mail/messages/${messageId}/attachments/${attachmentId}`;
 	},
 
 	getSmtpSettings: async (accountId: string): Promise<MailSmtpSettings | null> => {
