@@ -438,6 +438,10 @@ If editable:
 - track dirty state
 - show Save button
 - optionally show Reload button
+- warn before losing unsaved changes:
+  - browser refresh/tab close triggers a `beforeunload` prompt while the editor is dirty
+  - in-app navigation away from the page asks for confirmation ("You have unsaved changes. Leave without saving?")
+  - switching to a different file in the manifest asks for confirmation before discarding unsaved edits
 
 If read-only:
 
@@ -474,13 +478,15 @@ On save success:
 
 On conflict:
 
-- do not discard local unsaved content
-- show message:
-  - "This file changed since you opened it."
+- do not discard local unsaved content; the editor text remains untouched until the user explicitly reloads
+- show a conflict panel:
+  - "A newer server revision exists (rev N)."
 - offer safe actions:
-  - reload from server
-  - copy unsaved text manually
+  - copy my changes (writes the local editor text to the clipboard)
+  - download my version (downloads the local editor text under the file's name)
+  - reload server version (discards local edits after a confirmation prompt and refetches)
 - do not auto-merge in MVP
+- if the server revision turns out to hold content identical to the editor content (SHA-256 match), silently adopt the server revision and treat the state as saved instead of showing a conflict
 
 ### 10.7 Failed save
 
@@ -531,7 +537,7 @@ If audit infrastructure is not ready, document this as a follow-up.
 | Read-only policy | 403 | Show vault is read-only |
 | Unsupported file type | 415 or project equivalent | Show read-only unsupported message |
 | File too large | 413 or project equivalent | Show size-limit message |
-| Stale revision | 409 | Keep unsaved content, show conflict |
+| Stale revision | 409 with structured body (`current_rev`, `server_sha256`, `resolution`) | Keep unsaved content, show conflict panel with copy/download/reload actions; silently adopt the revision when server content is identical |
 | Network failure | error | Keep unsaved content, allow retry |
 | Save success | 200/204 | Clear dirty state, update revision |
 

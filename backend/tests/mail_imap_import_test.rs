@@ -73,7 +73,16 @@ async fn imap_selected_import_creates_job_and_imports_messages() {
 
     // 5. List messages in INBOX.
     let (uidvalidity, messages) = mail_service
-        .list_imap_messages(tenant_id, user.id, account.id, "INBOX", 10, None, None)
+        .list_imap_messages(
+            tenant_id,
+            user.id,
+            account.id,
+            "INBOX",
+            10,
+            None,
+            None,
+            rustshare_core::domain::MailSortOrder::DateDesc,
+        )
         .await
         .expect("list messages should succeed");
     let uidvalidity = uidvalidity.expect("INBOX should report a UIDVALIDITY");

@@ -61,6 +61,39 @@ impl From<MailVisibility> for String {
     }
 }
 
+/// Sort order for mail message listings.
+///
+/// `date_desc` (newest message date first) is the default everywhere;
+/// `date_asc` orders oldest first. "Message date" means the message `Date`
+/// header (`sent_at`), falling back to the import timestamp when absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MailSortOrder {
+    #[default]
+    DateDesc,
+    DateAsc,
+}
+
+impl MailSortOrder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MailSortOrder::DateDesc => "date_desc",
+            MailSortOrder::DateAsc => "date_asc",
+        }
+    }
+
+    /// Parse a `sort` query-parameter value. Returns `None` for unknown
+    /// values so callers can reject them with a 400 instead of silently
+    /// falling back to the default.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "date_desc" => Some(MailSortOrder::DateDesc),
+            "date_asc" => Some(MailSortOrder::DateAsc),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct MailMessage {
     #[schema(value_type = Uuid)]

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		mailApi,
@@ -14,20 +13,24 @@
 		type MailMessage,
 		type MailRemoteMessageBody,
 		type MailSmtpSettings,
+		type MailSortOrder,
 		type SaveDraftRequest,
 		type SendOutboundMailRequest
 	} from '$lib/api/mail';
+	import { apiClient } from '$lib/api/client';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import MailComposeModal from './MailComposeModal.svelte';
 	import MailMoveModal from './mail/MailMoveModal.svelte';
 	import MailSaveModal from './mail/MailSaveModal.svelte';
-	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { sanitizeEmailHtml } from '$lib/editor/adapter/security';
 	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		Archive,
+		ArrowDownNarrowWide,
+		ArrowDownWideNarrow,
 		ArrowLeft,
 		Check,
 		ChevronDown,
@@ -46,6 +49,7 @@
 		ReplyAll,
 		Search,
 		Send,
+		ShieldAlert,
 		Star,
 		Trash2
 	} from 'lucide-svelte';
@@ -66,6 +70,19 @@
 	let uidvalidity = $state<number | null>(null);
 	let searchInput = $state('');
 	let search = $state('');
+
+	// One global sort preference for every mailbox and the Saved view,
+	// persisted so it survives refresh and navigation away/back (issue #182).
+	const MAIL_SORT_STORAGE_KEY = 'mail-sort-order';
+	function readStoredSortOrder(): MailSortOrder {
+		if (!browser) return 'date_desc';
+		return localStorage.getItem(MAIL_SORT_STORAGE_KEY) === 'date_asc' ? 'date_asc' : 'date_desc';
+	}
+	let sortOrder = $state<MailSortOrder>(readStoredSortOrder());
+	function toggleSortOrder() {
+		sortOrder = sortOrder === 'date_desc' ? 'date_asc' : 'date_desc';
+		if (browser) localStorage.setItem(MAIL_SORT_STORAGE_KEY, sortOrder);
+	}
 	let activityOpen = $state(false);
 	let overflowOpen = $state(false);
 	let moveOpen = $state(false);
@@ -90,57 +107,6 @@
 	let composeSaveError = $state('');
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
 
-	// Persisted list context so a detail round-trip (Back from
-	// /modules/mail/messages/[id]) restores the previous mailbox state.
-	// Selection (selectedUids) and scroll position are deliberately not
-	// persisted: selection is volatile and scroll restore is impractical with
-	// the query-backed virtual lists.
-	const MAIL_LIST_STATE_KEY = 'rustshare:mail-module:list-state';
-	interface PersistedMailListState {
-		mailboxView: MailboxView;
-		selectedAccountId: string | null;
-		selectedFolder: string | null;
-		search: string;
-	}
-
-	onMount(() => {
-		try {
-			const raw = sessionStorage.getItem(MAIL_LIST_STATE_KEY);
-			if (!raw) return;
-			const saved = JSON.parse(raw) as Partial<PersistedMailListState>;
-			if (
-				saved.mailboxView === 'remote' ||
-				saved.mailboxView === 'drafts' ||
-				saved.mailboxView === 'saved'
-			) {
-				mailboxView = saved.mailboxView;
-			}
-			if (saved.selectedAccountId !== undefined) selectedAccountId = saved.selectedAccountId;
-			if (saved.selectedFolder !== undefined) selectedFolder = saved.selectedFolder;
-			if (typeof saved.search === 'string') {
-				search = saved.search;
-				searchInput = saved.search;
-			}
-		} catch {
-			// Malformed or unavailable sessionStorage: start from defaults.
-		}
-	});
-
-	$effect(() => {
-		if (!browser) return;
-		const state: PersistedMailListState = {
-			mailboxView,
-			selectedAccountId,
-			selectedFolder,
-			search
-		};
-		try {
-			sessionStorage.setItem(MAIL_LIST_STATE_KEY, JSON.stringify(state));
-		} catch {
-			// Persistence is best-effort (private mode / quota).
-		}
-	});
-
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
@@ -151,7 +117,7 @@
 		enabled: false
 	});
 	const accountMessagesQuery = createQuery<ListMailAccountMessagesResponse>({
-		queryKey: ['mail-account-messages', null, null, ''],
+		queryKey: ['mail-account-messages', null, null, '', sortOrder],
 		queryFn: () => Promise.resolve({ uidvalidity: null, next_cursor: null, messages: [] }),
 		enabled: false
 	});
@@ -166,8 +132,8 @@
 		enabled: false
 	});
 	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
-		queryKey: ['mail-messages', ''],
-		queryFn: () => mailApi.listMessagesPage('')
+		queryKey: ['mail-messages', '', sortOrder],
+		queryFn: () => mailApi.listMessagesPage('', null, null, sortOrder)
 	});
 	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
 		queryKey: ['mail-archive-jobs', null],
@@ -187,9 +153,54 @@
 	let selectedActionUids = $derived(
 		selectedUids.length ? selectedUids : selectedMessage ? [selectedMessage.uid] : []
 	);
-	let safeBodyHtml = $derived(
-		$remoteBodyQuery.data?.html ? sanitizeHtml($remoteBodyQuery.data.html) : null
+	// Remote images are blocked by default and only load after an explicit
+	// per-message action; switching messages resets back to blocked.
+	let remoteImagesAllowed = $state(false);
+	let remoteImagesKey = $derived(
+		selectedAccountId && selectedFolder && selectedMessage
+			? `${selectedAccountId}:${selectedFolder}:${selectedMessage.uid}`
+			: null
 	);
+	let lastRemoteImagesKey: string | null = null;
+	$effect(() => {
+		if (remoteImagesKey !== lastRemoteImagesKey) {
+			lastRemoteImagesKey = remoteImagesKey;
+			remoteImagesAllowed = false;
+		}
+	});
+
+	function rewriteRemoteCidUrls(html: string, body: MailRemoteMessageBody): string {
+		let rewritten = html;
+		for (const attachment of body.attachments) {
+			// Content-ID headers may be bracketed (`<id@host>`) while the
+			// referencing URL is `cid:id@host`; match both forms.
+			const contentId = attachment.content_id?.trim().replace(/^<+|>+$/g, '');
+			if (!contentId) continue;
+			const url = mailApi.remoteAttachmentUrl(
+				selectedAccountId!,
+				body.uid,
+				attachment.index,
+				selectedFolder!,
+				uidvalidity
+			);
+			rewritten = rewritten.split(`cid:${contentId}`).join(url);
+		}
+		return rewritten;
+	}
+
+	let bodyRender = $derived.by(() => {
+		const body = $remoteBodyQuery.data;
+		if (!body?.html) return null;
+		// cid: references are rewritten to attachment download URLs on our own
+		// API before sanitization; exempt that base URL so blocked mode does
+		// not strip them as "remote" images when the API URL is absolute.
+		return sanitizeEmailHtml(rewriteRemoteCidUrls(body.html, body), {
+			allowRemoteImages: remoteImagesAllowed,
+			localUrlPrefixes: [apiClient.getBaseURL()]
+		});
+	});
+	let safeBodyHtml = $derived(bodyRender?.html ?? null);
+	let blockedRemoteImages = $derived(bodyRender?.blockedRemoteImages ?? 0);
 	let syncing = $derived(
 		$foldersQuery.isFetching || $accountMessagesQuery.isFetching || $draftsQuery.isFetching
 	);
@@ -199,14 +210,6 @@
 		if (!selectedAccountId && accounts.length) selectedAccountId = accounts[0].id;
 		if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
 			selectedAccountId = accounts[0]?.id ?? null;
-		}
-	});
-
-	$effect(() => {
-		// With zero IMAP accounts the remote mailbox is unusable; land on the
-		// Saved to RustShare mailbox so imported mail stays reachable.
-		if ($accountsQuery.data && $accountsQuery.data.length === 0 && mailboxView === 'remote') {
-			mailboxView = 'saved';
 		}
 	});
 
@@ -244,9 +247,16 @@
 
 	$effect(() => {
 		accountMessagesQuery.setOptions({
-			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, search],
+			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, search, sortOrder],
 			queryFn: () =>
-				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100, null, search),
+				mailApi.listAccountMessages(
+					selectedAccountId!,
+					selectedFolder!,
+					100,
+					null,
+					search,
+					sortOrder
+				),
 			enabled: mailboxView === 'remote' && !!selectedAccountId && !!selectedFolder
 		});
 		selectedUids = [];
@@ -270,8 +280,8 @@
 
 	$effect(() => {
 		importedMessagesQuery.setOptions({
-			queryKey: ['mail-messages', search],
-			queryFn: () => mailApi.listMessagesPage(search),
+			queryKey: ['mail-messages', search, sortOrder],
+			queryFn: () => mailApi.listMessagesPage(search, null, null, sortOrder),
 			enabled: mailboxView === 'saved'
 		});
 	});
@@ -436,6 +446,19 @@
 		return `${(value / 1024 / 1024).toFixed(1)} MB`;
 	}
 
+	// Duplicate attachment filenames are distinguished by their 1-based index
+	// so two "report.pdf" chips never look identical.
+	function hasDuplicateFilename(
+		attachments: MailRemoteMessageBody['attachments'],
+		index: number
+	): boolean {
+		const filename = attachments[index]?.filename;
+		if (!filename) return false;
+		return attachments.some(
+			(other, otherIndex) => otherIndex !== index && other.filename === filename
+		);
+	}
+
 	function selectMailbox(view: MailboxView, folder: string | null = selectedFolder) {
 		mailboxView = view;
 		selectedFolder = folder;
@@ -459,17 +482,51 @@
 			: [...selectedUids, uid];
 	}
 
-	async function runForSelection(action: (uid: number) => Promise<void>, success: string) {
-		if (!selectedActionUids.length) return;
+	async function runForSelection(
+		action: (uid: number) => Promise<void>,
+		success: string,
+		verb: string,
+		actionLabel: string
+	) {
+		if (!selectedActionUids.length || actionPending) return;
 		actionPending = true;
+		const uids = selectedActionUids;
+		const failedUids: number[] = [];
+		let firstError: unknown = null;
 		try {
-			await Promise.all(selectedActionUids.map(action));
-			selectedUids = [];
-			selectedMessage = null;
-			await $accountMessagesQuery.refetch();
-			toastStore.show(success, 'success');
-		} catch (error) {
-			toastStore.show(error instanceof Error ? error.message : 'Mail action failed', 'error');
+			for (const uid of uids) {
+				try {
+					await action(uid);
+				} catch (error) {
+					failedUids.push(uid);
+					firstError ??= error;
+				}
+			}
+			// Keep failed items selected so the user can retry them.
+			if (selectedUids.length) {
+				selectedUids = selectedUids.filter((uid) => failedUids.includes(uid));
+			}
+			if (
+				selectedMessage &&
+				uids.includes(selectedMessage.uid) &&
+				!failedUids.includes(selectedMessage.uid)
+			) {
+				selectedMessage = null;
+			}
+			// Reconcile counts and unread state from the IMAP-authoritative state.
+			await Promise.all([$foldersQuery.refetch(), $accountMessagesQuery.refetch()]);
+			if (failedUids.length === 0) {
+				toastStore.show(success, 'success');
+			} else if (uids.length === 1) {
+				// A single failed action deserves the server's real error, not a summary.
+				const detail = firstError instanceof Error ? firstError.message : 'Unknown error';
+				toastStore.show(`${actionLabel} failed: ${detail}`, 'error');
+			} else {
+				toastStore.show(
+					`${verb} ${uids.length - failedUids.length} of ${uids.length} messages; ${failedUids.length} failed`,
+					'error'
+				);
+			}
 		} finally {
 			actionPending = false;
 		}
@@ -484,7 +541,9 @@
 					selectedFolder!,
 					uidvalidity
 				),
-			message.is_flagged ? 'Star removed' : 'Message starred'
+			message.is_flagged ? 'Star removed' : 'Message starred',
+			message.is_flagged ? 'Unstarred' : 'Starred',
+			message.is_flagged ? 'Unstar' : 'Star'
 		);
 	}
 
@@ -492,9 +551,32 @@
 		await runForSelection(
 			(uid) =>
 				mailApi.moveMessage(selectedAccountId!, uid, selectedFolder!, destination, uidvalidity),
-			'Message moved'
+			selectedUids.length ? 'Messages moved' : 'Message moved',
+			'Moved',
+			'Move'
 		);
 		moveOpen = false;
+	}
+
+	async function archiveSelected() {
+		const archiveFolder = ($foldersQuery.data ?? []).find((folder) => folder.role === 'archive');
+		if (!archiveFolder) {
+			toastStore.show('No archive folder found on this account', 'error');
+			return;
+		}
+		await runForSelection(
+			(uid) =>
+				mailApi.archiveMessage(
+					selectedAccountId!,
+					uid,
+					selectedFolder!,
+					uidvalidity,
+					archiveFolder.name
+				),
+			selectedUids.length ? 'Messages archived' : 'Message archived',
+			'Archived',
+			'Archive'
+		);
 	}
 
 	async function confirmSave() {
@@ -559,54 +641,48 @@
 			message={$accountsQuery.error?.message ?? 'Unknown error'}
 			onRetry={() => $accountsQuery.refetch()}
 		/>
+	{:else if ($accountsQuery.data ?? []).length === 0}
+		<div
+			class="mx-auto my-12 max-w-md rounded-xl border border-dashed border-base-300 p-10 text-center"
+		>
+			<Mail size={36} class="mx-auto mb-4 text-brand-500" />
+			<h2 class="text-xl font-bold">No mail account configured</h2>
+			<p class="mt-2 text-sm text-base-content/60">Configure an IMAP/SMTP account to use Mail.</p>
+			<a href="/settings?tab=mail" class="btn btn-primary mt-6">Open Mail settings</a>
+		</div>
 	{:else}
-		{@const hasAccounts = ($accountsQuery.data ?? []).length > 0}
-		{#if !hasAccounts}
-			<div
-				class="mx-auto mb-4 flex max-w-2xl flex-wrap items-center gap-3 rounded-xl border border-dashed border-base-300 p-4"
-			>
-				<Mail size={20} class="shrink-0 text-brand-500" />
-				<p class="min-w-0 flex-1 text-sm text-base-content/70">
-					No mail account configured — mail you import is still available in Saved to RustShare
-					below.
-				</p>
-				<a href="/settings?tab=mail" class="btn btn-primary btn-sm shrink-0">Open Mail settings</a>
-			</div>
-		{/if}
 		<section
 			class="flex h-[calc(100vh-10rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
 		>
 			<header class="flex flex-wrap items-center gap-2 border-b border-base-300 p-2">
-				{#if hasAccounts}
-					<div class="min-w-48">
-						<select
-							class="select select-bordered select-sm w-full"
-							aria-label="Mail account"
-							bind:value={selectedAccountId}
-							onchange={() => {
-								selectedFolder = null;
-								mailboxView = 'remote';
-							}}
-						>
-							{#each $accountsQuery.data ?? [] as account}
-								<option value={account.id}>{account.name}</option>
-							{/each}
-						</select>
-						<p
-							class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
-								? 'text-error'
-								: 'text-base-content/50'}"
-						>
-							{selectedAccount?.last_error
-								? `Error: ${selectedAccount.last_error}`
-								: syncing
-									? 'Synchronizing…'
-									: selectedAccount?.last_connected_at
-										? `Connected ${formatDate(selectedAccount.last_connected_at)}`
-										: 'Not synchronized yet'}
-						</p>
-					</div>
-				{/if}
+				<div class="min-w-48">
+					<select
+						class="select select-bordered select-sm w-full"
+						aria-label="Mail account"
+						bind:value={selectedAccountId}
+						onchange={() => {
+							selectedFolder = null;
+							mailboxView = 'remote';
+						}}
+					>
+						{#each $accountsQuery.data ?? [] as account}
+							<option value={account.id}>{account.name}</option>
+						{/each}
+					</select>
+					<p
+						class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
+							? 'text-error'
+							: 'text-base-content/50'}"
+					>
+						{selectedAccount?.last_error
+							? `Error: ${selectedAccount.last_error}`
+							: syncing
+								? 'Synchronizing…'
+								: selectedAccount?.last_connected_at
+									? `Connected ${formatDate(selectedAccount.last_connected_at)}`
+									: 'Not synchronized yet'}
+					</p>
+				</div>
 				<form class="relative min-w-44 flex-1" onsubmit={submitSearch}>
 					<Search
 						size={14}
@@ -619,17 +695,26 @@
 						bind:value={searchInput}
 					/>
 				</form>
-				{#if hasAccounts}
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm btn-square"
-						aria-label="Synchronize mail"
-						onclick={syncMailbox}
-						disabled={syncing}
-					>
-						<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
-					</button>
-				{/if}
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm btn-square"
+					aria-label={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
+					title={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
+					onclick={toggleSortOrder}
+				>
+					{#if sortOrder === 'date_desc'}<ArrowDownWideNarrow
+							size={16}
+						/>{:else}<ArrowDownNarrowWide size={16} />{/if}
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm btn-square"
+					aria-label="Synchronize mail"
+					onclick={syncMailbox}
+					disabled={syncing}
+				>
+					<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
+				</button>
 				<div class="relative">
 					<button
 						type="button"
@@ -724,22 +809,20 @@
 							{/each}
 						{/if}
 						<div class="my-2 border-t border-base-300"></div>
-						{#if hasAccounts}
-							<button
-								type="button"
-								class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
-								'drafts'
-									? 'bg-brand-500/10 font-semibold text-brand-700'
-									: ''}"
-								aria-current={mailboxView === 'drafts' ? 'page' : undefined}
-								onclick={() => selectMailbox('drafts')}
-							>
-								<FileText size={15} /><span class="flex-1 text-left">Drafts</span
-								>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
-										>{($draftsQuery.data ?? []).length}</span
-									>{/if}
-							</button>
-						{/if}
+						<button
+							type="button"
+							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
+							'drafts'
+								? 'bg-brand-500/10 font-semibold text-brand-700'
+								: ''}"
+							aria-current={mailboxView === 'drafts' ? 'page' : undefined}
+							onclick={() => selectMailbox('drafts')}
+						>
+							<FileText size={15} /><span class="flex-1 text-left">Drafts</span
+							>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
+									>{($draftsQuery.data ?? []).length}</span
+								>{/if}
+						</button>
 						<button
 							type="button"
 							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
@@ -924,6 +1007,8 @@
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
+								title={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
+								disabled={actionPending}
 								onclick={() => toggleStar(selectedMessage!)}
 								><Star
 									size={15}
@@ -934,23 +1019,50 @@
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label="Save to RustShare"
+								title="Save to RustShare"
+								disabled={actionPending}
 								onclick={() => (saveOpen = true)}><Check size={15} /></button
+							>
+							<a
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Download .eml"
+								download
+								href={mailApi.remoteSourceUrl(
+									selectedAccountId!,
+									selectedMessage.uid,
+									selectedFolder!,
+									uidvalidity
+								)}><Download size={15} /></a
 							>
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
 								aria-label="Move message"
+								title="Move message"
+								disabled={actionPending}
 								onclick={() => (moveOpen = true)}><Folder size={15} /></button
+							>
+							<button
+								type="button"
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Archive message"
+								title="Archive message"
+								disabled={actionPending}
+								onclick={archiveSelected}><Archive size={15} /></button
 							>
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm btn-square text-error"
 								aria-label="Delete message"
+								title="Delete message"
+								disabled={actionPending}
 								onclick={() =>
 									runForSelection(
 										(uid) =>
 											mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-										'Message deleted'
+										'Message deleted',
+										'Deleted',
+										'Delete'
 									)}><Trash2 size={15} /></button
 							>
 						</div>
@@ -981,6 +1093,31 @@
 										>{formatDate($remoteBodyQuery.data.date)}</time
 									>
 								</div>
+								{#if $remoteBodyQuery.data.html}
+									{#if blockedRemoteImages > 0 && !remoteImagesAllowed}
+										<div
+											class="mt-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-sm"
+										>
+											<ShieldAlert size={16} class="shrink-0 text-warning" />
+											<span class="flex-1">Images were blocked to protect your privacy.</span>
+											<button
+												class="btn btn-outline btn-xs"
+												onclick={() => (remoteImagesAllowed = true)}>Load remote images</button
+											>
+										</div>
+									{:else if remoteImagesAllowed}
+										<div
+											class="mt-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/40 px-3 py-2 text-xs text-base-content/60"
+										>
+											<ShieldAlert size={14} class="shrink-0" />
+											<span class="flex-1">Remote images loaded for this message.</span>
+											<button
+												class="btn btn-ghost btn-xs"
+												onclick={() => (remoteImagesAllowed = false)}>Block images</button
+											>
+										</div>
+									{/if}
+								{/if}
 								<div class="prose mt-6 max-w-none text-sm">
 									{#if safeBodyHtml}{@html safeBodyHtml}{:else}<pre
 											class="whitespace-pre-wrap font-sans">{$remoteBodyQuery.data.text ||
@@ -991,9 +1128,8 @@
 									>
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
-											{#each $remoteBodyQuery.data.attachments as attachment}<a
-													class="btn btn-outline btn-sm max-w-full"
-													title={attachment.filename || `Attachment ${attachment.index + 1}`}
+											{#each $remoteBodyQuery.data.attachments as attachment, attachmentIndex}<a
+													class="btn btn-outline btn-sm"
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
 														selectedMessage.uid,
@@ -1001,10 +1137,11 @@
 														selectedFolder!,
 														uidvalidity
 													)}
-													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
-														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
-													>
-													<span class="shrink-0 text-base-content/45"
+													><Paperclip size={13} />{attachment.filename ||
+														`Attachment ${attachment.index + 1}`}{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
+															class="badge badge-ghost badge-sm">#{attachment.index + 1}</span
+														>{/if}
+													<span class="text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
 													></a
 												>{/each}
@@ -1018,44 +1155,67 @@
 
 			{#if selectedUids.length}
 				<div
-					class="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+					class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 				>
 					<span class="px-2 text-sm font-semibold">{selectedUids.length} selected</span>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.markMessageRead(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Marked read'
+								'Marked read',
+								'Marked read',
+								'Mark read'
 							)}>Read</button
 					>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.markMessageUnread(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Marked unread'
+								'Marked unread',
+								'Marked unread',
+								'Mark unread'
 							)}>Unread</button
 					>
 					<button
 						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) => mailApi.starMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Messages starred'
+								'Messages starred',
+								'Starred',
+								'Star'
 							)}>Star</button
 					>
-					<button class="btn btn-ghost btn-sm" onclick={() => (saveOpen = true)}>Save</button>
-					<button class="btn btn-ghost btn-sm" onclick={() => (moveOpen = true)}>Move</button>
+					<button
+						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
+						onclick={() => (saveOpen = true)}>Save</button
+					>
+					<button
+						class="btn btn-ghost btn-sm"
+						disabled={actionPending}
+						onclick={() => (moveOpen = true)}>Move</button
+					>
+					<button class="btn btn-ghost btn-sm" disabled={actionPending} onclick={archiveSelected}
+						>Archive</button
+					>
 					<button
 						class="btn btn-ghost btn-sm text-error"
+						disabled={actionPending}
 						onclick={() =>
 							runForSelection(
 								(uid) =>
 									mailApi.deleteMessage(selectedAccountId!, uid, selectedFolder!, uidvalidity),
-								'Messages deleted'
+								'Messages deleted',
+								'Deleted',
+								'Delete'
 							)}>Delete</button
 					>
 				</div>

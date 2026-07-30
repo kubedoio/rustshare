@@ -3,10 +3,11 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use futures_util::stream::BoxStream;
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSmtpSettings,
-    MailSourceMode, MailTlsMode, MailVisibility, SharePermissions, UserId,
+    MailSortOrder, MailSourceMode, MailTlsMode, MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
     AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
@@ -20,7 +21,7 @@ use rustshare_core::services::{
 };
 use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{is_missing_object_error, EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -235,6 +236,14 @@ pub enum MailError {
     Database(String),
     #[error("IMAP error: {0}")]
     Imap(String),
+    /// COPY+delete move fallback where the COPY succeeded but deleting the
+    /// source message failed. The destination mailbox now holds a copy of the
+    /// message, so a blind retry would create a duplicate. async-imap 0.11
+    /// does not expose the UIDPLUS COPYUID response from UID COPY
+    /// (`Session::uid_copy` returns `Result<()>`), so the copied message
+    /// cannot be rolled back programmatically; surface the state instead.
+    #[error("Partial move: {0}")]
+    PartialMove(String),
     #[error("SMTP send failed")]
     Smtp,
     #[error("Import cancelled")]
@@ -275,6 +284,21 @@ pub struct RemoteMailMessageSource {
     pub rfc822: Vec<u8>,
     pub is_seen: bool,
     pub is_flagged: bool,
+}
+
+/// Body of a downloaded mail attachment.
+pub enum MailAttachmentBody {
+    /// Fully buffered bytes. Used for content-addressed import blobs, whose
+    /// size is bounded by the 25 MB raw-message cap enforced on `.eml`
+    /// upload/import, so buffering in memory is acceptable.
+    Buffered(bytes::Bytes),
+    /// Streamed bytes. Used for the draft file fallback, where attachments
+    /// reference workspace files that can be many GB and must not be
+    /// buffered in memory.
+    Stream {
+        content_length: Option<i64>,
+        stream: BoxStream<'static, std::io::Result<bytes::Bytes>>,
+    },
 }
 
 impl MailService {
@@ -933,7 +957,8 @@ impl MailService {
         Ok(visible)
     }
 
-    /// List imported mail messages for a user.
+    /// List imported mail messages for a user, ordered by message date
+    /// (`COALESCE(sent_at, imported_at)`) in the requested direction.
     pub async fn list_messages(
         &self,
         tenant_id: Uuid,
@@ -941,9 +966,10 @@ impl MailService {
         search: Option<&str>,
         cursor: Option<(DateTime<Utc>, Uuid)>,
         limit: i64,
+        sort: MailSortOrder,
     ) -> Result<Vec<MailMessage>, MailError> {
         self.metadata_store
-            .list_mail_messages_page(tenant_id, owner_id, search, cursor, limit)
+            .list_mail_messages_page(tenant_id, owner_id, search, cursor, limit, sort)
             .await
             .map_err(|e| MailError::Database(e.to_string()))
     }
@@ -1051,6 +1077,102 @@ impl MailService {
             .list_mail_attachments_by_message_id(message_id, tenant_id, owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Download a single attachment's stored bytes, scoped to the owning user
+    /// and tenant.
+    ///
+    /// Prefers the content-addressed object-store blob; falls back to the
+    /// linked file's content when no usable blob exists. Only a
+    /// confirmed-missing object (S3 `NoSuchKey`/404) proceeds to the fallback
+    /// or is reported as `NotFound` (404), so callers cannot distinguish
+    /// storage layout from absence; any other storage failure (unreachable
+    /// store, access denied, integrity mismatch) propagates as
+    /// `MailError::Storage` (5xx) instead of being misreported as missing.
+    pub async fn download_attachment(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        attachment_id: Uuid,
+    ) -> Result<(MailAttachment, MailAttachmentBody), MailError> {
+        // Verify the caller can access the message first so cross-tenant
+        // requests are rejected before any storage access happens. Map a
+        // tenant/owner mismatch to NotFound so this endpoint does not leak
+        // message existence (unlike the older read endpoints, which use 403).
+        self.get_message(tenant_id, owner_id, message_id)
+            .await
+            .map_err(|err| match err {
+                MailError::PermissionDenied => MailError::NotFound(message_id),
+                other => other,
+            })?;
+        let attachment = self
+            .metadata_store
+            .find_mail_attachment_by_id(attachment_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(attachment_id))?;
+
+        if let Some(blob_key) = &attachment.blob_key {
+            match self.object_store.get(blob_key).await {
+                // Imported blobs are bounded by the 25 MB raw-message import
+                // cap, so buffering them in memory is acceptable.
+                Ok(bytes) => return Ok((attachment, MailAttachmentBody::Buffered(bytes))),
+                Err(e) if is_missing_object_error(&e) => {
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        error = %e,
+                        "mail attachment blob missing from object store; trying file fallback"
+                    );
+                }
+                Err(e) => return Err(MailError::Storage(e.to_string())),
+            }
+        }
+
+        if let Some(file_id) = attachment.file_id {
+            let file = match self.file_service.get_file(file_id, owner_id).await {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    // A missing or inaccessible linked file is reported as a
+                    // missing attachment (404), never as a storage failure.
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        file_id = %file_id,
+                        error = %e,
+                        "mail attachment file fallback failed: file metadata unreadable"
+                    );
+                    None
+                }
+            };
+            if let Some(file) = file {
+                // Draft attachments reference workspace files that can be many
+                // GB, so stream the content instead of buffering it.
+                match self.object_store.get_stream(&file.storage_key()).await {
+                    Ok((_content_type, content_length, stream)) => {
+                        return Ok((
+                            attachment,
+                            MailAttachmentBody::Stream {
+                                content_length,
+                                stream: Box::pin(stream),
+                            },
+                        ));
+                    }
+                    Err(e) if is_missing_object_error(&e) => {
+                        tracing::warn!(
+                            attachment_id = %attachment_id,
+                            file_id = %file_id,
+                            error = %e,
+                            "mail attachment file content missing from object store"
+                        );
+                    }
+                    Err(e) => return Err(MailError::Storage(e.to_string())),
+                }
+            }
+        }
+
+        // No readable bytes anywhere: report NotFound (404) so a missing blob
+        // is indistinguishable from a missing attachment.
+        Err(MailError::NotFound(attachment_id))
     }
 
     // ============================================================================
@@ -1315,6 +1437,10 @@ impl MailService {
 
     /// List message summaries in an IMAP folder, along with the folder's
     /// UIDVALIDITY so callers can submit stable UID selections.
+    ///
+    /// `cursor_uid` is direction-dependent: for `date_desc` it is the
+    /// `before_uid` (page continues below it), for `date_asc` the `after_uid`
+    /// (page continues above it).
     #[allow(clippy::too_many_arguments)]
     pub async fn list_imap_messages(
         &self,
@@ -1323,15 +1449,16 @@ impl MailService {
         account_id: MailAccountId,
         folder: &str,
         limit: usize,
-        before_uid: Option<u32>,
+        cursor_uid: Option<u32>,
         search: Option<&str>,
+        sort: MailSortOrder,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
         let result = session
-            .fetch_message_summaries(folder, limit, before_uid, search)
+            .fetch_message_summaries(folder, limit, cursor_uid, search, sort)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;
@@ -3867,15 +3994,40 @@ async fn run_imap_mailbox_mutation<S: ImapMailboxSession + ?Sized>(
             .await
             .map_err(imap_to_mail_error),
         MailboxMutation::Move(destination_folder) => {
-            if !session.supports_move().await.map_err(imap_to_mail_error)? {
+            if session.supports_move().await.map_err(imap_to_mail_error)? {
+                return session
+                    .move_message(folder, uid, destination_folder)
+                    .await
+                    .map_err(imap_to_mail_error);
+            }
+            // Servers without UID MOVE fall back to COPY + delete. UIDPLUS is
+            // required so the EXPUNGE stays scoped to this UID only.
+            if !session
+                .supports_uidplus()
+                .await
+                .map_err(imap_to_mail_error)?
+            {
                 return Err(MailError::InvalidSource(
-                    "Server does not support MOVE; refusing unsafe mailbox move".to_string(),
+                    "Server supports neither MOVE nor UIDPLUS; cannot move the message safely"
+                        .to_string(),
                 ));
             }
             session
-                .move_message(folder, uid, destination_folder)
+                .copy_message(folder, uid, destination_folder)
                 .await
-                .map_err(imap_to_mail_error)
+                .map_err(imap_to_mail_error)?;
+            // The IMAP client cannot report the COPYUID of the copy, so a
+            // failed source delete cannot be rolled back. Return a distinct
+            // error so the caller (and user) knows the destination already
+            // holds a copy and a retry would duplicate the message.
+            session.delete_message(folder, uid).await.map_err(|e| {
+                let reason = imap_to_mail_error(e);
+                MailError::PartialMove(format!(
+                    "Message was copied to '{destination_folder}' but could not be removed \
+                         from '{folder}': {reason}. The destination now holds a copy of the \
+                         message; remove it manually before retrying to avoid duplicates."
+                ))
+            })
         }
         MailboxMutation::Delete => {
             if !session
@@ -4071,6 +4223,7 @@ mod tests {
         supports_uidplus: bool,
         folder_status: crate::services::imap_client::FolderStatus,
         calls: Vec<String>,
+        fail_delete: bool,
     }
 
     #[async_trait::async_trait]
@@ -4125,8 +4278,22 @@ mod tests {
             Ok(self.supports_uidplus)
         }
 
+        async fn copy_message(
+            &mut self,
+            folder: &str,
+            uid: u32,
+            destination_folder: &str,
+        ) -> Result<(), ImapError> {
+            self.calls
+                .push(format!("copy:{folder}:{uid}:{destination_folder}"));
+            Ok(())
+        }
+
         async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError> {
             self.calls.push(format!("delete:{folder}:{uid}"));
+            if self.fail_delete {
+                return Err(ImapError::CommandFailed("UID STORE failed".to_string()));
+            }
             Ok(())
         }
     }
@@ -4139,6 +4306,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err = run_imap_mailbox_mutation(
@@ -4163,6 +4331,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4235,6 +4404,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4268,13 +4438,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mailbox_mutation_rejects_move_without_move_capability() {
+    async fn mailbox_mutation_move_falls_back_to_copy_delete_without_move_capability() {
         let mut session = MockMailboxSession {
             uidvalidity: Some(9),
             supports_move: false,
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
+        };
+
+        run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect("MOVE-less server with UIDPLUS should fall back to COPY+delete");
+
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "supports_move",
+                "supports_uidplus",
+                "copy:Inbox:42:Archive",
+                "delete:Inbox:42",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_rejects_move_without_move_or_uidplus() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: false,
+            supports_uidplus: false,
+            folder_status: Default::default(),
+            calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err = run_imap_mailbox_mutation(
@@ -4285,10 +4489,56 @@ mod tests {
             MailboxMutation::Move("Archive"),
         )
         .await
-        .expect_err("MOVE-less server should fail");
+        .expect_err("server without MOVE or UIDPLUS should fail");
 
-        assert!(err.to_string().contains("does not support MOVE"));
-        assert_eq!(session.calls, vec!["select:Inbox", "supports_move"]);
+        assert!(err.to_string().contains("neither MOVE nor UIDPLUS"));
+        assert_eq!(
+            session.calls,
+            vec!["select:Inbox", "supports_move", "supports_uidplus"]
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_mutation_move_fallback_reports_partial_move_on_delete_failure() {
+        let mut session = MockMailboxSession {
+            uidvalidity: Some(9),
+            supports_move: false,
+            supports_uidplus: true,
+            folder_status: Default::default(),
+            calls: Vec::new(),
+            fail_delete: true,
+        };
+
+        let err = run_imap_mailbox_mutation(
+            &mut session,
+            "Inbox",
+            Some(9),
+            42,
+            MailboxMutation::Move("Archive"),
+        )
+        .await
+        .expect_err("failing delete after a successful copy should report a partial move");
+
+        assert!(
+            matches!(err, MailError::PartialMove(_)),
+            "expected PartialMove, got {err:?}"
+        );
+        assert!(err.to_string().contains("copied to 'Archive'"));
+        assert!(err.to_string().contains("UID STORE failed"));
+        assert!(err.to_string().contains("now holds a copy"));
+        // The copy happened, and no cleanup was attempted against the
+        // destination (the client cannot identify the copied message without
+        // COPYUID), so a retry would duplicate it — hence the distinct error.
+        assert_eq!(
+            session.calls,
+            vec![
+                "select:Inbox",
+                "supports_move",
+                "supports_uidplus",
+                "copy:Inbox:42:Archive",
+                "delete:Inbox:42",
+            ]
+        );
     }
 
     #[tokio::test]
@@ -4299,6 +4549,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(
@@ -4355,6 +4606,7 @@ mod tests {
             supports_uidplus: false,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         let err =
@@ -4374,6 +4626,7 @@ mod tests {
             supports_uidplus: true,
             folder_status: Default::default(),
             calls: Vec::new(),
+            fail_delete: false,
         };
 
         run_imap_mailbox_mutation(&mut session, "Trash", Some(9), 42, MailboxMutation::Delete)
