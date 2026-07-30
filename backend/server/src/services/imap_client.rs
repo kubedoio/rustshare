@@ -345,14 +345,7 @@ impl ImapSession {
         Ok(mailbox.uid_validity)
     }
 
-    /// Fetch one page of message summaries from a folder.
-    ///
-    /// IMAP has no server-side date sort, so ordering is arrival-based: UIDs
-    /// increase as messages arrive, and `sort` picks the traversal direction
-    /// (`date_desc` walks from the highest UID down, `date_asc` from the
-    /// lowest up). `cursor` is direction-dependent — a `before_uid` for
-    /// `date_desc`, an `after_uid` for `date_asc`. Within the fetched page
-    /// the summaries are then refined by their parsed Date header.
+    /// Fetch one date-sorted page of message summaries from a folder.
     pub async fn fetch_message_summaries(
         &mut self,
         folder: &str,
@@ -367,35 +360,37 @@ impl ImapSession {
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(criteria))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-        let limited = select_page_uids(uids.into_iter().collect(), limit, cursor, sort);
-        if limited.is_empty() {
+        let uids: Vec<u32> = uids.into_iter().collect();
+        if uids.is_empty() {
             return Ok((uidvalidity, Vec::new()));
         }
-
-        let uid_set = limited
-            .iter()
-            .map(|u| u.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
 
         // Fetch the raw header block instead of ENVELOPE: some servers (e.g.
         // Stalwart with UTF8=ACCEPT) return raw UTF-8 inside ENVELOPE quoted
         // strings, which the imap-proto parser rejects. BODY.PEEK[HEADER] is a
         // length-prefixed literal and parses regardless of content encoding.
-        let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
-            self.session
-                .uid_fetch(uid_set, "(UID RFC822.SIZE FLAGS BODY.PEEK[HEADER])")
-                .await?
-                .try_collect::<Vec<Fetch>>()
-                .await
-        })
-        .await
-        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-
-        let mut summaries: Vec<ImapMessageSummary> =
-            fetches.into_iter().filter_map(summary_from_fetch).collect();
+        // ponytail: this fetches all matching headers because async-imap has no
+        // SORT API; use server-side SORT when the connector exposes it.
+        let mut summaries = Vec::with_capacity(uids.len());
+        for chunk in uids.chunks(500) {
+            let uid_set = chunk
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+                self.session
+                    .uid_fetch(uid_set, "(UID RFC822.SIZE FLAGS BODY.PEEK[HEADER])")
+                    .await?
+                    .try_collect::<Vec<Fetch>>()
+                    .await
+            })
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+            summaries.extend(fetches.into_iter().filter_map(summary_from_fetch));
+        }
         sort_summaries_by_date(&mut summaries, sort);
-        Ok((uidvalidity, summaries))
+        Ok((uidvalidity, select_summary_page(summaries, limit, cursor)))
     }
 
     pub async fn fetch_rfc822(
@@ -986,42 +981,20 @@ fn summary_from_header_bytes(
     })
 }
 
-/// Select the page of UIDs to fetch, sorted so the limit returns a stable,
-/// deterministic slice instead of an arbitrary HashSet subset.
-///
-/// IMAP UIDs increase with arrival, so traversal direction is the
-/// arrival-order proxy for date sorting: `date_desc` walks from the highest
-/// UID down (`cursor` = `before_uid`), `date_asc` from the lowest UID up
-/// (`cursor` = `after_uid`).
-fn select_page_uids(
-    mut uids: Vec<u32>,
+fn select_summary_page(
+    summaries: Vec<ImapMessageSummary>,
     limit: usize,
     cursor: Option<u32>,
-    sort: MailSortOrder,
-) -> Vec<u32> {
-    match sort {
-        MailSortOrder::DateDesc => {
-            uids.sort_unstable_by(|a, b| b.cmp(a));
-            uids.into_iter()
-                .filter(|uid| cursor.is_none_or(|c| *uid < c))
-                .take(limit)
-                .collect()
-        }
-        MailSortOrder::DateAsc => {
-            uids.sort_unstable();
-            uids.into_iter()
-                .filter(|uid| cursor.is_none_or(|c| *uid > c))
-                .take(limit)
-                .collect()
-        }
-    }
+) -> Vec<ImapMessageSummary> {
+    let start = cursor
+        .and_then(|cursor| summaries.iter().position(|summary| summary.uid == cursor))
+        .map_or(0, |position| position + 1);
+    summaries.into_iter().skip(start).take(limit).collect()
 }
 
-/// Order a fetched page by (Date header, UID) in the requested direction.
+/// Order a mailbox by (Date header, UID) in the requested direction.
 /// Messages without a parseable Date header are treated as the oldest; the
-/// UID is the deterministic tiebreak. Cross-page ordering stays
-/// arrival-based (UID traversal), so this only refines the within-page
-/// order.
+/// UID is the deterministic tiebreak.
 fn sort_summaries_by_date(summaries: &mut [ImapMessageSummary], sort: MailSortOrder) {
     match sort {
         MailSortOrder::DateDesc => {
@@ -1157,30 +1130,6 @@ mod tests {
         assert_eq!(query, "ALL SINCE 01-Jan-2024 BEFORE 31-Dec-2024");
     }
 
-    #[test]
-    fn select_page_uids_desc_takes_highest_first() {
-        let page = select_page_uids(vec![3, 9, 1, 7, 5], 3, None, MailSortOrder::DateDesc);
-        assert_eq!(page, vec![9, 7, 5]);
-    }
-
-    #[test]
-    fn select_page_uids_desc_continues_below_cursor() {
-        let page = select_page_uids(vec![3, 9, 1, 7, 5], 3, Some(5), MailSortOrder::DateDesc);
-        assert_eq!(page, vec![3, 1]);
-    }
-
-    #[test]
-    fn select_page_uids_asc_takes_lowest_first() {
-        let page = select_page_uids(vec![3, 9, 1, 7, 5], 3, None, MailSortOrder::DateAsc);
-        assert_eq!(page, vec![1, 3, 5]);
-    }
-
-    #[test]
-    fn select_page_uids_asc_continues_above_cursor() {
-        let page = select_page_uids(vec![3, 9, 1, 7, 5], 3, Some(5), MailSortOrder::DateAsc);
-        assert_eq!(page, vec![7, 9]);
-    }
-
     fn summary_with(uid: u32, sent_at: Option<DateTime<Utc>>) -> ImapMessageSummary {
         ImapMessageSummary {
             uid,
@@ -1231,5 +1180,29 @@ mod tests {
         assert_eq!(summaries[0].uid, 2);
         sort_summaries_by_date(&mut summaries, MailSortOrder::DateAsc);
         assert_eq!(summaries[0].uid, 1);
+    }
+
+    #[test]
+    fn pagination_uses_the_complete_date_sorted_mailbox() {
+        let newest = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let middle = DateTime::from_timestamp(1_600_000_000, 0).unwrap();
+        let oldest = DateTime::from_timestamp(1_500_000_000, 0).unwrap();
+        let mut summaries = vec![
+            summary_with(100, Some(oldest)),
+            summary_with(1, Some(newest)),
+            summary_with(50, Some(middle)),
+        ];
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateDesc);
+
+        let first = select_summary_page(summaries.clone(), 2, None);
+        assert_eq!(
+            first.iter().map(|summary| summary.uid).collect::<Vec<_>>(),
+            vec![1, 50]
+        );
+        let second = select_summary_page(summaries, 2, Some(50));
+        assert_eq!(
+            second.iter().map(|summary| summary.uid).collect::<Vec<_>>(),
+            vec![100]
+        );
     }
 }

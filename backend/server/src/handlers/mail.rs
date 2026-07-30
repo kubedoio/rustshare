@@ -857,8 +857,7 @@ pub struct ListMailMessagesQuery {
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
-    /// Direction-dependent paging cursor: a `before_uid` for
-    /// `sort=date_desc`, an `after_uid` for `sort=date_asc`.
+    /// UID of the last message returned by the previous date-sorted page.
     cursor: Option<i64>,
     search: Option<String>,
     /// Sort order: `date_desc` (default, newest first) or `date_asc`
