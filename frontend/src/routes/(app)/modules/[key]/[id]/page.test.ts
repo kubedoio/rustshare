@@ -28,6 +28,8 @@ function createMockQuery(data: unknown) {
 	const store = readable({
 		data,
 		isLoading: false,
+		isFetching: true,
+		error: null,
 		refetch: vi.fn()
 	});
 	return {
@@ -115,6 +117,22 @@ vi.mock('lucide-svelte', () => ({
 }));
 
 describe('Note detail page conflict banner', () => {
+	it('does not render a cached note whose id belongs to the previous route', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		vi.mocked(createQuery).mockReturnValue(
+			createMockQuery({
+				id: 'note-2',
+				name: 'Previous note',
+				content: 'Previous note content',
+				metadata: {}
+			})
+		);
+
+		render(Page);
+
+		expect(screen.queryByText('Previous note')).toBeNull();
+	});
+
 	it('renders resolution actions for title_mismatch conflicts', async () => {
 		const { createQuery } = await import('$lib/query-compat');
 		const mockedCreateQuery = vi.mocked(createQuery);
