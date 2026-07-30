@@ -110,7 +110,12 @@
 
 	let dismissedConflict = $state(false);
 
-	let item = $derived($query.data as ModuleItem | undefined);
+	// TanStack keeps the previous query's data while a new key starts fetching.
+	// Never render that stale note under the new route id.
+	let item = $derived.by(() => {
+		const data = $query.data as ModuleItem | undefined;
+		return data?.id === id ? data : undefined;
+	});
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
 	let subtitle = $derived.by(() => {
@@ -627,7 +632,7 @@
 </script>
 
 <div class="module-detail-page h-full">
-	{#if $query.isLoading}
+	{#if $query.isLoading || ($query.isFetching && !item)}
 		<div class="flex h-full items-center justify-center">
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
