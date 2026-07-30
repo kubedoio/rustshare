@@ -5,6 +5,7 @@
 	import { getVaultFileContent, saveVaultFileContent } from '$lib/api/vaults';
 	import { queryClient } from '$lib/query-client';
 	import RichMarkdownEditor from '$lib/editor/components/RichMarkdownEditor.svelte';
+	import { splitFrontmatter, wrapFrontmatter } from '$lib/editor/adapter/frontmatter';
 	import type { VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
 	import { sha256Hex } from '$lib/utils/sha256';
@@ -36,6 +37,8 @@
 	let loadedContent = $state<string | null>(null);
 	let loadedPath = $state<string | null>(null);
 	let loadedVaultId = $state<string | null>(null);
+	let editorRegion = $state<HTMLDivElement>();
+	let richEditor = $state<RichMarkdownEditor>();
 	let isDirty = $derived(file !== null && localContent !== (loadedContent ?? ''));
 	let hasConflict = $derived(
 		editBaseRev !== null && currentServerRev !== null && editBaseRev !== currentServerRev
@@ -204,6 +207,7 @@
 	}
 
 	async function copyMyChanges() {
+		syncMarkdown();
 		try {
 			await navigator.clipboard.writeText(localContent);
 			conflictCopied = true;
@@ -216,6 +220,7 @@
 
 	function downloadMyVersion() {
 		if (!file) return;
+		syncMarkdown();
 		const name = file.path.split('/').pop() || 'vault-file.md';
 		const blob = new Blob([localContent], { type: 'text/markdown;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
@@ -235,6 +240,7 @@
 
 	// Warn before losing unsaved changes on tab close/refresh or in-app navigation.
 	function handleBeforeUnload(event: BeforeUnloadEvent) {
+		syncMarkdown();
 		if (isDirty) {
 			event.preventDefault();
 			event.returnValue = '';
@@ -242,6 +248,7 @@
 	}
 
 	beforeNavigate((navigation) => {
+		syncMarkdown();
 		if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) {
 			navigation.cancel();
 		}
@@ -276,11 +283,38 @@
 	const isMarkdown = $derived(
 		file?.path.toLowerCase().endsWith('.md') || file?.path.toLowerCase().endsWith('.markdown')
 	);
+	const editorDocument = $derived(splitFrontmatter(localContent));
+
+	function syncMarkdown() {
+		if (!isMarkdown || !richEditor) return;
+		const markdown = richEditor.getMarkdown();
+		localContent = editorDocument.hasFrontmatter
+			? wrapFrontmatter(editorDocument.frontmatter, markdown)
+			: markdown;
+	}
+
+	function save() {
+		syncMarkdown();
+		if (
+			canEdit &&
+			localContent !== (loadedContent ?? '') &&
+			editBaseRev !== null &&
+			!hasConflict &&
+			!tombstoneConflict &&
+			!$saveMutation.isPending
+		) {
+			$saveMutation.mutate().catch(() => {});
+		}
+	}
 
 	function handleKeyDown(event: KeyboardEvent) {
-		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+		if (
+			(event.ctrlKey || event.metaKey) &&
+			event.key === 's' &&
+			editorRegion?.contains(event.target as Node)
+		) {
 			event.preventDefault();
-			if (canSave) $saveMutation.mutate().catch(() => {});
+			save();
 		}
 	}
 </script>
@@ -299,7 +333,13 @@
 		</p>
 	</div>
 {:else}
-	<div class="space-y-3">
+	<div
+		class="space-y-3"
+		bind:this={editorRegion}
+		onfocusout={(event) => {
+			if (!editorRegion?.contains(event.relatedTarget as Node | null)) syncMarkdown();
+		}}
+	>
 		<div class="flex items-center justify-between">
 			<div>
 				<h3 class="font-display text-lg">{file.path}</h3>
@@ -316,11 +356,7 @@
 				</p>
 			</div>
 			{#if canEdit}
-				<button
-					class="btn rounded-xl btn-primary btn-sm"
-					disabled={!canSave}
-					onclick={() => $saveMutation.mutate().catch(() => {})}
-				>
+				<button class="btn rounded-xl btn-primary btn-sm" disabled={!canSave} onclick={save}>
 					{#if $saveMutation.isPending}
 						<Loader class="h-4 w-4 animate-spin" />
 					{:else if saveSuccess}
@@ -421,11 +457,15 @@
 			<div class="h-[min(70vh,50rem)] min-h-[32rem]">
 				{#if isMarkdown}
 					<RichMarkdownEditor
-						content={localContent}
-						currentMarkdown={localContent}
+						bind:this={richEditor}
+						content={editorDocument.body}
+						currentMarkdown={editorDocument.body}
 						editable={!$contentQuery.isLoading && !$saveMutation.isPending}
 						hasAttachmentHandler={false}
-						on:change={(event) => (localContent = event.detail.markdown)}
+						on:change={(event) =>
+							(localContent = editorDocument.hasFrontmatter
+								? wrapFrontmatter(editorDocument.frontmatter, event.detail.markdown)
+								: event.detail.markdown)}
 					/>
 				{:else}
 					<textarea

@@ -307,7 +307,10 @@ export function editorToMarkdown(editor: Editor): string {
 		const markdownStorage = storage?.markdown;
 
 		if (markdownStorage?.getMarkdown) {
-			return markdownStorage.getMarkdown();
+			return markdownStorage
+				.getMarkdown()
+				.replace(/\\\[\\\[/g, '[[')
+				.replace(/\\\]\\\]/g, ']]');
 		}
 
 		// Fallback: return plain text if markdown extension missing

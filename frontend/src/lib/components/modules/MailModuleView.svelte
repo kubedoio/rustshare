@@ -1212,7 +1212,8 @@
 														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
 													>
 													{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
-															class="badge badge-ghost badge-sm shrink-0">#{attachment.index + 1}</span
+															class="badge badge-ghost badge-sm shrink-0"
+															>#{attachment.index + 1}</span
 														>{/if}
 													<span class="shrink-0 text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span

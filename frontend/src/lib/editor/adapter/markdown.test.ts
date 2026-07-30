@@ -227,6 +227,13 @@ describe('createRichEditor', () => {
 		expect(html).toContain('<em>italic</em>');
 	});
 
+	it('preserves Obsidian wikilinks when serialized', () => {
+		editor = createRichEditor({ content: 'See [[Project Note|the plan]] and ![[diagram.png]]' });
+		const markdown = editorToMarkdown(editor);
+		expect(markdown).toContain('[[Project Note|the plan]]');
+		expect(markdown).toContain('![[diagram.png]]');
+	});
+
 	it('fires onUpdate callback', () => {
 		let lastMarkdown = '';
 		editor = createRichEditor({
