@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic ascending/descending date sorting for mail lists (#182): both the imported ("Saved to RustShare") list and the remote IMAP folder list accept `sort=date_desc` (default, newest first) or `sort=date_asc` (oldest first), reject unknown values with a 400, and order deterministically by message date with an id/UID tiebreak. The Mail UI gains a sort toggle whose preference is persisted globally in `localStorage`.
+
 ### Changed
 
 - Consolidated the root and backend Cargo workspaces into one unified workspace with a single `Cargo.lock`, removing the nested `backend/Cargo.toml` workspace and eliminating ambiguous dependency resolution.
@@ -20,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated CI so documentation-only and frontend-only changes no longer trigger the full Rust workflow; the DCO check now runs in its own always-on workflow.
 
 ### Fixed
+
+- Quoted the space-containing `RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME` value in `.env.example` and made `scripts/final-launch-smoke.sh` extract only the variables it needs from `.env` via grep/sed instead of sourcing the file, so `.env` values can no longer break or execute inside the smoke script. Refs #132.
+- Fixed `scripts/final-launch-smoke.sh` CSRF handling to match the backend's double-submit protection: the smoke script now reads the `rustshare_csrf_token` cookie from its login cookie jar and sends it as the `X-Rustshare-Csrf` header on every mutating authenticated request instead of a static `1`, which previously 403'd all mutations. Refs #132.
+- Documented that the auto-generated admin bootstrap password is written to container-local storage once, does not survive container recreation, and must be recorded immediately; `RUSTSHARE_ADMIN_PASSWORD` in `.env` before first start is now documented as the durable alternative across README.md, docs/DEPLOYMENT.md, `.env.example`, and `scripts/pre-flight.sh` output. Refs #132.
+- Distinguished a confirmed missing object-storage bucket from unreachable endpoints or rejected credentials at startup: only a real NotFound/NoSuchBucket (HTTP 404) falls into the bucket-creation path, while connection and 403 errors now fail fast with an actionable endpoint/credentials message. Refs #154, #132.
+- Documented secret generation (`scripts/pre-flight.sh` or manual values) as a required quickstart step in README.md and docs/DEPLOYMENT.md, added expected startup duration and a first-start troubleshooting subsection (secret validation errors, unreachable RustFS, bootstrap admin password retrieval). Refs #154, #132.
+- Extended `scripts/final-launch-smoke.sh` with nginx health and proxied backend readiness assertions and with share revocation coverage (public link returns 404/410 after revocation; internal share disappears from the recipient's list). Refs #154, #132.
+- Added a backend liveness healthcheck (`/health` via wget) and `restart: unless-stopped` policies for postgres, rustfs, backend, and nginx to the base `docker-compose.yml`; nginx now proxies `/health/ready` to the backend. Refs #154, #132.
+- Made WebUI vault Markdown editing reliable and conflict-safe (#185): structured 409 conflict bodies (`current_rev`, `server_sha256`) now propagate through the frontend API client; a dirty editor warns on refresh/tab close (`beforeunload`), in-app navigation (`beforeNavigate`), and file switching; conflicts show a recovery panel (copy changes to clipboard, download local version, reload server version after confirmation) instead of reload-and-lose; conflicts whose server content is identical to the editor content (SHA-256 match) silently adopt the server revision instead of alarming the user; added HTTP integration coverage for the `/content/*` vault-sync endpoints.
+- Fixed mail attachment filenames, metadata, and downloads (#183): imported mail attachments can now be downloaded via `GET /api/v1/mail/messages/{id}/attachments/{attachment_id}` serving the exact stored bytes (object-store blob with linked-file fallback; missing blobs and cross-tenant access return 404), and remote IMAP messages now expose a raw `.eml` download via `GET /api/v1/mail/accounts/{id}/messages/{uid}/source`. The message detail page offers a per-attachment Download action, the remote viewer gains a Download .eml toolbar action, and duplicate attachment filenames are distinguished by an index badge.
+- WebUI bug-bash fixes for issue #186 (WB-001 through WB-012): the login page shows "Invalid email or password" instead of a raw "Unauthorized"; dashboard recent activity uses grammatical "You created …" copy and neutral "A file"/"A folder" labels instead of "Unknown"; the files toolbar's icon-only New folder/Upload buttons have accessible names; the note editor header no longer overlaps or clips its actions at 390px; imported mail stays reachable in "Saved to RustShare" without an IMAP account; the mail module restores its list context (mailbox/account/folder/search) after a detail round-trip; the mail bulk-action bar and remote attachment chips wrap/truncate at narrow widths; the shares page fits 390px viewports; the admin sidebar collapses behind a hamburger below md; and date/time display is unified through the shared `format.ts` policy (relative for lists/feeds, one absolute format for details).
+
+### Security
+
+- Sanitized response filenames on every mail download path (remote/imported attachment, imported/remote `.eml` source) with one shared Content-Disposition builder: an ASCII-only, injection-proof `filename=` fallback (control characters stripped, quotes/backslashes/slashes neutralized, `..` traversal collapsed, length capped, Windows reserved device names prefixed) plus an RFC 5987 `filename*` carrying the safe Unicode original. Storage blob keys are never exposed in responses (#183).
 
 - Added safe asynchronous garbage collection for orphaned global `blobs/<sha256>` objects, with durable coalesced candidates, a 24-hour default grace period, cross-process writer/collector locking, global reference checks, leased workers, conservative retry, metrics, and disabled-by-default operator controls.
 
@@ -32,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hardened the production Compose contract by requiring same-host external TLS termination on a dedicated loopback port, preserving the validated upstream HTTPS scheme, probing dependency readiness, and pinning RustFS to an immutable image digest.
 - Audited and hardened permission-aware AI indexing. All indexed note chunks now carry a canonical `IndexAclProjection` resolved from the authoritative permission model; retrieval pre-filters by tenant, caller principals, visibility, and embedding policy; missing, malformed, stale, and cross-tenant ACL data fail closed; share revocation and note lifecycle events propagate to the index without requiring a full rebuild. Added backend-agnostic contract tests against both `InMemoryVectorStore` and `PgVectorStore`.
+- Mail module: remote images in message previews and imported message bodies are now blocked by default so opening a message never triggers external image requests, with a privacy notice and an explicit per-message "Load remote images" action in both the IMAP preview and the imported message page. `cid:` embedded images now resolve in the IMAP preview via the attachment download endpoint, and remote `srcset` candidates are stripped alongside `src`. The imported-parts endpoint gained an opt-in `load_remote_images=true` query parameter and reports blocked images via the `X-Mail-Blocked-Remote-Images` response header. Refs #181.
 
 ### Documentation
 
@@ -43,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added RustShare Mail Phase 3: IMAP selected import. Users can connect IMAP accounts with encrypted credentials, browse folders and messages, and create import jobs that copy selected messages into RustShare as durable mail artifacts. Includes account management, an import-job worker, audit events, and REST endpoints for accounts, folders, messages, and jobs.
 - Added RustShare Mail Phase 4: archive jobs. Users can create folder/date-range IMAP archive jobs that incrementally copy messages into RustShare, resume from the last imported UID, apply optional retention soft-deletion, and retry failed runs with exponential backoff. Includes audit events and REST endpoints under `/api/v1/mail/accounts/{id}/archive-jobs` and `/api/v1/mail/archive-jobs/{id}`. Refs #147.
 - Added RustShare Mail Phase 5 WebUI client. Users can manage IMAP accounts, browse folders and message summaries, queue selected imports, view archive/import status, read imported mail with sanitized HTML, inspect attachments, and manage links to RustShare objects.
+- Added reliable RustShare Mail move and archive actions. Single and bulk archive buttons file messages into the account's `\Archive`-role folder (with a clear error when none exists), IMAP servers without UID MOVE now fall back to a UIDPLUS-gated COPY + delete sequence instead of failing outright, bulk actions report per-item failures and keep failed messages selected for retry, and toolbar/bulk buttons are disabled while a request is in flight to prevent duplicate submissions. Refs #184.
 
 ### Changed
 

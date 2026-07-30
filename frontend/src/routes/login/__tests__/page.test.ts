@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$app/navigation', () => ({
@@ -32,6 +32,8 @@ vi.mock('$app/stores', () => ({
 
 import LoginPage from '../+page.svelte';
 import { getAuthConfig } from '$lib/api/auth';
+import { authStore } from '$lib/stores/auth';
+import { ApiError } from '$lib/api/types';
 
 describe('login page', () => {
 	beforeEach(() => {
@@ -96,6 +98,57 @@ describe('login page', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText(/No login method is enabled for this deployment/i)).toBeTruthy();
+		});
+	});
+
+	it('maps a bare 401 to a friendly message on failed login', async () => {
+		vi.mocked(getAuthConfig).mockResolvedValue({
+			password_login_enabled: true,
+			oidc_enabled: false,
+			oidc_login_label: null,
+			oidc_mobile_enabled: false
+		});
+		vi.mocked(authStore.login).mockRejectedValue(new ApiError(401, 'Unauthorized'));
+
+		render(LoginPage);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Email')).toBeTruthy();
+		});
+		await fireEvent.input(screen.getByLabelText('Email'), {
+			target: { value: 'bugbash@audit.local' }
+		});
+		await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Sign in with password' }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Invalid email or password')).toBeTruthy();
+		});
+		expect(screen.queryByText('Unauthorized')).toBeNull();
+	});
+
+	it('keeps the server-provided error message when one exists', async () => {
+		vi.mocked(getAuthConfig).mockResolvedValue({
+			password_login_enabled: true,
+			oidc_enabled: false,
+			oidc_login_label: null,
+			oidc_mobile_enabled: false
+		});
+		vi.mocked(authStore.login).mockRejectedValue(new ApiError(401, 'Account is disabled'));
+
+		render(LoginPage);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Email')).toBeTruthy();
+		});
+		await fireEvent.input(screen.getByLabelText('Email'), {
+			target: { value: 'bugbash@audit.local' }
+		});
+		await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Sign in with password' }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Account is disabled')).toBeTruthy();
 		});
 	});
 });

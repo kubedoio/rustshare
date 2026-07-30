@@ -248,10 +248,28 @@ export interface NoteSummary {
 export class ApiError extends Error {
 	constructor(
 		public status: number,
-		public message: string
+		public message: string,
+		public details?: Record<string, unknown>
 	) {
 		super(message);
 		this.name = 'ApiError';
+	}
+
+	/** Structured conflict fields (present on 409 responses from the vault-sync API). */
+	get client_rev(): number | undefined {
+		return typeof this.details?.client_rev === 'number' ? this.details.client_rev : undefined;
+	}
+
+	get current_rev(): number | undefined {
+		return typeof this.details?.current_rev === 'number' ? this.details.current_rev : undefined;
+	}
+
+	get server_sha256(): string | undefined {
+		return typeof this.details?.server_sha256 === 'string' ? this.details.server_sha256 : undefined;
+	}
+
+	get resolution(): string | undefined {
+		return typeof this.details?.resolution === 'string' ? this.details.resolution : undefined;
 	}
 }
 

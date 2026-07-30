@@ -20,7 +20,7 @@ pub use metadata::{
     ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,
     UserSecurityEventRecord,
 };
-pub use object_store::{ObjectStore, ObjectStoreOptions};
+pub use object_store::{is_missing_object_error, ObjectStore, ObjectStoreOptions};
 
 // Service-layer trait bridges for EventStore, MetadataStore, ObjectStore and
 // ShareNotificationRepoImpl now live next to their concrete types (see

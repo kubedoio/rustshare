@@ -237,6 +237,8 @@
 					class="flex items-center gap-2 rounded-lg border border-base-300/60 bg-base-100 px-2.5 py-1.5 text-sm font-medium text-base-content/80 transition-colors hover:border-brand-500/30 hover:text-base-content disabled:opacity-50"
 					onclick={onNewFolder}
 					disabled={isUploading}
+					aria-label="New folder"
+					title="New folder"
 				>
 					<FolderPlus size={14} />
 					<span class="hidden sm:inline">New folder</span>
@@ -250,6 +252,8 @@
 					class="flex items-center gap-2 rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm shadow-brand-500/20 transition-colors hover:bg-brand-600 disabled:opacity-50"
 					onclick={onUpload}
 					disabled={isUploading}
+					aria-label="Upload"
+					title="Upload"
 				>
 					<Upload size={16} />
 					<span class="hidden sm:inline">Upload</span>

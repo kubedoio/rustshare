@@ -5,6 +5,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: rustshare
       POSTGRES_USER: rustshare
@@ -23,6 +24,7 @@ services:
   rustfs:
     # Upgrade only after a verified backup and restore drill; see docs/DEPLOYMENT.md.
     image: rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a
+    restart: unless-stopped
     environment:
       # Must be set via env var or .env file — see .env.example
       RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER}
@@ -48,6 +50,17 @@ services:
       args:
         VITE_API_URL: /api/v1
         VITE_WS_URL: /api/ws
+    restart: unless-stopped
+    # Liveness probe on the backend's plain /health endpoint. Do not use
+    # /health/ready here: gating other services on backend readiness would
+    # deadlock startup ordering, since the backend itself waits on postgres
+    # and rustfs. wget is installed in the runtime image.
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     # Increase file descriptor limits to handle many concurrent WebSocket connections
     ulimits:
       nofile:
@@ -127,6 +140,7 @@ services:
 
   nginx:
     image: nginx:alpine
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:

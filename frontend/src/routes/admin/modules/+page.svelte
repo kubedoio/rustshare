@@ -73,8 +73,8 @@
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
 	{:else}
-		<div class="overflow-hidden rounded-2xl border border-base-300/50 bg-base-100 shadow-sm">
-			<table class="table w-full">
+		<div class="overflow-x-auto rounded-2xl border border-base-300/50 bg-base-100 shadow-sm">
+			<table class="table min-w-max">
 				<thead>
 					<tr
 						class="border-b border-base-300/50 bg-base-200/30 text-left text-xs tracking-wider text-base-content/60 uppercase"
