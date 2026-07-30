@@ -5463,6 +5463,7 @@
           "Mail"
         ],
         "summary": "List message summaries in an IMAP folder.",
+        "description": "Ordering is arrival-based: IMAP UIDs increase as messages arrive, so\n`sort=date_desc` (default) walks from the highest UID down and\n`sort=date_asc` from the lowest UID up; the `cursor` parameter acts as a\n`before_uid` for `date_desc` and an `after_uid` for `date_asc`. Within\neach returned page the summaries are refined by their parsed Date header.",
         "operationId": "list_mail_account_messages",
         "parameters": [
           {
@@ -5495,6 +5496,7 @@
           {
             "name": "cursor",
             "in": "path",
+            "description": "Direction-dependent paging cursor: a `before_uid` for\n`sort=date_desc`, an `after_uid` for `sort=date_asc`.",
             "required": true,
             "schema": {
               "type": [
@@ -5507,6 +5509,18 @@
           {
             "name": "search",
             "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "path",
+            "description": "Sort order: `date_desc` (default, newest first) or `date_asc`\n(oldest first). Unknown values are rejected with 400.",
             "required": true,
             "schema": {
               "type": [
@@ -6646,6 +6660,18 @@
               ],
               "format": "uuid"
             }
+          },
+          {
+            "name": "sort",
+            "in": "path",
+            "description": "Sort order: `date_desc` (default, newest message date first) or\n`date_asc` (oldest first). Message date is the Date header with the\nimport timestamp as fallback. Unknown values are rejected with 400.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -6655,6 +6681,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListMailMessagesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

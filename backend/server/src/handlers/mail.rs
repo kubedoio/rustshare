@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
-use rustshare_core::domain::{LinkTargetType, MailTlsMode};
+use rustshare_core::domain::{LinkTargetType, MailSortOrder, MailTlsMode};
 use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -337,6 +337,20 @@ pub async fn upload_mail(
     ))
 }
 
+/// Parse the optional `sort` query parameter shared by both mail list
+/// endpoints. A missing value defaults to `date_desc` (newest first);
+/// unknown values are rejected with a 400 instead of silently falling back.
+fn parse_mail_sort_order(sort: Option<&str>) -> Result<MailSortOrder, AppError> {
+    match sort {
+        None => Ok(MailSortOrder::DateDesc),
+        Some(value) => MailSortOrder::parse(value).ok_or_else(|| {
+            AppError::bad_request(format!(
+                "Invalid sort value '{value}': expected 'date_desc' or 'date_asc'"
+            ))
+        }),
+    }
+}
+
 /// List imported mail messages.
 #[utoipa::path(
     get,
@@ -345,6 +359,7 @@ pub async fn upload_mail(
     params(ListImportedMailMessagesQuery),
     responses(
         (status = 200, description = "Mail messages", body = ListMailMessagesResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -355,6 +370,7 @@ pub async fn list_mail_messages(
 ) -> Result<Json<ListMailMessagesResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
 
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let cursor = match (query.cursor_at, query.cursor_id) {
         (Some(at), Some(id)) => Some((at, id)),
@@ -377,6 +393,7 @@ pub async fn list_mail_messages(
                 .filter(|value| !value.trim().is_empty()),
             cursor,
             limit + 1,
+            sort,
         )
         .await?;
     let has_more = page.len() > limit as usize;
@@ -389,7 +406,9 @@ pub async fn list_mail_messages(
     let next_cursor = has_more.then(|| messages.last()).flatten();
 
     Ok(Json(ListMailMessagesResponse {
-        next_cursor_at: next_cursor.map(|message| message.imported_at),
+        // The cursor is the row's coalesced sort value so the keyset
+        // predicate matches the ORDER BY exactly.
+        next_cursor_at: next_cursor.map(|message| message.sent_at.unwrap_or(message.imported_at)),
         next_cursor_id: next_cursor.map(|message| message.id),
         messages,
     }))
@@ -458,6 +477,10 @@ pub struct ListImportedMailMessagesQuery {
     pub limit: Option<i64>,
     pub cursor_at: Option<DateTime<Utc>>,
     pub cursor_id: Option<Uuid>,
+    /// Sort order: `date_desc` (default, newest message date first) or
+    /// `date_asc` (oldest first). Message date is the Date header with the
+    /// import timestamp as fallback. Unknown values are rejected with 400.
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -834,8 +857,12 @@ pub struct ListMailMessagesQuery {
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
+    /// UID of the last message returned by the previous date-sorted page.
     cursor: Option<i64>,
     search: Option<String>,
+    /// Sort order: `date_desc` (default, newest first) or `date_asc`
+    /// (oldest first). Unknown values are rejected with 400.
+    sort: Option<String>,
 }
 
 fn default_message_limit() -> i64 {
@@ -1106,6 +1133,12 @@ pub async fn list_mail_account_folders(
 }
 
 /// List message summaries in an IMAP folder.
+///
+/// Ordering is arrival-based: IMAP UIDs increase as messages arrive, so
+/// `sort=date_desc` (default) walks from the highest UID down and
+/// `sort=date_asc` from the lowest UID up; the `cursor` parameter acts as a
+/// `before_uid` for `date_desc` and an `after_uid` for `date_asc`. Within
+/// each returned page the summaries are refined by their parsed Date header.
 #[utoipa::path(
     get,
     path = "/api/v1/mail/accounts/{id}/messages",
@@ -1128,6 +1161,7 @@ pub async fn list_mail_account_messages(
     Query(query): Query<ListMailMessagesQuery>,
 ) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     if query.folder.trim().is_empty() {
         return Err(AppError::bad_request("Missing folder query parameter"));
     }
@@ -1153,6 +1187,7 @@ pub async fn list_mail_account_messages(
                 .search
                 .as_deref()
                 .filter(|value| !value.trim().is_empty()),
+            sort,
         )
         .await?;
 
@@ -1183,11 +1218,13 @@ pub async fn list_mail_account_messages(
             summary_to_response(summary, imported_message_id)
         })
         .collect();
-    let next_cursor = messages
-        .iter()
-        .map(|message| message.uid)
-        .min()
-        .map(i64::from);
+    let next_cursor = match sort {
+        // The cursor continues the UID traversal: below the lowest UID on the
+        // page for date_desc, above the highest for date_asc.
+        MailSortOrder::DateDesc => messages.iter().map(|message| message.uid).min(),
+        MailSortOrder::DateAsc => messages.iter().map(|message| message.uid).max(),
+    }
+    .map(i64::from);
 
     Ok(Json(MailMessageSummaryListResponse {
         uidvalidity: uidvalidity.map(i64::from),
@@ -2955,13 +2992,64 @@ pub async fn send_draft_handler(
 #[cfg(test)]
 mod tests {
     use super::{
-        remove_reply_all_sender, require_destination_folder, rewrite_cid_urls, sanitize_email_html,
-        validate_send_outbound_mail_request, CreateMailImportJobRequest,
-        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+        parse_mail_sort_order, remove_reply_all_sender, require_destination_folder,
+        rewrite_cid_urls, sanitize_email_html, validate_send_outbound_mail_request,
+        CreateMailImportJobRequest, CreateOrUpdateSmtpSettingsRequest,
+        ListImportedMailMessagesQuery, ListMailMessagesQuery, SendOutboundMailRequest,
     };
+    use crate::handlers::AppError;
     use chrono::Utc;
+    use rustshare_core::domain::MailSortOrder;
     use uuid::Uuid;
     use validator::Validate;
+
+    #[test]
+    fn mail_sort_order_defaults_to_newest_first() {
+        assert_eq!(
+            parse_mail_sort_order(None).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_desc")).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_asc")).unwrap(),
+            MailSortOrder::DateAsc
+        );
+    }
+
+    #[test]
+    fn mail_sort_order_rejects_unknown_values() {
+        let err = parse_mail_sort_order(Some("subject")).expect_err("invalid sort should fail");
+        assert!(
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("date_desc")),
+            "error should name the valid values, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn imported_messages_query_deserializes_sort_param() {
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r#"{"sort": "date_asc"}"#).expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r"{}").expect("missing sort should deserialize");
+        assert!(query.sort.is_none());
+    }
+
+    #[test]
+    fn account_messages_query_deserializes_sort_param() {
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX", "sort": "date_asc"}"#)
+                .expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX"}"#).expect("should deserialize");
+        assert!(query.sort.is_none());
+    }
 
     #[test]
     fn archive_and_trash_require_an_explicit_destination() {

@@ -9,7 +9,7 @@ use base64::Engine;
 use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::TryStreamExt;
 use mailparse::{addrparse_header, MailAddr, MailHeaderMap};
-use rustshare_core::domain::MailTlsMode;
+use rustshare_core::domain::{MailSortOrder, MailTlsMode};
 use rustshare_core::validation::{resolve_mail_server_socket_addrs, should_accept_invalid_certs};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
@@ -345,12 +345,14 @@ impl ImapSession {
         Ok(mailbox.uid_validity)
     }
 
+    /// Fetch one date-sorted page of message summaries from a folder.
     pub async fn fetch_message_summaries(
         &mut self,
         folder: &str,
         limit: usize,
-        before_uid: Option<u32>,
+        cursor: Option<u32>,
         search: Option<&str>,
+        sort: MailSortOrder,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), ImapError> {
         let uidvalidity = self.select_folder(folder).await?;
 
@@ -358,43 +360,37 @@ impl ImapSession {
         let uids = tokio::time::timeout(DEFAULT_TIMEOUT, self.session.uid_search(criteria))
             .await
             .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-        // Sort newest-first (highest UID) so the limit returns a stable,
-        // deterministic slice instead of an arbitrary HashSet subset.
-        let mut all_uids: Vec<u32> = uids.into_iter().collect();
-        all_uids.sort_unstable_by(|a, b| b.cmp(a));
-        let limited: Vec<u32> = all_uids
-            .into_iter()
-            .filter(|uid| before_uid.map(|cursor| *uid < cursor).unwrap_or(true))
-            .take(limit)
-            .collect();
-        if limited.is_empty() {
+        let uids: Vec<u32> = uids.into_iter().collect();
+        if uids.is_empty() {
             return Ok((uidvalidity, Vec::new()));
         }
-
-        let uid_set = limited
-            .iter()
-            .map(|u| u.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
 
         // Fetch the raw header block instead of ENVELOPE: some servers (e.g.
         // Stalwart with UTF8=ACCEPT) return raw UTF-8 inside ENVELOPE quoted
         // strings, which the imap-proto parser rejects. BODY.PEEK[HEADER] is a
         // length-prefixed literal and parses regardless of content encoding.
-        let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
-            self.session
-                .uid_fetch(uid_set, "(UID RFC822.SIZE FLAGS BODY.PEEK[HEADER])")
-                .await?
-                .try_collect::<Vec<Fetch>>()
-                .await
-        })
-        .await
-        .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
-
-        Ok((
-            uidvalidity,
-            fetches.into_iter().filter_map(summary_from_fetch).collect(),
-        ))
+        // ponytail: this fetches all matching headers because async-imap has no
+        // SORT API; use server-side SORT when the connector exposes it.
+        let mut summaries = Vec::with_capacity(uids.len());
+        for chunk in uids.chunks(500) {
+            let uid_set = chunk
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let fetches = tokio::time::timeout(DEFAULT_TIMEOUT, async {
+                self.session
+                    .uid_fetch(uid_set, "(UID RFC822.SIZE FLAGS BODY.PEEK[HEADER])")
+                    .await?
+                    .try_collect::<Vec<Fetch>>()
+                    .await
+            })
+            .await
+            .map_err(|_| ImapError::CommandFailed("IMAP command timed out".to_string()))??;
+            summaries.extend(fetches.into_iter().filter_map(summary_from_fetch));
+        }
+        sort_summaries_by_date(&mut summaries, sort);
+        Ok((uidvalidity, select_summary_page(summaries, limit, cursor)))
     }
 
     pub async fn fetch_rfc822(
@@ -985,6 +981,31 @@ fn summary_from_header_bytes(
     })
 }
 
+fn select_summary_page(
+    summaries: Vec<ImapMessageSummary>,
+    limit: usize,
+    cursor: Option<u32>,
+) -> Vec<ImapMessageSummary> {
+    let start = cursor
+        .and_then(|cursor| summaries.iter().position(|summary| summary.uid == cursor))
+        .map_or(0, |position| position + 1);
+    summaries.into_iter().skip(start).take(limit).collect()
+}
+
+/// Order a mailbox by (Date header, UID) in the requested direction.
+/// Messages without a parseable Date header are treated as the oldest; the
+/// UID is the deterministic tiebreak.
+fn sort_summaries_by_date(summaries: &mut [ImapMessageSummary], sort: MailSortOrder) {
+    match sort {
+        MailSortOrder::DateDesc => {
+            summaries.sort_by_key(|summary| std::cmp::Reverse((summary.sent_at, summary.uid)));
+        }
+        MailSortOrder::DateAsc => {
+            summaries.sort_by_key(|summary| (summary.sent_at, summary.uid));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1107,5 +1128,81 @@ mod tests {
         let before = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
         let query = build_archive_search_query(Some(since), Some(before));
         assert_eq!(query, "ALL SINCE 01-Jan-2024 BEFORE 31-Dec-2024");
+    }
+
+    fn summary_with(uid: u32, sent_at: Option<DateTime<Utc>>) -> ImapMessageSummary {
+        ImapMessageSummary {
+            uid,
+            subject: None,
+            from_address: None,
+            from_name: None,
+            sent_at,
+            size_bytes: 0,
+            is_seen: false,
+            is_flagged: false,
+        }
+    }
+
+    #[test]
+    fn sort_summaries_desc_orders_by_date_then_uid_descending() {
+        let ts = DateTime::from_timestamp(1_660_559_400, 0).unwrap();
+        let older = DateTime::from_timestamp(1_660_000_000, 0).unwrap();
+        let mut summaries = vec![
+            summary_with(1, Some(older)),
+            summary_with(2, Some(ts)),
+            summary_with(3, Some(ts)),
+        ];
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateDesc);
+        let uids: Vec<u32> = summaries.iter().map(|s| s.uid).collect();
+        // Equal dates fall back to the higher UID first.
+        assert_eq!(uids, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn sort_summaries_asc_orders_by_date_then_uid_ascending() {
+        let ts = DateTime::from_timestamp(1_660_559_400, 0).unwrap();
+        let older = DateTime::from_timestamp(1_660_000_000, 0).unwrap();
+        let mut summaries = vec![
+            summary_with(3, Some(ts)),
+            summary_with(1, Some(older)),
+            summary_with(2, Some(ts)),
+        ];
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateAsc);
+        let uids: Vec<u32> = summaries.iter().map(|s| s.uid).collect();
+        assert_eq!(uids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn sort_summaries_treats_missing_date_as_oldest() {
+        let ts = DateTime::from_timestamp(1_660_559_400, 0).unwrap();
+        let mut summaries = vec![summary_with(1, None), summary_with(2, Some(ts))];
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateDesc);
+        assert_eq!(summaries[0].uid, 2);
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateAsc);
+        assert_eq!(summaries[0].uid, 1);
+    }
+
+    #[test]
+    fn pagination_uses_the_complete_date_sorted_mailbox() {
+        let newest = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let middle = DateTime::from_timestamp(1_600_000_000, 0).unwrap();
+        let oldest = DateTime::from_timestamp(1_500_000_000, 0).unwrap();
+        let mut summaries = vec![
+            summary_with(100, Some(oldest)),
+            summary_with(1, Some(newest)),
+            summary_with(50, Some(middle)),
+        ];
+        sort_summaries_by_date(&mut summaries, MailSortOrder::DateDesc);
+
+        let first = select_summary_page(summaries.clone(), 2, None);
+        assert_eq!(
+            first.iter().map(|summary| summary.uid).collect::<Vec<_>>(),
+            vec![1, 50]
+        );
+        let second = select_summary_page(summaries, 2, Some(50));
+        assert_eq!(
+            second.iter().map(|summary| summary.uid).collect::<Vec<_>>(),
+            vec![100]
+        );
     }
 }

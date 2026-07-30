@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		mailApi,
@@ -12,6 +13,7 @@
 		type MailMessage,
 		type MailRemoteMessageBody,
 		type MailSmtpSettings,
+		type MailSortOrder,
 		type SaveDraftRequest,
 		type SendOutboundMailRequest
 	} from '$lib/api/mail';
@@ -27,6 +29,8 @@
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		Archive,
+		ArrowDownNarrowWide,
+		ArrowDownWideNarrow,
 		ArrowLeft,
 		Check,
 		ChevronDown,
@@ -66,6 +70,19 @@
 	let uidvalidity = $state<number | null>(null);
 	let searchInput = $state('');
 	let search = $state('');
+
+	// One global sort preference for every mailbox and the Saved view,
+	// persisted so it survives refresh and navigation away/back (issue #182).
+	const MAIL_SORT_STORAGE_KEY = 'mail-sort-order';
+	function readStoredSortOrder(): MailSortOrder {
+		if (!browser) return 'date_desc';
+		return localStorage.getItem(MAIL_SORT_STORAGE_KEY) === 'date_asc' ? 'date_asc' : 'date_desc';
+	}
+	let sortOrder = $state<MailSortOrder>(readStoredSortOrder());
+	function toggleSortOrder() {
+		sortOrder = sortOrder === 'date_desc' ? 'date_asc' : 'date_desc';
+		if (browser) localStorage.setItem(MAIL_SORT_STORAGE_KEY, sortOrder);
+	}
 	let activityOpen = $state(false);
 	let overflowOpen = $state(false);
 	let moveOpen = $state(false);
@@ -100,7 +117,7 @@
 		enabled: false
 	});
 	const accountMessagesQuery = createQuery<ListMailAccountMessagesResponse>({
-		queryKey: ['mail-account-messages', null, null, ''],
+		queryKey: ['mail-account-messages', null, null, '', sortOrder],
 		queryFn: () => Promise.resolve({ uidvalidity: null, next_cursor: null, messages: [] }),
 		enabled: false
 	});
@@ -115,8 +132,8 @@
 		enabled: false
 	});
 	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
-		queryKey: ['mail-messages', ''],
-		queryFn: () => mailApi.listMessagesPage('')
+		queryKey: ['mail-messages', '', sortOrder],
+		queryFn: () => mailApi.listMessagesPage('', null, null, sortOrder)
 	});
 	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
 		queryKey: ['mail-archive-jobs', null],
@@ -230,9 +247,16 @@
 
 	$effect(() => {
 		accountMessagesQuery.setOptions({
-			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, search],
+			queryKey: ['mail-account-messages', selectedAccountId, selectedFolder, search, sortOrder],
 			queryFn: () =>
-				mailApi.listAccountMessages(selectedAccountId!, selectedFolder!, 100, null, search),
+				mailApi.listAccountMessages(
+					selectedAccountId!,
+					selectedFolder!,
+					100,
+					null,
+					search,
+					sortOrder
+				),
 			enabled: mailboxView === 'remote' && !!selectedAccountId && !!selectedFolder
 		});
 		selectedUids = [];
@@ -256,8 +280,8 @@
 
 	$effect(() => {
 		importedMessagesQuery.setOptions({
-			queryKey: ['mail-messages', search],
-			queryFn: () => mailApi.listMessagesPage(search),
+			queryKey: ['mail-messages', search, sortOrder],
+			queryFn: () => mailApi.listMessagesPage(search, null, null, sortOrder),
 			enabled: mailboxView === 'saved'
 		});
 	});
@@ -599,6 +623,17 @@
 						bind:value={searchInput}
 					/>
 				</form>
+				<button
+					type="button"
+					class="btn btn-ghost btn-sm btn-square"
+					aria-label={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
+					title={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
+					onclick={toggleSortOrder}
+				>
+					{#if sortOrder === 'date_desc'}<ArrowDownWideNarrow
+							size={16}
+						/>{:else}<ArrowDownNarrowWide size={16} />{/if}
+				</button>
 				<button
 					type="button"
 					class="btn btn-ghost btn-sm btn-square"

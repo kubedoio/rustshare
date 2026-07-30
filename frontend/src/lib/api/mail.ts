@@ -21,6 +21,12 @@ export interface MailMessage {
 export type MailSourceMode =
 	'eml_upload' | 'imap_selected' | 'imap_archive' | 'inbound_address' | 'outbound' | 'draft';
 
+/**
+ * Sort order for mail list endpoints. `date_desc` (newest message date first)
+ * is the server default; omitted params mean `date_desc`.
+ */
+export type MailSortOrder = 'date_desc' | 'date_asc';
+
 export interface MailMessagePart {
 	id: string;
 	part_index: number;
@@ -299,12 +305,14 @@ export const mailApi = {
 		folder: string,
 		limit = 100,
 		cursor?: number | null,
-		search = ''
+		search = '',
+		sort?: MailSortOrder
 	): Promise<ListMailAccountMessagesResponse> => {
 		const cursorParam = cursor ? `&cursor=${cursor}` : '';
 		const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+		const sortParam = sort ? `&sort=${sort}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}${sortParam}`
 		);
 	},
 
@@ -493,10 +501,12 @@ export const mailApi = {
 	listMessagesPage: async (
 		search = '',
 		cursorAt?: string | null,
-		cursorId?: string | null
+		cursorId?: string | null,
+		sort?: MailSortOrder
 	): Promise<ListMailMessagesResponse> => {
 		const params = new URLSearchParams({ limit: '50' });
 		if (search) params.set('search', search);
+		if (sort) params.set('sort', sort);
 		if (cursorAt && cursorId) {
 			params.set('cursor_at', cursorAt);
 			params.set('cursor_id', cursorId);

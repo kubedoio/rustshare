@@ -793,3 +793,285 @@ async fn reading_part_and_source_appends_viewed_event() {
     cleanup_user(&state.db_pool, user.id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
+
+// ---------------------------------------------------------------------------
+// Deterministic date sorting (issue #182)
+// ---------------------------------------------------------------------------
+
+async fn insert_sorted_message(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    subject: &str,
+    sent_at: Option<chrono::DateTime<chrono::Utc>>,
+    imported_at: chrono::DateTime<chrono::Utc>,
+) -> Uuid {
+    // eml_upload is excluded from the account-source unique index, so several
+    // synthetic messages per user can coexist without fake source identities.
+    let mut message = rustshare_core::domain::MailMessage::new(
+        tenant_id,
+        user_id,
+        user_id,
+        rustshare_core::domain::MailSourceMode::EmlUpload,
+    );
+    message.subject = Some(subject.to_string());
+    message.sent_at = sent_at;
+    message.imported_at = imported_at;
+    state
+        .metadata_store
+        .create_mail_message(&message)
+        .await
+        .expect("insert mail message");
+    message.id
+}
+
+async fn get_saved_messages(app: &axum::Router, token: &str, query: &str) -> serde_json::Value {
+    let request = Request::builder()
+        .uri(format!("/api/v1/mail/messages?{query}"))
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "query: {query}");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn message_ids(body: &serde_json::Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .map(|message| message["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_sort_both_directions_with_null_sent_at_fallback() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+
+    // A: dated oldest. B: dated newest. C: no Date header, but imported last,
+    // so it falls between A and B on the coalesced sort value.
+    let a = insert_sorted_message(&state, tenant_id, user.id, "A", Some(base), base).await;
+    let b = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "B",
+        Some(base + day * 10),
+        base + day,
+    )
+    .await;
+    let c = insert_sorted_message(&state, tenant_id, user.id, "C", None, base + day * 5).await;
+
+    let desc = get_saved_messages(&app, &token, "").await;
+    assert_eq!(
+        message_ids(&desc),
+        vec![b.to_string(), c.to_string(), a.to_string()],
+        "default order should be newest coalesced date first"
+    );
+
+    let explicit_desc = get_saved_messages(&app, &token, "sort=date_desc").await;
+    assert_eq!(message_ids(&explicit_desc), message_ids(&desc));
+
+    let asc = get_saved_messages(&app, &token, "sort=date_asc").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![a.to_string(), c.to_string(), b.to_string()],
+        "ascending order should be oldest coalesced date first"
+    );
+
+    let request = Request::builder()
+        .uri("/api/v1/mail/messages?sort=sideways")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "unknown sort values must be rejected"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_sort_equal_dates_use_id_tiebreak() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_tie", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let ts = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let first = insert_sorted_message(&state, tenant_id, user.id, "Tie 1", Some(ts), ts).await;
+    let second = insert_sorted_message(&state, tenant_id, user.id, "Tie 2", Some(ts), ts).await;
+
+    // Postgres uuid ordering is plain byte ordering, matching Rust's Uuid Ord.
+    let (low, high) = if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    };
+
+    let desc = get_saved_messages(&app, &token, "sort=date_desc").await;
+    assert_eq!(
+        message_ids(&desc),
+        vec![high.to_string(), low.to_string()],
+        "descending ties should break on id DESC"
+    );
+
+    let asc = get_saved_messages(&app, &token, "sort=date_asc").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![low.to_string(), high.to_string()],
+        "ascending ties should break on id ASC"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_sort_paginates_in_both_directions() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_page", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        ids.push(
+            insert_sorted_message(
+                &state,
+                tenant_id,
+                user.id,
+                &format!("Page {i}"),
+                Some(base + day * i),
+                base + day * i,
+            )
+            .await
+            .to_string(),
+        );
+    }
+
+    for (sort, expected) in [
+        (
+            "date_desc",
+            vec![ids[2].clone(), ids[1].clone(), ids[0].clone()],
+        ),
+        ("date_asc", ids.clone()),
+    ] {
+        let page1 = get_saved_messages(&app, &token, &format!("sort={sort}&limit=2")).await;
+        assert_eq!(message_ids(&page1), expected[..2], "first page for {sort}");
+        let cursor_at = page1["next_cursor_at"]
+            .as_str()
+            .expect("next_cursor_at present");
+        let cursor_id = page1["next_cursor_id"]
+            .as_str()
+            .expect("next_cursor_id present");
+
+        let page2 = get_saved_messages(
+            &app,
+            &token,
+            &format!("sort={sort}&limit=2&cursor_at={cursor_at}&cursor_id={cursor_id}"),
+        )
+        .await;
+        assert_eq!(message_ids(&page2), expected[2..], "second page for {sort}");
+        assert!(
+            page2["next_cursor_at"].is_null(),
+            "no third page expected for {sort}"
+        );
+    }
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_search_combines_with_sort() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_search", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+    let older = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Quarterly report Q1",
+        Some(base),
+        base,
+    )
+    .await;
+    let newer = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Quarterly report Q2",
+        Some(base + day),
+        base + day,
+    )
+    .await;
+    insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Unrelated",
+        Some(base + day * 2),
+        base + day * 2,
+    )
+    .await;
+
+    let asc = get_saved_messages(&app, &token, "sort=date_asc&search=quarterly").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![older.to_string(), newer.to_string()],
+        "search results should honor ascending date order"
+    );
+
+    let desc = get_saved_messages(&app, &token, "sort=date_desc&search=quarterly").await;
+    assert_eq!(
+        message_ids(&desc),
+        vec![newer.to_string(), older.to_string()],
+        "search results should honor descending date order"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}

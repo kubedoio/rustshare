@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic ascending/descending date sorting for mail lists (#182): both the imported ("Saved to RustShare") list and the remote IMAP folder list accept `sort=date_desc` (default, newest first) or `sort=date_asc` (oldest first), reject unknown values with a 400, and order deterministically by message date with an id/UID tiebreak. The Mail UI gains a sort toggle whose preference is persisted globally in `localStorage`.
+
 ### Changed
 
 - Consolidated the root and backend Cargo workspaces into one unified workspace with a single `Cargo.lock`, removing the nested `backend/Cargo.toml` workspace and eliminating ambiguous dependency resolution.
