@@ -776,6 +776,12 @@ pub trait ImapMailboxSession: Send {
         uid: u32,
         destination_folder: &str,
     ) -> Result<(), ImapError>;
+    async fn copy_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError>;
     async fn supports_uidplus(&mut self) -> Result<bool, ImapError>;
     async fn delete_message(&mut self, folder: &str, uid: u32) -> Result<(), ImapError>;
 }
@@ -814,6 +820,15 @@ impl ImapMailboxSession for ImapSession {
         destination_folder: &str,
     ) -> Result<(), ImapError> {
         ImapSession::move_message(self, folder, uid, destination_folder).await
+    }
+
+    async fn copy_message(
+        &mut self,
+        folder: &str,
+        uid: u32,
+        destination_folder: &str,
+    ) -> Result<(), ImapError> {
+        ImapSession::copy_message(self, folder, uid, destination_folder).await
     }
 
     async fn supports_uidplus(&mut self) -> Result<bool, ImapError> {
