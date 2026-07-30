@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
@@ -293,6 +295,27 @@ impl ObjectStore {
     }
 }
 
+/// Whether an error returned by [`ObjectStore::get`] or
+/// [`ObjectStore::get_stream`] means the object is confirmed missing (S3
+/// `NoSuchKey` / 404), as opposed to an infrastructure failure such as an
+/// unreachable store, access denied, or a failed integrity check.
+///
+/// Only a confirmed-missing error may be treated as "not found"; anything
+/// else must be surfaced as a storage failure. Mirrors the code matching in
+/// [`ObjectStore::exists`].
+pub fn is_missing_object_error(error: &anyhow::Error) -> bool {
+    let Some(sdk_error) = error.downcast_ref::<SdkError<GetObjectError>>() else {
+        return false;
+    };
+    sdk_error
+        .as_service_error()
+        .is_some_and(is_missing_get_object_error)
+}
+
+fn is_missing_get_object_error(error: &GetObjectError) -> bool {
+    error.is_no_such_key() || matches!(error.meta().code(), Some("NoSuchKey") | Some("NotFound"))
+}
+
 fn expected_blob_sha256(key: &str) -> Option<&str> {
     let hash = key.strip_prefix(BLOB_KEY_PREFIX)?;
     (hash.len() == SHA256_HEX_LEN && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
@@ -453,6 +476,18 @@ where
     })
 }
 
+/// Classify a `head_bucket` failure. Only a confirmed "bucket does not exist"
+/// (S3 `NotFound`/`NoSuchBucket`, or a bare HTTP 404 from S3-compatible
+/// stores like RustFS/MinIO) means the bucket is missing. Everything else —
+/// unreachable endpoint, 403 Forbidden from bad credentials, 5xx — means
+/// "inaccessible", and must not fall into the bucket-creation path.
+fn head_bucket_error_is_not_found(error_code: Option<&str>, http_status: Option<u16>) -> bool {
+    matches!(
+        error_code,
+        Some("NotFound") | Some("NoSuchBucket") | Some("404")
+    ) || http_status == Some(404)
+}
+
 async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool) -> Result<()> {
     match client.head_bucket().bucket(bucket).send().await {
         Ok(_) => {
@@ -460,6 +495,26 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool
             Ok(())
         }
         Err(error) => {
+            let error_code = error
+                .as_service_error()
+                .and_then(|service_error| service_error.meta().code());
+            let http_status = error
+                .raw_response()
+                .map(|response| response.status().as_u16());
+
+            if !head_bucket_error_is_not_found(error_code, http_status) {
+                // Anything but a confirmed "bucket does not exist" means the
+                // endpoint is unreachable or the credentials are rejected;
+                // attempting to create the bucket would only mask the cause.
+                return Err(error).with_context(|| {
+                    format!(
+                        "object storage bucket `{bucket}` could not be checked; \
+                         verify the object storage endpoint (RUSTFS_ENDPOINT) is reachable \
+                         and the credentials (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) are valid"
+                    )
+                });
+            }
+
             if !auto_create {
                 return Err(error).with_context(|| {
                     format!(
@@ -472,7 +527,7 @@ async fn ensure_bucket_exists(client: &S3Client, bucket: &str, auto_create: bool
             tracing::warn!(
                 bucket = %bucket,
                 error = %error,
-                "Object storage bucket missing or inaccessible, attempting to create it"
+                "Object storage bucket missing, attempting to create it"
             );
 
             match client.create_bucket().bucket(bucket).send().await {
@@ -569,6 +624,36 @@ mod tests {
     #[cfg(not(unix))]
     fn peak_rss_bytes() -> usize {
         0
+    }
+
+    #[test]
+    fn head_bucket_error_is_not_found_only_for_confirmed_missing_bucket() {
+        // Confirmed missing: S3 service codes, or a bare 404 from
+        // S3-compatible stores that do not set a distinct error code.
+        assert!(head_bucket_error_is_not_found(Some("NotFound"), Some(404)));
+        assert!(head_bucket_error_is_not_found(
+            Some("NoSuchBucket"),
+            Some(404)
+        ));
+        assert!(head_bucket_error_is_not_found(Some("NoSuchBucket"), None));
+        assert!(head_bucket_error_is_not_found(Some("404"), Some(404)));
+        assert!(head_bucket_error_is_not_found(None, Some(404)));
+
+        // Not missing: unreachable endpoint (no response), rejected
+        // credentials, throttling, or server errors must not be treated as
+        // "bucket does not exist".
+        assert!(!head_bucket_error_is_not_found(None, None));
+        assert!(!head_bucket_error_is_not_found(
+            Some("Forbidden"),
+            Some(403)
+        ));
+        assert!(!head_bucket_error_is_not_found(None, Some(403)));
+        assert!(!head_bucket_error_is_not_found(
+            Some("AccessDenied"),
+            Some(403)
+        ));
+        assert!(!head_bucket_error_is_not_found(None, Some(500)));
+        assert!(!head_bucket_error_is_not_found(Some("SlowDown"), Some(503)));
     }
 
     async fn setup_object_store() -> Option<ObjectStore> {
@@ -737,6 +822,29 @@ mod tests {
         );
 
         store.delete(&key).await.unwrap();
+    }
+
+    #[test]
+    fn missing_object_error_matches_no_such_key() {
+        let error =
+            GetObjectError::NoSuchKey(aws_sdk_s3::types::error::NoSuchKey::builder().build());
+        assert!(super::is_missing_get_object_error(&error));
+    }
+
+    #[test]
+    fn missing_object_error_rejects_other_service_errors() {
+        let error = GetObjectError::InvalidObjectState(
+            aws_sdk_s3::types::error::InvalidObjectState::builder().build(),
+        );
+        assert!(!super::is_missing_get_object_error(&error));
+    }
+
+    #[test]
+    fn missing_object_error_rejects_non_sdk_errors() {
+        // Infrastructure and integrity failures (e.g. from verify_blob_bytes)
+        // are not AWS service errors and must not be treated as "missing".
+        let error = anyhow::anyhow!("object integrity check failed");
+        assert!(!super::is_missing_object_error(&error));
     }
 
     #[tokio::test]

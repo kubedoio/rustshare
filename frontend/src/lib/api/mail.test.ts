@@ -39,6 +39,46 @@ describe('mailApi', () => {
 		);
 	});
 
+	it('serializes the sort param on saved list pages', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({
+			messages: [],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+
+		await mailApi.listMessagesPage('', null, null, 'date_asc');
+
+		expect(apiClient.get).toHaveBeenCalledWith('/mail/messages?limit=50&sort=date_asc');
+	});
+
+	it('serializes the sort param on account folder pages', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({ uidvalidity: 42, messages: [] });
+
+		await mailApi.listAccountMessages('acct-1', 'INBOX', 100, null, '', 'date_asc');
+
+		expect(apiClient.get).toHaveBeenCalledWith(
+			'/mail/accounts/acct-1/messages?folder=INBOX&limit=100&sort=date_asc'
+		);
+	});
+
+	it('omits the sort param by default on both list endpoints', async () => {
+		vi.mocked(apiClient.get).mockResolvedValue({
+			messages: [],
+			uidvalidity: 42,
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+
+		await mailApi.listMessagesPage();
+		await mailApi.listAccountMessages('acct-1', 'INBOX', 100);
+
+		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/mail/messages?limit=50');
+		expect(apiClient.get).toHaveBeenNthCalledWith(
+			2,
+			'/mail/accounts/acct-1/messages?folder=INBOX&limit=100'
+		);
+	});
+
 	it('lists durable import jobs', async () => {
 		vi.mocked(apiClient.get).mockResolvedValueOnce({ jobs: [{ id: 'job-1' }] });
 

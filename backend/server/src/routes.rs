@@ -288,6 +288,10 @@ pub fn mail_routes() -> Router<AppState> {
             get(crate::handlers::mail::list_mail_message_attachments),
         )
         .route(
+            "/api/v1/mail/messages/{id}/attachments/{attachment_id}",
+            get(crate::handlers::mail::download_mail_message_attachment),
+        )
+        .route(
             "/api/v1/mail/messages/{id}/links",
             get(crate::handlers::mail::list_mail_links)
                 .post(crate::handlers::mail::create_mail_link),
@@ -391,6 +395,10 @@ pub fn mail_routes() -> Router<AppState> {
         .route(
             "/api/v1/mail/accounts/{id}/messages/{uid}/attachments/{index}",
             get(crate::handlers::mail::download_remote_mail_attachment),
+        )
+        .route(
+            "/api/v1/mail/accounts/{id}/messages/{uid}/source",
+            get(crate::handlers::mail::download_remote_mail_message_source),
         )
         .route(
             "/api/v1/mail/accounts/{id}/messages/{uid}/move",

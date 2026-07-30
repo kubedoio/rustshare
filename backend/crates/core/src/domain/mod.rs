@@ -28,7 +28,7 @@ pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
 pub use mail_link::{LinkTargetType, MailLink, MailLinkId};
 pub use mail_message::{
-    MailAttachment, MailMessage, MailMessagePart, MailSourceMode, MailVisibility,
+    MailAttachment, MailMessage, MailMessagePart, MailSortOrder, MailSourceMode, MailVisibility,
 };
 pub use module::{AiIndexingPolicy, AuditPolicy, Module, ModulePermissions};
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};

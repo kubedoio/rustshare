@@ -11,6 +11,7 @@ const mockDeps = vi.hoisted(() => {
 			artifactId?: string;
 			moduleKey?: string;
 			accessible?: boolean;
+			resourceType?: string;
 		}>;
 		loading: boolean;
 		error: string | null;
@@ -69,7 +70,7 @@ vi.mock('$lib/stores/activity', () => ({
 }));
 
 vi.mock('$lib/utils/dashboard', () => ({
-	getActivityVerb: vi.fn(() => 'was created'),
+	getActivityVerb: vi.fn(() => 'created'),
 	getUserInitials: vi.fn(() => 'AJ'),
 	getModuleColor: vi.fn(() => ({ color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' }))
 }));
@@ -263,6 +264,91 @@ describe('RecentActivity', () => {
 
 		expect(screen.queryByRole('link')).toBeNull();
 		expect(screen.getByText('legacy.txt')).toBeTruthy();
+	});
+
+	it('renders the actor and verb as a grammatical sentence', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'note_created',
+					fileName: 'My Note',
+					timestamp: new Date().toISOString(),
+					artifactId: 'note-123',
+					moduleKey: 'notes'
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		const { container } = render(RecentActivity, {
+			props: { userName: 'Alice Johnson' }
+		});
+
+		const description = container.querySelector('.activity-description');
+		expect(description).toBeTruthy();
+		expect(description!.textContent).toContain('You');
+		expect(description!.textContent).toContain('created');
+		expect(description!.textContent).not.toContain('was');
+	});
+
+	it('falls back to a neutral label instead of "Unknown" for unnamed share events', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'share_created',
+					fileName: 'Unknown',
+					timestamp: new Date().toISOString(),
+					artifactId: 'share-123',
+					moduleKey: 'shares',
+					resourceType: 'share',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson', nameLookup: new Map() }
+		});
+
+		expect(screen.getByText('A file')).toBeTruthy();
+		expect(screen.queryByText('Unknown')).toBeNull();
+	});
+
+	it('falls back to "A folder" for unnamed folder share events', () => {
+		mockDeps.setState({
+			items: [
+				{
+					id: '1',
+					type: 'share_created',
+					fileName: 'Unknown',
+					timestamp: new Date().toISOString(),
+					artifactId: 'share-456',
+					moduleKey: 'shares',
+					resourceType: 'folder',
+					accessible: true
+				}
+			],
+			loading: false,
+			error: null,
+			hasMore: false,
+			cursor: null
+		});
+
+		render(RecentActivity, {
+			props: { userName: 'Alice Johnson', nameLookup: new Map() }
+		});
+
+		expect(screen.getByText('A folder')).toBeTruthy();
+		expect(screen.queryByText('Unknown')).toBeNull();
 	});
 
 	it('renders empty state when no activities', () => {

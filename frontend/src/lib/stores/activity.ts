@@ -53,6 +53,7 @@ export interface Activity {
 	artifactId?: string;
 	moduleKey?: string;
 	accessible?: boolean;
+	resourceType?: string; // Backend resource type (file/folder/share/module…)
 }
 
 const MAX_ACTIVITIES = 50;
@@ -146,7 +147,8 @@ function mapServerItemToActivity(item: ActivityItem): Activity {
 		timestamp: item.timestamp,
 		artifactId: item.resource_id,
 		moduleKey,
-		accessible: true // Server already filters by permission
+		accessible: true, // Server already filters by permission
+		resourceType: item.resource_type
 	};
 }
 
