@@ -446,6 +446,19 @@
 		return `${(value / 1024 / 1024).toFixed(1)} MB`;
 	}
 
+	// Duplicate attachment filenames are distinguished by their 1-based index
+	// so two "report.pdf" chips never look identical.
+	function hasDuplicateFilename(
+		attachments: MailRemoteMessageBody['attachments'],
+		index: number
+	): boolean {
+		const filename = attachments[index]?.filename;
+		if (!filename) return false;
+		return attachments.some(
+			(other, otherIndex) => otherIndex !== index && other.filename === filename
+		);
+	}
+
 	function selectMailbox(view: MailboxView, folder: string | null = selectedFolder) {
 		mailboxView = view;
 		selectedFolder = folder;
@@ -947,6 +960,17 @@
 								aria-label="Save to RustShare"
 								onclick={() => (saveOpen = true)}><Check size={15} /></button
 							>
+							<a
+								class="btn btn-ghost btn-sm btn-square"
+								aria-label="Download .eml"
+								download
+								href={mailApi.remoteSourceUrl(
+									selectedAccountId!,
+									selectedMessage.uid,
+									selectedFolder!,
+									uidvalidity
+								)}><Download size={15} /></a
+							>
 							<button
 								type="button"
 								class="btn btn-ghost btn-sm btn-square"
@@ -1027,7 +1051,7 @@
 									>
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
-											{#each $remoteBodyQuery.data.attachments as attachment}<a
+											{#each $remoteBodyQuery.data.attachments as attachment, attachmentIndex}<a
 													class="btn btn-outline btn-sm"
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
@@ -1037,7 +1061,9 @@
 														uidvalidity
 													)}
 													><Paperclip size={13} />{attachment.filename ||
-														`Attachment ${attachment.index + 1}`}
+														`Attachment ${attachment.index + 1}`}{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
+															class="badge badge-ghost badge-sm">#{attachment.index + 1}</span
+														>{/if}
 													<span class="text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
 													></a

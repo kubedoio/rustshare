@@ -3,6 +3,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use futures_util::stream::BoxStream;
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSmtpSettings,
@@ -20,7 +21,7 @@ use rustshare_core::services::{
 };
 use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{is_missing_object_error, EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -275,6 +276,21 @@ pub struct RemoteMailMessageSource {
     pub rfc822: Vec<u8>,
     pub is_seen: bool,
     pub is_flagged: bool,
+}
+
+/// Body of a downloaded mail attachment.
+pub enum MailAttachmentBody {
+    /// Fully buffered bytes. Used for content-addressed import blobs, whose
+    /// size is bounded by the 25 MB raw-message cap enforced on `.eml`
+    /// upload/import, so buffering in memory is acceptable.
+    Buffered(bytes::Bytes),
+    /// Streamed bytes. Used for the draft file fallback, where attachments
+    /// reference workspace files that can be many GB and must not be
+    /// buffered in memory.
+    Stream {
+        content_length: Option<i64>,
+        stream: BoxStream<'static, std::io::Result<bytes::Bytes>>,
+    },
 }
 
 impl MailService {
@@ -1053,6 +1069,102 @@ impl MailService {
             .list_mail_attachments_by_message_id(message_id, tenant_id, owner_id)
             .await
             .map_err(|e| MailError::Database(e.to_string()))
+    }
+
+    /// Download a single attachment's stored bytes, scoped to the owning user
+    /// and tenant.
+    ///
+    /// Prefers the content-addressed object-store blob; falls back to the
+    /// linked file's content when no usable blob exists. Only a
+    /// confirmed-missing object (S3 `NoSuchKey`/404) proceeds to the fallback
+    /// or is reported as `NotFound` (404), so callers cannot distinguish
+    /// storage layout from absence; any other storage failure (unreachable
+    /// store, access denied, integrity mismatch) propagates as
+    /// `MailError::Storage` (5xx) instead of being misreported as missing.
+    pub async fn download_attachment(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        attachment_id: Uuid,
+    ) -> Result<(MailAttachment, MailAttachmentBody), MailError> {
+        // Verify the caller can access the message first so cross-tenant
+        // requests are rejected before any storage access happens. Map a
+        // tenant/owner mismatch to NotFound so this endpoint does not leak
+        // message existence (unlike the older read endpoints, which use 403).
+        self.get_message(tenant_id, owner_id, message_id)
+            .await
+            .map_err(|err| match err {
+                MailError::PermissionDenied => MailError::NotFound(message_id),
+                other => other,
+            })?;
+        let attachment = self
+            .metadata_store
+            .find_mail_attachment_by_id(attachment_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(attachment_id))?;
+
+        if let Some(blob_key) = &attachment.blob_key {
+            match self.object_store.get(blob_key).await {
+                // Imported blobs are bounded by the 25 MB raw-message import
+                // cap, so buffering them in memory is acceptable.
+                Ok(bytes) => return Ok((attachment, MailAttachmentBody::Buffered(bytes))),
+                Err(e) if is_missing_object_error(&e) => {
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        error = %e,
+                        "mail attachment blob missing from object store; trying file fallback"
+                    );
+                }
+                Err(e) => return Err(MailError::Storage(e.to_string())),
+            }
+        }
+
+        if let Some(file_id) = attachment.file_id {
+            let file = match self.file_service.get_file(file_id, owner_id).await {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    // A missing or inaccessible linked file is reported as a
+                    // missing attachment (404), never as a storage failure.
+                    tracing::warn!(
+                        attachment_id = %attachment_id,
+                        file_id = %file_id,
+                        error = %e,
+                        "mail attachment file fallback failed: file metadata unreadable"
+                    );
+                    None
+                }
+            };
+            if let Some(file) = file {
+                // Draft attachments reference workspace files that can be many
+                // GB, so stream the content instead of buffering it.
+                match self.object_store.get_stream(&file.storage_key()).await {
+                    Ok((_content_type, content_length, stream)) => {
+                        return Ok((
+                            attachment,
+                            MailAttachmentBody::Stream {
+                                content_length,
+                                stream: Box::pin(stream),
+                            },
+                        ));
+                    }
+                    Err(e) if is_missing_object_error(&e) => {
+                        tracing::warn!(
+                            attachment_id = %attachment_id,
+                            file_id = %file_id,
+                            error = %e,
+                            "mail attachment file content missing from object store"
+                        );
+                    }
+                    Err(e) => return Err(MailError::Storage(e.to_string())),
+                }
+            }
+        }
+
+        // No readable bytes anywhere: report NotFound (404) so a missing blob
+        // is indistinguishable from a missing attachment.
+        Err(MailError::NotFound(attachment_id))
     }
 
     // ============================================================================
