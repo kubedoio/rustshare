@@ -240,13 +240,14 @@
 		}
 	}
 
+	beforeNavigate((navigation) => {
+		if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) {
+			navigation.cancel();
+		}
+	});
+
 	onMount(() => {
 		window.addEventListener('beforeunload', handleBeforeUnload);
-		beforeNavigate((navigation) => {
-			if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) {
-				navigation.cancel();
-			}
-		});
 	});
 
 	onDestroy(() => {
