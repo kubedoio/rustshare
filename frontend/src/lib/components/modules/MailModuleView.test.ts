@@ -32,7 +32,8 @@ const mocks = vi.hoisted(() => ({
 	sendDraft: vi.fn(),
 	discardDraft: vi.fn(),
 	uploadMessage: vi.fn(),
-	remoteAttachmentUrl: vi.fn(() => '/attachment')
+	remoteAttachmentUrl: vi.fn(() => '/attachment'),
+	remoteSourceUrl: vi.fn(() => '/message.eml')
 }));
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
@@ -684,7 +685,9 @@ describe('MailModuleView', () => {
 
 		// The saved mailbox is selected with the previous search applied.
 		expect(await screen.findByRole('button', { name: /Saved mail/ })).toBeTruthy();
-		await waitFor(() => expect(mocks.listMessagesPage).toHaveBeenCalledWith('quarterly'));
+		await waitFor(() =>
+			expect(mocks.listMessagesPage).toHaveBeenCalledWith('quarterly', null, null, 'date_desc')
+		);
 		expect(
 			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
 		).toBe('page');
