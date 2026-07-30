@@ -1,12 +1,12 @@
 use axum::{
     body::Body,
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use chrono::{DateTime, NaiveDate, Utc};
-use rustshare_core::domain::{LinkTargetType, MailTlsMode};
+use rustshare_core::domain::{LinkTargetType, MailSortOrder, MailTlsMode};
 use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -511,6 +511,20 @@ pub async fn upload_mail(
     ))
 }
 
+/// Parse the optional `sort` query parameter shared by both mail list
+/// endpoints. A missing value defaults to `date_desc` (newest first);
+/// unknown values are rejected with a 400 instead of silently falling back.
+fn parse_mail_sort_order(sort: Option<&str>) -> Result<MailSortOrder, AppError> {
+    match sort {
+        None => Ok(MailSortOrder::DateDesc),
+        Some(value) => MailSortOrder::parse(value).ok_or_else(|| {
+            AppError::bad_request(format!(
+                "Invalid sort value '{value}': expected 'date_desc' or 'date_asc'"
+            ))
+        }),
+    }
+}
+
 /// List imported mail messages.
 #[utoipa::path(
     get,
@@ -519,6 +533,7 @@ pub async fn upload_mail(
     params(ListImportedMailMessagesQuery),
     responses(
         (status = 200, description = "Mail messages", body = ListMailMessagesResponse),
+        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -529,6 +544,7 @@ pub async fn list_mail_messages(
 ) -> Result<Json<ListMailMessagesResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
 
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let cursor = match (query.cursor_at, query.cursor_id) {
         (Some(at), Some(id)) => Some((at, id)),
@@ -551,6 +567,7 @@ pub async fn list_mail_messages(
                 .filter(|value| !value.trim().is_empty()),
             cursor,
             limit + 1,
+            sort,
         )
         .await?;
     let has_more = page.len() > limit as usize;
@@ -563,7 +580,9 @@ pub async fn list_mail_messages(
     let next_cursor = has_more.then(|| messages.last()).flatten();
 
     Ok(Json(ListMailMessagesResponse {
-        next_cursor_at: next_cursor.map(|message| message.imported_at),
+        // The cursor is the row's coalesced sort value so the keyset
+        // predicate matches the ORDER BY exactly.
+        next_cursor_at: next_cursor.map(|message| message.sent_at.unwrap_or(message.imported_at)),
         next_cursor_id: next_cursor.map(|message| message.id),
         messages,
     }))
@@ -632,6 +651,10 @@ pub struct ListImportedMailMessagesQuery {
     pub limit: Option<i64>,
     pub cursor_at: Option<DateTime<Utc>>,
     pub cursor_id: Option<Uuid>,
+    /// Sort order: `date_desc` (default, newest message date first) or
+    /// `date_asc` (oldest first). Message date is the Date header with the
+    /// import timestamp as fallback. Unknown values are rejected with 400.
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1008,8 +1031,12 @@ pub struct ListMailMessagesQuery {
     folder: String,
     #[serde(default = "default_message_limit")]
     limit: i64,
+    /// UID of the last message returned by the previous date-sorted page.
     cursor: Option<i64>,
     search: Option<String>,
+    /// Sort order: `date_desc` (default, newest first) or `date_asc`
+    /// (oldest first). Unknown values are rejected with 400.
+    sort: Option<String>,
 }
 
 fn default_message_limit() -> i64 {
@@ -1280,6 +1307,12 @@ pub async fn list_mail_account_folders(
 }
 
 /// List message summaries in an IMAP folder.
+///
+/// Ordering is arrival-based: IMAP UIDs increase as messages arrive, so
+/// `sort=date_desc` (default) walks from the highest UID down and
+/// `sort=date_asc` from the lowest UID up; the `cursor` parameter acts as a
+/// `before_uid` for `date_desc` and an `after_uid` for `date_asc`. Within
+/// each returned page the summaries are refined by their parsed Date header.
 #[utoipa::path(
     get,
     path = "/api/v1/mail/accounts/{id}/messages",
@@ -1302,6 +1335,7 @@ pub async fn list_mail_account_messages(
     Query(query): Query<ListMailMessagesQuery>,
 ) -> Result<Json<MailMessageSummaryListResponse>, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
+    let sort = parse_mail_sort_order(query.sort.as_deref())?;
     if query.folder.trim().is_empty() {
         return Err(AppError::bad_request("Missing folder query parameter"));
     }
@@ -1327,6 +1361,7 @@ pub async fn list_mail_account_messages(
                 .search
                 .as_deref()
                 .filter(|value| !value.trim().is_empty()),
+            sort,
         )
         .await?;
 
@@ -1357,11 +1392,13 @@ pub async fn list_mail_account_messages(
             summary_to_response(summary, imported_message_id)
         })
         .collect();
-    let next_cursor = messages
-        .iter()
-        .map(|message| message.uid)
-        .min()
-        .map(i64::from);
+    let next_cursor = match sort {
+        // The cursor continues the UID traversal: below the lowest UID on the
+        // page for date_desc, above the highest for date_asc.
+        MailSortOrder::DateDesc => messages.iter().map(|message| message.uid).min(),
+        MailSortOrder::DateAsc => messages.iter().map(|message| message.uid).max(),
+    }
+    .map(i64::from);
 
     Ok(Json(MailMessageSummaryListResponse {
         uidvalidity: uidvalidity.map(i64::from),
@@ -2148,27 +2185,35 @@ pub async fn delete_mail_archive_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn sanitize_email_html(html: &str) -> String {
+/// Sanitize stored message HTML. When `allow_remote_images` is false (the
+/// default), remote `<img src>` values are stripped to protect privacy; the
+/// returned bool reports whether any image was blocked.
+fn sanitize_email_html(html: &str, allow_remote_images: bool) -> (String, bool) {
     let schemes: std::collections::HashSet<&str> = ["http", "https", "mailto", "cid", "data"]
         .into_iter()
         .collect();
-    ammonia::Builder::default()
+    let blocked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocked_flag = blocked.clone();
+    let clean = ammonia::Builder::default()
         .url_schemes(schemes)
-        .attribute_filter(|element, attribute, value| {
+        .attribute_filter(move |element, attribute, value| {
             let source = value.trim_start();
-            if element == "img"
+            if !allow_remote_images
+                && element == "img"
                 && attribute == "src"
                 && (source.starts_with("//")
                     || source.split_once(':').is_some_and(|(scheme, _)| {
                         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
                     }))
             {
+                blocked_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             Some(value.into())
         })
         .clean(html)
-        .to_string()
+        .to_string();
+    (clean, blocked.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn rewrite_cid_urls(html: &str, attachments: &[rustshare_core::domain::MailAttachment]) -> String {
@@ -2215,6 +2260,14 @@ pub async fn list_mail_message_parts(
     }))
 }
 
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MailMessagePartQuery {
+    /// Load remote images in sanitized HTML parts (blocked by default).
+    #[serde(default)]
+    pub load_remote_images: bool,
+}
+
 /// Get the content of a single message part. HTML parts are sanitized before delivery.
 #[utoipa::path(
     get,
@@ -2223,6 +2276,7 @@ pub async fn list_mail_message_parts(
     params(
         ("id" = Uuid, Path, description = "Mail message ID"),
         ("part_id" = Uuid, Path, description = "Part ID"),
+        MailMessagePartQuery,
     ),
     responses(
         (status = 200, description = "Part content"),
@@ -2234,6 +2288,7 @@ pub async fn get_mail_message_part(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path((message_id, part_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<MailMessagePartQuery>,
 ) -> Result<Response, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     let (part, bytes) = state
@@ -2248,7 +2303,10 @@ pub async fn get_mail_message_part(
             .mail_service
             .list_attachments(auth.tenant_id, auth.user_id, message_id)
             .await?;
-        let sanitized = sanitize_email_html(&rewrite_cid_urls(html, &attachments));
+        let (sanitized, blocked_remote_images) = sanitize_email_html(
+            &rewrite_cid_urls(html, &attachments),
+            query.load_remote_images,
+        );
         if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await {
             tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
         }
@@ -2261,6 +2319,12 @@ pub async fn get_mail_message_part(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("sandbox"),
         );
+        if blocked_remote_images {
+            headers.insert(
+                HeaderName::from_static("x-mail-blocked-remote-images"),
+                HeaderValue::from_static("1"),
+            );
+        }
         return Ok((StatusCode::OK, headers, sanitized).into_response());
     } else if let Some(charset) = &part.charset {
         format!("{}; charset={}", part.content_type, charset)
@@ -3181,13 +3245,64 @@ pub async fn send_draft_handler(
 #[cfg(test)]
 mod tests {
     use super::{
-        remove_reply_all_sender, require_destination_folder, rewrite_cid_urls, sanitize_email_html,
-        validate_send_outbound_mail_request, CreateMailImportJobRequest,
-        CreateOrUpdateSmtpSettingsRequest, SendOutboundMailRequest,
+        parse_mail_sort_order, remove_reply_all_sender, require_destination_folder,
+        rewrite_cid_urls, sanitize_email_html, validate_send_outbound_mail_request,
+        CreateMailImportJobRequest, CreateOrUpdateSmtpSettingsRequest,
+        ListImportedMailMessagesQuery, ListMailMessagesQuery, SendOutboundMailRequest,
     };
+    use crate::handlers::AppError;
     use chrono::Utc;
+    use rustshare_core::domain::MailSortOrder;
     use uuid::Uuid;
     use validator::Validate;
+
+    #[test]
+    fn mail_sort_order_defaults_to_newest_first() {
+        assert_eq!(
+            parse_mail_sort_order(None).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_desc")).unwrap(),
+            MailSortOrder::DateDesc
+        );
+        assert_eq!(
+            parse_mail_sort_order(Some("date_asc")).unwrap(),
+            MailSortOrder::DateAsc
+        );
+    }
+
+    #[test]
+    fn mail_sort_order_rejects_unknown_values() {
+        let err = parse_mail_sort_order(Some("subject")).expect_err("invalid sort should fail");
+        assert!(
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("date_desc")),
+            "error should name the valid values, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn imported_messages_query_deserializes_sort_param() {
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r#"{"sort": "date_asc"}"#).expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListImportedMailMessagesQuery =
+            serde_json::from_str(r"{}").expect("missing sort should deserialize");
+        assert!(query.sort.is_none());
+    }
+
+    #[test]
+    fn account_messages_query_deserializes_sort_param() {
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX", "sort": "date_asc"}"#)
+                .expect("should deserialize");
+        assert_eq!(query.sort.as_deref(), Some("date_asc"));
+
+        let query: ListMailMessagesQuery =
+            serde_json::from_str(r#"{"folder": "INBOX"}"#).expect("should deserialize");
+        assert!(query.sort.is_none());
+    }
 
     #[test]
     fn archive_and_trash_require_an_explicit_destination() {
@@ -3367,7 +3482,7 @@ mod tests {
     fn sanitize_email_html_strips_scripts() {
         let raw =
             r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, _) = sanitize_email_html(raw, false);
         assert!(!clean.contains("<script>"));
         assert!(!clean.contains("javascript:"));
         assert!(clean.contains("<p>Hello</p>"));
@@ -3376,13 +3491,60 @@ mod tests {
     #[test]
     fn sanitize_email_html_blocks_remote_images() {
         let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img alt="upper" src="HTTPS://tracker.example/upper.gif"><img src="//tracker.example/relative.gif"><img src="cid:inline">"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "blocked flag should report removed remote images");
         assert!(!clean.contains("https://tracker.example"));
         assert!(!clean.contains("HTTPS://tracker.example"));
         assert!(!clean.contains("//tracker.example"));
         assert!(clean.contains(r#"<img alt="tracker">"#));
         assert!(clean.contains(r#"<img alt="upper">"#));
         assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_reports_no_block_without_remote_images() {
+        let raw = r#"<p>Hello</p><img src="cid:inline">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(!blocked, "no remote images means no blocked flag");
+        assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_explicit_load_keeps_remote_images() {
+        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img src="//tracker.example/relative.gif">"#;
+        let (clean, blocked) = sanitize_email_html(raw, true);
+        assert!(!blocked, "allow mode never reports blocked images");
+        assert!(clean.contains(r#"<img alt="tracker" src="https://tracker.example/pixel.gif">"#));
+        assert!(clean.contains(r#"<img src="//tracker.example/relative.gif">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_scripts_in_allow_mode() {
+        let raw = r#"<img src="https://tracker.example/pixel.gif" onerror="alert(1)"><script>alert('xss')</script>"#;
+        let (clean, _) = sanitize_email_html(raw, true);
+        assert!(!clean.contains("<script>"));
+        assert!(!clean.contains("onerror"));
+        assert!(clean.contains("https://tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_srcset_in_both_modes() {
+        let raw = r#"<img src="cid:inline" srcset="https://tracker.example/pixel.gif 1x, https://tracker.example/pixel@2x.gif 2x">"#;
+        let (blocked_mode, _) = sanitize_email_html(raw, false);
+        let (allow_mode, _) = sanitize_email_html(raw, true);
+        assert!(!blocked_mode.contains("srcset"));
+        assert!(!allow_mode.contains("srcset"));
+        assert!(!blocked_mode.contains("tracker.example"));
+        assert!(!allow_mode.contains("tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_blocks_tracking_pixel() {
+        let raw =
+            r#"<p>Hi</p><img src="https://tracker.example/open.gif" width="1" height="1" alt="">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "tracking pixel should be reported as blocked");
+        assert!(!clean.contains("tracker.example"));
     }
 
     #[test]

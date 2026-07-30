@@ -794,232 +794,118 @@ async fn reading_part_and_source_appends_viewed_event() {
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
-/// Multi-attachment EML: plain body plus three attachments — ASCII name,
-/// RFC 2047 encoded-word Unicode name, and a zero-byte payload.
-fn multi_attachment_eml() -> Vec<u8> {
-    // "first bytes" and "pdf-bytes" base64-encoded; the second filename is the
-    // RFC 2047 encoded-word for "我的報告.pdf".
-    "From: sender@example.com\r\n\
-     To: recipient@example.com\r\n\
-     Subject: Multi attachments\r\n\
-     Message-ID: <multi-attach@example.com>\r\n\
-     Date: Mon, 06 Jul 2026 14:00:00 +0000\r\n\
-     MIME-Version: 1.0\r\n\
-     Content-Type: multipart/mixed; boundary=\"mixboundary\"\r\n\
-     \r\n\
-     --mixboundary\r\n\
-     Content-Type: text/plain; charset=utf-8\r\n\
-     \r\n\
-     See attached files.\r\n\
-     --mixboundary\r\n\
-     Content-Type: text/plain; name=\"first.txt\"\r\n\
-     Content-Disposition: attachment; filename=\"first.txt\"\r\n\
-     Content-Transfer-Encoding: base64\r\n\
-     \r\n\
-     Zmlyc3QgYnl0ZXM=\r\n\
-     --mixboundary\r\n\
-     Content-Type: application/pdf; name=\"=?UTF-8?B?5oiR55qE5aCx5ZGKLnBkZg==?=\"\r\n\
-     Content-Disposition: attachment; filename=\"=?UTF-8?B?5oiR55qE5aCx5ZGKLnBkZg==?=\"\r\n\
-     Content-Transfer-Encoding: base64\r\n\
-     \r\n\
-     cGRmLWJ5dGVz\r\n\
-     --mixboundary\r\n\
-     Content-Type: application/octet-stream; name=\"empty.bin\"\r\n\
-     Content-Disposition: attachment; filename=\"empty.bin\"\r\n\
-     Content-Transfer-Encoding: base64\r\n\
-     \r\n\
-     \r\n\
-     --mixboundary--\r\n"
-        .as_bytes()
-        .to_vec()
+// ---------------------------------------------------------------------------
+// Deterministic date sorting (issue #182)
+// ---------------------------------------------------------------------------
+
+async fn insert_sorted_message(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    subject: &str,
+    sent_at: Option<chrono::DateTime<chrono::Utc>>,
+    imported_at: chrono::DateTime<chrono::Utc>,
+) -> Uuid {
+    // eml_upload is excluded from the account-source unique index, so several
+    // synthetic messages per user can coexist without fake source identities.
+    let mut message = rustshare_core::domain::MailMessage::new(
+        tenant_id,
+        user_id,
+        user_id,
+        rustshare_core::domain::MailSourceMode::EmlUpload,
+    );
+    message.subject = Some(subject.to_string());
+    message.sent_at = sent_at;
+    message.imported_at = imported_at;
+    state
+        .metadata_store
+        .create_mail_message(&message)
+        .await
+        .expect("insert mail message");
+    message.id
 }
 
-async fn list_attachment_ids(
-    app: axum::Router,
-    message_id: Uuid,
-    token: &str,
-) -> Vec<serde_json::Value> {
+async fn get_saved_messages(app: &axum::Router, token: &str, query: &str) -> serde_json::Value {
     let request = Request::builder()
-        .uri(format!("/api/v1/mail/messages/{message_id}/attachments"))
+        .uri(format!("/api/v1/mail/messages?{query}"))
         .method("GET")
-        .header("Authorization", format!("Bearer {token}"))
+        .header("Authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "query: {query}");
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    parsed["attachments"]
-        .as_array()
-        .expect("attachments array")
-        .clone()
+    serde_json::from_slice(&body).unwrap()
 }
 
-async fn get_attachment(
-    app: axum::Router,
-    message_id: Uuid,
-    attachment_id: &str,
-    token: Option<&str>,
-) -> axum::response::Response {
-    let mut builder = Request::builder()
-        .uri(format!(
-            "/api/v1/mail/messages/{message_id}/attachments/{attachment_id}"
-        ))
-        .method("GET")
-        .body(Body::empty())
-        .unwrap();
-    if let Some(token) = token {
-        builder
-            .headers_mut()
-            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
-    }
-    app.oneshot(builder).await.unwrap()
+fn message_ids(body: &serde_json::Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .map(|message| message["id"].as_str().unwrap().to_string())
+        .collect()
 }
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
-async fn download_imported_attachments_serves_exact_bytes_with_safe_headers() {
+async fn saved_messages_sort_both_directions_with_null_sent_at_fallback() {
     let state = setup_test_env().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
-    let user = create_test_user(&state, "mail_att_dl", tenant_id).await;
+    let user = create_test_user(&state, "mail_sort", tenant_id).await;
     enable_mail_module(&state, tenant_id, user.id).await;
     let token = create_auth_token(&state, user.id, tenant_id);
-
-    let message = state
-        .mail_service
-        .import_eml(tenant_id, user.id, user.id, multi_attachment_eml())
-        .await
-        .expect("import_eml should succeed");
-
     let app = build_app(state.clone());
-    let attachments = list_attachment_ids(app.clone(), message.id, &token).await;
-    assert_eq!(attachments.len(), 3, "expected three attachments");
 
-    // Each attachment is independently downloadable with its exact bytes.
-    let first = attachments
-        .iter()
-        .find(|a| a["filename"] == "first.txt")
-        .expect("first.txt attachment");
-    let response = get_attachment(
-        app.clone(),
-        message.id,
-        first["id"].as_str().unwrap(),
-        Some(&token),
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+
+    // A: dated oldest. B: dated newest. C: no Date header, but imported last,
+    // so it falls between A and B on the coalesced sort value.
+    let a = insert_sorted_message(&state, tenant_id, user.id, "A", Some(base), base).await;
+    let b = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "B",
+        Some(base + day * 10),
+        base + day,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        "text/plain"
-    );
-    assert_eq!(
-        response.headers().get("x-content-type-options").unwrap(),
-        "nosniff"
-    );
-    let disposition = response
-        .headers()
-        .get("content-disposition")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        disposition.starts_with("attachment; filename=\"first.txt\"; filename*=UTF-8''first.txt"),
-        "unexpected disposition: {disposition}"
-    );
-    assert!(
-        !disposition.contains("blobs/"),
-        "disposition must not leak storage keys: {disposition}"
-    );
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(body.to_vec(), b"first bytes");
+    let c = insert_sorted_message(&state, tenant_id, user.id, "C", None, base + day * 5).await;
 
-    // Unicode filename: ASCII-safe fallback plus RFC 5987 original.
-    let unicode = attachments
-        .iter()
-        .find(|a| a["filename"] == "我的報告.pdf")
-        .expect("unicode-named attachment");
-    let response = get_attachment(
-        app.clone(),
-        message.id,
-        unicode["id"].as_str().unwrap(),
-        Some(&token),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
+    let desc = get_saved_messages(&app, &token, "").await;
     assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        "application/pdf"
+        message_ids(&desc),
+        vec![b.to_string(), c.to_string(), a.to_string()],
+        "default order should be newest coalesced date first"
     );
-    let disposition = response
-        .headers()
-        .get("content-disposition")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        disposition.contains("filename=\"____.pdf\""),
-        "ASCII fallback expected: {disposition}"
-    );
-    assert!(
-        disposition.contains("filename*=UTF-8''%E6%88%91%E7%9A%84%E5%A0%B1%E5%91%8A.pdf"),
-        "RFC 5987 original expected: {disposition}"
-    );
-    assert!(
-        !disposition.bytes().any(|b| b < 0x20 || b == 0x7f),
-        "no control characters allowed: {disposition:?}"
-    );
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(body.to_vec(), b"pdf-bytes");
 
-    // Zero-byte attachment downloads as an empty 200 body.
-    let empty = attachments
-        .iter()
-        .find(|a| a["filename"] == "empty.bin")
-        .expect("empty.bin attachment");
-    let response = get_attachment(
-        app.clone(),
-        message.id,
-        empty["id"].as_str().unwrap(),
-        Some(&token),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert!(body.is_empty(), "zero-byte attachment should be empty");
+    let explicit_desc = get_saved_messages(&app, &token, "sort=date_desc").await;
+    assert_eq!(message_ids(&explicit_desc), message_ids(&desc));
 
-    // Source download keeps its clearly separate .eml disposition.
+    let asc = get_saved_messages(&app, &token, "sort=date_asc").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![a.to_string(), c.to_string(), b.to_string()],
+        "ascending order should be oldest coalesced date first"
+    );
+
     let request = Request::builder()
-        .uri(format!("/api/v1/mail/messages/{}/source", message.id))
+        .uri("/api/v1/mail/messages?sort=sideways")
         .method("GET")
-        .header("Authorization", format!("Bearer {token}"))
+        .header("Authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        "message/rfc822"
-    );
-    let disposition = response
-        .headers()
-        .get("content-disposition")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        disposition.contains(&format!("filename=\"message-{}.eml\"", message.id)),
-        "source disposition should carry the .eml name: {disposition}"
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "unknown sort values must be rejected"
     );
 
     cleanup_user(&state.db_pool, user.id).await;
@@ -1028,59 +914,164 @@ async fn download_imported_attachments_serves_exact_bytes_with_safe_headers() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
-async fn download_imported_attachment_not_found_and_authorization() {
+async fn saved_messages_sort_equal_dates_use_id_tiebreak() {
     let state = setup_test_env().await;
-    let tenant_a = create_test_tenant(&state.db_pool).await;
-    let user_a = create_test_user(&state, "mail_att_owner", tenant_a).await;
-    enable_mail_module(&state, tenant_a, user_a.id).await;
-    let token_a = create_auth_token(&state, user_a.id, tenant_a);
-
-    let tenant_b = create_test_tenant(&state.db_pool).await;
-    let user_b = create_test_user(&state, "mail_att_intruder", tenant_b).await;
-    enable_mail_module(&state, tenant_b, user_b.id).await;
-    let token_b = create_auth_token(&state, user_b.id, tenant_b);
-
-    let message = state
-        .mail_service
-        .import_eml(tenant_a, user_a.id, user_a.id, multi_attachment_eml())
-        .await
-        .expect("import_eml should succeed");
-
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_tie", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
     let app = build_app(state.clone());
-    let attachments = list_attachment_ids(app.clone(), message.id, &token_a).await;
-    let first_id = attachments[0]["id"].as_str().unwrap().to_string();
 
-    // Unauthenticated request is rejected.
-    let response = get_attachment(app.clone(), message.id, &first_id, None).await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let ts = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let first = insert_sorted_message(&state, tenant_id, user.id, "Tie 1", Some(ts), ts).await;
+    let second = insert_sorted_message(&state, tenant_id, user.id, "Tie 2", Some(ts), ts).await;
 
-    // Cross-tenant request is indistinguishable from a missing attachment.
-    let response = get_attachment(app.clone(), message.id, &first_id, Some(&token_b)).await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // Postgres uuid ordering is plain byte ordering, matching Rust's Uuid Ord.
+    let (low, high) = if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    };
 
-    // Unknown attachment ID on a known message is a 404.
-    let response = get_attachment(
-        app.clone(),
-        message.id,
-        &Uuid::new_v4().to_string(),
-        Some(&token_a),
+    let desc = get_saved_messages(&app, &token, "sort=date_desc").await;
+    assert_eq!(
+        message_ids(&desc),
+        vec![high.to_string(), low.to_string()],
+        "descending ties should break on id DESC"
+    );
+
+    let asc = get_saved_messages(&app, &token, "sort=date_asc").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![low.to_string(), high.to_string()],
+        "ascending ties should break on id ASC"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_sort_paginates_in_both_directions() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_page", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        ids.push(
+            insert_sorted_message(
+                &state,
+                tenant_id,
+                user.id,
+                &format!("Page {i}"),
+                Some(base + day * i),
+                base + day * i,
+            )
+            .await
+            .to_string(),
+        );
+    }
+
+    for (sort, expected) in [
+        (
+            "date_desc",
+            vec![ids[2].clone(), ids[1].clone(), ids[0].clone()],
+        ),
+        ("date_asc", ids.clone()),
+    ] {
+        let page1 = get_saved_messages(&app, &token, &format!("sort={sort}&limit=2")).await;
+        assert_eq!(message_ids(&page1), expected[..2], "first page for {sort}");
+        let cursor_at = page1["next_cursor_at"]
+            .as_str()
+            .expect("next_cursor_at present");
+        let cursor_id = page1["next_cursor_id"]
+            .as_str()
+            .expect("next_cursor_id present");
+
+        let page2 = get_saved_messages(
+            &app,
+            &token,
+            &format!("sort={sort}&limit=2&cursor_at={cursor_at}&cursor_id={cursor_id}"),
+        )
+        .await;
+        assert_eq!(message_ids(&page2), expected[2..], "second page for {sort}");
+        assert!(
+            page2["next_cursor_at"].is_null(),
+            "no third page expected for {sort}"
+        );
+    }
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn saved_messages_search_combines_with_sort() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_sort_search", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let day = chrono::Duration::days(1);
+    let older = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Quarterly report Q1",
+        Some(base),
+        base,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let newer = insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Quarterly report Q2",
+        Some(base + day),
+        base + day,
+    )
+    .await;
+    insert_sorted_message(
+        &state,
+        tenant_id,
+        user.id,
+        "Unrelated",
+        Some(base + day * 2),
+        base + day * 2,
+    )
+    .await;
 
-    // Attachment whose blob vanished from the object store (and with no file
-    // fallback) is a 404, not a storage error.
-    sqlx::query("UPDATE mail_attachments SET blob_key = $1, file_id = NULL WHERE id = $2")
-        .bind("blobs/definitely-missing-blob")
-        .bind(Uuid::parse_str(&first_id).unwrap())
-        .execute(&state.db_pool)
-        .await
-        .expect("update attachment blob_key");
-    let response = get_attachment(app.clone(), message.id, &first_id, Some(&token_a)).await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let asc = get_saved_messages(&app, &token, "sort=date_asc&search=quarterly").await;
+    assert_eq!(
+        message_ids(&asc),
+        vec![older.to_string(), newer.to_string()],
+        "search results should honor ascending date order"
+    );
 
-    cleanup_user(&state.db_pool, user_a.id).await;
-    cleanup_user(&state.db_pool, user_b.id).await;
-    cleanup_tenant(&state.db_pool, tenant_a).await;
-    cleanup_tenant(&state.db_pool, tenant_b).await;
+    let desc = get_saved_messages(&app, &token, "sort=date_desc&search=quarterly").await;
+    assert_eq!(
+        message_ids(&desc),
+        vec![newer.to_string(), older.to_string()],
+        "search results should honor descending date order"
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
 }

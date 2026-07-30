@@ -21,6 +21,12 @@ export interface MailMessage {
 export type MailSourceMode =
 	'eml_upload' | 'imap_selected' | 'imap_archive' | 'inbound_address' | 'outbound' | 'draft';
 
+/**
+ * Sort order for mail list endpoints. `date_desc` (newest message date first)
+ * is the server default; omitted params mean `date_desc`.
+ */
+export type MailSortOrder = 'date_desc' | 'date_asc';
+
 export interface MailMessagePart {
 	id: string;
 	part_index: number;
@@ -299,12 +305,14 @@ export const mailApi = {
 		folder: string,
 		limit = 100,
 		cursor?: number | null,
-		search = ''
+		search = '',
+		sort?: MailSortOrder
 	): Promise<ListMailAccountMessagesResponse> => {
 		const cursorParam = cursor ? `&cursor=${cursor}` : '';
 		const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+		const sortParam = sort ? `&sort=${sort}` : '';
 		return apiClient.get<ListMailAccountMessagesResponse>(
-			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}`
+			`/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&limit=${limit}${cursorParam}${searchParam}${sortParam}`
 		);
 	},
 
@@ -504,10 +512,12 @@ export const mailApi = {
 	listMessagesPage: async (
 		search = '',
 		cursorAt?: string | null,
-		cursorId?: string | null
+		cursorId?: string | null,
+		sort?: MailSortOrder
 	): Promise<ListMailMessagesResponse> => {
 		const params = new URLSearchParams({ limit: '50' });
 		if (search) params.set('search', search);
+		if (sort) params.set('sort', sort);
 		if (cursorAt && cursorId) {
 			params.set('cursor_at', cursorAt);
 			params.set('cursor_id', cursorId);
@@ -577,6 +587,21 @@ export const mailApi = {
 
 	getPartContent: async (messageId: string, partId: string): Promise<string> => {
 		return apiClient.requestText(`/mail/messages/${messageId}/parts/${partId}`);
+	},
+
+	getPartContentWithMeta: async (
+		messageId: string,
+		partId: string,
+		opts?: { loadRemoteImages?: boolean }
+	): Promise<{ content: string; blockedRemoteImages: boolean }> => {
+		const query = opts?.loadRemoteImages ? '?load_remote_images=true' : '';
+		const { text, headers } = await apiClient.requestTextWithHeaders(
+			`/mail/messages/${messageId}/parts/${partId}${query}`
+		);
+		return {
+			content: text,
+			blockedRemoteImages: headers.get('X-Mail-Blocked-Remote-Images') === '1'
+		};
 	},
 
 	listAttachments: async (messageId: string): Promise<MailAttachment[]> => {

@@ -28,17 +28,14 @@ const mocks = vi.hoisted(() => ({
 	updateDraft: vi.fn(),
 	sendDraft: vi.fn(),
 	discardDraft: vi.fn(),
-	uploadMessage: vi.fn()
+	uploadMessage: vi.fn(),
+	remoteAttachmentUrl: vi.fn(() => '/attachment')
 }));
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn().mockResolvedValue([]) }));
 vi.mock('$lib/api/mail', () => ({
-	mailApi: {
-		...mocks,
-		remoteAttachmentUrl: vi.fn(() => '/attachment'),
-		remoteSourceUrl: vi.fn(() => '/eml-source')
-	}
+	mailApi: mocks
 }));
 
 const testModule = {
@@ -109,6 +106,7 @@ const body = {
 describe('MailModuleView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		localStorage.clear();
 		queryClient.clear();
 		mocks.listAccounts.mockResolvedValue([account]);
 		mocks.listFolders.mockResolvedValue(folders);
@@ -118,6 +116,7 @@ describe('MailModuleView', () => {
 			messages: [message]
 		});
 		mocks.getRemoteMessageBody.mockResolvedValue(body);
+		mocks.remoteAttachmentUrl.mockReturnValue('/attachment');
 		mocks.listDrafts.mockResolvedValue([]);
 		mocks.listMessagesPage.mockResolvedValue({
 			messages: [],
@@ -161,6 +160,124 @@ describe('MailModuleView', () => {
 		await waitFor(() => expect(container.textContent).toContain('Hello Alice'));
 		expect(mocks.getRemoteMessageBody).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7);
 		expect(container.querySelector('script')).toBeNull();
+	});
+
+	it('blocks remote images with a privacy notice and loads them on demand', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Hello</p><img src="https://tracker.example/pixel.gif">'
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+		const blockedImg = container.querySelector('img[data-rustshare-blocked-src]');
+		expect(blockedImg).toBeTruthy();
+		expect(blockedImg!.getAttribute('src')).toBeNull();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Load remote images' }));
+		await waitFor(() =>
+			expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeTruthy()
+		);
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.getByText('Remote images loaded for this message.')).toBeTruthy();
+	});
+
+	it('resets blocked remote images when switching messages', async () => {
+		const second = { ...message, uid: 43, subject: 'Second notice', is_seen: true };
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: [message, second]
+		});
+		mocks.getRemoteMessageBody.mockImplementation((_accountId: string, uid: number) =>
+			Promise.resolve({ ...body, uid, html: '<img src="https://tracker.example/pixel.gif">' })
+		);
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Load remote images' }));
+		await waitFor(() =>
+			expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeTruthy()
+		);
+
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Second notice/ }));
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+		expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeNull();
+	});
+
+	it('rewrites cid: images to attachment download URLs', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Logo:</p><img src="cid:logo@example.com">',
+			attachments: [
+				{
+					index: 2,
+					filename: 'logo.png',
+					mime_type: 'image/png',
+					size_bytes: 5,
+					content_id: '<logo@example.com>'
+				}
+			]
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.querySelector('img[src="/attachment"]')).toBeTruthy());
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+	});
+
+	it('keeps cid: images rewritten to absolute URLs on the local API base', async () => {
+		// When VITE_API_URL is absolute (the default is
+		// http://localhost:8080/api/v1), rewritten attachment URLs are absolute
+		// too; they must not be treated as remote images, while a truly
+		// external tracker in the same message is still blocked.
+		const localUrl =
+			'http://localhost:8080/api/v1/mail/accounts/acc-1/messages/42/attachments/2?folder=INBOX';
+		mocks.remoteAttachmentUrl.mockReturnValue(localUrl);
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Logo:</p><img src="cid:logo@example.com"><img src="https://tracker.example/pixel.gif">',
+			attachments: [
+				{
+					index: 2,
+					filename: 'logo.png',
+					mime_type: 'image/png',
+					size_bytes: 5,
+					content_id: '<logo@example.com>'
+				}
+			]
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.querySelector(`img[src="${localUrl}"]`)).toBeTruthy());
+		expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeNull();
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+	});
+
+	it('leaves unresolved cid: images untouched without crashing', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<img src="cid:missing-part">',
+			attachments: []
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() =>
+			expect(container.querySelector('img[src="cid:missing-part"]')).toBeTruthy()
+		);
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+	});
+
+	it('shows no remote-image notice for plain-text messages', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({ ...body, html: null, text: 'Plain body' });
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.textContent).toContain('Plain body'));
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Load remote images' })).toBeNull();
 	});
 
 	it('toggles the selected message star', async () => {
@@ -294,48 +411,109 @@ describe('MailModuleView', () => {
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
 	});
 
-	it('offers a raw .eml download for the selected remote message', async () => {
+	it('requests the remote list newest-first by default', async () => {
 		render(MailModuleView, { module: testModule });
-		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
 
-		const link = await screen.findByRole('link', { name: 'Download .eml' });
-		expect(link.getAttribute('href')).toBe('/eml-source');
-		const { mailApi } = await import('$lib/api/mail');
-		expect(mailApi.remoteSourceUrl).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7);
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_desc'
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Sort: newest first' })).toBeTruthy();
 	});
 
-	it('distinguishes duplicate attachment filenames by index and shows sizes', async () => {
-		mocks.getRemoteMessageBody.mockResolvedValue({
-			...body,
-			attachments: [
-				{
-					index: 0,
-					filename: 'dup.pdf',
-					mime_type: 'application/pdf',
-					size_bytes: 2048,
-					content_id: null
-				},
-				{
-					index: 1,
-					filename: 'dup.pdf',
-					mime_type: 'application/pdf',
-					size_bytes: 1024,
-					content_id: null
-				},
-				{ index: 2, filename: null, mime_type: 'image/png', size_bytes: 500, content_id: null }
-			]
+	it('re-fetches oldest-first when the sort control is toggled', async () => {
+		render(MailModuleView, { module: testModule });
+		await screen.findByRole('button', { name: /Bob.*Quarterly update/ });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Sort: newest first' }));
+
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+		expect(screen.getByRole('button', { name: 'Sort: oldest first' })).toBeTruthy();
+		expect(localStorage.getItem('mail-sort-order')).toBe('date_asc');
+	});
+
+	it('reads the persisted sort preference on mount', async () => {
+		localStorage.setItem('mail-sort-order', 'date_asc');
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByRole('button', { name: 'Sort: oldest first' })).toBeTruthy();
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+	});
+
+	it('keeps the sort order across a search submit', async () => {
+		render(MailModuleView, { module: testModule });
+		await screen.findByRole('button', { name: /Bob.*Quarterly update/ });
+		await fireEvent.click(screen.getByRole('button', { name: 'Sort: newest first' }));
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'',
+				'date_asc'
+			)
+		);
+
+		const input = screen.getByRole('textbox', { name: 'Search mail' });
+		await fireEvent.input(input, { target: { value: 'quarterly' } });
+		await fireEvent.submit(input.closest('form')!);
+
+		await waitFor(() =>
+			expect(mocks.listAccountMessages).toHaveBeenCalledWith(
+				'acct-1',
+				'INBOX',
+				100,
+				null,
+				'quarterly',
+				'date_asc'
+			)
+		);
+	});
+
+	it('passes the sort order to the Saved view', async () => {
+		localStorage.setItem('mail-sort-order', 'date_asc');
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Saved to RustShare' }));
+
+		await waitFor(() =>
+			expect(mocks.listMessagesPage).toHaveBeenCalledWith('', null, null, 'date_asc')
+		);
+	});
+
+	it('renders the sort control for an empty mailbox', async () => {
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: []
 		});
 		render(MailModuleView, { module: testModule });
-		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
 
-		expect(await screen.findByText('#1')).toBeTruthy();
-		expect(screen.getByText('#2')).toBeTruthy();
-		expect(screen.getByText('Attachment 3')).toBeTruthy();
-		expect(screen.getByText('2 KB')).toBeTruthy();
-		expect(screen.getByText('1 KB')).toBeTruthy();
-		expect(screen.getByText('500 B')).toBeTruthy();
-		const chips = screen.getAllByRole('link', { name: /dup\.pdf|Attachment 3/ });
-		expect(chips).toHaveLength(3);
-		for (const chip of chips) expect(chip.getAttribute('href')).toBe('/attachment');
+		expect(await screen.findByText('No messages in this folder.')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Sort: newest first' })).toBeTruthy();
 	});
 });

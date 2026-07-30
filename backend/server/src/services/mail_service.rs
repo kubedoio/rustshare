@@ -7,7 +7,7 @@ use futures_util::stream::BoxStream;
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSmtpSettings,
-    MailSourceMode, MailTlsMode, MailVisibility, SharePermissions, UserId,
+    MailSortOrder, MailSourceMode, MailTlsMode, MailVisibility, SharePermissions, UserId,
 };
 use rustshare_core::events::{
     AggregateType, Event, EventType, MailAccountCreatedPayload, MailAccountDeletedPayload,
@@ -949,7 +949,8 @@ impl MailService {
         Ok(visible)
     }
 
-    /// List imported mail messages for a user.
+    /// List imported mail messages for a user, ordered by message date
+    /// (`COALESCE(sent_at, imported_at)`) in the requested direction.
     pub async fn list_messages(
         &self,
         tenant_id: Uuid,
@@ -957,9 +958,10 @@ impl MailService {
         search: Option<&str>,
         cursor: Option<(DateTime<Utc>, Uuid)>,
         limit: i64,
+        sort: MailSortOrder,
     ) -> Result<Vec<MailMessage>, MailError> {
         self.metadata_store
-            .list_mail_messages_page(tenant_id, owner_id, search, cursor, limit)
+            .list_mail_messages_page(tenant_id, owner_id, search, cursor, limit, sort)
             .await
             .map_err(|e| MailError::Database(e.to_string()))
     }
@@ -1427,6 +1429,10 @@ impl MailService {
 
     /// List message summaries in an IMAP folder, along with the folder's
     /// UIDVALIDITY so callers can submit stable UID selections.
+    ///
+    /// `cursor_uid` is direction-dependent: for `date_desc` it is the
+    /// `before_uid` (page continues below it), for `date_asc` the `after_uid`
+    /// (page continues above it).
     #[allow(clippy::too_many_arguments)]
     pub async fn list_imap_messages(
         &self,
@@ -1435,15 +1441,16 @@ impl MailService {
         account_id: MailAccountId,
         folder: &str,
         limit: usize,
-        before_uid: Option<u32>,
+        cursor_uid: Option<u32>,
         search: Option<&str>,
+        sort: MailSortOrder,
     ) -> Result<(Option<u32>, Vec<ImapMessageSummary>), MailError> {
         let account = self.get_account(tenant_id, owner_id, account_id).await?;
         let password = rustshare_crypto::decrypt_secret(&account.password_enc, &self.secret_key)
             .map_err(|e| MailError::Storage(format!("failed to decrypt password: {e}")))?;
         let mut session = self.connect_and_login(&account, &password).await?;
         let result = session
-            .fetch_message_summaries(folder, limit, before_uid, search)
+            .fetch_message_summaries(folder, limit, cursor_uid, search, sort)
             .await
             .map_err(imap_to_mail_error)?;
         let _ = session.logout().await;

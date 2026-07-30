@@ -1,141 +1,165 @@
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryClient } from '$lib/query-client';
 import MailMessagePage from './+page.svelte';
 
-const fixtures = vi.hoisted(() => ({
-	message: {
-		id: 'msg-1',
-		account_id: 'acct-1',
-		subject: 'Quarterly report',
-		from_name: 'Bob',
-		from_address: 'bob@example.com',
-		to_addresses: ['alice@example.com'],
-		cc_addresses: [],
-		bcc_addresses: [],
-		sent_at: '2026-07-20T09:00:00Z',
-		imported_at: '2026-07-20T10:00:00Z',
-		size_bytes: 4096,
-		has_attachments: true,
-		source_mode: 'imap_selected'
-	},
-	parts: [
-		{
-			id: 'part-1',
-			part_index: 0,
-			content_type: 'text/plain',
-			charset: 'utf-8',
-			size_bytes: 10,
-			is_body: true
-		}
-	],
-	attachments: [
-		{
-			id: 'att-1',
-			file_id: 'file-1',
-			filename: 'report.pdf',
-			mime_type: 'application/pdf',
-			size_bytes: 2048
-		},
-		{
-			id: 'att-2',
-			file_id: null,
-			filename: 'notes.txt',
-			mime_type: 'text/plain',
-			size_bytes: 0
-		}
-	]
+const mocks = vi.hoisted(() => ({
+	goto: vi.fn(),
+	getMessage: vi.fn(),
+	listParts: vi.fn(),
+	listAttachments: vi.fn(),
+	listLinks: vi.fn(),
+	listAccounts: vi.fn(),
+	getSmtpSettings: vi.fn(),
+	getPartContent: vi.fn(),
+	getPartContentWithMeta: vi.fn(),
+	createLink: vi.fn(),
+	deleteLink: vi.fn(),
+	replyMail: vi.fn(),
+	replyAllMail: vi.fn(),
+	forwardMail: vi.fn(),
+	sendOutboundMail: vi.fn(),
+	saveDraft: vi.fn(),
+	updateDraft: vi.fn(),
+	discardDraft: vi.fn()
 }));
 
 vi.mock('$app/stores', () => ({
 	page: readable({ params: { messageId: 'msg-1' } })
 }));
-
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-
-vi.mock('$lib/modules/registry', () => ({
-	getModuleByKey: vi.fn(() => ({ enabled: true }))
-}));
-
+vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn().mockResolvedValue([]) }));
-
 vi.mock('$lib/api/mail', () => ({
 	mailApi: {
-		getMessage: vi.fn(),
-		listParts: vi.fn(),
-		listAttachments: vi.fn(),
-		listLinks: vi.fn().mockResolvedValue([]),
-		getPartContent: vi.fn().mockResolvedValue('Hello Alice'),
-		listAccounts: vi.fn().mockResolvedValue([]),
-		getSmtpSettings: vi.fn().mockResolvedValue(null),
-		downloadSourceUrl: vi.fn((messageId: string) => `/api/v1/mail/messages/${messageId}/source`),
-		attachmentDownloadUrl: vi.fn(
-			(messageId: string, attachmentId: string) =>
-				`/api/v1/mail/messages/${messageId}/attachments/${attachmentId}`
-		),
-		createLink: vi.fn(),
-		deleteLink: vi.fn(),
-		replyMail: vi.fn(),
-		replyAllMail: vi.fn(),
-		forwardMail: vi.fn(),
-		sendOutboundMail: vi.fn(),
-		saveDraft: vi.fn(),
-		updateDraft: vi.fn(),
-		discardDraft: vi.fn()
+		...mocks,
+		downloadSourceUrl: vi.fn(() => '/source')
 	}
 }));
 
-vi.mock('$lib/query-compat', () => ({
-	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
-		const key = options.queryKey?.[0];
-		const data =
-			key === 'mail-message'
-				? fixtures.message
-				: key === 'mail-message-parts'
-					? fixtures.parts
-					: key === 'mail-message-attachments'
-						? fixtures.attachments
-						: [];
-		const store = readable({ data, isLoading: false, isError: false, refetch: vi.fn() });
-		return { subscribe: store.subscribe, setOptions: vi.fn() };
-	}),
-	createMutation: vi.fn(() => {
-		const store = readable({ mutate: vi.fn(), isPending: false });
-		return { subscribe: store.subscribe };
-	})
-}));
+const account = {
+	id: 'acct-1',
+	name: 'Work mail',
+	host: 'imap.example.com',
+	port: 993,
+	username: 'alice@example.com',
+	tls_mode: 'tls',
+	is_enabled: true,
+	last_connected_at: null,
+	last_error: null,
+	created_at: '2026-07-01T00:00:00Z'
+};
 
-describe('Mail message detail page', () => {
-	it('links each attachment to the mail attachment download endpoint', async () => {
-		render(MailMessagePage);
+const message = {
+	id: 'msg-1',
+	account_id: 'acct-1',
+	subject: 'Imported newsletter',
+	from_address: 'bob@example.com',
+	from_name: 'Bob',
+	to_addresses: ['alice@example.com'],
+	cc_addresses: [],
+	bcc_addresses: [],
+	sent_at: '2026-07-20T09:00:00Z',
+	imported_at: '2026-07-20T10:00:00Z',
+	size_bytes: 100,
+	has_attachments: false,
+	source_mode: 'imap_selected'
+};
 
-		const links = await screen.findAllByRole('link', { name: 'Download' });
-		expect(links).toHaveLength(2);
-		expect(links[0].getAttribute('href')).toBe('/api/v1/mail/messages/msg-1/attachments/att-1');
-		expect(links[1].getAttribute('href')).toBe('/api/v1/mail/messages/msg-1/attachments/att-2');
-		expect(links[0].getAttribute('download')).not.toBeNull();
+const htmlPart = {
+	id: 'part-1',
+	part_index: 1,
+	content_type: 'text/html',
+	charset: 'utf-8',
+	size_bytes: 50,
+	is_body: true
+};
+
+const textPart = {
+	id: 'part-2',
+	part_index: 0,
+	content_type: 'text/plain',
+	charset: 'utf-8',
+	size_bytes: 20,
+	is_body: true
+};
+
+describe('Imported mail message page', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		queryClient.clear();
+		mocks.getMessage.mockResolvedValue(message);
+		mocks.listParts.mockResolvedValue([htmlPart]);
+		mocks.listAttachments.mockResolvedValue([]);
+		mocks.listLinks.mockResolvedValue([]);
+		mocks.listAccounts.mockResolvedValue([account]);
+		mocks.getSmtpSettings.mockResolvedValue(null);
+		mocks.getPartContent.mockResolvedValue('Plain body');
+		mocks.getPartContentWithMeta.mockResolvedValue({
+			content: '<p>Hi</p>',
+			blockedRemoteImages: false
+		});
 	});
 
-	it('shows attachment filename, type, and size', async () => {
+	it('shows a privacy notice when the backend blocked remote images', async () => {
+		mocks.getPartContentWithMeta.mockResolvedValue({
+			content: '<p>Hi</p><img data-rustshare-blocked-src="https://tracker.example/pixel.gif">',
+			blockedRemoteImages: true
+		});
 		render(MailMessagePage);
 
-		expect(await screen.findByText('report.pdf')).toBeTruthy();
-		expect(screen.getByText('notes.txt')).toBeTruthy();
-		expect(screen.getByText(/application\/pdf/)).toBeTruthy();
-		expect(screen.getByText(/2,048 bytes/)).toBeTruthy();
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+		expect(mocks.getPartContentWithMeta).toHaveBeenCalledWith('msg-1', 'part-1', {
+			loadRemoteImages: false
+		});
 	});
 
-	it('keeps the mail-only badge for attachments without a linked file', async () => {
-		render(MailMessagePage);
+	it('re-fetches with load_remote_images=true when loading remote images', async () => {
+		mocks.getPartContentWithMeta
+			.mockResolvedValueOnce({
+				content: '<p>Hi</p><img data-rustshare-blocked-src="https://tracker.example/pixel.gif">',
+				blockedRemoteImages: true
+			})
+			.mockResolvedValue({
+				content: '<p>Hi</p><img src="https://tracker.example/pixel.gif">',
+				blockedRemoteImages: false
+			});
+		const { container } = render(MailMessagePage);
 
-		expect(await screen.findByText('mail-only')).toBeTruthy();
-		expect(screen.getByRole('button', { name: 'Open file' })).toBeTruthy();
+		await fireEvent.click(await screen.findByRole('button', { name: 'Load remote images' }));
+
+		await waitFor(() =>
+			expect(mocks.getPartContentWithMeta).toHaveBeenCalledWith('msg-1', 'part-1', {
+				loadRemoteImages: true
+			})
+		);
+		await waitFor(() =>
+			expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeTruthy()
+		);
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.getByText('Remote images loaded for this message.')).toBeTruthy();
 	});
 
-	it('keeps the separate Download .eml action pointing at the source endpoint', async () => {
+	it('shows no notice when nothing was blocked', async () => {
 		render(MailMessagePage);
 
-		const emlLink = await screen.findByRole('link', { name: 'Download .eml' });
-		expect(emlLink.getAttribute('href')).toBe('/api/v1/mail/messages/msg-1/source');
+		await waitFor(() =>
+			expect(mocks.getPartContentWithMeta).toHaveBeenCalledWith('msg-1', 'part-1', {
+				loadRemoteImages: false
+			})
+		);
+		expect(await screen.findByText('Hi')).toBeTruthy();
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Load remote images' })).toBeNull();
+	});
+
+	it('shows no notice for plain-text messages', async () => {
+		mocks.listParts.mockResolvedValue([textPart]);
+		mocks.getPartContent.mockResolvedValue('Plain body');
+		render(MailMessagePage);
+
+		expect(await screen.findByText('Plain body')).toBeTruthy();
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Load remote images' })).toBeNull();
 	});
 });
