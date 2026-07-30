@@ -322,11 +322,13 @@
 <svelte:window onkeydown={handleKeyDown} />
 
 {#if !file}
-	<div class="rounded-[1.25rem] border border-dashed border-base-300 bg-base-100 p-8 text-center">
+	<div
+		class="flex h-full items-center justify-center rounded-[1.25rem] border border-dashed border-base-300 bg-base-100 p-8 text-center"
+	>
 		<p class="text-base-content/60">Select a file from the manifest to view or edit.</p>
 	</div>
 {:else if !isEditableVaultFile(file)}
-	<div class="rounded-[1.25rem] border border-base-300/70 bg-base-100 p-6">
+	<div class="h-full rounded-[1.25rem] border border-base-300/70 bg-base-100 p-6">
 		<h3 class="font-display text-lg">{file.path}</h3>
 		<p class="mt-2 text-sm text-base-content/60">
 			This file type cannot be edited in the WebUI. Download it to edit locally.
@@ -334,7 +336,7 @@
 	</div>
 {:else}
 	<div
-		class="space-y-3"
+		class="flex h-full flex-col space-y-3"
 		bind:this={editorRegion}
 		onfocusout={(event) => {
 			if (!editorRegion?.contains(event.relatedTarget as Node | null)) syncMarkdown();
@@ -454,7 +456,7 @@
 		{/if}
 
 		{#if canEdit}
-			<div class="h-[min(70vh,50rem)] min-h-[32rem]">
+			<div class="min-h-[20rem] flex-1">
 				{#if isMarkdown}
 					<RichMarkdownEditor
 						bind:this={richEditor}
@@ -476,7 +478,7 @@
 			</div>
 		{:else}
 			<pre
-				class="min-h-[24rem] overflow-auto rounded-2xl border border-base-300/70 bg-base-200/50 p-4 font-mono text-sm whitespace-pre-wrap">{$contentQuery
+				class="min-h-[20rem] flex-1 overflow-auto rounded-2xl border border-base-300/70 bg-base-200/50 p-4 font-mono text-sm whitespace-pre-wrap">{$contentQuery
 					.data?.content ?? ''}</pre>
 		{/if}
 	</div>

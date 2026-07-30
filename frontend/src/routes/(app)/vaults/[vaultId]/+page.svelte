@@ -218,13 +218,17 @@
 			{/if}
 		</div>
 
-		<div class="grid items-start gap-6 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
+		<div
+			class="grid items-start gap-6 lg:h-[calc(100dvh-22rem)] lg:min-h-[36rem] lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)] lg:items-stretch"
+		>
 			<!-- Manifest Files -->
-			<div class="space-y-3">
+			<div class="flex flex-col space-y-3 lg:min-h-0">
 				<h2 class="px-1 font-display text-2xl text-base-content">Manifest</h2>
 
 				{#if manifest && manifest.files.length > 0}
-					<div class="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
+					<div
+						class="max-h-[70vh] space-y-2 overflow-y-auto pr-1 lg:max-h-none lg:min-h-0 lg:flex-1"
+					>
 						{#each manifest.files as file}
 							<button
 								class="flex w-full items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 text-left shadow-sm transition-colors hover:bg-base-200/50"
@@ -298,7 +302,7 @@
 
 			<div
 				bind:this={editorPanel}
-				class="min-w-0 scroll-mt-4 rounded-[2rem] border border-base-300/70 bg-base-100 p-4 shadow-sm lg:sticky lg:top-4 lg:p-6"
+				class="min-w-0 scroll-mt-4 rounded-[2rem] border border-base-300/70 bg-base-100 p-4 shadow-sm lg:sticky lg:top-4 lg:h-full lg:overflow-y-auto lg:p-6"
 			>
 				<VaultFileEditor
 					vaultId={vaultId!}
