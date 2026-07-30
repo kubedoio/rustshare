@@ -20,7 +20,7 @@
 	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
-	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { sanitizeEmailHtml } from '$lib/editor/adapter/security';
 	import { listAllFiles } from '$lib/api/files';
 	import {
 		ArrowLeft,
@@ -30,7 +30,8 @@
 		Trash2,
 		Reply,
 		Forward,
-		ReplyAll
+		ReplyAll,
+		ShieldAlert
 	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
@@ -84,17 +85,38 @@
 		});
 	});
 
+	// Remote images are blocked by default and only load after an explicit
+	// per-message action; navigating to another message resets to blocked.
+	let remoteImagesAllowed = $state(false);
+	let lastRemoteImagesMessageId: string | null = null;
+	$effect(() => {
+		if (messageId !== lastRemoteImagesMessageId) {
+			lastRemoteImagesMessageId = messageId ?? null;
+			remoteImagesAllowed = false;
+		}
+	});
+
 	let bodyContent = $derived.by(async () => {
 		const parts = $partsQuery.data ?? [];
 		const htmlPart = parts.find((p) => p.is_body && p.content_type === 'text/html');
 		const textPart = parts.find((p) => p.is_body && p.content_type === 'text/plain');
 		const part = htmlPart ?? textPart;
-		if (!part) return { type: 'empty' as const, content: '' };
-		const raw = await mailApi.getPartContent(messageId!, part.id);
+		if (!part) return { type: 'empty' as const, content: '', blockedRemoteImages: false };
 		if (htmlPart) {
-			return { type: 'html' as const, content: sanitizeHtml(raw) };
+			const { content: raw, blockedRemoteImages } = await mailApi.getPartContentWithMeta(
+				messageId!,
+				part.id,
+				{ loadRemoteImages: remoteImagesAllowed }
+			);
+			const { html } = sanitizeEmailHtml(raw, { allowRemoteImages: remoteImagesAllowed });
+			return {
+				type: 'html' as const,
+				content: html,
+				blockedRemoteImages: !remoteImagesAllowed && blockedRemoteImages
+			};
 		}
-		return { type: 'text' as const, content: raw };
+		const raw = await mailApi.getPartContent(messageId!, part.id);
+		return { type: 'text' as const, content: raw, blockedRemoteImages: false };
 	});
 
 	let previewAttachment = $state<MailAttachment | null>(null);
@@ -388,6 +410,27 @@
 					<ModulePageSkeleton />
 				{:then body}
 					{#if body.type === 'html'}
+						{#if body.blockedRemoteImages}
+							<div
+								class="mb-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-sm"
+							>
+								<ShieldAlert size={16} class="shrink-0 text-warning" />
+								<span class="flex-1">Images were blocked to protect your privacy.</span>
+								<button class="btn btn-outline btn-xs" onclick={() => (remoteImagesAllowed = true)}
+									>Load remote images</button
+								>
+							</div>
+						{:else if remoteImagesAllowed}
+							<div
+								class="mb-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/40 px-3 py-2 text-xs text-base-content/60"
+							>
+								<ShieldAlert size={14} class="shrink-0" />
+								<span class="flex-1">Remote images loaded for this message.</span>
+								<button class="btn btn-ghost btn-xs" onclick={() => (remoteImagesAllowed = false)}
+									>Block images</button
+								>
+							</div>
+						{/if}
 						<div class="prose max-w-none">{@html body.content}</div>
 					{:else if body.type === 'text'}
 						<pre class="whitespace-pre-wrap font-mono text-sm">{body.content}</pre>
