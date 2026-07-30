@@ -17,13 +17,14 @@
 		type SaveDraftRequest,
 		type SendOutboundMailRequest
 	} from '$lib/api/mail';
+	import { apiClient } from '$lib/api/client';
 	import ModulePageShell from '$lib/components/layout/ModulePageShell.svelte';
 	import ModulePageSkeleton from '$lib/components/common/ModulePageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import MailComposeModal from './MailComposeModal.svelte';
 	import MailMoveModal from './mail/MailMoveModal.svelte';
 	import MailSaveModal from './mail/MailSaveModal.svelte';
-	import { sanitizeHtml } from '$lib/editor/adapter/security';
+	import { sanitizeEmailHtml } from '$lib/editor/adapter/security';
 	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -48,6 +49,7 @@
 		ReplyAll,
 		Search,
 		Send,
+		ShieldAlert,
 		Star,
 		Trash2
 	} from 'lucide-svelte';
@@ -151,9 +153,54 @@
 	let selectedActionUids = $derived(
 		selectedUids.length ? selectedUids : selectedMessage ? [selectedMessage.uid] : []
 	);
-	let safeBodyHtml = $derived(
-		$remoteBodyQuery.data?.html ? sanitizeHtml($remoteBodyQuery.data.html) : null
+	// Remote images are blocked by default and only load after an explicit
+	// per-message action; switching messages resets back to blocked.
+	let remoteImagesAllowed = $state(false);
+	let remoteImagesKey = $derived(
+		selectedAccountId && selectedFolder && selectedMessage
+			? `${selectedAccountId}:${selectedFolder}:${selectedMessage.uid}`
+			: null
 	);
+	let lastRemoteImagesKey: string | null = null;
+	$effect(() => {
+		if (remoteImagesKey !== lastRemoteImagesKey) {
+			lastRemoteImagesKey = remoteImagesKey;
+			remoteImagesAllowed = false;
+		}
+	});
+
+	function rewriteRemoteCidUrls(html: string, body: MailRemoteMessageBody): string {
+		let rewritten = html;
+		for (const attachment of body.attachments) {
+			// Content-ID headers may be bracketed (`<id@host>`) while the
+			// referencing URL is `cid:id@host`; match both forms.
+			const contentId = attachment.content_id?.trim().replace(/^<+|>+$/g, '');
+			if (!contentId) continue;
+			const url = mailApi.remoteAttachmentUrl(
+				selectedAccountId!,
+				body.uid,
+				attachment.index,
+				selectedFolder!,
+				uidvalidity
+			);
+			rewritten = rewritten.split(`cid:${contentId}`).join(url);
+		}
+		return rewritten;
+	}
+
+	let bodyRender = $derived.by(() => {
+		const body = $remoteBodyQuery.data;
+		if (!body?.html) return null;
+		// cid: references are rewritten to attachment download URLs on our own
+		// API before sanitization; exempt that base URL so blocked mode does
+		// not strip them as "remote" images when the API URL is absolute.
+		return sanitizeEmailHtml(rewriteRemoteCidUrls(body.html, body), {
+			allowRemoteImages: remoteImagesAllowed,
+			localUrlPrefixes: [apiClient.getBaseURL()]
+		});
+	});
+	let safeBodyHtml = $derived(bodyRender?.html ?? null);
+	let blockedRemoteImages = $derived(bodyRender?.blockedRemoteImages ?? 0);
 	let syncing = $derived(
 		$foldersQuery.isFetching || $accountMessagesQuery.isFetching || $draftsQuery.isFetching
 	);
@@ -945,6 +992,31 @@
 										>{formatDate($remoteBodyQuery.data.date)}</time
 									>
 								</div>
+								{#if $remoteBodyQuery.data.html}
+									{#if blockedRemoteImages > 0 && !remoteImagesAllowed}
+										<div
+											class="mt-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/60 px-3 py-2 text-sm"
+										>
+											<ShieldAlert size={16} class="shrink-0 text-warning" />
+											<span class="flex-1">Images were blocked to protect your privacy.</span>
+											<button
+												class="btn btn-outline btn-xs"
+												onclick={() => (remoteImagesAllowed = true)}>Load remote images</button
+											>
+										</div>
+									{:else if remoteImagesAllowed}
+										<div
+											class="mt-4 flex items-center gap-2 rounded-lg border border-base-300 bg-base-200/40 px-3 py-2 text-xs text-base-content/60"
+										>
+											<ShieldAlert size={14} class="shrink-0" />
+											<span class="flex-1">Remote images loaded for this message.</span>
+											<button
+												class="btn btn-ghost btn-xs"
+												onclick={() => (remoteImagesAllowed = false)}>Block images</button
+											>
+										</div>
+									{/if}
+								{/if}
 								<div class="prose mt-6 max-w-none text-sm">
 									{#if safeBodyHtml}{@html safeBodyHtml}{:else}<pre
 											class="whitespace-pre-wrap font-sans">{$remoteBodyQuery.data.text ||

@@ -28,16 +28,14 @@ const mocks = vi.hoisted(() => ({
 	updateDraft: vi.fn(),
 	sendDraft: vi.fn(),
 	discardDraft: vi.fn(),
-	uploadMessage: vi.fn()
+	uploadMessage: vi.fn(),
+	remoteAttachmentUrl: vi.fn(() => '/attachment')
 }));
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn().mockResolvedValue([]) }));
 vi.mock('$lib/api/mail', () => ({
-	mailApi: {
-		...mocks,
-		remoteAttachmentUrl: vi.fn(() => '/attachment')
-	}
+	mailApi: mocks
 }));
 
 const testModule = {
@@ -118,6 +116,7 @@ describe('MailModuleView', () => {
 			messages: [message]
 		});
 		mocks.getRemoteMessageBody.mockResolvedValue(body);
+		mocks.remoteAttachmentUrl.mockReturnValue('/attachment');
 		mocks.listDrafts.mockResolvedValue([]);
 		mocks.listMessagesPage.mockResolvedValue({
 			messages: [],
@@ -161,6 +160,124 @@ describe('MailModuleView', () => {
 		await waitFor(() => expect(container.textContent).toContain('Hello Alice'));
 		expect(mocks.getRemoteMessageBody).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7);
 		expect(container.querySelector('script')).toBeNull();
+	});
+
+	it('blocks remote images with a privacy notice and loads them on demand', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Hello</p><img src="https://tracker.example/pixel.gif">'
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+		const blockedImg = container.querySelector('img[data-rustshare-blocked-src]');
+		expect(blockedImg).toBeTruthy();
+		expect(blockedImg!.getAttribute('src')).toBeNull();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Load remote images' }));
+		await waitFor(() =>
+			expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeTruthy()
+		);
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.getByText('Remote images loaded for this message.')).toBeTruthy();
+	});
+
+	it('resets blocked remote images when switching messages', async () => {
+		const second = { ...message, uid: 43, subject: 'Second notice', is_seen: true };
+		mocks.listAccountMessages.mockResolvedValue({
+			uidvalidity: 7,
+			next_cursor: null,
+			messages: [message, second]
+		});
+		mocks.getRemoteMessageBody.mockImplementation((_accountId: string, uid: number) =>
+			Promise.resolve({ ...body, uid, html: '<img src="https://tracker.example/pixel.gif">' })
+		);
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Load remote images' }));
+		await waitFor(() =>
+			expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeTruthy()
+		);
+
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Second notice/ }));
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+		expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeNull();
+	});
+
+	it('rewrites cid: images to attachment download URLs', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Logo:</p><img src="cid:logo@example.com">',
+			attachments: [
+				{
+					index: 2,
+					filename: 'logo.png',
+					mime_type: 'image/png',
+					size_bytes: 5,
+					content_id: '<logo@example.com>'
+				}
+			]
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.querySelector('img[src="/attachment"]')).toBeTruthy());
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+	});
+
+	it('keeps cid: images rewritten to absolute URLs on the local API base', async () => {
+		// When VITE_API_URL is absolute (the default is
+		// http://localhost:8080/api/v1), rewritten attachment URLs are absolute
+		// too; they must not be treated as remote images, while a truly
+		// external tracker in the same message is still blocked.
+		const localUrl =
+			'http://localhost:8080/api/v1/mail/accounts/acc-1/messages/42/attachments/2?folder=INBOX';
+		mocks.remoteAttachmentUrl.mockReturnValue(localUrl);
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<p>Logo:</p><img src="cid:logo@example.com"><img src="https://tracker.example/pixel.gif">',
+			attachments: [
+				{
+					index: 2,
+					filename: 'logo.png',
+					mime_type: 'image/png',
+					size_bytes: 5,
+					content_id: '<logo@example.com>'
+				}
+			]
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.querySelector(`img[src="${localUrl}"]`)).toBeTruthy());
+		expect(container.querySelector('img[src="https://tracker.example/pixel.gif"]')).toBeNull();
+		expect(await screen.findByText('Images were blocked to protect your privacy.')).toBeTruthy();
+	});
+
+	it('leaves unresolved cid: images untouched without crashing', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			html: '<img src="cid:missing-part">',
+			attachments: []
+		});
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() =>
+			expect(container.querySelector('img[src="cid:missing-part"]')).toBeTruthy()
+		);
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+	});
+
+	it('shows no remote-image notice for plain-text messages', async () => {
+		mocks.getRemoteMessageBody.mockResolvedValue({ ...body, html: null, text: 'Plain body' });
+		const { container } = render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		await waitFor(() => expect(container.textContent).toContain('Plain body'));
+		expect(screen.queryByText('Images were blocked to protect your privacy.')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Load remote images' })).toBeNull();
 	});
 
 	it('toggles the selected message star', async () => {

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -1974,27 +1974,35 @@ pub async fn delete_mail_archive_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn sanitize_email_html(html: &str) -> String {
+/// Sanitize stored message HTML. When `allow_remote_images` is false (the
+/// default), remote `<img src>` values are stripped to protect privacy; the
+/// returned bool reports whether any image was blocked.
+fn sanitize_email_html(html: &str, allow_remote_images: bool) -> (String, bool) {
     let schemes: std::collections::HashSet<&str> = ["http", "https", "mailto", "cid", "data"]
         .into_iter()
         .collect();
-    ammonia::Builder::default()
+    let blocked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocked_flag = blocked.clone();
+    let clean = ammonia::Builder::default()
         .url_schemes(schemes)
-        .attribute_filter(|element, attribute, value| {
+        .attribute_filter(move |element, attribute, value| {
             let source = value.trim_start();
-            if element == "img"
+            if !allow_remote_images
+                && element == "img"
                 && attribute == "src"
                 && (source.starts_with("//")
                     || source.split_once(':').is_some_and(|(scheme, _)| {
                         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
                     }))
             {
+                blocked_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             Some(value.into())
         })
         .clean(html)
-        .to_string()
+        .to_string();
+    (clean, blocked.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn rewrite_cid_urls(html: &str, attachments: &[rustshare_core::domain::MailAttachment]) -> String {
@@ -2041,6 +2049,14 @@ pub async fn list_mail_message_parts(
     }))
 }
 
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MailMessagePartQuery {
+    /// Load remote images in sanitized HTML parts (blocked by default).
+    #[serde(default)]
+    pub load_remote_images: bool,
+}
+
 /// Get the content of a single message part. HTML parts are sanitized before delivery.
 #[utoipa::path(
     get,
@@ -2049,6 +2065,7 @@ pub async fn list_mail_message_parts(
     params(
         ("id" = Uuid, Path, description = "Mail message ID"),
         ("part_id" = Uuid, Path, description = "Part ID"),
+        MailMessagePartQuery,
     ),
     responses(
         (status = 200, description = "Part content"),
@@ -2060,6 +2077,7 @@ pub async fn get_mail_message_part(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path((message_id, part_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<MailMessagePartQuery>,
 ) -> Result<Response, AppError> {
     require_mail_enabled(&state, auth.tenant_id).await?;
     let (part, bytes) = state
@@ -2074,7 +2092,10 @@ pub async fn get_mail_message_part(
             .mail_service
             .list_attachments(auth.tenant_id, auth.user_id, message_id)
             .await?;
-        let sanitized = sanitize_email_html(&rewrite_cid_urls(html, &attachments));
+        let (sanitized, blocked_remote_images) = sanitize_email_html(
+            &rewrite_cid_urls(html, &attachments),
+            query.load_remote_images,
+        );
         if let Err(e) = emit_mail_message_viewed(&state, message_id, auth.user_id, "body").await {
             tracing::warn!(error = ?e, message_id = %message_id, "failed to record mail view event");
         }
@@ -2087,6 +2108,12 @@ pub async fn get_mail_message_part(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("sandbox"),
         );
+        if blocked_remote_images {
+            headers.insert(
+                HeaderName::from_static("x-mail-blocked-remote-images"),
+                HeaderValue::from_static("1"),
+            );
+        }
         return Ok((StatusCode::OK, headers, sanitized).into_response());
     } else if let Some(charset) = &part.charset {
         format!("{}; charset={}", part.content_type, charset)
@@ -3202,7 +3229,7 @@ mod tests {
     fn sanitize_email_html_strips_scripts() {
         let raw =
             r#"<p>Hello</p><script>alert('xss')</script><a href="javascript:bad()">click</a>"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, _) = sanitize_email_html(raw, false);
         assert!(!clean.contains("<script>"));
         assert!(!clean.contains("javascript:"));
         assert!(clean.contains("<p>Hello</p>"));
@@ -3211,13 +3238,60 @@ mod tests {
     #[test]
     fn sanitize_email_html_blocks_remote_images() {
         let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img alt="upper" src="HTTPS://tracker.example/upper.gif"><img src="//tracker.example/relative.gif"><img src="cid:inline">"#;
-        let clean = sanitize_email_html(raw);
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "blocked flag should report removed remote images");
         assert!(!clean.contains("https://tracker.example"));
         assert!(!clean.contains("HTTPS://tracker.example"));
         assert!(!clean.contains("//tracker.example"));
         assert!(clean.contains(r#"<img alt="tracker">"#));
         assert!(clean.contains(r#"<img alt="upper">"#));
         assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_reports_no_block_without_remote_images() {
+        let raw = r#"<p>Hello</p><img src="cid:inline">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(!blocked, "no remote images means no blocked flag");
+        assert!(clean.contains(r#"<img src="cid:inline">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_explicit_load_keeps_remote_images() {
+        let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img src="//tracker.example/relative.gif">"#;
+        let (clean, blocked) = sanitize_email_html(raw, true);
+        assert!(!blocked, "allow mode never reports blocked images");
+        assert!(clean.contains(r#"<img alt="tracker" src="https://tracker.example/pixel.gif">"#));
+        assert!(clean.contains(r#"<img src="//tracker.example/relative.gif">"#));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_scripts_in_allow_mode() {
+        let raw = r#"<img src="https://tracker.example/pixel.gif" onerror="alert(1)"><script>alert('xss')</script>"#;
+        let (clean, _) = sanitize_email_html(raw, true);
+        assert!(!clean.contains("<script>"));
+        assert!(!clean.contains("onerror"));
+        assert!(clean.contains("https://tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_strips_srcset_in_both_modes() {
+        let raw = r#"<img src="cid:inline" srcset="https://tracker.example/pixel.gif 1x, https://tracker.example/pixel@2x.gif 2x">"#;
+        let (blocked_mode, _) = sanitize_email_html(raw, false);
+        let (allow_mode, _) = sanitize_email_html(raw, true);
+        assert!(!blocked_mode.contains("srcset"));
+        assert!(!allow_mode.contains("srcset"));
+        assert!(!blocked_mode.contains("tracker.example"));
+        assert!(!allow_mode.contains("tracker.example"));
+    }
+
+    #[test]
+    fn sanitize_email_html_blocks_tracking_pixel() {
+        let raw =
+            r#"<p>Hi</p><img src="https://tracker.example/open.gif" width="1" height="1" alt="">"#;
+        let (clean, blocked) = sanitize_email_html(raw, false);
+        assert!(blocked, "tracking pixel should be reported as blocked");
+        assert!(!clean.contains("tracker.example"));
     }
 
     #[test]
