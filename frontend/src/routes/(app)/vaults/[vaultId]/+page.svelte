@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { getVault, getManifest, updateVaultWritePolicy } from '$lib/api/vaults';
@@ -60,8 +61,9 @@
 
 	let selectedFile = $state<VaultManifestEntry | null>(null);
 	let editorDirty = $state(false);
+	let editorPanel = $state<HTMLDivElement>();
 
-	function selectFile(file: VaultManifestEntry) {
+	async function selectFile(file: VaultManifestEntry) {
 		if (
 			editorDirty &&
 			selectedFile !== null &&
@@ -71,6 +73,8 @@
 			return;
 		}
 		selectedFile = file;
+		await tick();
+		editorPanel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
 
 	const writePolicyOptions: { value: VaultWritePolicy; label: string }[] = [
@@ -96,7 +100,7 @@
 	<title>{vault?.name ?? 'Vault'} - RustShare</title>
 </svelte:head>
 
-<div class="mx-auto max-w-5xl space-y-6">
+<div class="mx-auto max-w-[90rem] space-y-6">
 	<!-- Back link -->
 	<a
 		href="/vaults"
@@ -214,12 +218,13 @@
 			{/if}
 		</div>
 
+		<div class="grid items-start gap-6 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
 		<!-- Manifest Files -->
 		<div class="space-y-3">
 			<h2 class="px-1 font-display text-2xl text-base-content">Manifest</h2>
 
 			{#if manifest && manifest.files.length > 0}
-				<div class="space-y-2">
+				<div class="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
 					{#each manifest.files as file}
 						<button
 							class="flex w-full items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 text-left shadow-sm transition-colors hover:bg-base-200/50"
@@ -291,13 +296,17 @@
 			{/if}
 		</div>
 
-		<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 shadow-sm lg:p-8">
+		<div
+			bind:this={editorPanel}
+			class="min-w-0 scroll-mt-4 rounded-[2rem] border border-base-300/70 bg-base-100 p-4 shadow-sm lg:sticky lg:top-4 lg:p-6"
+		>
 			<VaultFileEditor
 				vaultId={vaultId!}
 				policy={vault.write_policy}
 				bind:file={selectedFile}
 				bind:dirty={editorDirty}
 			/>
+		</div>
 		</div>
 	{:else}
 		<ErrorState title="Vault not found" message="The requested vault does not exist." />

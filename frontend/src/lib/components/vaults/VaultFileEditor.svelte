@@ -4,6 +4,7 @@
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import { getVaultFileContent, saveVaultFileContent } from '$lib/api/vaults';
 	import { queryClient } from '$lib/query-client';
+	import RichMarkdownEditor from '$lib/editor/components/RichMarkdownEditor.svelte';
 	import type { VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
 	import { sha256Hex } from '$lib/utils/sha256';
@@ -272,6 +273,9 @@
 			!tombstoneConflict &&
 			!$saveMutation.isPending
 	);
+	const isMarkdown = $derived(
+		file?.path.toLowerCase().endsWith('.md') || file?.path.toLowerCase().endsWith('.markdown')
+	);
 
 	function handleKeyDown(event: KeyboardEvent) {
 		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
@@ -280,6 +284,8 @@
 		}
 	}
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 {#if !file}
 	<div class="rounded-[1.25rem] border border-dashed border-base-300 bg-base-100 p-8 text-center">
@@ -311,7 +317,7 @@
 			</div>
 			{#if canEdit}
 				<button
-					class="btn btn-primary btn-sm rounded-xl"
+					class="btn rounded-xl btn-primary btn-sm"
 					disabled={!canSave}
 					onclick={() => $saveMutation.mutate().catch(() => {})}
 				>
@@ -353,7 +359,7 @@
 					</div>
 				</div>
 				<div class="flex flex-wrap gap-2 pl-6">
-					<button class="btn btn-warning btn-xs rounded-lg" onclick={copyMyChanges}>
+					<button class="btn rounded-lg btn-warning btn-xs" onclick={copyMyChanges}>
 						{#if conflictCopied}
 							<Check class="h-3 w-3" />
 							<span>Copied!</span>
@@ -362,12 +368,12 @@
 							<span>Copy my changes</span>
 						{/if}
 					</button>
-					<button class="btn btn-warning btn-xs rounded-lg" onclick={downloadMyVersion}>
+					<button class="btn rounded-lg btn-warning btn-xs" onclick={downloadMyVersion}>
 						<Download class="h-3 w-3" />
 						<span>Download my version</span>
 					</button>
 					<button
-						class="btn btn-outline btn-warning btn-xs rounded-lg"
+						class="btn rounded-lg btn-outline btn-warning btn-xs"
 						onclick={confirmReloadFromServer}
 					>
 						<RotateCcw class="h-3 w-3" />
@@ -390,7 +396,7 @@
 					</div>
 				</div>
 				<div class="flex flex-wrap gap-2 pl-6">
-					<button class="btn btn-error btn-xs rounded-lg" onclick={copyMyChanges}>
+					<button class="btn rounded-lg btn-error btn-xs" onclick={copyMyChanges}>
 						{#if conflictCopied}
 							<Check class="h-3 w-3" />
 							<span>Copied!</span>
@@ -399,11 +405,11 @@
 							<span>Copy my changes</span>
 						{/if}
 					</button>
-					<button class="btn btn-error btn-xs rounded-lg" onclick={downloadMyVersion}>
+					<button class="btn rounded-lg btn-error btn-xs" onclick={downloadMyVersion}>
 						<Download class="h-3 w-3" />
 						<span>Download my version</span>
 					</button>
-					<button class="btn btn-outline btn-error btn-xs rounded-lg" onclick={closeFile}>
+					<button class="btn rounded-lg btn-outline btn-error btn-xs" onclick={closeFile}>
 						<X class="h-3 w-3" />
 						<span>Close file</span>
 					</button>
@@ -412,11 +418,22 @@
 		{/if}
 
 		{#if canEdit}
-			<textarea
-				class="textarea textarea-bordered min-h-[24rem] w-full rounded-2xl font-mono text-sm"
-				bind:value={localContent}
-				onkeydown={handleKeyDown}
-				disabled={$contentQuery.isLoading || $saveMutation.isPending}></textarea>
+			<div class="h-[min(70vh,50rem)] min-h-[32rem]">
+				{#if isMarkdown}
+					<RichMarkdownEditor
+						content={localContent}
+						currentMarkdown={localContent}
+						editable={!$contentQuery.isLoading && !$saveMutation.isPending}
+						hasAttachmentHandler={false}
+						on:change={(event) => (localContent = event.detail.markdown)}
+					/>
+				{:else}
+					<textarea
+						class="textarea-bordered textarea h-full w-full resize-none rounded-2xl font-mono text-sm"
+						bind:value={localContent}
+						disabled={$contentQuery.isLoading || $saveMutation.isPending}></textarea>
+				{/if}
+			</div>
 		{:else}
 			<pre
 				class="min-h-[24rem] overflow-auto rounded-2xl border border-base-300/70 bg-base-200/50 p-4 font-mono text-sm whitespace-pre-wrap">{$contentQuery

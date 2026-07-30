@@ -8,6 +8,9 @@ import type { VaultManifestEntry } from '$lib/api/types';
 
 vi.mock('$lib/api/vaults');
 vi.mock('$lib/utils/sha256', () => ({ sha256Hex: vi.fn() }));
+vi.mock('$lib/editor/components/RichMarkdownEditor.svelte', async () => ({
+	default: (await import('./VaultFileEditor.test-editor.svelte')).default
+}));
 
 const { beforeNavigateCallbacks } = vi.hoisted(() => ({
 	beforeNavigateCallbacks: [] as Array<(navigation: { cancel: () => void }) => void>
@@ -50,7 +53,7 @@ describe('VaultFileEditor', () => {
 		});
 	});
 
-	it('renders textarea for editable Markdown file', async () => {
+	it('renders the standard editor for an editable Markdown file', async () => {
 		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
 			path: 'note.md',
 			content: '# Hello',
