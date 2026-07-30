@@ -107,6 +107,34 @@ describe('vault content API', () => {
 		});
 	});
 
+	it('propagates structured conflict fields from a 409 response body', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce({
+			ok: false,
+			status: 409,
+			statusText: 'Conflict',
+			json: async () => ({
+				error: 'conflict',
+				message: 'Conflict detected',
+				client_rev: 1,
+				current_rev: 3,
+				server_sha256: 'abc123',
+				resolution: 'create_conflict_copy'
+			})
+		} as Response);
+
+		const error = await saveVaultFileContent('vault-1', 'note.md', {
+			content: '# Updated',
+			expected_revision: 1
+		}).catch((e) => e);
+		expect(error).toBeInstanceOf(ApiError);
+		expect(error.status).toBe(409);
+		expect(error.client_rev).toBe(1);
+		expect(error.current_rev).toBe(3);
+		expect(error.server_sha256).toBe('abc123');
+		expect(error.resolution).toBe('create_conflict_copy');
+		expect(error.details).toMatchObject({ error: 'conflict', client_rev: 1 });
+	});
+
 	it('updates vault write policy', async () => {
 		const vault: Vault = {
 			id: 'vault-1',

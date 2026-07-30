@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made WebUI vault Markdown editing reliable and conflict-safe (#185): structured 409 conflict bodies (`current_rev`, `server_sha256`) now propagate through the frontend API client; a dirty editor warns on refresh/tab close (`beforeunload`), in-app navigation (`beforeNavigate`), and file switching; conflicts show a recovery panel (copy changes to clipboard, download local version, reload server version after confirmation) instead of reload-and-lose; conflicts whose server content is identical to the editor content (SHA-256 match) silently adopt the server revision instead of alarming the user; added HTTP integration coverage for the `/content/*` vault-sync endpoints.
 - Fixed mail attachment filenames, metadata, and downloads (#183): imported mail attachments can now be downloaded via `GET /api/v1/mail/messages/{id}/attachments/{attachment_id}` serving the exact stored bytes (object-store blob with linked-file fallback; missing blobs and cross-tenant access return 404), and remote IMAP messages now expose a raw `.eml` download via `GET /api/v1/mail/accounts/{id}/messages/{uid}/source`. The message detail page offers a per-attachment Download action, the remote viewer gains a Download .eml toolbar action, and duplicate attachment filenames are distinguished by an index badge.
 
 ### Security
