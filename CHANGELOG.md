@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reworked Vault Markdown editing into a visible two-pane workspace with the standard RustShare rich-text toolbar, a full-height scrollable editor, and automatic editor focus after selecting a manifest file; plain `.txt` files retain a simple notepad-style editor.
 - Quoted the space-containing `RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME` value in `.env.example` and made `scripts/final-launch-smoke.sh` extract only the variables it needs from `.env` via grep/sed instead of sourcing the file, so `.env` values can no longer break or execute inside the smoke script. Refs #132.
 - Fixed `scripts/final-launch-smoke.sh` CSRF handling to match the backend's double-submit protection: the smoke script now reads the `rustshare_csrf_token` cookie from its login cookie jar and sends it as the `X-Rustshare-Csrf` header on every mutating authenticated request instead of a static `1`, which previously 403'd all mutations. Refs #132.
 - Documented that the auto-generated admin bootstrap password is written to container-local storage once, does not survive container recreation, and must be recorded immediately; `RUSTSHARE_ADMIN_PASSWORD` in `.env` before first start is now documented as the durable alternative across README.md, docs/DEPLOYMENT.md, `.env.example`, and `scripts/pre-flight.sh` output. Refs #132.

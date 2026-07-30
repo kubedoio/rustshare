@@ -4,6 +4,8 @@
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import { getVaultFileContent, saveVaultFileContent } from '$lib/api/vaults';
 	import { queryClient } from '$lib/query-client';
+	import RichMarkdownEditor from '$lib/editor/components/RichMarkdownEditor.svelte';
+	import { splitFrontmatter, wrapFrontmatter } from '$lib/editor/adapter/frontmatter';
 	import type { VaultManifestEntry, VaultWritePolicy } from '$lib/api/types';
 	import { isEditableVaultFile, isEditableVaultPolicy } from '$lib/utils/vault';
 	import { sha256Hex } from '$lib/utils/sha256';
@@ -35,6 +37,8 @@
 	let loadedContent = $state<string | null>(null);
 	let loadedPath = $state<string | null>(null);
 	let loadedVaultId = $state<string | null>(null);
+	let editorRegion = $state<HTMLDivElement>();
+	let richEditor = $state<RichMarkdownEditor>();
 	let isDirty = $derived(file !== null && localContent !== (loadedContent ?? ''));
 	let hasConflict = $derived(
 		editBaseRev !== null && currentServerRev !== null && editBaseRev !== currentServerRev
@@ -203,6 +207,7 @@
 	}
 
 	async function copyMyChanges() {
+		syncMarkdown();
 		try {
 			await navigator.clipboard.writeText(localContent);
 			conflictCopied = true;
@@ -215,6 +220,7 @@
 
 	function downloadMyVersion() {
 		if (!file) return;
+		syncMarkdown();
 		const name = file.path.split('/').pop() || 'vault-file.md';
 		const blob = new Blob([localContent], { type: 'text/markdown;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
@@ -234,6 +240,7 @@
 
 	// Warn before losing unsaved changes on tab close/refresh or in-app navigation.
 	function handleBeforeUnload(event: BeforeUnloadEvent) {
+		syncMarkdown();
 		if (isDirty) {
 			event.preventDefault();
 			event.returnValue = '';
@@ -241,6 +248,7 @@
 	}
 
 	beforeNavigate((navigation) => {
+		syncMarkdown();
 		if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) {
 			navigation.cancel();
 		}
@@ -272,14 +280,46 @@
 			!tombstoneConflict &&
 			!$saveMutation.isPending
 	);
+	const isMarkdown = $derived(
+		file?.path.toLowerCase().endsWith('.md') || file?.path.toLowerCase().endsWith('.markdown')
+	);
+	const editorDocument = $derived(splitFrontmatter(localContent));
+
+	function syncMarkdown() {
+		if (!isMarkdown || !richEditor) return;
+		const markdown = richEditor.getMarkdown();
+		localContent = editorDocument.hasFrontmatter
+			? wrapFrontmatter(editorDocument.frontmatter, markdown)
+			: markdown;
+	}
+
+	function save() {
+		syncMarkdown();
+		if (
+			canEdit &&
+			localContent !== (loadedContent ?? '') &&
+			editBaseRev !== null &&
+			!hasConflict &&
+			!tombstoneConflict &&
+			!$saveMutation.isPending
+		) {
+			$saveMutation.mutate().catch(() => {});
+		}
+	}
 
 	function handleKeyDown(event: KeyboardEvent) {
-		if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+		if (
+			(event.ctrlKey || event.metaKey) &&
+			event.key === 's' &&
+			editorRegion?.contains(event.target as Node)
+		) {
 			event.preventDefault();
-			if (canSave) $saveMutation.mutate().catch(() => {});
+			save();
 		}
 	}
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 {#if !file}
 	<div class="rounded-[1.25rem] border border-dashed border-base-300 bg-base-100 p-8 text-center">
@@ -293,7 +333,13 @@
 		</p>
 	</div>
 {:else}
-	<div class="space-y-3">
+	<div
+		class="space-y-3"
+		bind:this={editorRegion}
+		onfocusout={(event) => {
+			if (!editorRegion?.contains(event.relatedTarget as Node | null)) syncMarkdown();
+		}}
+	>
 		<div class="flex items-center justify-between">
 			<div>
 				<h3 class="font-display text-lg">{file.path}</h3>
@@ -310,11 +356,7 @@
 				</p>
 			</div>
 			{#if canEdit}
-				<button
-					class="btn btn-primary btn-sm rounded-xl"
-					disabled={!canSave}
-					onclick={() => $saveMutation.mutate().catch(() => {})}
-				>
+				<button class="btn rounded-xl btn-primary btn-sm" disabled={!canSave} onclick={save}>
 					{#if $saveMutation.isPending}
 						<Loader class="h-4 w-4 animate-spin" />
 					{:else if saveSuccess}
@@ -353,7 +395,7 @@
 					</div>
 				</div>
 				<div class="flex flex-wrap gap-2 pl-6">
-					<button class="btn btn-warning btn-xs rounded-lg" onclick={copyMyChanges}>
+					<button class="btn rounded-lg btn-warning btn-xs" onclick={copyMyChanges}>
 						{#if conflictCopied}
 							<Check class="h-3 w-3" />
 							<span>Copied!</span>
@@ -362,12 +404,12 @@
 							<span>Copy my changes</span>
 						{/if}
 					</button>
-					<button class="btn btn-warning btn-xs rounded-lg" onclick={downloadMyVersion}>
+					<button class="btn rounded-lg btn-warning btn-xs" onclick={downloadMyVersion}>
 						<Download class="h-3 w-3" />
 						<span>Download my version</span>
 					</button>
 					<button
-						class="btn btn-outline btn-warning btn-xs rounded-lg"
+						class="btn rounded-lg btn-outline btn-warning btn-xs"
 						onclick={confirmReloadFromServer}
 					>
 						<RotateCcw class="h-3 w-3" />
@@ -390,7 +432,7 @@
 					</div>
 				</div>
 				<div class="flex flex-wrap gap-2 pl-6">
-					<button class="btn btn-error btn-xs rounded-lg" onclick={copyMyChanges}>
+					<button class="btn rounded-lg btn-error btn-xs" onclick={copyMyChanges}>
 						{#if conflictCopied}
 							<Check class="h-3 w-3" />
 							<span>Copied!</span>
@@ -399,11 +441,11 @@
 							<span>Copy my changes</span>
 						{/if}
 					</button>
-					<button class="btn btn-error btn-xs rounded-lg" onclick={downloadMyVersion}>
+					<button class="btn rounded-lg btn-error btn-xs" onclick={downloadMyVersion}>
 						<Download class="h-3 w-3" />
 						<span>Download my version</span>
 					</button>
-					<button class="btn btn-outline btn-error btn-xs rounded-lg" onclick={closeFile}>
+					<button class="btn rounded-lg btn-outline btn-error btn-xs" onclick={closeFile}>
 						<X class="h-3 w-3" />
 						<span>Close file</span>
 					</button>
@@ -412,11 +454,26 @@
 		{/if}
 
 		{#if canEdit}
-			<textarea
-				class="textarea textarea-bordered min-h-[24rem] w-full rounded-2xl font-mono text-sm"
-				bind:value={localContent}
-				onkeydown={handleKeyDown}
-				disabled={$contentQuery.isLoading || $saveMutation.isPending}></textarea>
+			<div class="h-[min(70vh,50rem)] min-h-[32rem]">
+				{#if isMarkdown}
+					<RichMarkdownEditor
+						bind:this={richEditor}
+						content={editorDocument.body}
+						currentMarkdown={editorDocument.body}
+						editable={!$contentQuery.isLoading && !$saveMutation.isPending}
+						hasAttachmentHandler={false}
+						on:change={(event) =>
+							(localContent = editorDocument.hasFrontmatter
+								? wrapFrontmatter(editorDocument.frontmatter, event.detail.markdown)
+								: event.detail.markdown)}
+					/>
+				{:else}
+					<textarea
+						class="textarea-bordered textarea h-full w-full resize-none rounded-2xl font-mono text-sm"
+						bind:value={localContent}
+						disabled={$contentQuery.isLoading || $saveMutation.isPending}></textarea>
+				{/if}
+			</div>
 		{:else}
 			<pre
 				class="min-h-[24rem] overflow-auto rounded-2xl border border-base-300/70 bg-base-200/50 p-4 font-mono text-sm whitespace-pre-wrap">{$contentQuery

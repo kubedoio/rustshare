@@ -8,6 +8,9 @@ import type { VaultManifestEntry } from '$lib/api/types';
 
 vi.mock('$lib/api/vaults');
 vi.mock('$lib/utils/sha256', () => ({ sha256Hex: vi.fn() }));
+vi.mock('$lib/editor/components/RichMarkdownEditor.svelte', async () => ({
+	default: (await import('./VaultFileEditor.test-editor.svelte')).default
+}));
 
 const { beforeNavigateCallbacks } = vi.hoisted(() => ({
 	beforeNavigateCallbacks: [] as Array<(navigation: { cancel: () => void }) => void>
@@ -50,7 +53,7 @@ describe('VaultFileEditor', () => {
 		});
 	});
 
-	it('renders textarea for editable Markdown file', async () => {
+	it('renders the standard editor for an editable Markdown file', async () => {
 		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
 			path: 'note.md',
 			content: '# Hello',
@@ -125,6 +128,40 @@ describe('VaultFileEditor', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText(/rev 2/i)).toBeTruthy();
+		});
+	});
+
+	it('preserves Obsidian frontmatter when rich content changes', async () => {
+		vi.spyOn(vaultsApi, 'getVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			content: '---\ntags:\n  - project\ncustom: keep-me\n---\n# Hello',
+			server_rev: 1,
+			content_type: 'text/markdown',
+			size: 51
+		});
+		vi.spyOn(vaultsApi, 'saveVaultFileContent').mockResolvedValueOnce({
+			path: 'note.md',
+			server_rev: 2,
+			updated_at: '2026-07-30T00:00:00Z'
+		});
+
+		const file: VaultManifestEntry = {
+			path: 'note.md',
+			server_rev: 1,
+			mtime_server: '',
+			deleted: false
+		};
+		render(VaultFileEditor, { props: { vaultId: 'v1', policy: 'web_editing_enabled', file } });
+
+		const editor = await waitFor(() => screen.getByDisplayValue('# Hello'));
+		await fireEvent.input(editor, { target: { value: '# Updated' } });
+		await fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+		await waitFor(() => {
+			expect(vaultsApi.saveVaultFileContent).toHaveBeenCalledWith('v1', 'note.md', {
+				content: '---\ntags:\n  - project\ncustom: keep-me\n---\n# Updated',
+				expected_revision: 1
+			});
 		});
 	});
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { getVault, getManifest, updateVaultWritePolicy } from '$lib/api/vaults';
@@ -60,8 +61,9 @@
 
 	let selectedFile = $state<VaultManifestEntry | null>(null);
 	let editorDirty = $state(false);
+	let editorPanel = $state<HTMLDivElement>();
 
-	function selectFile(file: VaultManifestEntry) {
+	async function selectFile(file: VaultManifestEntry) {
 		if (
 			editorDirty &&
 			selectedFile !== null &&
@@ -71,6 +73,8 @@
 			return;
 		}
 		selectedFile = file;
+		await tick();
+		editorPanel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}
 
 	const writePolicyOptions: { value: VaultWritePolicy; label: string }[] = [
@@ -96,7 +100,7 @@
 	<title>{vault?.name ?? 'Vault'} - RustShare</title>
 </svelte:head>
 
-<div class="mx-auto max-w-5xl space-y-6">
+<div class="mx-auto max-w-[90rem] space-y-6">
 	<!-- Back link -->
 	<a
 		href="/vaults"
@@ -214,90 +218,95 @@
 			{/if}
 		</div>
 
-		<!-- Manifest Files -->
-		<div class="space-y-3">
-			<h2 class="px-1 font-display text-2xl text-base-content">Manifest</h2>
+		<div class="grid items-start gap-6 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
+			<!-- Manifest Files -->
+			<div class="space-y-3">
+				<h2 class="px-1 font-display text-2xl text-base-content">Manifest</h2>
 
-			{#if manifest && manifest.files.length > 0}
-				<div class="space-y-2">
-					{#each manifest.files as file}
-						<button
-							class="flex w-full items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 text-left shadow-sm transition-colors hover:bg-base-200/50"
-							class:ring-2={selectedFile?.path === file.path}
-							class:ring-brand-500={selectedFile?.path === file.path}
-							onclick={() => selectFile(file)}
-						>
-							<div
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-base-300/70 bg-base-200/70"
-								class:text-error={file.deleted}
-								class:text-brand-500={!file.deleted}
+				{#if manifest && manifest.files.length > 0}
+					<div class="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
+						{#each manifest.files as file}
+							<button
+								class="flex w-full items-center gap-3 rounded-[1.25rem] border border-base-300/70 bg-base-100 p-4 text-left shadow-sm transition-colors hover:bg-base-200/50"
+								class:ring-2={selectedFile?.path === file.path}
+								class:ring-brand-500={selectedFile?.path === file.path}
+								onclick={() => selectFile(file)}
 							>
-								{#if file.deleted}
-									<Trash2 class="h-4 w-4" />
-								{:else if isEditableVaultFile(file)}
-									<Pencil class="h-4 w-4" />
-								{:else}
-									<Eye class="h-4 w-4" />
-								{/if}
-							</div>
-
-							<div class="min-w-0 flex-1">
-								<div class="flex flex-wrap items-center gap-2">
-									<span
-										class="truncate font-data text-sm font-medium {file.deleted
-											? 'text-base-content/40 line-through'
-											: 'text-base-content'}"
-									>
-										{file.path}
-									</span>
+								<div
+									class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-base-300/70 bg-base-200/70"
+									class:text-error={file.deleted}
+									class:text-brand-500={!file.deleted}
+								>
 									{#if file.deleted}
-										<span
-											class="rounded-full border border-error/20 bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
-										>
-											Deleted
-										</span>
+										<Trash2 class="h-4 w-4" />
+									{:else if isEditableVaultFile(file)}
+										<Pencil class="h-4 w-4" />
+									{:else}
+										<Eye class="h-4 w-4" />
 									{/if}
 								</div>
-								<div class="mt-1 flex items-center gap-3 text-xs text-base-content/50">
-									<span class="font-data">rev {file.server_rev}</span>
-									{#if file.size !== undefined && file.size !== null}
-										<span class="text-base-content/30">|</span>
-										<span class="font-data">{formatFileSize(file.size)}</span>
-									{/if}
-									{#if file.content_type}
-										<span class="text-base-content/30">|</span>
-										<span class="font-data">{file.content_type}</span>
-									{/if}
-								</div>
-							</div>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<div
-					class="rounded-[2rem] border border-dashed border-base-300 bg-base-100 px-6 py-12 text-center shadow-sm"
-				>
-					<div
-						class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500"
-					>
-						<Database class="h-6 w-6" />
-					</div>
-					<h3 class="font-display text-xl text-base-content">Empty manifest</h3>
-					<p class="mx-auto mt-2 max-w-md font-data text-sm text-base-content/65">
-						This vault has no files in its manifest yet. Files will appear here once they are
-						synced.
-					</p>
-				</div>
-			{/if}
-		</div>
 
-		<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 shadow-sm lg:p-8">
-			<VaultFileEditor
-				vaultId={vaultId!}
-				policy={vault.write_policy}
-				bind:file={selectedFile}
-				bind:dirty={editorDirty}
-			/>
+								<div class="min-w-0 flex-1">
+									<div class="flex flex-wrap items-center gap-2">
+										<span
+											class="truncate font-data text-sm font-medium {file.deleted
+												? 'text-base-content/40 line-through'
+												: 'text-base-content'}"
+										>
+											{file.path}
+										</span>
+										{#if file.deleted}
+											<span
+												class="rounded-full border border-error/20 bg-error/10 px-2 py-0.5 text-xs font-medium text-error"
+											>
+												Deleted
+											</span>
+										{/if}
+									</div>
+									<div class="mt-1 flex items-center gap-3 text-xs text-base-content/50">
+										<span class="font-data">rev {file.server_rev}</span>
+										{#if file.size !== undefined && file.size !== null}
+											<span class="text-base-content/30">|</span>
+											<span class="font-data">{formatFileSize(file.size)}</span>
+										{/if}
+										{#if file.content_type}
+											<span class="text-base-content/30">|</span>
+											<span class="font-data">{file.content_type}</span>
+										{/if}
+									</div>
+								</div>
+							</button>
+						{/each}
+					</div>
+				{:else}
+					<div
+						class="rounded-[2rem] border border-dashed border-base-300 bg-base-100 px-6 py-12 text-center shadow-sm"
+					>
+						<div
+							class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/10 text-brand-500"
+						>
+							<Database class="h-6 w-6" />
+						</div>
+						<h3 class="font-display text-xl text-base-content">Empty manifest</h3>
+						<p class="mx-auto mt-2 max-w-md font-data text-sm text-base-content/65">
+							This vault has no files in its manifest yet. Files will appear here once they are
+							synced.
+						</p>
+					</div>
+				{/if}
+			</div>
+
+			<div
+				bind:this={editorPanel}
+				class="min-w-0 scroll-mt-4 rounded-[2rem] border border-base-300/70 bg-base-100 p-4 shadow-sm lg:sticky lg:top-4 lg:p-6"
+			>
+				<VaultFileEditor
+					vaultId={vaultId!}
+					policy={vault.write_policy}
+					bind:file={selectedFile}
+					bind:dirty={editorDirty}
+				/>
+			</div>
 		</div>
 	{:else}
 		<ErrorState title="Vault not found" message="The requested vault does not exist." />
