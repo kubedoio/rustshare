@@ -8,9 +8,9 @@ use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
-    MailSmtpSettings, OidcLoginState, ReplicationJob, ReplicationJobStatus, ReplicationState,
-    ReplicationTarget, Share, SharePermissions, User, UserId, UserSession, Vault, VaultDevice,
-    VaultFile, VaultWritePolicy,
+    MailSmtpSettings, MailSortOrder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
+    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserId, UserSession, Vault,
+    VaultDevice, VaultFile, VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
 use serde_json;
@@ -546,6 +546,33 @@ impl MetadataStore {
         Ok(rows)
     }
 
+    /// Find a single mail attachment by ID, scoped to the owning user and tenant.
+    pub async fn find_mail_attachment_by_id(
+        &self,
+        attachment_id: Uuid,
+        message_id: Uuid,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<Option<MailAttachment>> {
+        let row = sqlx::query_as::<_, MailAttachment>(
+            r#"
+            SELECT
+                a.id, a.tenant_id, a.message_id, a.file_id, a.filename, a.mime_type,
+                a.size_bytes, a.part_index, a.content_disposition, a.content_id, a.blob_key, a.created_at
+            FROM mail_attachments a
+            JOIN mail_messages m ON m.id = a.message_id
+            WHERE a.id = $1 AND a.message_id = $2 AND m.tenant_id = $3 AND m.owner_id = $4
+            "#,
+        )
+        .bind(attachment_id)
+        .bind(message_id)
+        .bind(tenant_id)
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Find a mail message by ID.
     ///
     /// This method does not enforce tenant or ownership checks. Callers must
@@ -810,9 +837,18 @@ impl MetadataStore {
         search: Option<&str>,
         cursor: Option<(DateTime<Utc>, Uuid)>,
         limit: i64,
+        sort: MailSortOrder,
     ) -> Result<Vec<MailMessage>> {
         let (cursor_at, cursor_id) = cursor.unzip();
-        let rows = sqlx::query_as::<_, MailMessage>(
+        // The ordering is (COALESCE(sent_at, imported_at), id) so messages
+        // without a Date header fall back to their import time and the id
+        // keeps the order deterministic. Direction fragments come from this
+        // match only — never from user input — so the interpolation is safe.
+        let (direction, cursor_cmp) = match sort {
+            MailSortOrder::DateDesc => ("DESC", "<"),
+            MailSortOrder::DateAsc => ("ASC", ">"),
+        };
+        let sql = format!(
             r#"
             SELECT
                 id, tenant_id, owner_id, account_id, source_mode, source_folder, source_uid, source_uidvalidity,
@@ -827,19 +863,20 @@ impl MetadataStore {
                    OR from_address ILIKE '%' || $3 || '%'
                    OR from_name ILIKE '%' || $3 || '%'
                    OR to_addresses::text ILIKE '%' || $3 || '%')
-              AND ($4::timestamptz IS NULL OR (imported_at, id) < ($4, $5))
-            ORDER BY imported_at DESC, id DESC
+              AND ($4::timestamptz IS NULL OR (COALESCE(sent_at, imported_at), id) {cursor_cmp} ($4, $5))
+            ORDER BY COALESCE(sent_at, imported_at) {direction}, id {direction}
             LIMIT $6
             "#,
-        )
-        .bind(tenant_id)
-        .bind(owner_id)
-        .bind(search)
-        .bind(cursor_at)
-        .bind(cursor_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        );
+        let rows = sqlx::query_as::<_, MailMessage>(&sql)
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(search)
+            .bind(cursor_at)
+            .bind(cursor_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
