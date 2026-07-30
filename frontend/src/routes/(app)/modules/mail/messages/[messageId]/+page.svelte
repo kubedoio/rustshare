@@ -21,6 +21,7 @@
 	import { getModuleByKey } from '$lib/modules/registry';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeEmailHtml } from '$lib/editor/adapter/security';
+	import { formatAbsoluteDateTime } from '$lib/utils/format';
 	import { listAllFiles } from '$lib/api/files';
 	import {
 		ArrowLeft,
@@ -284,7 +285,7 @@
 		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
-			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+			message.sent_at ? formatAbsoluteDateTime(message.sent_at) : 'unknown date'
 		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
@@ -307,7 +308,7 @@
 		composeBcc = '';
 		composeSubject = prefixedSubject('Re:', message.subject);
 		composeBody = `\n\nOn ${
-			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'unknown date'
+			message.sent_at ? formatAbsoluteDateTime(message.sent_at) : 'unknown date'
 		}, ${message.from_name || message.from_address || 'sender'} wrote:\n${quoteMailBody(original)}`;
 		composeAttachments = [];
 		composeOpen = true;
@@ -325,7 +326,7 @@
 		composeBody = `\n\n---------- Forwarded message ----------\nFrom: ${formatAddresses(
 			[message.from_name, message.from_address].filter(Boolean)
 		)}\nDate: ${
-			message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'
+			message.sent_at ? formatAbsoluteDateTime(message.sent_at) : 'Unknown'
 		}\nSubject: ${message.subject || '(no subject)'}\n\n${original}`;
 
 		// Copy attachments if any; await the query so early clicks cannot drop them
@@ -400,7 +401,7 @@
 					{/if}
 					<div>
 						<span class="text-base-content/55">Date:</span>
-						{message.sent_at ? new Date(message.sent_at).toLocaleString() : 'Unknown'}
+						{message.sent_at ? formatAbsoluteDateTime(message.sent_at) : 'Unknown'}
 					</div>
 				</div>
 			</div>

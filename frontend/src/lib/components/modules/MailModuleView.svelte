@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		mailApi,
@@ -107,6 +108,57 @@
 	let composeSaveError = $state('');
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
 
+	// Persisted list context so a detail round-trip (Back from
+	// /modules/mail/messages/[id]) restores the previous mailbox state.
+	// Selection (selectedUids) and scroll position are deliberately not
+	// persisted: selection is volatile and scroll restore is impractical with
+	// the query-backed virtual lists.
+	const MAIL_LIST_STATE_KEY = 'rustshare:mail-module:list-state';
+	interface PersistedMailListState {
+		mailboxView: MailboxView;
+		selectedAccountId: string | null;
+		selectedFolder: string | null;
+		search: string;
+	}
+
+	onMount(() => {
+		try {
+			const raw = sessionStorage.getItem(MAIL_LIST_STATE_KEY);
+			if (!raw) return;
+			const saved = JSON.parse(raw) as Partial<PersistedMailListState>;
+			if (
+				saved.mailboxView === 'remote' ||
+				saved.mailboxView === 'drafts' ||
+				saved.mailboxView === 'saved'
+			) {
+				mailboxView = saved.mailboxView;
+			}
+			if (saved.selectedAccountId !== undefined) selectedAccountId = saved.selectedAccountId;
+			if (saved.selectedFolder !== undefined) selectedFolder = saved.selectedFolder;
+			if (typeof saved.search === 'string') {
+				search = saved.search;
+				searchInput = saved.search;
+			}
+		} catch {
+			// Malformed or unavailable sessionStorage: start from defaults.
+		}
+	});
+
+	$effect(() => {
+		if (!browser) return;
+		const state: PersistedMailListState = {
+			mailboxView,
+			selectedAccountId,
+			selectedFolder,
+			search
+		};
+		try {
+			sessionStorage.setItem(MAIL_LIST_STATE_KEY, JSON.stringify(state));
+		} catch {
+			// Persistence is best-effort (private mode / quota).
+		}
+	});
+
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
 		queryFn: () => mailApi.listAccounts()
@@ -210,6 +262,14 @@
 		if (!selectedAccountId && accounts.length) selectedAccountId = accounts[0].id;
 		if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
 			selectedAccountId = accounts[0]?.id ?? null;
+		}
+	});
+
+	$effect(() => {
+		// With zero IMAP accounts the remote mailbox is unusable; land on the
+		// Saved to RustShare mailbox so imported mail stays reachable.
+		if ($accountsQuery.data && $accountsQuery.data.length === 0 && mailboxView === 'remote') {
+			mailboxView = 'saved';
 		}
 	});
 
@@ -641,48 +701,54 @@
 			message={$accountsQuery.error?.message ?? 'Unknown error'}
 			onRetry={() => $accountsQuery.refetch()}
 		/>
-	{:else if ($accountsQuery.data ?? []).length === 0}
-		<div
-			class="mx-auto my-12 max-w-md rounded-xl border border-dashed border-base-300 p-10 text-center"
-		>
-			<Mail size={36} class="mx-auto mb-4 text-brand-500" />
-			<h2 class="text-xl font-bold">No mail account configured</h2>
-			<p class="mt-2 text-sm text-base-content/60">Configure an IMAP/SMTP account to use Mail.</p>
-			<a href="/settings?tab=mail" class="btn btn-primary mt-6">Open Mail settings</a>
-		</div>
 	{:else}
+		{@const hasAccounts = ($accountsQuery.data ?? []).length > 0}
+		{#if !hasAccounts}
+			<div
+				class="mx-auto mb-4 flex max-w-2xl flex-wrap items-center gap-3 rounded-xl border border-dashed border-base-300 p-4"
+			>
+				<Mail size={20} class="shrink-0 text-brand-500" />
+				<p class="min-w-0 flex-1 text-sm text-base-content/70">
+					No mail account configured — mail you import is still available in Saved to RustShare
+					below.
+				</p>
+				<a href="/settings?tab=mail" class="btn btn-primary btn-sm shrink-0">Open Mail settings</a>
+			</div>
+		{/if}
 		<section
 			class="flex h-[calc(100vh-10rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-base-300 bg-base-100"
 		>
 			<header class="flex flex-wrap items-center gap-2 border-b border-base-300 p-2">
-				<div class="min-w-48">
-					<select
-						class="select select-bordered select-sm w-full"
-						aria-label="Mail account"
-						bind:value={selectedAccountId}
-						onchange={() => {
-							selectedFolder = null;
-							mailboxView = 'remote';
-						}}
-					>
-						{#each $accountsQuery.data ?? [] as account}
-							<option value={account.id}>{account.name}</option>
-						{/each}
-					</select>
-					<p
-						class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
-							? 'text-error'
-							: 'text-base-content/50'}"
-					>
-						{selectedAccount?.last_error
-							? `Error: ${selectedAccount.last_error}`
-							: syncing
-								? 'Synchronizing…'
-								: selectedAccount?.last_connected_at
-									? `Connected ${formatDate(selectedAccount.last_connected_at)}`
-									: 'Not synchronized yet'}
-					</p>
-				</div>
+				{#if hasAccounts}
+					<div class="min-w-48">
+						<select
+							class="select select-bordered select-sm w-full"
+							aria-label="Mail account"
+							bind:value={selectedAccountId}
+							onchange={() => {
+								selectedFolder = null;
+								mailboxView = 'remote';
+							}}
+						>
+							{#each $accountsQuery.data ?? [] as account}
+								<option value={account.id}>{account.name}</option>
+							{/each}
+						</select>
+						<p
+							class="mt-0.5 truncate px-1 text-[11px] {selectedAccount?.last_error
+								? 'text-error'
+								: 'text-base-content/50'}"
+						>
+							{selectedAccount?.last_error
+								? `Error: ${selectedAccount.last_error}`
+								: syncing
+									? 'Synchronizing…'
+									: selectedAccount?.last_connected_at
+										? `Connected ${formatDate(selectedAccount.last_connected_at)}`
+										: 'Not synchronized yet'}
+						</p>
+					</div>
+				{/if}
 				<form class="relative min-w-44 flex-1" onsubmit={submitSearch}>
 					<Search
 						size={14}
@@ -706,15 +772,17 @@
 							size={16}
 						/>{:else}<ArrowDownNarrowWide size={16} />{/if}
 				</button>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm btn-square"
-					aria-label="Synchronize mail"
-					onclick={syncMailbox}
-					disabled={syncing}
-				>
-					<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
-				</button>
+				{#if hasAccounts}
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm btn-square"
+						aria-label="Synchronize mail"
+						onclick={syncMailbox}
+						disabled={syncing}
+					>
+						<RefreshCw size={16} class={syncing ? 'animate-spin' : ''} />
+					</button>
+				{/if}
 				<div class="relative">
 					<button
 						type="button"
@@ -809,20 +877,22 @@
 							{/each}
 						{/if}
 						<div class="my-2 border-t border-base-300"></div>
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
-							'drafts'
-								? 'bg-brand-500/10 font-semibold text-brand-700'
-								: ''}"
-							aria-current={mailboxView === 'drafts' ? 'page' : undefined}
-							onclick={() => selectMailbox('drafts')}
-						>
-							<FileText size={15} /><span class="flex-1 text-left">Drafts</span
-							>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
-									>{($draftsQuery.data ?? []).length}</span
-								>{/if}
-						</button>
+						{#if hasAccounts}
+							<button
+								type="button"
+								class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
+								'drafts'
+									? 'bg-brand-500/10 font-semibold text-brand-700'
+									: ''}"
+								aria-current={mailboxView === 'drafts' ? 'page' : undefined}
+								onclick={() => selectMailbox('drafts')}
+							>
+								<FileText size={15} /><span class="flex-1 text-left">Drafts</span
+								>{#if ($draftsQuery.data ?? []).length}<span class="badge badge-sm"
+										>{($draftsQuery.data ?? []).length}</span
+									>{/if}
+							</button>
+						{/if}
 						<button
 							type="button"
 							class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-base-200 {mailboxView ===
@@ -1129,7 +1199,8 @@
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
 											{#each $remoteBodyQuery.data.attachments as attachment, attachmentIndex}<a
-													class="btn btn-outline btn-sm"
+													class="btn btn-outline btn-sm max-w-full"
+													title={attachment.filename || `Attachment ${attachment.index + 1}`}
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
 														selectedMessage.uid,
@@ -1137,11 +1208,13 @@
 														selectedFolder!,
 														uidvalidity
 													)}
-													><Paperclip size={13} />{attachment.filename ||
-														`Attachment ${attachment.index + 1}`}{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
-															class="badge badge-ghost badge-sm">#{attachment.index + 1}</span
+													><Paperclip size={13} class="shrink-0" /><span class="min-w-0 truncate"
+														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
+													>
+													{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
+															class="badge badge-ghost badge-sm shrink-0">#{attachment.index + 1}</span
 														>{/if}
-													<span class="text-base-content/45"
+													<span class="shrink-0 text-base-content/45"
 														>{formatBytes(attachment.size_bytes)}</span
 													></a
 												>{/each}
@@ -1155,7 +1228,7 @@
 
 			{#if selectedUids.length}
 				<div
-					class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+					class="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 				>
 					<span class="px-2 text-sm font-semibold">{selectedUids.length} selected</span>
 					<button

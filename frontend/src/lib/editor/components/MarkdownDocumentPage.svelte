@@ -855,10 +855,14 @@
 		margin: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
 	}
 
 	.doc-title-wrapper {
 		margin: 0;
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	.doc-title-button {
@@ -868,6 +872,7 @@
 		font: inherit;
 		color: inherit;
 		cursor: pointer;
+		max-width: 100%;
 	}
 
 	.doc-title-input {
@@ -901,6 +906,9 @@
 		opacity: 0.5;
 		margin-top: 0.125rem;
 		white-space: nowrap;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.doc-header-right {
@@ -998,6 +1006,33 @@
 		.doc-header-center {
 			order: 3;
 			width: 100%;
+			flex-wrap: wrap;
+		}
+
+		/* Keep every header action reachable: the actions group may wrap onto
+		   its own line instead of being clipped off the viewport edge. */
+		.doc-header-right {
+			flex: 1 1 auto;
+			min-width: 0;
+			flex-wrap: wrap;
+			justify-content: flex-end;
+		}
+
+		/* The save indicator reserves 70px even when hidden; reclaim it so the
+		   back button and actions fit on the first row. */
+		.save-indicator:not(.visible) {
+			display: none;
+		}
+
+		.save-indicator {
+			min-width: 0;
+			margin-right: 0;
+		}
+
+		.header-actions {
+			border-left: none;
+			padding-left: 0;
+			margin-left: 0;
 		}
 	}
 </style>

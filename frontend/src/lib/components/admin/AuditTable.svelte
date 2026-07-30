@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { AuditEntry } from '$lib/api/admin';
+	import { formatAbsoluteDateTime } from '$lib/utils/format';
 
 	let {
 		entries = [],
@@ -44,7 +45,7 @@
 	}
 
 	function formatDate(dateStr: string) {
-		return new Date(dateStr).toLocaleString();
+		return formatAbsoluteDateTime(dateStr);
 	}
 
 	const ACTION_COLORS: Record<string, string> = {

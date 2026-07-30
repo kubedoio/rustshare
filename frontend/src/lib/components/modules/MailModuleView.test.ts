@@ -112,6 +112,7 @@ describe('MailModuleView', () => {
 		localStorage.clear();
 		queryClient.clear();
 		toastStore.clear();
+		sessionStorage.clear();
 		mocks.listAccounts.mockResolvedValue([account]);
 		mocks.listFolders.mockResolvedValue(folders);
 		mocks.listAccountMessages.mockResolvedValue({
@@ -486,6 +487,23 @@ describe('MailModuleView', () => {
 		await waitFor(() => expect(mocks.starMessage).toHaveBeenCalledWith('acct-1', 42, 'INBOX', 7));
 	});
 
+	it('wraps the bulk-action bar so it fits narrow viewports', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(
+			await screen.findByRole('checkbox', { name: 'Select message Quarterly update' })
+		);
+
+		const bar = screen.getByText('1 selected').parentElement!;
+		expect(bar.className).toContain('flex-wrap');
+		expect(bar.className).toContain('max-w-[calc(100vw-2rem)]');
+		// All bulk actions stay in the reachable (wrapped) bar.
+		for (const label of ['Read', 'Unread', 'Star', 'Save', 'Move', 'Delete']) {
+			expect(
+				bar.querySelector(`button`) && screen.getByRole('button', { name: label })
+			).toBeTruthy();
+		}
+	});
+
 	it('saves selected UIDs to RustShare', async () => {
 		render(MailModuleView, { module: testModule });
 		await fireEvent.click(
@@ -574,6 +592,126 @@ describe('MailModuleView', () => {
 		await fireEvent.click(await screen.findByRole('button', { name: /Saved mail/ }));
 
 		expect(mocks.goto).toHaveBeenCalledWith('/modules/mail/messages/saved-1');
+	});
+
+	it('shows the saved mailbox when no IMAP account is configured', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [
+				{
+					id: 'saved-1',
+					subject: 'Imported report',
+					from_name: 'Bob',
+					from_address: 'bob@example.com',
+					to_addresses: [],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: null,
+					imported_at: '2026-07-20T09:00:00Z',
+					size_bytes: 1,
+					has_attachments: false,
+					source_mode: 'upload'
+				}
+			],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+		render(MailModuleView, { module: testModule });
+
+		// Imported mail stays reachable without an IMAP account…
+		expect(await screen.findByRole('button', { name: /Imported report/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+		// …and the account-setup prompt is a secondary hint, not a hard gate.
+		expect(screen.getByText(/No mail account configured/)).toBeTruthy();
+		expect(screen.getByRole('link', { name: 'Open Mail settings' })).toBeTruthy();
+		// Account-dependent chrome is hidden.
+		expect(screen.queryByLabelText('Mail account')).toBeNull();
+		expect(screen.queryByRole('button', { name: /Drafts/ })).toBeNull();
+	});
+
+	it('keeps the three-pane remote view when an account exists', async () => {
+		render(MailModuleView, { module: testModule });
+
+		expect(await screen.findByLabelText('Mail account')).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Inbox/ })).toBeTruthy();
+		expect(screen.queryByText(/No mail account configured/)).toBeNull();
+	});
+
+	it('persists the list context to sessionStorage', async () => {
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Saved to RustShare' }));
+
+		await waitFor(() => {
+			const raw = sessionStorage.getItem('rustshare:mail-module:list-state');
+			expect(raw).toBeTruthy();
+			const saved = JSON.parse(raw!);
+			expect(saved.mailboxView).toBe('saved');
+			expect(saved.selectedAccountId).toBe('acct-1');
+		});
+	});
+
+	it('restores the list context from sessionStorage on mount', async () => {
+		sessionStorage.setItem(
+			'rustshare:mail-module:list-state',
+			JSON.stringify({
+				mailboxView: 'saved',
+				selectedAccountId: 'acct-1',
+				selectedFolder: 'Archive',
+				search: 'quarterly'
+			})
+		);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [
+				{
+					id: 'saved-1',
+					subject: 'Saved mail',
+					from_name: 'Bob',
+					from_address: 'bob@example.com',
+					to_addresses: [],
+					cc_addresses: [],
+					bcc_addresses: [],
+					sent_at: null,
+					imported_at: '2026-07-20T09:00:00Z',
+					size_bytes: 1,
+					has_attachments: false,
+					source_mode: 'imap_selected'
+				}
+			],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+		render(MailModuleView, { module: testModule });
+
+		// The saved mailbox is selected with the previous search applied.
+		expect(await screen.findByRole('button', { name: /Saved mail/ })).toBeTruthy();
+		await waitFor(() => expect(mocks.listMessagesPage).toHaveBeenCalledWith('quarterly'));
+		expect(
+			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
+		).toBe('page');
+		expect((screen.getByLabelText('Search mail') as HTMLInputElement).value).toBe('quarterly');
+	});
+
+	it('truncates long remote attachment names with a tooltip', async () => {
+		const longName = 'quarterly-financial-report-attachment-with-a-very-long-name-2026-final.xlsx';
+		mocks.getRemoteMessageBody.mockResolvedValue({
+			...body,
+			attachments: [
+				{
+					index: 0,
+					filename: longName,
+					mime_type: 'application/vnd.ms-excel',
+					size_bytes: 4096,
+					content_id: null
+				}
+			]
+		});
+		render(MailModuleView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: /Bob.*Quarterly update/ }));
+
+		const chip = await screen.findByRole('link', { name: new RegExp('quarterly-financial') });
+		expect(chip.getAttribute('title')).toBe(longName);
+		expect(chip.className).toContain('max-w-full');
+		expect(chip.querySelector('.truncate')).toBeTruthy();
 	});
 
 	it('renders a folder error with inline retry', async () => {
