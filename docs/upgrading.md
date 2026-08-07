@@ -201,7 +201,7 @@ If an upgrade fails or causes unexpected behavior:
 
 | Version | Breaking Change | Migration Path |
 |---------|-----------------|----------------|
-| 0.7.0 | Mail reading is privacy-safe by default: remote images are **blocked** in message previews and imported message bodies unless the user opts in per message. Plaintext SMTP modes configured before the ban are **rejected** at send/test time. Desktop WebSocket sync notifications (never wired up) were removed. Database migrations in this release are **forward-only** (see [Rollback Procedure](#rollback-procedure)). | Review `docs/runbooks/backup-restore.md` and take a backup before upgrading. No data migration action is required; migrations run automatically on first start. For SMTP, reconfigure any affected account to a supported TLS mode. |
+| 0.7.0 | Mail reading is privacy-safe by default: remote images are **blocked** in message previews and imported message bodies unless the user opts in per message. Plaintext SMTP modes configured before the ban are **rejected** at send/test time. The **Mail module is disabled by default** — enable it in admin module settings before the Mail UI/API responds. Desktop WebSocket sync notifications (never wired up) were removed. Database migrations in this release are **forward-only** (see [Rollback Procedure](#rollback-procedure)). | Review `docs/runbooks/backup-restore.md` and take a backup before upgrading. No data migration action is required; migrations run automatically on first start. For SMTP, reconfigure any affected account to a supported TLS mode. Enable the Mail module in admin settings after upgrading. |
 | 0.4.0 | No known breaking changes. | Follow the general upgrade steps and verify the deployment health check after restart. |
 | — | — | — |
 
