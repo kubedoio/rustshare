@@ -4,7 +4,9 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Must match the base compose image: the v0.7.0 schema uses the pgvector
+    # "vector" extension, which stock postgres images do not provide.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: rustshare
       POSTGRES_USER: rustshare

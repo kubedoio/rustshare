@@ -98,7 +98,7 @@ tar -czf "${TARGET_DIR}/config.tar.gz" \
 	docker \
 	scripts \
 	README.md \
-	PRODUCTION_READINESS.md \
+	docs/PRODUCTION_READINESS.md \
 	>/dev/null 2>&1
 
 cat >"${TARGET_DIR}/manifest.env" <<EOF

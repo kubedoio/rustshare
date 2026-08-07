@@ -110,7 +110,7 @@ The current desktop client ships as a CLI plus background daemon under [apps/des
 
 What is real today:
 
-- the live macOS path is the `rustshare-desktop` binary, currently version `0.3.0`
+- the live macOS path is the `rustshare-desktop` binary, currently version `0.4.0`
 - login is pairing-first, with an explicit `--token` fallback for admin and debugging workflows
 - sync roots mirror their configured remote subtree, including directory structure and empty directories
 - root `/` is supported as a full-account mirror

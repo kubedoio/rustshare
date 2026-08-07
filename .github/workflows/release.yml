@@ -199,6 +199,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             USE_PRECOMPILED=true
+            VERSION=${{ needs.validate-tag.outputs.version }}
+            REVISION=${{ needs.validate-tag.outputs.commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

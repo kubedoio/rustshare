@@ -176,6 +176,23 @@ If an upgrade fails or causes unexpected behavior:
    ./scripts/final-launch-smoke.sh
    ```
 
+> **Forward-only migrations.** RustShare database migrations are **forward-only**:
+> once a migration has been applied, the database is not guaranteed to work with
+> the previous release's binary. Rolling back is **not** "start the old image
+> against the same database volume". The supported rollback strategy is:
+>
+> 1. stop the current stack;
+> 2. restore the **pre-upgrade PostgreSQL backup** (`scripts/restore-stack.sh`
+>    replays the `postgres.sql.gz` bundle from `scripts/backup-stack.sh`);
+> 3. restore the **object-storage snapshot** if the bundle contains one
+>    (RustFS `/data` volume);
+> 4. redeploy the **previous release** (rebuild from the previous Git tag, or
+>    revert `RUSTSHARE_BACKEND_IMAGE` to the previous version tag);
+> 5. run `scripts/final-launch-smoke.sh` to verify.
+>
+> Take a backup (`./scripts/backup-stack.sh`) before every upgrade so this path
+> is always available.
+
 ---
 
 ## Breaking Changes
@@ -184,6 +201,7 @@ If an upgrade fails or causes unexpected behavior:
 
 | Version | Breaking Change | Migration Path |
 |---------|-----------------|----------------|
+| 0.7.0 | Mail reading is privacy-safe by default: remote images are **blocked** in message previews and imported message bodies unless the user opts in per message. Plaintext SMTP modes configured before the ban are **rejected** at send/test time. The **Mail module is disabled by default** — enable it in admin module settings before the Mail UI/API responds. Desktop WebSocket sync notifications (never wired up) were removed. Database migrations in this release are **forward-only** (see [Rollback Procedure](#rollback-procedure)). | Review `docs/runbooks/backup-restore.md` and take a backup before upgrading. No data migration action is required; migrations run automatically on first start. For SMTP, reconfigure any affected account to a supported TLS mode. Enable the Mail module in admin settings after upgrading. |
 | 0.4.0 | No known breaking changes. | Follow the general upgrade steps and verify the deployment health check after restart. |
 | — | — | — |
 
@@ -195,5 +213,6 @@ If an upgrade fails or causes unexpected behavior:
 
 | Version | Change | Details |
 |---------|--------|---------|
+| 0.7.0 | New environment variables. | `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` (default `false`) — allow IMAP/SMTP connections to internal/private servers (SSRF guard; off by default). `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` (default `internal`, `internal\|never`) — accept invalid TLS certs for internal mail servers only; public destinations always verify. `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` (default `true`) — auto-create the object-storage bucket at startup. `RUSTSHARE_OBJECT_GC_*` and `RUSTSHARE_BLOB_LOCK_POOL_*` — safe blob garbage-collection operator controls (GC disabled by default). |
 | 0.4.0 | No changes. | No new, removed, or renamed environment variables are required for this release. |
 | — | — | — |

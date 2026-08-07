@@ -1,5 +1,5 @@
 services:
   backend:
-    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/rustshare/rustshare-backend:latest}
+    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/kubedoio/rustshare-backend:latest}
     pull_policy: ${RUSTSHARE_BACKEND_PULL_POLICY:-missing}
     build: null

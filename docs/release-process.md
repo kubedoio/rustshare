@@ -40,7 +40,12 @@ While the project is `< 1.0.0`:
 The release workflows publish the following Docker tags:
 
 - **`.github/workflows/pilot-release.yml`** (main branch): `edge`, `nightly-YYYY-MM-DD`, `sha-<gitsha>`
-- **`.github/workflows/release.yml`** (stable / RC tags): `X.Y.Z`, `X.Y`, `X`, `latest`, `sha-<gitsha>` (stable); `X.Y.Z-rc.N`, `sha-<gitsha>` (RC)
+- **`.github/workflows/release.yml`** (stable tags only): `X.Y.Z`, `X.Y`, `X`, `latest`, `sha-<gitsha>`
+
+> **Note:** `release.yml` accepts **stable `vX.Y.Z` tags only** (the `validate-tag`
+> step enforces `^v[0-9]+\.[0-9]+\.[0-9]+$`). `-rc.N` tags are **not** accepted by
+> the automated pipeline; pre-release validation is done locally before tagging
+> the stable version (see [Pre-release Validation](#pre-release-validation)).
 
 Combined tag matrix:
 
@@ -49,7 +54,6 @@ Combined tag matrix:
 | `edge` | Latest `main` push | Unstable | Development, CI validation |
 | `nightly-YYYY-MM-DD` | Dated `main` push | Unstable | Snapshot testing, bisecting |
 | `sha-<gitsha>` | Every build | Unstable | Exact reproducibility |
-| `X.Y.Z-rc.N` | Release candidate tag (`vX.Y.Z-rc.N`) | Pre-release | Staging validation |
 | `X.Y.Z` | Stable tag (`vX.Y.Z`) | Stable | Production deployments |
 | `X.Y` | Rolling minor alias | Stable | Automatic patch uptake |
 | `X` | Rolling major alias | Stable | Automatic minor uptake (post-1.0) |
@@ -62,26 +66,39 @@ Combined tag matrix:
 
 ---
 
-## Release Candidate Flow
+## Pre-release Validation
 
-1. **Decide the target version.** Ensure `CHANGELOG.md` has an "Unreleased" section with all changes since the last stable release.
-2. **Create an RC tag:**
-   ```bash
-   git tag -s v0.4.0-rc.1 -m "Release candidate 0.4.0-rc.1"
-   git push origin v0.4.0-rc.1
-   ```
-3. **CI actions:**
-   - Runs the pilot compose smoke test.
-   - Builds and scans the image with Trivy.
-   - Publishes tags: `0.4.0-rc.1`, `sha-<gitsha>`.
-   - Does **not** update `latest`, `0.4`, or `0`.
-4. **Validate the RC:**
-   - Deploy to staging.
-   - Run integration tests.
-   - Verify migration behavior against a copy of production data.
-5. **Promote to stable:**
-   - If the RC passes, create the stable tag (`v0.4.0`).
-   - If issues are found, fix on `main`, cut `v0.4.0-rc.2`, and repeat.
+The automated pipeline is **stable-tag-only**: pushing `vX.Y.Z` triggers
+`release.yml`, which builds binaries, publishes container images, and creates
+the GitHub Release. There is **no automated RC channel** — `vX.Y.Z-rc.N` tags
+are rejected by `release.yml`.
+
+Before pushing a stable tag, the maintainer must complete the validation
+checklist against the exact commit to be tagged:
+
+1. **Backend gates**: `cargo fmt --all --check`, clippy (`-D warnings`),
+   `cargo test --workspace --all-features --lib`, release build,
+   `cargo sqlx prepare --workspace --check`, `cargo deny ... check`.
+2. **Frontend gates**: `npm ci`, `npm run check`, `npm run lint`,
+   `npm run test`, `npm run build`, `npm audit --audit-level=high`.
+3. **Live-DB integration suite**: PostgreSQL (pgvector) + RustFS, migrations
+   applied, `cargo test --workspace --all-features -- --ignored`.
+4. **Clean deployment smoke**: boot the documented Compose stack from a clean
+   state and run `./scripts/final-launch-smoke.sh`.
+5. **Upgrade drill**: upgrade from the previous stable release against
+   representative data; verify data survival and restart after migrations.
+6. **Backup/restore drill**: `./scripts/backup-stack.sh` →
+   `./scripts/verify-backup-bundle.sh` → `./scripts/run-restore-drill.sh` /
+   `post-restore-smoke.sh`.
+7. **Security suite**: tenant isolation, share authorization/revocation, CSRF,
+   authentication, SSRF, Mail privacy/sanitization, object-storage credential
+   isolation.
+
+When a staging environment is available, also deploy the candidate to staging,
+run the integration suites there, and verify migration behavior against a copy
+of production data before tagging. If issues are found, fix them on `main`,
+merge, and re-run the affected gates against the new candidate commit — then
+tag the stable version.
 
 ---
 
@@ -223,7 +240,10 @@ The release workflow builds and attaches static Linux binaries to each GitHub Re
 
 | Target | Expected artifact |
 |--------|-------------------|
-| `x86_64-unknown-linux-gnu` | `rustshare-backend-x86_64-linux` |
-| `aarch64-unknown-linux-gnu` | `rustshare-backend-aarch64-linux` |
+| `x86_64-unknown-linux-gnu` | `rustshare-server-x86_64-unknown-linux-gnu` |
+| `aarch64-unknown-linux-gnu` | `rustshare-server-aarch64-unknown-linux-gnu` |
 
-These binaries are built in the `docker/backend.Dockerfile` multi-stage build and extracted by the release workflow. Operators who prefer binaries over Docker can download them directly from the release page.
+These binaries are built by `release.yml` (job `build-binaries`) with the pinned
+Rust toolchain (1.97.1) and cross-compilation toolchain for `aarch64`, then
+consumed by the container-image build. Operators who prefer binaries over Docker
+can download them directly from the release page.
