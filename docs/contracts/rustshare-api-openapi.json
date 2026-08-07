@@ -5496,7 +5496,7 @@
           {
             "name": "cursor",
             "in": "path",
-            "description": "Direction-dependent paging cursor: a `before_uid` for\n`sort=date_desc`, an `after_uid` for `sort=date_asc`.",
+            "description": "UID of the last message returned by the previous date-sorted page.",
             "required": true,
             "schema": {
               "type": [
