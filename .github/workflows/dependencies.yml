@@ -52,13 +52,13 @@ jobs:
       POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
       DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Cache cargo-outdated
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-outdated
           key: ${{ runner.os }}-cargo-outdated
@@ -112,10 +112,10 @@ jobs:
     name: Check Frontend Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -141,8 +141,8 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Run security audit
         run: |

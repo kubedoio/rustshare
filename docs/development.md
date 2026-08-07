@@ -8,7 +8,7 @@ Get the full RustShare stack running locally and run the test suite in under 15 
 
 | Tool | Version | Purpose | Install |
 |------|---------|---------|---------|
-| Rust | 1.95.0 | Backend, workspace crates | `rustup show` (reads `rust-toolchain.toml`) |
+| Rust | 1.97.1 | Backend, workspace crates | `rustup show` (reads `rust-toolchain.toml`) |
 | Node.js | 22+ | Frontend build & tooling | [nodejs.org](https://nodejs.org) or `nvm` |
 | Docker & Docker Compose | latest | PostgreSQL, RustFS (S3-compatible), nginx | [docker.com](https://docker.com) |
 | sqlx-cli | latest | Database migrations | `cargo install sqlx-cli --features postgres` |

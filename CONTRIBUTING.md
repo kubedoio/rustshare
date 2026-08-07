@@ -22,7 +22,7 @@ For the AI-agent / quick-reference version of this guide, see [`AGENTS.md`](AGEN
 
 Before you begin, ensure you have the following tools installed:
 
-- **Rust** — managed by `rust-toolchain.toml` (currently 1.95.0). Run `rustup show` to install the pinned toolchain automatically.
+- **Rust** — managed by `rust-toolchain.toml` (currently 1.97.1). Run `rustup show` to install the pinned toolchain automatically.
 - **Node.js 22+** — required for the frontend build and tooling.
 - **Docker and Docker Compose** — required for running PostgreSQL, RustFS (S3-compatible), and other infrastructure locally.
 - **sqlx-cli** — install via `cargo install sqlx-cli --features postgres`. Used to run database migrations.

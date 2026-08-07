@@ -16,7 +16,7 @@ This file contains project-specific guidance for coding agents working in the Ru
 
 ## Toolchain
 
-- Rust 1.95.0 (see `rust-toolchain.toml`).
+- Rust 1.97.1 (see `rust-toolchain.toml`).
 - Node.js 22+ and npm 10+ for the frontend.
 - PostgreSQL 16+ for backend tests and local development.
 - Docker and Docker Compose for local deployment.
