@@ -260,11 +260,7 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
         ClientIdentity::User { user_id, .. } => {
             info!("WebSocket connection closed for user {}", user_id);
         }
-        ClientIdentity::ShareViewer {
-            share_id,
-            permissions: _,
-            ..
-        } => {
+        ClientIdentity::ShareViewer { share_id, .. } => {
             info!(
                 "WebSocket connection closed for share viewer: share_id={}",
                 share_id

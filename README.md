@@ -67,7 +67,7 @@ It is not presented as a fully mature enterprise content platform yet. It is a p
 
 ![CI](https://github.com/kubedoio/rustshare/actions/workflows/ci.yml/badge.svg)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.95.0-orange.svg)](rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/rust-1.97.1-orange.svg)](rust-toolchain.toml)
 
 ---
 
