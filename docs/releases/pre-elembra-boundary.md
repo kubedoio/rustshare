@@ -1,6 +1,6 @@
 # Pre-Elembra Release Boundary
 
-> Last updated: 2026-08-07
+> Last updated: 2026-08-08
 
 ## The boundary
 
@@ -55,8 +55,8 @@ Future breaking architecture work is tracked by:
 ## Operator guidance
 
 - **v0.7.0 remains reproducibly buildable and tagged** as the last
-  old-architecture baseline: tag `v0.7.0` exists, and the release pipeline
-  publishes binaries, container images, and SBOMs for it.
+  old-architecture baseline: the `v0.7.0` tag marks the release, and the release
+  pipeline publishes binaries, container images, and SBOMs for it.
 - Pin to `v0.7.0` (or a later release tag) explicitly; do not track `latest`
   across the Elembra cutover unless the Elembra migration plan says otherwise.
 
