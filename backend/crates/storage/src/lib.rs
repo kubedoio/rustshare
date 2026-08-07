@@ -10,7 +10,6 @@ pub mod event_store;
 pub mod metadata;
 pub mod object_store;
 pub mod repos;
-pub mod session;
 pub mod upload_doc_store;
 pub mod upload_impl;
 

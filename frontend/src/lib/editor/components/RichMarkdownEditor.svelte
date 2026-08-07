@@ -27,15 +27,13 @@
 		editable = true,
 		hasAttachmentHandler = false,
 		currentMarkdown = content,
-		syncExternalContent = true,
-		ydoc = undefined
+		syncExternalContent = true
 	}: {
 		content?: string;
 		editable?: boolean;
 		hasAttachmentHandler?: boolean;
 		currentMarkdown?: string;
 		syncExternalContent?: boolean;
-		ydoc?: import('yjs').Doc | undefined;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -87,9 +85,8 @@
 	function buildEditorOptions(element: HTMLElement): CreateEditorOptions {
 		return {
 			element,
-			content: ydoc ? '' : content,
+			content,
 			editable,
-			ydoc,
 			editorProps: {
 				handleClickOn(view: EditorView, pos: number, node: ProseMirrorNode) {
 					if (node.type.name === 'image') {

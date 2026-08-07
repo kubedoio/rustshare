@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Folder } from '$lib/api/types';
-	import { fileBrowserUi, viewMode, sortField, sortOrder } from '$lib/stores/fileBrowserUi';
+	import { fileBrowserUi, viewMode } from '$lib/stores/fileBrowserUi';
+	import { fileSortState, setSortField } from '$lib/stores/fileSort';
 	import { selectionCount, hasSelection, selectionStore } from '$lib/stores/selection';
 	import Breadcrumbs from '$lib/components/layout/Breadcrumbs.svelte';
 	import {
@@ -82,7 +83,7 @@
 		{ value: 'name', label: 'Name' },
 		{ value: 'modified_at', label: 'Date modified' },
 		{ value: 'size', label: 'Size' },
-		{ value: 'type', label: 'Type' }
+		{ value: 'mime_type', label: 'Type' }
 	] as const;
 
 	let selectedFileCount = $derived($selectionStore.selectedFileIds.size);
@@ -91,7 +92,7 @@
 	let effectiveSelectedCount = $derived(selectedCountProp ?? $selectionCount);
 
 	function handleSortClick(field: (typeof sortOptions)[number]['value']) {
-		fileBrowserUi.toggleSort(field);
+		setSortField(field);
 		sortMenuOpen = false;
 	}
 
@@ -218,9 +219,9 @@
 					>
 						<ArrowUpDown size={16} />
 						<span class="hidden sm:inline">
-							{sortOptions.find((o) => o.value === $sortField)?.label}
+							{sortOptions.find((o) => o.value === $fileSortState.field)?.label}
 						</span>
-						{#if $sortOrder === 'asc'}
+						{#if $fileSortState.order === 'asc'}
 							<ArrowUp size={14} class="text-base-content/40" />
 						{:else}
 							<ArrowDown size={14} class="text-base-content/40" />
@@ -236,16 +237,16 @@
 								<button
 									type="button"
 									class="flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors
-										{$sortField === option.value
+										{$fileSortState.field === option.value
 										? 'bg-brand-500/10 text-brand-600'
 										: 'text-base-content/80 hover:bg-base-200/60'}"
 									onclick={() => handleSortClick(option.value)}
 									role="option"
-									aria-selected={$sortField === option.value}
+									aria-selected={$fileSortState.field === option.value}
 								>
 									<span>{option.label}</span>
-									{#if $sortField === option.value}
-										{#if $sortOrder === 'asc'}
+									{#if $fileSortState.field === option.value}
+										{#if $fileSortState.order === 'asc'}
 											<ArrowUp size={14} />
 										{:else}
 											<ArrowDown size={14} />

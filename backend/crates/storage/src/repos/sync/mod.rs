@@ -7,8 +7,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::repos::RepositoryError;
-
 /// A single delta item in a sync response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -205,53 +203,6 @@ pub struct SyncCursor {
     pub last_event_id: Uuid,
     /// Last updated timestamp
     pub updated_at: DateTime<Utc>,
-}
-
-/// Repository for sync operations
-#[allow(async_fn_in_trait)]
-pub trait SyncRepository: Send + Sync {
-    /// Get or create a sync cursor for a device
-    ///
-    /// If a cursor doesn't exist for this device, creates a new one
-    /// starting from the current time.
-    async fn get_or_create_cursor(
-        &self,
-        user_id: Uuid,
-        device_id: Uuid,
-    ) -> Result<SyncCursor, RepositoryError>;
-
-    /// Update a sync cursor for a device
-    ///
-    /// Updates the cursor token and last_event_id for the given device.
-    async fn update_cursor(
-        &self,
-        user_id: Uuid,
-        device_id: Uuid,
-        cursor: &str,
-        last_event_id: Uuid,
-    ) -> Result<(), RepositoryError>;
-
-    /// Get delta changes since a cursor
-    ///
-    /// Returns all events that occurred after the given cursor position.
-    /// Results are paginated based on the limit parameter.
-    async fn get_delta(
-        &self,
-        user_id: Uuid,
-        since_cursor: &str,
-        limit: usize,
-    ) -> Result<DeltaResult, RepositoryError>;
-
-    /// List all cursors for a user
-    ///
-    /// Returns all device cursors for the given user.
-    async fn list_user_cursors(&self, user_id: Uuid) -> Result<Vec<SyncCursor>, RepositoryError>;
-
-    /// Delete a cursor for a device
-    ///
-    /// Removes the cursor for the given device. Used when a device
-    /// is deauthorized or reset.
-    async fn delete_cursor(&self, user_id: Uuid, device_id: Uuid) -> Result<(), RepositoryError>;
 }
 
 /// Error type for cursor parsing

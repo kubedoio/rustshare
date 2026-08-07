@@ -30,17 +30,9 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 	exit 0
 fi
 
-compose() {
-	if docker compose version >/dev/null 2>&1; then
-		docker compose "$@"
-	else
-		docker-compose "$@"
-	fi
-}
-
 require_service_running() {
 	local service="$1"
-	if ! compose ps --services --status running | grep -qx "${service}"; then
+	if ! docker compose ps --services --status running | grep -qx "${service}"; then
 		echo "Service '${service}' is not running. Start the stack before creating a backup." >&2
 		exit 1
 	fi
@@ -49,7 +41,7 @@ require_service_running() {
 require_container_id() {
 	local service="$1"
 	local container_id
-	container_id="$(compose ps -q "${service}")"
+	container_id="$(docker compose ps -q "${service}")"
 	if [[ -z "${container_id}" ]]; then
 		echo "Could not determine container ID for service '${service}'." >&2
 		exit 1
@@ -87,7 +79,7 @@ require_service_running "${POSTGRES_SERVICE}"
 require_service_running "${RUSTFS_SERVICE}"
 
 echo "Creating PostgreSQL backup..."
-compose exec -T "${POSTGRES_SERVICE}" \
+docker compose exec -T "${POSTGRES_SERVICE}" \
 	pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" | gzip -c >"${TARGET_DIR}/postgres.sql.gz"
 
 echo "Creating RustFS volume snapshot..."

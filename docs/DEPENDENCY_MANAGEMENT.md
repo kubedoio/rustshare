@@ -16,14 +16,14 @@ Configuration: [`.github/dependabot.yml`](../.github/dependabot.yml)
 
 ### 2. CI Dependency Checks
 
-GitHub Actions workflow runs every Monday to check for outdated dependencies:
+GitHub Actions workflow runs every Monday to check for outdated frontend dependencies:
 
-- Checks all Cargo.toml files for outdated crates
-- Runs security audits with `cargo audit`
-- Verifies builds work with latest dependencies
-- Checks frontend npm packages for updates
+- Checks frontend npm packages for updates (`npm outdated`)
+- Runs a security audit of npm packages (`npm audit --audit-level=high`)
 
 Workflow: [`.github/workflows/dependencies.yml`](../.github/workflows/dependencies.yml)
+
+Rust dependency advisories are checked on every push/PR by the `cargo deny check advisories` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 ## Manual Dependency Checking
 

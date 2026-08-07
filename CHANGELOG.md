@@ -19,9 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rustshare-desktop status` now derives its output from the sync manager state instead of a hardcoded value; the standalone CLI still reports Idle until daemon-state reporting is wired up.
+- Releases are now triggered by tag push or manual dispatch only; the release workflow no longer waits for CI to pass on the tagged commit (both the workflow_run auto-trigger and the CI-completion gate were removed). Run the full validation suite before tagging, as documented in `docs/release-process.md`.
+
 - Consolidated the root and backend Cargo workspaces into one unified workspace with a single `Cargo.lock`, removing the nested `backend/Cargo.toml` workspace and eliminating ambiguous dependency resolution.
 - Reduced development and test build overhead by setting `debug = 1` in the `dev` and `test` Cargo profiles; this preserves line-level debugging while shrinking the target directory and improving test-linking times.
 - Updated CI so documentation-only and frontend-only changes no longer trigger the full Rust workflow; the DCO check now runs in its own always-on workflow.
+
+### Removed
+
+- Desktop real-time WebSocket sync notifications were removed; they were never wired up (the daemon always ran without a WebSocket URL). Periodic 30s full sync is unchanged.
+- Removed the unused collaboration (Yjs) editor dependencies from the frontend.
 
 ### Fixed
 

@@ -5,7 +5,6 @@ mod email_service;
 pub mod eml_parser;
 mod errors;
 mod file_service;
-mod folder_ancestry;
 mod folder_service;
 mod notification_errors;
 mod notification_service;
@@ -46,7 +45,6 @@ pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,
     MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
 };
-pub use folder_ancestry::{AncestryFolderRepository, FolderAncestryBuilder};
 pub use folder_service::{
     EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps,
 };

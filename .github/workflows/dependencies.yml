@@ -4,11 +4,11 @@ on:
   # Run weekly
   schedule:
     - cron: '0 9 * * 1'  # Every Monday at 9 AM
-  # Run on PRs that modify Cargo files
+  # Run on PRs that modify frontend dependency manifests
   pull_request:
     paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
   # Allow manual trigger
   workflow_dispatch:
 
@@ -16,97 +16,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-
-  generate-secrets:
-    name: Generate Secrets
-    runs-on: ubuntu-latest
-    outputs:
-      pg_password: ${{ steps.secrets.outputs.pg_password }}
-    steps:
-      - name: Generate PostgreSQL password
-        id: secrets
-        run: |
-          PG_PASSWORD=$(openssl rand -hex 32)
-          echo "pg_password=${PG_PASSWORD}" >> "$GITHUB_OUTPUT"
-
-  check-backend-dependencies:
-    name: Check Backend Dependencies
-    runs-on: ubuntu-latest
-    needs: [generate-secrets]
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    env:
-      SQLX_OFFLINE: true
-      # Per-run cryptographically random database password. The container is
-      # ephemeral and only reachable from within this job.
-      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
-      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.97.1
-
-      - name: Cache cargo-outdated
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/bin/cargo-outdated
-          key: ${{ runner.os }}-cargo-outdated
-
-      - name: Install cargo-outdated
-        run: |
-          if ! command -v cargo-outdated &> /dev/null; then
-            # Install with --locked to avoid dependency resolution conflicts
-            # between cargo-outdated's transitive deps and the latest registry.
-            cargo install cargo-outdated --locked
-          fi
-
-      - name: Check for outdated dependencies
-        run: |
-          echo "## Outdated Dependencies" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Check for outdated dependencies
-          OUTPUT=$(cargo outdated -R --format compact 2>&1 || true)
-
-          if echo "$OUTPUT" | grep -q "All dependencies are up to date"; then
-            echo "✅ All dependencies are up to date!" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ Outdated dependencies found:" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-
-            # Show detailed view
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Detailed Report" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cargo outdated -R 2>&1 || true
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
-        continue-on-error: true
-
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --features postgres
-
-      - name: Run migrations
-        run: sqlx migrate run --source backend/migrations
-
-      - name: Verify build with latest dependencies
-        run: |
-          cargo update
-          cargo check --workspace --all-features
-          cargo test --workspace --all-features --lib
 
   check-frontend-dependencies:
     name: Check Frontend Dependencies
@@ -136,15 +45,3 @@ jobs:
       - name: Run security audit
         working-directory: ./frontend
         run: npm audit --audit-level=high
-
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.97.1
-
-      - name: Run security audit
-        run: |
-          cargo install cargo-deny --locked
-          cargo deny --manifest-path Cargo.toml check advisories

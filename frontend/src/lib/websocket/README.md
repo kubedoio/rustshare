@@ -30,7 +30,6 @@ This module implements WebSocket real-time synchronization for multi-device file
 
 5. **UI Components**
    - `ToastContainer.svelte`: Displays toast notifications globally
-   - `WebSocketStatus.svelte`: Shows connection status indicator
 
 ## Features
 
@@ -84,9 +83,8 @@ All file and folder events trigger appropriate cache invalidations and notificat
    - Cleans up WebSocket on logout
    - Handles session restoration on page load
 
-2. **App Layout** (`routes/(app)/+layout.svelte`)
+2. **App Shell** (`lib/layout/AppShell.svelte`)
    - Includes `ToastContainer` for global notifications
-   - Includes `WebSocketStatus` in header
 
 3. **Query Client** (`query-client.ts`)
    - Used by WebSocket manager to invalidate queries

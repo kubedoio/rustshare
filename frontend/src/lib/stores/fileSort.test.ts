@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { fileSortState, setSortField, setViewMode, setPageSize } from '$lib/stores/fileSort';
+import { fileSortState, setSortField, setPageSize } from '$lib/stores/fileSort';
 
 describe('fileSort store', () => {
 	beforeEach(() => {
@@ -8,7 +8,6 @@ describe('fileSort store', () => {
 		fileSortState.set({
 			field: 'name',
 			order: 'asc',
-			viewMode: 'list',
 			pageSize: 20
 		});
 		// Clear localStorage
@@ -20,7 +19,6 @@ describe('fileSort store', () => {
 			const state = get(fileSortState);
 			expect(state.field).toBe('name');
 			expect(state.order).toBe('asc');
-			expect(state.viewMode).toBe('list');
 		});
 	});
 
@@ -46,7 +44,6 @@ describe('fileSort store', () => {
 			fileSortState.set({
 				field: 'name',
 				order: 'desc',
-				viewMode: 'grid',
 				pageSize: 20
 			});
 
@@ -72,28 +69,6 @@ describe('fileSort store', () => {
 		});
 	});
 
-	describe('setViewMode', () => {
-		it('should switch to list view', () => {
-			setViewMode('list');
-			const state = get(fileSortState);
-			expect(state.viewMode).toBe('list');
-		});
-
-		it('should switch to grid view', () => {
-			setViewMode('grid');
-			const state = get(fileSortState);
-			expect(state.viewMode).toBe('grid');
-		});
-
-		it('should toggle between views', () => {
-			setViewMode('list');
-			expect(get(fileSortState).viewMode).toBe('list');
-
-			setViewMode('grid');
-			expect(get(fileSortState).viewMode).toBe('grid');
-		});
-	});
-
 	describe('pageSize', () => {
 		it('should default to 20', () => {
 			const state = get(fileSortState);
@@ -109,14 +84,12 @@ describe('fileSort store', () => {
 	describe('localStorage persistence v3', () => {
 		it('should save state to localStorage', () => {
 			setSortField('size');
-			setViewMode('list');
 
 			const stored = localStorage.getItem('file-sort-state-v3');
 			expect(stored).toBeTruthy();
 
 			const parsed = JSON.parse(stored!);
 			expect(parsed.field).toBe('size');
-			expect(parsed.viewMode).toBe('list');
 		});
 
 		it('should load state from localStorage on init', async () => {
@@ -126,7 +99,6 @@ describe('fileSort store', () => {
 				JSON.stringify({
 					field: 'modified_at',
 					order: 'desc',
-					viewMode: 'list',
 					pageSize: 20
 				})
 			);
@@ -138,7 +110,6 @@ describe('fileSort store', () => {
 
 			expect(state.field).toBe('modified_at');
 			expect(state.order).toBe('desc');
-			expect(state.viewMode).toBe('list');
 		});
 
 		it('should handle corrupted localStorage gracefully', async () => {
@@ -151,7 +122,6 @@ describe('fileSort store', () => {
 			// Should fall back to defaults
 			expect(state.field).toBe('name');
 			expect(state.order).toBe('asc');
-			expect(state.viewMode).toBe('list');
 		});
 
 		it('should save pageSize to localStorage', () => {
@@ -167,7 +137,6 @@ describe('fileSort store', () => {
 				JSON.stringify({
 					field: 'size',
 					order: 'desc',
-					viewMode: 'grid',
 					pageSize: 50
 				})
 			);

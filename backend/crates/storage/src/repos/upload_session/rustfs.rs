@@ -438,8 +438,6 @@ mod tests {
         let config = MetadataBackendConfig {
             base_prefix: "test".to_string(),
             namespace: "default".to_string(),
-            enable_optimistic_concurrency: true,
-            fallback_to_leases: true,
         };
 
         let doc_store = Arc::new(LocalFsDocumentStore::new(

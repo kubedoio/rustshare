@@ -80,7 +80,6 @@ The `crates/` directory at the repository root contains shared libraries:
 - `client-state` — client-side state management
 - `file-ops` — file operation utilities
 - `platform` — platform abstractions
-- `test-support` — shared test helpers
 
 ## Quality Checks
 

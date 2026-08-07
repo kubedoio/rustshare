@@ -29,7 +29,5 @@ walkdir = "2.5"
 filetime = "0.2"
 
 [dev-dependencies]
-test-support = { path = "../test-support" }
-mockall = { workspace = true }
 tempfile = { workspace = true }
 axum = { workspace = true }

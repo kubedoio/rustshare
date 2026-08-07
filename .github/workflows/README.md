@@ -9,7 +9,7 @@ This directory contains the CI/CD workflows for RustShare.
 | CI | `ci.yml` | PR/push to `main` | Format, clippy, tests, SQLx prepare check, secret scan |
 | Frontend CI | `frontend-ci.yml` | PR/push to `main` (frontend paths) | Typecheck, lint, tests, production build |
 | Integration Tests | `integration-tests.yml` | PR/push to `main` (backend paths) | End-to-end tests with PostgreSQL + RustFS |
-| Dependencies | `dependencies.yml` | Weekly + Cargo changes | Outdated dependency report, security audit |
+| Dependencies | `dependencies.yml` | Weekly + frontend package changes | Outdated npm dependency report, npm security audit (Rust advisories covered by `cargo deny` in `ci.yml`) |
 | Pilot Release | `pilot-release.yml` | PR/push to `main` | Build and validate pilot backend image |
 | Release | `release.yml` | Tags / workflow dispatch | Build, sign, and publish release artifacts |
 

@@ -1693,17 +1693,6 @@ where
     }
 }
 
-// Helper for hex encoding (avoiding an extra dependency)
-mod hex {
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
-}
-
 // NOTE: Tests temporarily disabled until the tenant-aware fixtures are updated.
 #[cfg(any())]
 mod tests {

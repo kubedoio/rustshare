@@ -299,17 +299,6 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn delete_file_state(&self, root_id: Uuid, relative_path: &Path) -> Result<bool> {
-        let deleted = self.conn.execute(
-            "DELETE FROM file_states WHERE root_id = ? AND relative_path = ?",
-            params![
-                root_id.as_bytes(),
-                relative_path.to_string_lossy().to_string()
-            ],
-        )?;
-        Ok(deleted > 0)
-    }
-
     /// Get all file states for a sync root
     pub fn get_all_file_states(&self, root_id: Uuid) -> Result<Vec<FileState>> {
         let mut stmt = self.conn.prepare(
@@ -733,9 +722,5 @@ mod tests {
         let loaded = db.get_file_state(root_id, bad_path).unwrap();
         assert!(loaded.is_some());
         assert!(!loaded.unwrap().relative_path.as_os_str().is_empty());
-
-        // delete_file_state should not panic
-        assert!(db.delete_file_state(root_id, bad_path).unwrap());
-        assert!(db.get_file_state(root_id, bad_path).unwrap().is_none());
     }
 }

@@ -167,10 +167,6 @@ SECRET_SPECS=(
 # Variables that docker-compose requires but are not secrets (we just check presence)
 REQUIRED_NON_SECRETS=(
 	"DATABASE_URL"
-	"STORAGE_ENDPOINT"
-	"STORAGE_BUCKET"
-	"STORAGE_REGION"
-	"ORIGIN"
 	"VITE_API_URL"
 	"VITE_WS_URL"
 )
@@ -279,12 +275,11 @@ for spec in "${SECRET_SPECS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# Derive S3/RustFS credentials from RustFS root credentials
+# Derive AWS credentials from RustFS root credentials
 # ---------------------------------------------------------------------------
-# For the default RustFS deployment, STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY
-# and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must match RustFS root
-# credentials. If you are using real AWS S3, override these variables in .env
-# instead of relying on this derivation.
+# For the default RustFS deployment, AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# must match RustFS root credentials. If you are using real AWS S3, override
+# these variables in .env instead of relying on this derivation.
 #
 # We only overwrite the derived variables when they are empty or still set to a
 # known weak default ("rustfsadmin"). Any non-empty, non-default value is treated
@@ -298,7 +293,7 @@ is_derived_weak_default() {
 }
 
 if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; then
-	for derived_var in STORAGE_ACCESS_KEY AWS_ACCESS_KEY_ID; do
+	for derived_var in AWS_ACCESS_KEY_ID; do
 		current_derived=""
 		if env_get "${derived_var}" >/dev/null 2>&1; then
 			current_derived="$(env_get "${derived_var}")"
@@ -314,7 +309,7 @@ if [[ -n "${RUSTFS_ROOT_USER_VALUE}" && -n "${RUSTFS_ROOT_PASSWORD_VALUE}" ]]; t
 		ok "${derived_var}"
 	done
 
-	for derived_var in STORAGE_SECRET_KEY AWS_SECRET_ACCESS_KEY; do
+	for derived_var in AWS_SECRET_ACCESS_KEY; do
 		current_derived=""
 		if env_get "${derived_var}" >/dev/null 2>&1; then
 			current_derived="$(env_get "${derived_var}")"

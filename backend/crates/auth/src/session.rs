@@ -67,11 +67,7 @@ pub fn hash_web_session_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
 
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{:02x}", byte))
-        .collect()
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

@@ -32,14 +32,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
 	exit $(( $# < 1 ))
 fi
 
-compose() {
-	if docker compose version >/dev/null 2>&1; then
-		docker compose "$@"
-	else
-		docker-compose "$@"
-	fi
-}
-
 require_file() {
 	local file="$1"
 	if [[ ! -f "${file}" ]]; then
@@ -57,7 +49,7 @@ wait_for_healthy() {
 
 	started_at="$(date +%s)"
 	while true; do
-		container_id="$(compose ps -q "${service}")"
+		container_id="$(docker compose ps -q "${service}")"
 		if [[ -z "${container_id}" ]]; then
 			if (( $(date +%s) - started_at >= timeout_seconds )); then
 				echo "Could not determine container ID for service '${service}'." >&2
@@ -96,25 +88,25 @@ require_file "${BACKUP_DIR}/rustfs-data.tar.gz"
 cd "${PROJECT_ROOT}"
 
 echo "Starting core services..."
-compose up -d "${POSTGRES_SERVICE}" "${RUSTFS_SERVICE}"
+docker compose up -d "${POSTGRES_SERVICE}" "${RUSTFS_SERVICE}"
 wait_for_healthy "${POSTGRES_SERVICE}"
 wait_for_healthy "${RUSTFS_SERVICE}"
 
 echo "Stopping application traffic..."
-compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
+docker compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
 
 echo "Restoring PostgreSQL database..."
-compose exec -T "${POSTGRES_SERVICE}" \
+docker compose exec -T "${POSTGRES_SERVICE}" \
 	psql -U "${POSTGRES_USER}" -d postgres -v ON_ERROR_STOP=1 \
 	-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${POSTGRES_DB}' AND pid <> pg_backend_pid();" \
 	-c "DROP DATABASE IF EXISTS \"${POSTGRES_DB}\";" \
 	-c "CREATE DATABASE \"${POSTGRES_DB}\";"
 
-gunzip -c "${BACKUP_DIR}/postgres.sql.gz" | compose exec -T "${POSTGRES_SERVICE}" \
+gunzip -c "${BACKUP_DIR}/postgres.sql.gz" | docker compose exec -T "${POSTGRES_SERVICE}" \
 	psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1
 
 echo "Restoring RustFS volume snapshot..."
-	RUSTFS_CONTAINER_ID="$(compose ps -q "${RUSTFS_SERVICE}")"
+	RUSTFS_CONTAINER_ID="$(docker compose ps -q "${RUSTFS_SERVICE}")"
 if [[ -z "${RUSTFS_CONTAINER_ID}" ]]; then
 	echo "Could not determine RustFS container ID." >&2
 	exit 1
@@ -126,7 +118,7 @@ if [[ -z "${RUSTFS_VOLUME_NAME}" ]]; then
 	exit 1
 fi
 
-compose stop "${RUSTFS_SERVICE}"
+docker compose stop "${RUSTFS_SERVICE}"
 
 docker run --rm -i \
 	-v "${RUSTFS_VOLUME_NAME}:/data" \
@@ -135,7 +127,7 @@ docker run --rm -i \
 	<"${BACKUP_DIR}/rustfs-data.tar.gz"
 
 echo "Restarting services..."
-compose up -d "${RUSTFS_SERVICE}" "${BACKEND_SERVICE}" "${EDGE_SERVICE}"
+docker compose up -d "${RUSTFS_SERVICE}" "${BACKEND_SERVICE}" "${EDGE_SERVICE}"
 wait_for_healthy "${RUSTFS_SERVICE}"
 wait_for_healthy "${BACKEND_SERVICE}"
 wait_for_healthy "${EDGE_SERVICE}"

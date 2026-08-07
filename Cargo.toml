@@ -92,18 +92,13 @@ clap = { version = "4.6", features = ["derive", "env"] }
 dirs = "6.0"
 
 # Process management
-daemonize = "0.5"
 nix = { version = "0.31", features = ["process", "signal"] }
-
-# Time serialization
-humantime-serde = "1.1"
 
 # OpenAPI generation
 utoipa = { version = "5.0", features = ["uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
 # Testing
-mockall = "0.15"
 tempfile = "3.10"
 validator = { version = "0.21", features = ["derive"] }
 windows = { version = "0.62", features = ["Win32_Storage_CloudFilters", "Win32_Foundation", "Win32_System_IO", "Win32_System_SystemServices", "Win32_Security"] }

@@ -225,7 +225,6 @@ Files and metadata are stored in an S3-compatible object store (RustFS in Docker
 1. A **same-host HTTPS reverse proxy** terminates TLS and forwards to the loopback-bound Compose nginx service, which adds security headers and proxies to the backend.
 2. **Axum Router** matches the request path (`/api/v1/...`, `/api/ws`, or SPA fallback).
 3. **Middleware Stack:**
-   - **CORS** (configured via `ORIGIN`)
    - **Rate limiting** (per-route, Redis-backed or in-memory)
    - **Request ID / correlation ID** — `X-Request-ID` is preserved from the client when valid or generated; propagated into tracing spans as `request_id` and returned in response headers.
    - **Authentication** (cookie session validation or Bearer token)
@@ -281,7 +280,7 @@ Secrets are loaded from environment variables and held in memory only. They are 
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | Encrypts sensitive data at rest (AES-256-GCM). |
 | `POSTGRES_PASSWORD` | PostgreSQL access. |
 | `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Object storage admin credentials. |
-| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | S3 API credentials (must match RustFS root credentials). |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 API credentials (must match RustFS root credentials). |
 | `OIDC_CLIENT_SECRET` | OIDC RP authentication. |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC-SHA256 webhook signing. |
 | `METRICS_API_TOKEN` | Optional bearer token for `/metrics`. |

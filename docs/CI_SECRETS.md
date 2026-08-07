@@ -42,7 +42,7 @@ secrets, but they must remain dynamic in the workflow files.
 | `RUSTSHARE_ADMIN_PASSWORD` | `integration-tests.yml`, `pilot-release.yml` | Bootstrap admin password for integration/pilot tests |
 | `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | `integration-tests.yml`, `pilot-release.yml` | RustFS root credentials for integration/pilot tests |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `integration-tests.yml`, `pilot-release.yml` | S3-compatible credentials (matches RustFS root credentials) |
-| `POSTGRES_PASSWORD` | `ci.yml`, `dependencies.yml`, `integration-tests.yml`, `pilot-release.yml` | Ephemeral PostgreSQL password |
+| `POSTGRES_PASSWORD` | `ci.yml`, `integration-tests.yml`, `pilot-release.yml` | Ephemeral PostgreSQL password |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | `pilot-release.yml` | Chat webhook signing secret for pilot tests |
 
 Generation uses `openssl rand`. Do not replace these with hardcoded values.

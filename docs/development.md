@@ -43,10 +43,10 @@ This generates strong secrets for `JWT_SECRET`, `RUSTSHARE_SECRET_ENCRYPTION_KEY
 ### 3. Start dev infrastructure
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-This starts PostgreSQL 16 and RustFS (S3-compatible object storage).
+This starts PostgreSQL 16 and RustFS (S3-compatible object storage). The dev file only defines overrides, so the base `docker-compose.yml` must be included.
 
 ### 4. Run database migrations
 
@@ -153,7 +153,7 @@ Run the backend and frontend simultaneously against shared Docker infrastructure
 
 ```bash
 # Terminal 1 — infrastructure
-docker compose -f docker-compose.dev.yml up -d postgres rustfs
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres rustfs
 
 # Terminal 2 — backend
 sqlx migrate run --source backend/migrations
@@ -176,7 +176,7 @@ Integration and contract tests require live PostgreSQL and RustFS services. They
 
 ```bash
 # Start required services
-docker compose -f docker-compose.dev.yml up -d postgres rustfs
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres rustfs
 
 # Run migrations
 sqlx migrate run --source backend/migrations
@@ -231,10 +231,10 @@ For deeper testing guidance, see [`backend/TESTING.md`](../backend/TESTING.md).
 
 | Command | Purpose |
 |---------|---------|
-| `docker compose -f docker-compose.dev.yml up -d` | Start dev services |
-| `docker compose -f docker-compose.dev.yml down` | Stop dev services |
-| `docker compose -f docker-compose.dev.yml logs -f postgres` | Tail PostgreSQL logs |
-| `docker compose -f docker-compose.dev.yml logs -f rustfs` | Tail RustFS logs |
+| `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` | Start dev services |
+| `docker compose -f docker-compose.yml -f docker-compose.dev.yml down` | Stop dev services |
+| `docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f postgres` | Tail PostgreSQL logs |
+| `docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f rustfs` | Tail RustFS logs |
 
 ---
 
@@ -268,7 +268,7 @@ Install the **Rust** plugin. Open the project at the repository root so the work
 
 | Issue | Fix |
 |-------|-----|
-| `sqlx migrate run` fails with connection error | Ensure PostgreSQL is running: `docker compose -f docker-compose.dev.yml ps` |
+| `sqlx migrate run` fails with connection error | Ensure PostgreSQL is running: `docker compose -f docker-compose.yml -f docker-compose.dev.yml ps` |
 | `cargo test -- --ignored` fails | Ensure both `postgres` and `rustfs` services are healthy |
 | Frontend can't reach backend | Verify `VITE_API_URL` in `.env` points to the backend |
 | Weak secret errors on startup | Run `source ./scripts/pre-flight.sh` to regenerate secrets |

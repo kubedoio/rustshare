@@ -266,40 +266,6 @@ pub async fn wait_for_stop(pid_file: &Path, timeout_secs: u64) -> Result<()> {
     }
 }
 
-/// Sets up signal handlers for graceful shutdown
-///
-/// This should be called by the daemon process to handle SIGTERM/SIGINT
-#[cfg(unix)]
-#[allow(unsafe_code)]
-pub fn setup_signal_handlers() -> Result<tokio::sync::mpsc::Receiver<()>> {
-    use nix::sys::signal::{self, SigHandler, Signal};
-
-    let (_tx, rx) = tokio::sync::mpsc::channel(1);
-
-    // Store sender in a static for the signal handler
-    // Note: In production, you'd want a more robust solution
-    // This is a simplified version for the module
-
-    unsafe {
-        signal::signal(Signal::SIGTERM, SigHandler::SigDfl)
-            .context("Failed to set SIGTERM handler")?;
-        signal::signal(Signal::SIGINT, SigHandler::SigDfl)
-            .context("Failed to set SIGINT handler")?;
-    }
-
-    // For a complete implementation, you'd use signal-hook or tokio-signals
-    // This is a basic placeholder that returns a channel
-
-    Ok(rx)
-}
-
-#[cfg(not(unix))]
-pub fn setup_signal_handlers() -> Result<tokio::sync::mpsc::Receiver<()>> {
-    let (_, rx) = tokio::sync::mpsc::channel(1);
-    warn!("Signal handlers not implemented for this platform");
-    Ok(rx)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

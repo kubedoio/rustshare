@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -31,12 +30,6 @@ pub fn atomic_rename(from: &Path, to: &Path) -> Result<()> {
     // std::fs::rename is atomic on most modern filesystems if on the same device
     std::fs::rename(from, to)?;
     Ok(())
-}
-
-pub fn get_mtime(path: &Path) -> Result<DateTime<Utc>> {
-    let metadata = std::fs::metadata(path)?;
-    let mtime = metadata.modified()?;
-    Ok(DateTime::from(mtime))
 }
 
 pub struct FsWatcher {

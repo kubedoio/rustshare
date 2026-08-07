@@ -16,6 +16,7 @@ chrono.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
 sha2.workspace = true
+hex.workspace = true
 rustshare-core = { path = "../core" }
 rustshare-crypto = { path = "../crypto" }
 

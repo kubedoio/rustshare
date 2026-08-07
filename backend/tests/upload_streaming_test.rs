@@ -135,8 +135,6 @@ fn create_upload_service(
             MetadataBackendConfig {
                 base_prefix: "apps/rustshare".to_string(),
                 namespace: "uploads".to_string(),
-                enable_optimistic_concurrency: true,
-                fallback_to_leases: true,
             },
         ));
 
