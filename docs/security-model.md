@@ -170,7 +170,7 @@ Tenant isolation is enforced primarily at the repository and service layers:
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | Encrypts data at rest | `openssl rand -base64 32` |
 | `POSTGRES_PASSWORD` | Database access | `openssl rand -hex 32` |
 | `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Object storage admin | Strong random strings |
-| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | S3 API credentials | Strong random strings |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 API credentials | Strong random strings |
 | `OIDC_CLIENT_SECRET` | OIDC RP authentication | Provided by IdP |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | Webhook signing secret | `openssl rand -base64 32` |
 | `METRICS_API_TOKEN` | Bearer token for Prometheus `/metrics` endpoint | `openssl rand -base64 32` |
@@ -400,7 +400,6 @@ Use this checklist before exposing RustShare to the internet.
 - [ ] Run `./scripts/pre-flight.sh` to generate strong secrets.
 - [ ] Change **all** default passwords and keys (`JWT_SECRET`, `RUSTSHARE_SECRET_ENCRYPTION_KEY`, PostgreSQL, RustFS, S3 credentials).
 - [ ] Configure TLS termination at Nginx or a load balancer.
-- [ ] Set `ORIGIN` to your production domain (enables strict CSRF validation).
 - [ ] Remove or firewall direct access to PostgreSQL (`5432`) and RustFS (`9000/9001`).
 - [ ] Disable `PASSWORD_LOGIN_ENABLED` if you intend to use OIDC exclusively.
 - [ ] Configure OIDC with a production identity provider and test the full flow.

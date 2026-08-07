@@ -141,12 +141,7 @@ carried through a private tunnel.
    X-Forwarded-Proto: https
    ```
 
-3. **Update `ORIGIN`** in `.env` to your HTTPS URL:
-   ```bash
-   ORIGIN=https://yourdomain.com
-   ```
-
-4. The included nginx config validates and preserves `X-Forwarded-Proto: https`
+3. The included nginx config validates and preserves `X-Forwarded-Proto: https`
    when forwarding to the backend.
 
 ### RustFS Upgrades
@@ -244,8 +239,7 @@ them with `scripts/pre-flight.sh` or manually with `openssl rand -base64 32`.
 | `JWT_SECRET` | `openssl rand -base64 32` | Rotate on suspected compromise or at least quarterly. After rotation, existing sessions are invalidated and users must log in again. |
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | `openssl rand -base64 32` | Rotate on suspected compromise. **Back up the old key** until all data encrypted with it has been re-encrypted, or you will lose access to stored secrets. |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` | Rotate periodically and whenever a team member with access leaves. Update `DATABASE_URL` and restart the stack. |
-| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Run `scripts/pre-flight.sh` (user: alphanumeric access key; password: `openssl rand -hex 32`) | Rotate together. Update `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` and any S3 clients. |
-| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Must match RustFS root credentials | Rotate with RustFS root credentials. |
+| `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD` | Run `scripts/pre-flight.sh` (user: alphanumeric access key; password: `openssl rand -hex 32`) | Rotate together. Update `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` and any S3 clients. |
 | `RUSTSHARE_ADMIN_PASSWORD` | Optional — leave empty to auto-generate a password stored in the secure bootstrap file (record it immediately; the bootstrap file does not survive container recreation). | Rotate after first login and whenever the admin credential is suspected to be exposed. |
 | `RUSTSHARE_DEMO_VIEWER_PASSWORD` | Run `scripts/pre-flight.sh` (`openssl rand -hex 32`) | Rotate if demo mode is enabled in production (not recommended). |
 
@@ -378,7 +372,6 @@ Before deploying to production:
    - [ ] Configure a same-host HTTPS reverse proxy in front of `127.0.0.1:8080`
    - [ ] Verify the loopback listener is not publicly reachable
    - [ ] Verify HTTPS is working and HTTP redirects to HTTPS
-   - [ ] Set `ORIGIN` in `.env` to your HTTPS URL
 
 4. **Use `docker-compose.prod.yml`**
    - [ ] Start the stack with `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`

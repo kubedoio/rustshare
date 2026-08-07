@@ -98,6 +98,10 @@ fn to_sync_error(error: anyhow::Error) -> SyncError {
                 reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE => {
                     SyncError::Io(io::Error::new(io::ErrorKind::NotFound, message))
                 }
+                // Transient client errors: back off and retry rather than aborting.
+                reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                    SyncError::Network(message)
+                }
                 status if status.is_server_error() => SyncError::Network(message),
                 status if status.is_client_error() => {
                     SyncError::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
@@ -566,6 +570,7 @@ fn looks_like_content_hash(hash: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::retry::{is_retryable_error, ErrorCategory};
     use axum::{
         body::Bytes,
         extract::{Path as AxumPath, State},
@@ -718,6 +723,55 @@ mod tests {
         });
 
         addr
+    }
+
+    async fn http_status_error_category(status: axum::http::StatusCode) -> ErrorCategory {
+        async fn fail(State(status): State<axum::http::StatusCode>) -> axum::http::StatusCode {
+            status
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route("/fail", get(fail)).with_state(status);
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let error = reqwest::get(format!("http://{}/fail", addr))
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err();
+        is_retryable_error(&to_sync_error(anyhow::Error::new(error)))
+    }
+
+    #[tokio::test]
+    async fn rate_limit_and_request_timeout_errors_are_retryable() {
+        assert_eq!(
+            http_status_error_category(axum::http::StatusCode::TOO_MANY_REQUESTS).await,
+            ErrorCategory::Retryable
+        );
+        assert_eq!(
+            http_status_error_category(axum::http::StatusCode::REQUEST_TIMEOUT).await,
+            ErrorCategory::Retryable
+        );
+    }
+
+    #[tokio::test]
+    async fn permanent_client_errors_are_not_retryable() {
+        for status in [
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::http::StatusCode::FORBIDDEN,
+            axum::http::StatusCode::NOT_FOUND,
+            axum::http::StatusCode::GONE,
+        ] {
+            assert_eq!(
+                http_status_error_category(status).await,
+                ErrorCategory::NotRetryable,
+                "status {status} should not be retried"
+            );
+        }
     }
 
     #[test]

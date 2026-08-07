@@ -4,11 +4,11 @@ on:
   # Run weekly
   schedule:
     - cron: '0 9 * * 1'  # Every Monday at 9 AM
-  # Run on PRs that modify Cargo files
+  # Run on PRs that modify frontend dependency manifests
   pull_request:
     paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
   # Allow manual trigger
   workflow_dispatch:
 

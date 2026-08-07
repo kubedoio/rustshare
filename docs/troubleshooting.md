@@ -234,28 +234,6 @@ docker compose ps
 docker compose logs nginx --tail 20
 ```
 
-### CORS Errors
-
-**Symptoms:** Browser blocks requests with `CORS policy` errors.
-
-**Solution:**
-
-Ensure `ORIGIN` matches the URL you access in the browser:
-
-```bash
-# For local development
-ORIGIN=http://localhost
-
-# For production
-ORIGIN=https://files.example.com
-```
-
-Restart the backend after changing `ORIGIN`:
-
-```bash
-docker compose up -d --force-recreate backend
-```
-
 ### Wrong `VITE_API_URL` or `VITE_WS_URL`
 
 **Symptoms:** Frontend loads but shows connection errors; API calls go to the wrong host.

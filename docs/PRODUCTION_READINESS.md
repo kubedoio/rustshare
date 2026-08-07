@@ -97,7 +97,7 @@ not applicable only with a documented reason and release-owner approval.
   - `JWT_SECRET` — invalidates existing sessions; plan a maintenance window.
   - `RUSTSHARE_SECRET_ENCRYPTION_KEY` — requires re-encryption of existing data; back up the old key until re-encryption is complete.
   - `POSTGRES_PASSWORD` — update `DATABASE_URL` and restart.
-  - `RUSTFS_ROOT_PASSWORD` / `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` — rotate together and update S3 clients.
+  - `RUSTFS_ROOT_PASSWORD` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — rotate together and update S3 clients.
   - `OIDC_CLIENT_SECRET` — follow your IdP's rotation policy.
   - `RUSTSHARE_CHAT_WEBHOOK_SECRET` — rotate and re-register webhooks.
   - `METRICS_API_TOKEN` — rotate if `/metrics` is exposed.

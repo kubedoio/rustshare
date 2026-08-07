@@ -14,14 +14,8 @@ These variables must be set before the application will start. Run `scripts/pre-
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://rustshare:password@postgres:5432/rustshare` | **Yes** |
 | `JWT_SECRET` | Signing key for JWT tokens | `openssl rand -base64 32` | **Yes** |
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | Encryption key for sensitive data at rest | `openssl rand -base64 32` | **Yes** |
-| `STORAGE_ACCESS_KEY` | S3-compatible storage access key | `openssl rand -hex 16` | **Yes** |
-| `STORAGE_SECRET_KEY` | S3-compatible storage secret key | `openssl rand -hex 32` | **Yes** |
-| `AWS_ACCESS_KEY_ID` | AWS/S3 access key (used by backend SDK) | Same as `STORAGE_ACCESS_KEY` | **Yes** |
-| `AWS_SECRET_ACCESS_KEY` | AWS/S3 secret key (used by backend SDK) | Same as `STORAGE_SECRET_KEY` | **Yes** |
-| `STORAGE_ENDPOINT` | S3-compatible storage endpoint | `http://rustfs:9000` | **Yes** |
-| `STORAGE_BUCKET` | S3 bucket name for file storage | `rustshare-files` | **Yes** |
-| `STORAGE_REGION` | S3 region | `us-east-1` | **Yes** |
-| `ORIGIN` | SvelteKit origin for CSRF protection | `https://files.example.com` | **Yes** |
+| `AWS_ACCESS_KEY_ID` | AWS/S3 access key (used by backend SDK) | Same as `RUSTFS_ROOT_USER` | **Yes** |
+| `AWS_SECRET_ACCESS_KEY` | AWS/S3 secret key (used by backend SDK) | Same as `RUSTFS_ROOT_PASSWORD` | **Yes** |
 | `VITE_API_URL` | Backend API URL (browser perspective) | `http://localhost/api` | **Yes** |
 | `VITE_WS_URL` | WebSocket URL for real-time sync | `ws://localhost/api` | **Yes** |
 
@@ -44,13 +38,8 @@ RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 
 | Variable | Description | Default | Required? |
 |----------|-------------|---------|-----------|
-| `STORAGE_ENDPOINT` | S3 endpoint URL. Use `http://rustfs:9000` inside Docker; `http://localhost:9000` for local development. | `http://rustfs:9000` | **Yes** |
-| `STORAGE_ACCESS_KEY` | S3 access key. | — | **Yes** |
-| `STORAGE_SECRET_KEY` | S3 secret key. | — | **Yes** |
-| `STORAGE_BUCKET` | Bucket name for stored files. | `rustshare-files` | **Yes** |
-| `STORAGE_REGION` | S3 region. Use `us-east-1` for RustFS. | `us-east-1` | **Yes** |
-| `AWS_ACCESS_KEY_ID` | AWS SDK access key. Typically set to the same value as `STORAGE_ACCESS_KEY`. | — | **Yes** |
-| `AWS_SECRET_ACCESS_KEY` | AWS SDK secret key. Typically set to the same value as `STORAGE_SECRET_KEY`. | — | **Yes** |
+| `AWS_ACCESS_KEY_ID` | AWS SDK access key. Typically set to the same value as `RUSTFS_ROOT_USER`. | — | **Yes** |
+| `AWS_SECRET_ACCESS_KEY` | AWS SDK secret key. Typically set to the same value as `RUSTFS_ROOT_PASSWORD`. | — | **Yes** |
 
 **Docker-internal variables:**
 
@@ -137,7 +126,6 @@ All rates are **per IP address per minute** using a token-bucket algorithm.
 
 | Variable | Description | Example | Required? |
 |----------|-------------|---------|-----------|
-| `ORIGIN` | SvelteKit origin for CSRF protection. **Must be your production domain in production.** | `http://localhost:3000` | **Yes** |
 | `VITE_API_URL` | Backend API base URL from the browser's perspective. | `http://localhost/api` | **Yes** |
 | `VITE_WS_URL` | WebSocket endpoint URL from the browser's perspective. | `ws://localhost/api` | **Yes** |
 
@@ -154,8 +142,8 @@ All rates are **per IP address per minute** using a token-bucket algorithm.
 | `RUSTSHARE_DEMO_VIEWER_EMAIL` | Demo viewer account email. | `viewer@localhost` | No |
 | `RUSTSHARE_DEMO_VIEWER_PASSWORD` | Demo viewer account password. | — | No |
 | `RUSTSHARE_DEMO_VIEWER_DISPLAY_NAME` | Demo viewer display name. | `Viewer User` | No |
-| `RUSTFS_ROOT_USER` | RustFS root user (must match `STORAGE_ACCESS_KEY`). | — | **Yes** |
-| `RUSTFS_ROOT_PASSWORD` | RustFS root password (must match `STORAGE_SECRET_KEY`). | — | **Yes** |
+| `RUSTFS_ROOT_USER` | RustFS root user (must match `AWS_ACCESS_KEY_ID`). | — | **Yes** |
+| `RUSTFS_ROOT_PASSWORD` | RustFS root password (must match `AWS_SECRET_ACCESS_KEY`). | — | **Yes** |
 
 ---
 
@@ -268,8 +256,7 @@ The following variables **must** be set to strong, unique values. The server ref
 | `JWT_SECRET` | Compromise allows token forgery and account takeover. |
 | `RUSTSHARE_SECRET_ENCRYPTION_KEY` | Compromise exposes all encrypted secrets (API keys, passwords) at rest. |
 | `POSTGRES_PASSWORD` | Compromise exposes all application data. |
-| `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | Compromise allows unrestricted access to all stored files. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Same as above; used by the S3 SDK. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Compromise allows unrestricted access to all stored files; used by the S3 SDK. |
 | `RUSTFS_ROOT_PASSWORD` | Root access to the object storage backend. |
 
 ### ⚠️ Dangerous if weak
@@ -286,8 +273,7 @@ The following variables **must** be set to strong, unique values. The server ref
 - [ ] Generate strong `RUSTSHARE_SECRET_ENCRYPTION_KEY` (`openssl rand -base64 32`)
 - [ ] Update `POSTGRES_PASSWORD` and ensure `DATABASE_URL` reflects it
 - [ ] Change RustFS credentials (`RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD`)
-- [ ] Update `STORAGE_ACCESS_KEY` and `STORAGE_SECRET_KEY`
-- [ ] Set `ORIGIN` to your production domain (e.g., `https://files.example.com`)
+- [ ] Update `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
 - [ ] Configure SSL/TLS with a reverse proxy
 - [ ] Adjust `RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES` based on capacity
 - [ ] Set `RUST_LOG=info` for production

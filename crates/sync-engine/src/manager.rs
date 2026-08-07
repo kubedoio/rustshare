@@ -50,7 +50,7 @@ pub enum SyncEvent {
     PeriodicSync,
 }
 
-/// Orchestrates all sync components: scanner, planner, worker, and WebSocket client
+/// Orchestrates all sync components: scanner, planner, and worker
 pub struct SyncManager {
     database: Arc<Mutex<Database>>,
     client: ApiClient,
@@ -185,7 +185,6 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Run the WebSocket client
     /// Handle incoming sync events
     async fn handle_sync_event(&self, event: SyncEvent) {
         match event {

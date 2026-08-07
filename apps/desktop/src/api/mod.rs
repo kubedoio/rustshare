@@ -4,7 +4,6 @@
 //! - Device authentication
 //! - File upload/download
 //! - Delta sync
-//! - WebSocket real-time sync
 
 pub mod auth;
 

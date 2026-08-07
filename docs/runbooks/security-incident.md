@@ -98,7 +98,7 @@
    openssl rand -hex 32
    ```
 2. Update RustFS root credentials via the RustFS console or `mc` CLI.
-3. Update `RUSTFS_ROOT_USER`, `RUSTFS_ROOT_PASSWORD`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` in `.env`.
+3. Update `RUSTFS_ROOT_USER`, `RUSTFS_ROOT_PASSWORD`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` in `.env`.
 4. Restart the stack.
 5. Verify upload and download work.
 
