@@ -221,95 +221,6 @@ fn is_retryable_from_message(msg: &str) -> ErrorCategory {
     ErrorCategory::Retryable
 }
 
-/// Execute an operation with retry logic
-///
-/// # Arguments
-/// * `config` - Retry configuration
-/// * `operation_name` - Name of the operation for logging
-/// * `operation` - Async closure that performs the operation
-///
-/// # Returns
-/// * `Ok(T)` if the operation succeeds
-/// * `Err(E)` if all retries are exhausted
-///
-/// # Example
-/// ```rust
-/// use sync_engine::retry::{RetryConfig, with_retry};
-///
-/// # fn main() {
-/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let config = RetryConfig::default();
-/// let result = with_retry(&config, "upload file", || async {
-///     // Your async operation here
-///     Ok::<_, sync_domain::SyncError>(())
-/// }).await;
-/// # });
-/// # }
-/// ```
-pub async fn with_retry<F, Fut, T, E>(
-    config: &RetryConfig,
-    operation_name: &str,
-    operation: F,
-) -> Result<T, E>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
-{
-    let mut last_error: Option<E> = None;
-
-    for attempt in 0..=config.max_retries {
-        match operation().await {
-            Ok(result) => {
-                if attempt > 0 {
-                    debug!("{} succeeded after {} retries", operation_name, attempt);
-                }
-                return Ok(result);
-            }
-            Err(error) => {
-                let error_msg = error.to_string();
-
-                // Check if we should retry this error
-                // Note: We need to convert the error to check retryability
-                // For SyncError, we can check directly. For other errors,
-                // we treat them as retryable by default.
-                let should_retry = attempt < config.max_retries;
-
-                if !should_retry {
-                    warn!(
-                        "{} failed after {} attempts. Last error: {}",
-                        operation_name,
-                        attempt + 1,
-                        error_msg
-                    );
-                    return Err(error);
-                }
-
-                let delay = calculate_backoff_delay(
-                    attempt,
-                    config.base_delay_seconds,
-                    config.max_delay_seconds,
-                );
-
-                warn!(
-                    "{} failed (attempt {}/{}): {}. Retrying in {:?}...",
-                    operation_name,
-                    attempt + 1,
-                    config.max_retries + 1,
-                    error_msg,
-                    delay
-                );
-
-                tokio::time::sleep(delay).await;
-                last_error = Some(error);
-            }
-        }
-    }
-
-    // This should not be reached, but just in case
-    Err(last_error.expect("Last error should be set if all retries exhausted"))
-}
-
 /// Execute an operation with retry logic, specifically for SyncError
 /// This version properly categorizes errors using is_retryable_error
 pub async fn with_retry_sync<F, Fut, T>(
@@ -518,18 +429,6 @@ mod tests {
         // Disk full should not be retryable
         let disk_full = SyncError::Other("disk full".to_string());
         assert_eq!(is_retryable_error(&disk_full), ErrorCategory::NotRetryable);
-    }
-
-    #[test]
-    fn test_now_unix() {
-        let now = now_unix();
-        let system_now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        // Should be very close (within 1 second)
-        assert!(now.abs_diff(system_now) <= 1);
     }
 
     #[test]

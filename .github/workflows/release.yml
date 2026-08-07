@@ -10,10 +10,6 @@ on:
         description: 'Version to release (e.g., 1.2.3)'
         required: true
         type: string
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,13 +39,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Resolve version and commit
         id: resolve
         run: |
           SHOULD_RELEASE="true"
-          COMMIT="${{ github.event.workflow_run.head_sha || github.sha }}"
+          COMMIT="${{ github.sha }}"
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -58,25 +54,6 @@ jobs:
               exit 1
             fi
             TAG="v$VERSION"
-
-          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            # Only proceed for push events (not pull requests)
-            if [[ "${{ github.event.workflow_run.event }}" != "push" ]]; then
-              echo "Skipping: workflow_run triggered by ${{ github.event.workflow_run.event }}, not push."
-              SHOULD_RELEASE="false"
-              VERSION=""
-              TAG=""
-            else
-              # Find the newest semver tag on this commit
-              TAG=$(git tag --points-at "$COMMIT" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
-              if [[ -z "$TAG" ]]; then
-                echo "No semver tag found on commit $COMMIT. Skipping release."
-                SHOULD_RELEASE="false"
-                VERSION=""
-              else
-                VERSION="${TAG#v}"
-              fi
-            fi
 
           else
             # push: tags:
@@ -102,64 +79,6 @@ jobs:
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
           echo "Resolved: version=$VERSION, commit=$COMMIT, tag=$TAG, release=$SHOULD_RELEASE"
 
-      - name: Check CI gate
-        if: steps.resolve.outputs.should_release == 'true'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const requiredWorkflows = ['CI'];
-            const sha = '${{ steps.resolve.outputs.commit }}';
-
-            async function sleep(ms) {
-              return new Promise(resolve => setTimeout(resolve, ms));
-            }
-
-            async function findLatestRun(name) {
-              const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRunsForRepo({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: sha,
-                per_page: 100
-              });
-              return runs
-                .filter(r => r.name === name && r.head_sha === sha)
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-            }
-
-            for (const name of requiredWorkflows) {
-              let latest = await findLatestRun(name);
-              let attempts = 0;
-              const maxAttempts = 120; // ~30 minutes
-
-              while ((!latest || latest.status !== 'completed') && attempts < maxAttempts) {
-                if (!latest) {
-                  console.log(`Workflow "${name}" not found yet for commit ${sha}. Waiting... (${attempts + 1}/${maxAttempts})`);
-                } else {
-                  console.log(`Workflow "${name}" status is "${latest.status}" for commit ${sha}. Waiting... (${attempts + 1}/${maxAttempts})`);
-                }
-                await sleep(15000);
-                latest = await findLatestRun(name);
-                attempts++;
-              }
-
-              if (!latest) {
-                core.setFailed(`Workflow "${name}" not found for commit ${sha} after waiting`);
-                return;
-              }
-
-              if (latest.status !== 'completed') {
-                core.setFailed(`Workflow "${name}" did not complete in time for commit ${sha} (status: ${latest.status})`);
-                return;
-              }
-
-              if (latest.conclusion !== 'success') {
-                core.setFailed(`Workflow "${name}" conclusion was "${latest.conclusion}" for commit ${sha}`);
-                return;
-              }
-
-              console.log(`✓ Workflow "${name}" passed (run ${latest.id})`);
-            }
-
   build-binaries:
     name: Build release binaries
     needs: validate-tag
@@ -175,7 +94,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -234,7 +153,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Download binary artifacts
         uses: actions/download-artifact@v8

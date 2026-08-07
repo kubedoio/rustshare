@@ -5,7 +5,6 @@
 //! that scaffolding is removed.
 
 use anyhow::Result;
-use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::PathBuf;
@@ -119,10 +118,6 @@ pub struct MetadataBackendConfig {
     pub base_prefix: String,
     /// Namespace for app isolation.
     pub namespace: String,
-    /// Enable optimistic concurrency.
-    pub enable_optimistic_concurrency: bool,
-    /// Fallback to leases if conditional writes fail.
-    pub fallback_to_leases: bool,
 }
 
 impl Default for MetadataBackendConfig {
@@ -130,8 +125,6 @@ impl Default for MetadataBackendConfig {
         Self {
             base_prefix: "apps/rustshare".to_string(),
             namespace: "default".to_string(),
-            enable_optimistic_concurrency: true,
-            fallback_to_leases: true,
         }
     }
 }
@@ -320,79 +313,6 @@ impl MetadataDocumentStore for LocalFsDocumentStore {
     }
 }
 
-/// Local filesystem-backed blob store (kept for API symmetry; currently unused).
-pub struct LocalFsBlobStore {
-    base_path: PathBuf,
-}
-
-impl LocalFsBlobStore {
-    /// Create a new local filesystem blob store.
-    pub fn new(base_path: PathBuf) -> Self {
-        Self { base_path }
-    }
-
-    /// Generate content-addressed key.
-    pub fn content_key(&self, hash: &str) -> String {
-        format!(
-            "shared/blobs/sha256/{}/{}/{}",
-            &hash[0..2],
-            &hash[2..4],
-            hash
-        )
-    }
-
-    /// Store blob data.
-    pub async fn put(&self, key: &str, data: Bytes) -> Result<PutResult> {
-        let path = self.base_path.join(key);
-
-        // Ensure parent directory exists.
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        // Write atomically.
-        let temp_path = path.with_extension("tmp");
-        tokio::fs::write(&temp_path, &data).await?;
-        tokio::fs::rename(&temp_path, &path).await?;
-
-        let etag = format!("\"{:x}\"", md5::compute(&data));
-
-        Ok(PutResult {
-            etag,
-            version_id: None,
-        })
-    }
-
-    /// Get blob data.
-    pub async fn get(&self, key: &str) -> Result<Option<Bytes>> {
-        let path = self.base_path.join(key);
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = tokio::fs::read(&path).await?;
-        Ok(Some(Bytes::from(data)))
-    }
-
-    /// Check if blob exists.
-    pub async fn exists(&self, key: &str) -> Result<bool> {
-        let path = self.base_path.join(key);
-        Ok(path.exists())
-    }
-
-    /// Delete blob.
-    pub async fn delete(&self, key: &str) -> Result<()> {
-        let path = self.base_path.join(key);
-
-        if path.exists() {
-            tokio::fs::remove_file(&path).await?;
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,8 +331,6 @@ mod tests {
         let config = MetadataBackendConfig {
             base_prefix: "test".to_string(),
             namespace: "default".to_string(),
-            enable_optimistic_concurrency: true,
-            fallback_to_leases: true,
         };
         let store = LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config);
 
@@ -454,8 +372,6 @@ mod tests {
         let config = MetadataBackendConfig {
             base_prefix: "test".to_string(),
             namespace: "default".to_string(),
-            enable_optimistic_concurrency: true,
-            fallback_to_leases: true,
         };
         let store = LocalFsDocumentStore::new(temp_dir.path().to_path_buf(), config);
 

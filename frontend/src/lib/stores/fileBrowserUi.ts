@@ -2,13 +2,9 @@ import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
 
 export type ViewMode = 'grid' | 'list';
-export type SortField = 'name' | 'modified_at' | 'size' | 'type';
-export type SortOrder = 'asc' | 'desc';
 
 interface FileBrowserUiState {
 	viewMode: ViewMode;
-	sortField: SortField;
-	sortOrder: SortOrder;
 	expandedFolderIds: Set<string>;
 	selectedFolderId: string | null;
 	searchQuery: string;
@@ -22,8 +18,6 @@ function createFileBrowserUiStore() {
 		if (!browser) {
 			return {
 				viewMode: 'list',
-				sortField: 'name',
-				sortOrder: 'asc',
 				expandedFolderIds: new Set(),
 				selectedFolderId: null,
 				searchQuery: ''
@@ -36,8 +30,6 @@ function createFileBrowserUiStore() {
 				const parsed = JSON.parse(saved);
 				return {
 					viewMode: parsed.viewMode || 'list',
-					sortField: parsed.sortField || 'name',
-					sortOrder: parsed.sortOrder || 'asc',
 					expandedFolderIds: new Set(parsed.expandedFolderIds || []),
 					selectedFolderId: parsed.selectedFolderId || null,
 					searchQuery: parsed.searchQuery || ''
@@ -49,8 +41,6 @@ function createFileBrowserUiStore() {
 
 		return {
 			viewMode: 'list',
-			sortField: 'name',
-			sortOrder: 'asc',
 			expandedFolderIds: new Set(),
 			selectedFolderId: null,
 			searchQuery: ''
@@ -68,8 +58,6 @@ function createFileBrowserUiStore() {
 				STORAGE_KEY,
 				JSON.stringify({
 					viewMode: state.viewMode,
-					sortField: state.sortField,
-					sortOrder: state.sortOrder,
 					expandedFolderIds: Array.from(state.expandedFolderIds),
 					selectedFolderId: state.selectedFolderId,
 					searchQuery: state.searchQuery
@@ -97,26 +85,6 @@ function createFileBrowserUiStore() {
 					...state,
 					viewMode: state.viewMode === 'grid' ? 'list' : 'grid'
 				};
-				persist(newState);
-				return newState;
-			});
-		},
-
-		setSort: (field: SortField, order: SortOrder) => {
-			update((state) => {
-				const newState = { ...state, sortField: field, sortOrder: order };
-				persist(newState);
-				return newState;
-			});
-		},
-
-		toggleSort: (field: SortField) => {
-			update((state) => {
-				let newOrder: SortOrder = 'asc';
-				if (state.sortField === field) {
-					newOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
-				}
-				const newState = { ...state, sortField: field, sortOrder: newOrder };
 				persist(newState);
 				return newState;
 			});
@@ -191,8 +159,6 @@ function createFileBrowserUiStore() {
 		reset: () => {
 			const defaultState = {
 				viewMode: 'list' as ViewMode,
-				sortField: 'name' as SortField,
-				sortOrder: 'asc' as SortOrder,
 				expandedFolderIds: new Set<string>(),
 				selectedFolderId: null,
 				searchQuery: ''
@@ -207,8 +173,6 @@ export const fileBrowserUi = createFileBrowserUiStore();
 
 // Derived stores for convenience
 export const viewMode = derived(fileBrowserUi, ($ui) => $ui.viewMode);
-export const sortField = derived(fileBrowserUi, ($ui) => $ui.sortField);
-export const sortOrder = derived(fileBrowserUi, ($ui) => $ui.sortOrder);
 export const expandedFolderIds = derived(fileBrowserUi, ($ui) => $ui.expandedFolderIds);
 export const selectedFolderId = derived(fileBrowserUi, ($ui) => $ui.selectedFolderId);
 export const searchQuery = derived(fileBrowserUi, ($ui) => $ui.searchQuery);

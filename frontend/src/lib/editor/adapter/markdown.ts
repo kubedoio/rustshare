@@ -334,8 +334,6 @@ export interface CreateEditorOptions {
 	onCreate?: () => void;
 	/** Additional ProseMirror editor props (e.g. handleDoubleClickOn) */
 	editorProps?: EditorProps;
-	/** Optional Yjs document for collaborative editing */
-	ydoc?: import('yjs').Doc;
 }
 
 /**
@@ -347,7 +345,7 @@ export function createRichEditor(options: CreateEditorOptions): Editor {
 
 	const editor = new Editor({
 		element: options.element,
-		extensions: getEditorExtensions({ ydoc: options.ydoc }),
+		extensions: getEditorExtensions(),
 		content: preprocessed,
 		editable: options.editable ?? true,
 		editorProps: {

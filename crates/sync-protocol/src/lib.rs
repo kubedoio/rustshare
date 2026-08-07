@@ -1,41 +1,15 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sync_domain::{RemoteEntry, SyncRoot};
+use sync_domain::SyncRoot;
 use uuid::Uuid;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeviceRegistrationRequest {
-    pub name: String,
-    pub os: String,
-    pub device_type: String,
-    pub version: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeviceRegistrationResponse {
-    pub device_id: uuid::Uuid,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeltaRequest {
-    pub cursor: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeltaResponse {
-    pub cursor: String,
-    pub changes: Vec<DeltaChange>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DeltaChange {
-    Upsert(RemoteEntry),
-    Delete(uuid::Uuid),
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncRootsResponse {
     pub roots: Vec<SyncRoot>,
+}
+
+pub fn default_chunk_size() -> u64 {
+    5 * 1024 * 1024 // 5MB default
 }
 
 #[derive(Debug, Serialize)]
@@ -47,10 +21,6 @@ pub struct CreateUploadSessionRequest {
     #[serde(default = "default_chunk_size")]
     pub chunk_size: u64,
     pub file_hash: Option<String>,
-}
-
-pub fn default_chunk_size() -> u64 {
-    5 * 1024 * 1024 // 5MB default
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,15 +87,9 @@ pub struct RemoteFolderNode {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct RemoteFolder {
-    pub id: Uuid,
-    pub name: String,
-    pub path: String,
-    pub parent_folder_id: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+/// Field-identical to RemoteFolderNode; kept as a named return type for create_folder.
+// ponytail: alias instead of duplicate struct
+pub type RemoteFolder = RemoteFolderNode;
 
 #[derive(Debug, Serialize)]
 pub struct CreateFolderRequest {

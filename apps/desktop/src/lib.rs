@@ -15,7 +15,6 @@ pub mod config;
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 /// Desktop client version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,27 +61,6 @@ pub fn ensure_directories() -> Result<()> {
     );
 
     Ok(())
-}
-
-/// Generate a unique device identifier
-///
-/// This ID is persisted and used to identify this device to the server.
-pub fn get_or_create_device_id() -> Result<Uuid> {
-    let device_id_path = data_dir()?.join("device_id");
-
-    if device_id_path.exists() {
-        let content = std::fs::read_to_string(&device_id_path)?;
-        let id = Uuid::parse_str(content.trim())
-            .map_err(|e| anyhow::anyhow!("Invalid device ID file: {}", e))?;
-        return Ok(id);
-    }
-
-    // Generate new device ID
-    let id = Uuid::new_v4();
-    std::fs::write(&device_id_path, id.to_string())?;
-
-    info!("Generated new device ID: {}", id);
-    Ok(id)
 }
 
 /// Clear all local data (for logout/reset)

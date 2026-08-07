@@ -37,14 +37,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
 	exit $(( $# < 1 ))
 fi
 
-compose() {
-	if docker compose version >/dev/null 2>&1; then
-		docker compose "$@"
-	else
-		docker-compose "$@"
-	fi
-}
-
 require_command() {
 	local command_name="$1"
 	if ! command -v "${command_name}" >/dev/null 2>&1; then
@@ -99,7 +91,7 @@ cleanup() {
 		return
 	fi
 
-	compose down -v --remove-orphans >/dev/null 2>&1 || true
+	docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
 
 trap 'write_report "failed" "Restore drill failed. Inspect the isolated compose project logs."; cleanup' ERR
@@ -110,16 +102,16 @@ echo "Verifying backup bundle..."
 "${PROJECT_ROOT}/scripts/verify-backup-bundle.sh" "${BACKUP_DIR}"
 
 echo "Resetting isolated drill stack..."
-compose down -v --remove-orphans >/dev/null 2>&1 || true
+docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 
 echo "Building isolated backend image from current workspace..."
-compose build backend
+docker compose build backend
 
 echo "Restoring backup into isolated project '${DRILL_PROJECT_NAME}'..."
 "${PROJECT_ROOT}/scripts/restore-stack.sh" "${BACKUP_DIR}"
 
 echo "Checking isolated stack health..."
-compose ps
+docker compose ps
 curl -fsS "${DRILL_BASE_URL%/}/health" >/dev/null
 curl -fsS "http://localhost:18081/health" >/dev/null
 

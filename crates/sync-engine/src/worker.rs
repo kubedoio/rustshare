@@ -1,5 +1,5 @@
 use crate::client::ApiClient;
-use crate::retry::{with_retry, with_retry_sync, RetryConfig};
+use crate::retry::{with_retry_sync, RetryConfig};
 use anyhow::{Context, Result};
 use client_state::{Database, FileState, UploadSession};
 use file_ops::atomic_rename;
@@ -123,11 +123,6 @@ impl SyncWorker {
         }
     }
 
-    pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
-        self.retry_config = config;
-        self
-    }
-
     // ============================================================================
     // Upload with Resumable Chunks
     // ============================================================================
@@ -149,7 +144,6 @@ impl SyncWorker {
 
         let file_size = local.size;
         let total_chunks = total_chunks_for_size(file_size);
-        let file_hash = &local.hash;
 
         // Get or create file state
         let file_state_id = self
@@ -167,7 +161,6 @@ impl SyncWorker {
                     .unwrap_or("unknown"),
                 file_size,
                 total_chunks,
-                file_hash,
             )
             .await?;
 
@@ -184,15 +177,17 @@ impl SyncWorker {
             let chunk_data = self.read_chunk(&local.path, chunk_index).await?;
 
             // Upload chunk with retry
-            with_retry(
+            with_retry_sync(
                 &self.retry_config,
                 &format!("upload chunk {}", chunk_index),
                 || async {
                     self.upload_chunk(&session_id, chunk_index, chunk_data.clone())
                         .await
+                        .map_err(to_sync_error)
                 },
             )
-            .await?;
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
             // Update progress in database
             let db = self.database.lock().await;
@@ -443,7 +438,6 @@ impl SyncWorker {
         file_name: &str,
         file_size: u64,
         total_chunks: i32,
-        file_hash: &str,
     ) -> Result<UploadSession> {
         let db = self.database.lock().await;
 
@@ -461,7 +455,7 @@ impl SyncWorker {
 
         // Create new session via API
         let session_response = self
-            .create_upload_session(parent_folder_id, file_size, file_hash, file_name)
+            .create_upload_session(parent_folder_id, file_size, file_name)
             .await?;
 
         // Store session in database
@@ -486,7 +480,6 @@ impl SyncWorker {
         &self,
         folder_id: Option<Uuid>,
         total_size: u64,
-        _file_hash: &str,
         file_name: &str,
     ) -> Result<sync_protocol::CreateUploadSessionResponse> {
         let request = CreateUploadSessionRequest {
@@ -512,7 +505,7 @@ impl SyncWorker {
         // Skip MD5 hash - server doesn't use Content-MD5 header correctly
         let result = self
             .client
-            .upload_chunk(session_uuid, chunk_index as u32, chunk_data, None)
+            .upload_chunk(session_uuid, chunk_index as u32, chunk_data)
             .await?;
 
         if !result.verified {

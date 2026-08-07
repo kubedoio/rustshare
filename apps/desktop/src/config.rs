@@ -5,18 +5,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::config_dir;
 
 /// Default server URL
 pub const DEFAULT_SERVER_URL: &str = "https://app.rustshare.io";
-
-/// Default sync interval in seconds
-pub const DEFAULT_SYNC_INTERVAL_SECS: u64 = 30;
-
-/// Default bandwidth limit in KB/s (0 = unlimited)
-pub const DEFAULT_BANDWIDTH_LIMIT_KBPS: u64 = 0;
 
 /// Client configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,48 +17,8 @@ pub struct Config {
     /// Server URL
     pub server_url: String,
 
-    /// Sync interval
-    #[serde(with = "humantime_serde")]
-    pub sync_interval: Duration,
-
-    /// Bandwidth limit in KB/s (0 = unlimited)
-    pub bandwidth_limit_kbps: u64,
-
-    /// Maximum concurrent uploads
-    pub max_concurrent_uploads: usize,
-
-    /// Maximum concurrent downloads
-    pub max_concurrent_downloads: usize,
-
-    /// Enable real-time sync via WebSocket
-    pub enable_websocket: bool,
-
-    /// Chunk size for resumable uploads (bytes)
-    pub upload_chunk_size: usize,
-
-    /// Retry configuration
-    pub retry: RetryConfig,
-
     /// Sync folders (folder_id -> local path)
     pub sync_folders: Vec<SyncFolderConfig>,
-}
-
-/// Retry configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryConfig {
-    /// Maximum retry attempts
-    pub max_attempts: u32,
-
-    /// Initial retry delay
-    #[serde(with = "humantime_serde")]
-    pub initial_delay: Duration,
-
-    /// Maximum retry delay
-    #[serde(with = "humantime_serde")]
-    pub max_delay: Duration,
-
-    /// Backoff multiplier
-    pub backoff_multiplier: f64,
 }
 
 /// Sync folder configuration
@@ -106,25 +59,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             server_url: DEFAULT_SERVER_URL.to_string(),
-            sync_interval: Duration::from_secs(DEFAULT_SYNC_INTERVAL_SECS),
-            bandwidth_limit_kbps: DEFAULT_BANDWIDTH_LIMIT_KBPS,
-            max_concurrent_uploads: 3,
-            max_concurrent_downloads: 3,
-            enable_websocket: true,
-            upload_chunk_size: 5 * 1024 * 1024, // 5MB chunks
-            retry: RetryConfig::default(),
             sync_folders: Vec::new(),
-        }
-    }
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: 5,
-            initial_delay: Duration::from_secs(1),
-            max_delay: Duration::from_secs(300), // 5 minutes
-            backoff_multiplier: 2.0,
         }
     }
 }
@@ -210,18 +145,6 @@ impl Config {
         self.sync_folders.retain(|f| f.folder_id != folder_id);
 
         self.sync_folders.len() < initial_len
-    }
-
-    /// Get all enabled sync folders
-    pub fn enabled_sync_folders(&self) -> Vec<&SyncFolderConfig> {
-        self.sync_folders.iter().filter(|f| f.enabled).collect()
-    }
-
-    /// Check if a folder is synced
-    pub fn is_folder_synced(&self, folder_id: uuid::Uuid) -> bool {
-        self.sync_folders
-            .iter()
-            .any(|f| f.folder_id == folder_id && f.enabled)
     }
 
     /// Get the local path for a synced folder
@@ -327,37 +250,6 @@ fn default_ignore_patterns() -> Vec<String> {
     ]
 }
 
-// Custom serialization for Duration
-mod humantime_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
-        let secs = duration.as_secs();
-        serializer.serialize_str(&format!("{}s", secs))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
-        let s = String::deserialize(deserializer)?;
-
-        // Parse duration string like "30s", "5m", "1h"
-        if let Some(num_str) = s.strip_suffix('s') {
-            let secs: u64 = num_str.parse().map_err(serde::de::Error::custom)?;
-            Ok(Duration::from_secs(secs))
-        } else if let Some(num_str) = s.strip_suffix('m') {
-            let mins: u64 = num_str.parse().map_err(serde::de::Error::custom)?;
-            Ok(Duration::from_secs(mins * 60))
-        } else if let Some(num_str) = s.strip_suffix('h') {
-            let hours: u64 = num_str.parse().map_err(serde::de::Error::custom)?;
-            Ok(Duration::from_secs(hours * 3600))
-        } else {
-            // Try parsing as plain seconds
-            let secs: u64 = s.parse().map_err(serde::de::Error::custom)?;
-            Ok(Duration::from_secs(secs))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,7 +259,6 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.server_url, "https://app.rustshare.io");
-        assert_eq!(config.sync_interval, Duration::from_secs(30));
         assert!(config.sync_folders.is_empty());
     }
 
@@ -385,7 +276,6 @@ mod tests {
                 direction: SyncDirection::Bidirectional,
                 ignore_patterns: vec!["*.tmp".to_string()],
             }],
-            ..Default::default()
         };
 
         // Save to temp location

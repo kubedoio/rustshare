@@ -533,17 +533,6 @@ pub async fn list_upload_sessions(
     Ok(Json(sessions.into_iter().map(|s| s.into()).collect()))
 }
 
-// Helper for hex encoding
-mod hex {
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod streaming_tests {
     use super::*;

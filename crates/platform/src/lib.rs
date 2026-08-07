@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use keyring_core::Entry;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const RUSTSHARE_TOKEN_SERVICE: &str = "rustshare";
@@ -48,22 +48,6 @@ impl TokenStore {
 pub struct PathManager;
 
 impl PathManager {
-    pub fn normalize_path(path: &Path) -> PathBuf {
-        cfg_if::cfg_if! {
-            if #[cfg(windows)] {
-                // Handle Windows long paths if needed
-                let path_str = path.to_string_lossy();
-                if !path_str.starts_with(r"\\?\") && path_str.len() > 250 {
-                    PathBuf::from(format!(r"\\?\{}", path_str))
-                } else {
-                    path.to_path_buf()
-                }
-            } else {
-                path.to_path_buf()
-            }
-        }
-    }
-
     pub fn get_app_data_dir() -> Result<PathBuf> {
         let dirs = directories::ProjectDirs::from("io", "rustshare", "RustShare")
             .ok_or_else(|| anyhow!("Could not determine app data directory"))?;

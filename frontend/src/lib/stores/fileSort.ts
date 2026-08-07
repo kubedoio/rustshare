@@ -2,20 +2,17 @@ import { writable } from 'svelte/store';
 
 export type SortField = 'name' | 'modified_at' | 'size' | 'mime_type';
 export type SortOrder = 'asc' | 'desc';
-export type ViewMode = 'grid' | 'list';
 export type PageSize = 10 | 20 | 50;
 
 export interface FileSortState {
 	field: SortField;
 	order: SortOrder;
-	viewMode: ViewMode;
 	pageSize: PageSize;
 }
 
 const defaultState: FileSortState = {
 	field: 'name',
 	order: 'asc',
-	viewMode: 'list',
 	pageSize: 20
 };
 
@@ -57,10 +54,6 @@ export function setSortField(field: SortField) {
 		// Otherwise, set new field with ascending order
 		return { ...state, field, order: 'asc' };
 	});
-}
-
-export function setViewMode(mode: ViewMode) {
-	fileSortState.update((state) => ({ ...state, viewMode: mode }));
 }
 
 export function setSortOrder(order: SortOrder) {

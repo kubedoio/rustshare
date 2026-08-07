@@ -13,8 +13,9 @@ use uuid::Uuid;
 use platform::{desktop_token_store, get_device_id, PathManager};
 use rustshare_desktop::api::auth::{interactive_pairing, DeviceToken};
 use rustshare_desktop::config::{Config, FolderUpdate, SyncDirection};
+use sync_domain::SyncRoot;
 use sync_engine::{
-    stop_daemon, wait_for_stop, ApiClient, DaemonHandle, Database, SocketClient, SyncCore, SyncRoot,
+    stop_daemon, wait_for_stop, ApiClient, DaemonHandle, Database, SocketClient, SyncManager,
 };
 
 /// RustShare Desktop Sync Client (Phase 1)
@@ -372,7 +373,7 @@ async fn async_main(cli: Cli) -> Result<()> {
     }
 
     let socket_path = app_data_dir.join("daemon.sock");
-    let core = SyncCore::new(db, client.clone(), workspace.clone(), socket_path);
+    let core = SyncManager::new(db, client.clone(), workspace.clone());
 
     match command {
         Commands::Login { token } => {
@@ -408,7 +409,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 };
 
                 // Register in database
-                core.register_root(root).await?;
+                core.sync_root(root).await?;
 
                 // Also add to config.toml for persistence
                 let mut config = Config::load()?;
@@ -418,7 +419,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 println!("✓ Registered sync root {}", root_id);
             }
             SyncAction::List => {
-                let roots = core.manager.database().lock().await.get_sync_roots()?;
+                let roots = core.database().lock().await.get_sync_roots()?;
                 let config = Config::load()?;
                 if roots.is_empty() {
                     println!("No sync roots configured.");
@@ -460,7 +461,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 );
 
                 let config = Config::load()?;
-                let db_arc = core.manager.database();
+                let db_arc = core.database();
                 let db = db_arc.lock().await;
                 if clear_quarantine {
                     let cleared = match root_id {
@@ -493,7 +494,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 apply,
             } => {
                 let cleanup_targets = {
-                    let db_arc = core.manager.database();
+                    let db_arc = core.database();
                     let db = db_arc.lock().await;
                     let mut roots = db.get_sync_roots()?;
                     if let Some(root_id) = root_id {
@@ -546,7 +547,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                                         entry.relative_path.display(),
                                         entry.remote_file_id
                                     );
-                                    let db_arc = core.manager.database();
+                                    let db_arc = core.database();
                                     let db = db_arc.lock().await;
                                     let _ = db.clear_broken_remote_entries_for_path(
                                         root.id,
@@ -575,7 +576,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                                                     entry.relative_path.display(),
                                                     entry.remote_file_id
                                                 );
-                                                let db_arc = core.manager.database();
+                                                let db_arc = core.database();
                                                 let db = db_arc.lock().await;
                                                 let _ = db.clear_broken_remote_entries_for_path(
                                                     root.id,
@@ -634,7 +635,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             SyncAction::Remove { root_id } => {
                 // Remove from SQLite database
                 let db_removed = {
-                    let db_arc = core.manager.database();
+                    let db_arc = core.database();
                     let db = db_arc.lock().await;
                     db.remove_sync_root(root_id)?
                 };
@@ -686,7 +687,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                 }
 
                 if let Some(local_path) = resolved_local_path {
-                    let db_arc = core.manager.database();
+                    let db_arc = core.database();
                     let db = db_arc.lock().await;
                     if let Some(mut root) = db
                         .get_sync_roots()?
@@ -738,15 +739,14 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
             SyncAction::Filter { action } => match action {
                 FilterAction::Add { root_id, pattern } => {
-                    core.manager
-                        .database()
+                    core.database()
                         .lock()
                         .await
                         .add_filter(root_id, &pattern, "exclude")?;
                     println!("✓ Added exclusion filter: {}", pattern);
                 }
                 FilterAction::List { root_id } => {
-                    let filters = core.manager.database().lock().await.get_filters(root_id)?;
+                    let filters = core.database().lock().await.get_filters(root_id)?;
                     if filters.is_empty() {
                         println!("No filters configured for root {}", root_id);
                     } else {
@@ -771,7 +771,7 @@ async fn async_main(cli: Cli) -> Result<()> {
                     // Internal command: actually run the daemon
                     // This is spawned as a child process by the Start command
                     daemon_handle.write_pid()?;
-                    run_daemon(core, daemon_handle).await?;
+                    run_daemon(core, socket_path, daemon_handle).await?;
                 }
                 DaemonCommands::Stop => {
                     if !daemon_handle.is_running() {
@@ -856,7 +856,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             }
         }
         Commands::Status => {
-            let status = core.get_status();
+            let status = core.current_state().await;
             println!("Current Status: {:?}", status);
         }
     }
@@ -1042,8 +1042,13 @@ where
 }
 
 /// Notify the daemon about a configuration change for a specific root
-async fn run_daemon(mut core: SyncCore, handle: DaemonHandle) -> anyhow::Result<()> {
+async fn run_daemon(
+    mut core: SyncManager,
+    socket_path: PathBuf,
+    handle: DaemonHandle,
+) -> anyhow::Result<()> {
     // Start the sync core (spawns background tasks)
+    core.start_socket_server(socket_path).await?;
     core.start().await?;
     tracing::info!("Sync core started, daemon is running");
 

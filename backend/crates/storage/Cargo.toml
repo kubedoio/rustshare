@@ -25,10 +25,7 @@ futures = "0.3"
 tempfile = "3"
 metrics = "0.24"
 
-# JWT for session management
-jsonwebtoken.workspace = true
-
-# Crypto for session hashing
+# Crypto for metadata integrity (object_store.rs)
 sha2 = "0.11"
 hex = "0.4"
 base64 = "0.23"

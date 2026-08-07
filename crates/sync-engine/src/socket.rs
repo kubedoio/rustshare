@@ -82,15 +82,6 @@ impl RpcError {
         }
     }
 
-    /// Create an error with additional data
-    pub fn with_data(code: i32, message: impl Into<String>, data: serde_json::Value) -> Self {
-        Self {
-            code,
-            message: message.into(),
-            data: Some(data),
-        }
-    }
-
     /// Parse error
     pub fn parse_error(msg: impl Into<String>) -> Self {
         Self::new(Self::PARSE_ERROR, msg)
@@ -107,11 +98,6 @@ impl RpcError {
             Self::METHOD_NOT_FOUND,
             format!("Method not found: {}", method.into()),
         )
-    }
-
-    /// Invalid params error
-    pub fn invalid_params(msg: impl Into<String>) -> Self {
-        Self::new(Self::INVALID_PARAMS, msg)
     }
 
     /// Internal error
@@ -278,15 +264,6 @@ impl SocketServer {
         Ok(())
     }
 
-    /// Trigger a graceful shutdown of the server
-    pub fn trigger_shutdown(&self) -> Result<()> {
-        if let Some(tx) = &self.shutdown_tx {
-            tx.send(()).context("Failed to send shutdown signal")?;
-            info!("Shutdown signal sent");
-        }
-        Ok(())
-    }
-
     /// Handle a single connection
     async fn handle_connection(
         stream: UnixStream,
@@ -411,21 +388,6 @@ impl SocketServer {
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
-
-    /// Shutdown the server and clean up
-    pub async fn shutdown(self) -> Result<()> {
-        // Trigger graceful shutdown
-        self.trigger_shutdown()?;
-
-        // Remove socket file
-        if self.socket_path.exists() {
-            tokio::fs::remove_file(&self.socket_path)
-                .await
-                .context("Failed to remove socket file")?;
-        }
-        info!("Socket server shutdown");
-        Ok(())
-    }
 }
 
 impl Drop for SocketServer {
@@ -547,11 +509,6 @@ impl SocketClient {
                 Ok(false)
             }
         }
-    }
-
-    /// Check if the socket is accessible
-    pub fn is_socket_available(&self) -> bool {
-        self.socket_path.exists()
     }
 
     /// Disconnect from the server

@@ -457,8 +457,6 @@ async fn init_services(
     let upload_backend_config = rustshare_storage::upload_doc_store::MetadataBackendConfig {
         base_prefix: "apps/rustshare".to_string(),
         namespace: "uploads".to_string(),
-        enable_optimistic_concurrency: true,
-        fallback_to_leases: true,
     };
 
     let upload_doc_store: Arc<rustshare_storage::upload_doc_store::LocalFsDocumentStore> = Arc::new(

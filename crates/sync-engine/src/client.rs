@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use sync_protocol::{
     CompleteUploadResponse, CreateFolderRequest, CreateUploadSessionRequest,
-    CreateUploadSessionResponse, DeltaRequest, DeltaResponse, DeviceRegistrationRequest,
-    DeviceRegistrationResponse, RemoteFile, RemoteFolder, RemoteFolderTree, UploadChunkResponse,
+    CreateUploadSessionResponse, RemoteFile, RemoteFolder, RemoteFolderTree, UploadChunkResponse,
 };
 use url::Url;
 use uuid::Uuid;
@@ -40,37 +39,6 @@ impl ApiClient {
             );
         }
         Ok(headers)
-    }
-
-    pub async fn register_device(
-        &self,
-        request: DeviceRegistrationRequest,
-    ) -> Result<DeviceRegistrationResponse> {
-        let url = self.base_url.join("/api/v1/devices/register")?;
-        let response = self
-            .client
-            .post(url)
-            .headers(self.headers()?)
-            .json(&request)
-            .send()
-            .await?
-            .error_for_status()?;
-
-        Ok(response.json().await?)
-    }
-
-    pub async fn fetch_deltas(&self, request: DeltaRequest) -> Result<DeltaResponse> {
-        let url = self.base_url.join("/api/v1/sync/delta")?;
-        let response = self
-            .client
-            .get(url)
-            .headers(self.headers()?)
-            .query(&[("cursor", &request.cursor)])
-            .send()
-            .await?
-            .error_for_status()?;
-
-        Ok(response.json().await?)
     }
 
     pub async fn download_file(&self, file_id: uuid::Uuid) -> Result<reqwest::Response> {
@@ -133,24 +101,18 @@ impl ApiClient {
         session_id: Uuid,
         chunk_index: u32,
         chunk_data: Vec<u8>,
-        md5_hash: Option<String>,
     ) -> Result<UploadChunkResponse> {
         let url = self.base_url.join(&format!(
             "/api/v1/uploads/sessions/{}/chunks/{}",
             session_id, chunk_index
         ))?;
 
-        let mut request = self
+        let request = self
             .client
             .put(url)
             .headers(self.headers()?)
             .header(CONTENT_TYPE, "application/octet-stream")
             .body(chunk_data);
-
-        if let Some(md5) = md5_hash {
-            let content_md5 = HeaderName::from_static("content-md5");
-            request = request.header(content_md5, md5);
-        }
 
         let response = request
             .send()

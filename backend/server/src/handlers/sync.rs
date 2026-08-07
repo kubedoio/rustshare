@@ -441,7 +441,7 @@ async fn event_to_sync_message(
             // For other events, use generic event message
             Ok(SyncMessage::Event {
                 event_id: event.id.to_string(),
-                event_type: event.event_type.type_name().to_string(),
+                event_type: format!("{:?}", event.event_type),
                 aggregate_id: event.aggregate_id.to_string(),
                 aggregate_type: serde_json::to_string(&event.aggregate_type)
                     .map_err(|e| e.to_string())?

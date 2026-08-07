@@ -19,11 +19,9 @@ import TableHeader from '@tiptap/extension-table-header';
 import Placeholder from '@tiptap/extension-placeholder';
 import Image from '@tiptap/extension-image';
 import { Markdown } from 'tiptap-markdown';
-import Collaboration from '@tiptap/extension-collaboration';
 
 export interface EditorExtensionsOptions {
 	placeholder?: string;
-	ydoc?: import('yjs').Doc;
 }
 
 function tableChildNodes(node: any): any[] {
@@ -128,8 +126,7 @@ export function getEditorExtensions(options?: EditorExtensionsOptions): Extensio
 			orderedList: { HTMLAttributes: { class: 'editor-ordered-list' } },
 			horizontalRule: { HTMLAttributes: { class: 'editor-hr' } },
 			link: false,
-			underline: false,
-			undoRedo: options?.ydoc ? false : undefined // Disable native history when using collaboration
+			underline: false
 		}),
 		Link.configure({
 			openOnClick: false,
@@ -166,14 +163,6 @@ export function getEditorExtensions(options?: EditorExtensionsOptions): Extensio
 			transformCopiedText: true
 		})
 	];
-
-	if (options?.ydoc) {
-		extensions.push(
-			Collaboration.configure({
-				document: options.ydoc
-			})
-		);
-	}
 
 	return extensions;
 }
