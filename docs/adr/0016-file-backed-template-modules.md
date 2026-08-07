@@ -1,9 +1,17 @@
 # ADR-0016: File-Backed Template Modules
 
-Status: Accepted  
+Status: Accepted for file-backed content semantics; **superseded by ADR-0030 for platform/Application boundaries and Module terminology**  
 Date: TBD  
 Owner: RustShare Core Team  
-Related: ADR-0017, ADR-0018  
+Related: ADR-0017, ADR-0018, ADR-0030
+
+## 2026-08-07 supersession note
+
+ADR-0030 replaces `Module` as Elembra's top-level product/modularity abstraction with `Application`. The current `Module` API, registry and `/modules` terminology are migration sources, not permanent compatibility contracts.
+
+The durable content-design principles in this ADR remain valid for Applications/features whose natural source of truth is file-backed—especially Notes, Decisions, Meetings, Standups and appropriate Kanban records. In particular, the separation of human-readable content, machine metadata, historical events and rebuildable indexes remains intentional.
+
+Do **not** interpret this ADR as requiring every Elembra Application to be file-backed. Mail, Chat/Buzz, Memory, Agents, Connectors and future Applications own domain-specific state according to the canonical Elembra architecture.
 
 ## Context
 
@@ -24,28 +32,26 @@ The dashboard and module views may provide specialized experiences, but the sour
 
 ## Decision
 
-RustShare will implement these features as **File-Backed Template Modules**.
-
-A Template Module is a permanent RustShare capability that combines:
+For the file-backed structured-work features covered by this ADR, RustShare/Elembra will implement the durable content model described below. The historical term **File-Backed Template Module** remains useful when reading existing code and migrations, but ADR-0030 defines the target Application architecture.
 
 ```text
-Module Definition
+Module/Application Definition
   visibility, routing, permissions, renderer, root path, UI placement
 
 Template Definition
   reusable creation pattern, folder structure, default files, form fields, metadata schema
 
-Module Instance
+Content Instance
   actual folder/file-backed object created from a template
 
 Renderer
-  WebUI projection for module-specific behavior
+  WebUI projection for specialized behavior
 
 Summary Provider
-  dashboard summary logic for enabled modules
+  dashboard summary logic
 ```
 
-The module system must obey this permanent rule:
+The file-backed content model obeys this permanent rule:
 
 ```text
 Path = human organization
@@ -57,21 +63,21 @@ Renderer = UI projection
 
 ## Architecture
 
-### Module
+### Application / file-backed feature
 
-A module is a product capability such as `notes`, `kanban`, or `decisions`.
-
-A module defines:
+In the target architecture an Application is the product/domain boundary defined by ADR-0030. A file-backed feature such as Notes may define:
 
 - whether it is enabled
-- where it lives in the workspace
+- where its content lives in the workspace
 - how it appears in the sidebar
 - how it appears on the dashboard
 - which renderer displays it
 - which template is used by default
 - who can use it
-- whether it is indexed for AI/company memory
+- whether/how it publishes to Elembra Memory
 - whether audit logging is enabled
+
+Existing `Module` records carrying these values are migrated into Application manifests/configuration and are not retained as a second permanent registry.
 
 ### Template
 
@@ -79,7 +85,7 @@ A template defines what gets created when the user creates an item.
 
 A template defines:
 
-- module key
+- owning Application/feature
 - template key
 - version
 - folder structure
@@ -89,17 +95,17 @@ A template defines:
 - UI icon/label
 - renderer hint
 
-### Module instance
+### Content instance
 
-A module instance is the actual object created in the workspace.
+A content instance is the actual object created in the workspace.
 
 Examples:
 
 ```text
-/Notes/Projects/RustShare AI Integration.md
-/Meetings/Engineering/2026/2026-04-30-template-modules/index.md
+/Notes/Projects/Elembra AI Integration.md
+/Meetings/Engineering/2026/2026-04-30-architecture/index.md
 /Kanban/Product Launch/02-In-Progress/CARD-0001-improve-dashboard/index.md
-/Decisions/Architecture/DEC-0001-file-backed-template-modules.md
+/Decisions/Architecture/DEC-0001-application-model.md
 /Shares/Public/Customer-Demo-Pack/README.md
 ```
 
@@ -111,46 +117,45 @@ Recommended pattern:
 
 ```text
 index.md                 human-readable content
-.rustshare.json          machine-readable state
-events.jsonl             audit/event history
+.elembra.json            machine-readable state (target naming)
+events.jsonl             local/domain history where appropriate
 attachments/             user files related to the object
 ```
 
-For single-file notes and decisions, sidecars may be stored next to the Markdown file:
+Existing `.rustshare*` sidecars are migration inputs. Their renaming/migration must preserve user data and should be performed deliberately rather than through a blind global rename.
 
-```text
-DEC-0001-example.md
-DEC-0001-example.rustshare.json
-```
+For single-file notes and decisions, sidecars may be stored next to the Markdown file.
 
-## Predefined modules
+## Historical predefined modules
 
-RustShare will ship with these predefined modules:
+The existing RustShare implementation ships/predefines module records such as:
 
-| Module | Key | Root path | Renderer |
+| Historical Module | Key | Typical root | Renderer |
 |---|---|---|---|
-| Notes | `notes` | `/Notes` | `notes` |
-| Meeting Notes | `meetings` | `/Meetings` | `meetings` |
-| Standup Records | `standups` | `/Standups` | `standups` |
-| Kanban Dashboard | `kanban` | `/Kanban` | `kanban` |
-| Decisions | `decisions` | `/Decisions` | `decisions` |
-| Shares | `shares` | `/Shares` | `shares` |
+| Notes | `notes` | `/Notes` or `/Workspace/Notes` | notes/okf-note |
+| Meeting Notes | `meetings` | `/Meetings` | meetings |
+| Standup Records | `standups` | `/Standups` | standups |
+| Kanban | `kanban` | `/Kanban` | kanban |
+| Decisions | `decisions` | `/Decisions` | decisions |
+| Shares | `shares` | `/Shares` | shares |
+
+These rows do not define the permanent Elembra Application taxonomy. Migration decisions are governed by ADR-0030 and `docs/migrations/rustshare-to-elembra-cutover.md`.
 
 ## File layout examples
 
 ### Notes
 
 ```text
-/Notes/Projects/RustShare AI Integration.md
-/Notes/Projects/RustShare AI Integration.rustshare.json
+/Notes/Projects/Elembra AI Integration.md
+/Notes/Projects/Elembra AI Integration.elembra.json
 ```
 
 ### Meeting Notes
 
 ```text
-/Meetings/Engineering/2026/2026-04-30-template-modules/
+/Meetings/Engineering/2026/2026-04-30-architecture/
   index.md
-  .rustshare.json
+  .elembra.json
   events.jsonl
   attachments/
 ```
@@ -159,14 +164,14 @@ RustShare will ship with these predefined modules:
 
 ```text
 /Standups/Engineering/2026/04/2026-04-30.md
-/Standups/Engineering/2026/04/2026-04-30.rustshare.json
+/Standups/Engineering/2026/04/2026-04-30.elembra.json
 ```
 
 ### Kanban
 
 ```text
 /Kanban/Product Launch/
-  .rustshare-module.json
+  .elembra-app.json
   00-Backlog/
   01-Ready/
   02-In-Progress/
@@ -179,7 +184,7 @@ A card may be represented as:
 ```text
 /Kanban/Product Launch/02-In-Progress/CARD-0001-improve-dashboard/
   index.md
-  .rustshare.json
+  .elembra.json
   events.jsonl
   attachments/
 ```
@@ -187,45 +192,36 @@ A card may be represented as:
 ### Decisions
 
 ```text
-/Decisions/Architecture/DEC-0001-file-backed-template-modules.md
-/Decisions/Architecture/DEC-0001-file-backed-template-modules.rustshare.json
+/Decisions/Architecture/DEC-0001-application-model.md
+/Decisions/Architecture/DEC-0001-application-model.elembra.json
 ```
 
 ### Shares
 
-```text
-/Shares/Internal/Engineering/RustShare-Preview-Pack/
-  README.md
-  .rustshare-share.json
-  files/
-
-/Shares/Public/Customer-Demo-Pack/
-  README.md
-  .rustshare-share.json
-  files/
-```
+Existing share/file relationships should be evaluated during the Files Application migration. A share is primarily a Files authorization/domain concept; it need not become an independent top-level Application merely because the legacy Module registry contains `shares`.
 
 ## Consequences
 
 ### Positive
 
-- RustShare keeps a file-centric architecture.
-- Modules become permanent, extensible platform capabilities.
-- Users can sync/export/backup module data as files.
-- AI/RAG indexing can operate on durable artifacts.
-- Audit trails can be stored close to the object.
-- Custom templates can be added without hardcoding new dashboard widgets.
+- File-backed knowledge stays durable, portable and exportable.
+- Specialized UI remains a projection rather than the source of truth.
+- AI/Memory indexing can operate on durable source artifacts with provenance.
+- Human-readable content remains separated from machine state.
+- The new Application architecture can retain good data semantics without making all Applications file-backed.
 
 ### Negative / trade-offs
 
 - Renderers must interpret file-backed objects correctly.
 - Move/rename operations need event logging and metadata updates.
 - S3/object-storage semantics may require copy/delete operations for moves.
-- Template migrations need versioning and compatibility rules.
+- Template migrations need explicit versioning.
+- Existing `.rustshare*` metadata requires a safe naming/data migration if changed.
 
 ## Non-goals
 
-- Do not build a proprietary database-first clone of Notion, Trello, or Confluence.
-- Do not hardcode Notes/Kanban/Decision cards directly into the dashboard.
-- Do not delete user files when disabling a module.
-- Do not expose hidden `.rustshare*` metadata in public shares by default.
+- Do not make every Elembra Application file-backed.
+- Do not build a proprietary database-first clone of Notion, Trello, or Confluence for content naturally represented as durable files.
+- Do not retain the legacy Module API/registry as a permanent compatibility layer.
+- Do not delete user files when disabling an Application.
+- Do not expose hidden metadata in public shares by default.
