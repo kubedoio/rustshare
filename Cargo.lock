@@ -4209,7 +4209,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-auth"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4228,7 +4228,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4256,7 +4256,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-crypto"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -4295,7 +4295,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-infrastructure"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4311,7 +4311,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-server"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -4375,7 +4375,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-storage"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "aws-config",
