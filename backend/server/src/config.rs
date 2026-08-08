@@ -15,7 +15,7 @@ pub struct AppConfig {
     pub rustfs_bucket: String,
     #[serde(
         default = "default_object_store_auto_create_bucket",
-        rename = "rustshare_object_store_auto_create_bucket"
+        rename = "RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET"
     )]
     pub object_store_auto_create_bucket: bool,
     #[serde(default = "default_public_url", rename = "RUSTSHARE_PUBLIC_URL")]

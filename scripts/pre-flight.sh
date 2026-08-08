@@ -13,6 +13,16 @@
 #   # Or non-interactive:
 #   . ./scripts/pre-flight.sh && docker compose up -d
 #
+#   # Or executed directly:
+#   bash scripts/pre-flight.sh
+#
+# When sourced, failure paths `return` instead of `exit` and the caller's
+# shell options are restored, so the caller's shell is never killed or left
+# with `set -euo pipefail` enabled. Execute directly for `exit` semantics.
+#
+
+# Capture the caller's shell options before our strict settings take effect.
+PREFLIGHT_CALLER_OPTIONS="$(set +o)"
 
 set -euo pipefail
 
@@ -29,7 +39,7 @@ require_command() {
 	local command_name="$1"
 	if ! command -v "${command_name}" >/dev/null 2>&1; then
 		echo "Missing required command: ${command_name}" >&2
-		exit 1
+		return 1
 	fi
 }
 
@@ -175,7 +185,8 @@ REQUIRED_NON_SECRETS=(
 # Preflight checks
 # ---------------------------------------------------------------------------
 
-require_command openssl
+main() {
+	require_command openssl || return 1
 
 # ---------------------------------------------------------------------------
 # .env existence
@@ -187,7 +198,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 		cp "${REPO_ROOT}/.env.example" "${ENV_FILE}"
 	else
 		error ".env not found and .env.example is missing. Cannot continue."
-		exit 1
+		return 1
 	fi
 fi
 
@@ -197,7 +208,8 @@ fi
 
 BACKUP_FILE="${ENV_FILE}.backup.$(date +%Y%m%d%H%M%S)"
 cp "${ENV_FILE}" "${BACKUP_FILE}"
-info ".env backed up to ${BACKUP_FILE}"
+chmod 600 "${ENV_FILE}" "${BACKUP_FILE}"
+info ".env backed up to ${BACKUP_FILE} (permissions hardened to 600)"
 
 # Remember the original POSTGRES_PASSWORD so we can detect whether it was
 # regenerated later and keep DATABASE_URL in sync.
@@ -413,4 +425,22 @@ else
 	info "All required secrets are present and strong."
 	info "You can now run:"
 	echo "    docker compose up -d"
+fi
+}
+
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+	# Sourced: never exit or mutate the caller's shell. Calling main inside an
+	# `if` suppresses this script's `set -e` for the whole body, so an
+	# unexpected failure returns 1 instead of exiting the caller's shell.
+	if main "$@"; then
+		_preflight_status=0
+	else
+		_preflight_status=$?
+	fi
+	eval "${PREFLIGHT_CALLER_OPTIONS}"
+	return "${_preflight_status}"
+else
+	# Executed directly (bash scripts/pre-flight.sh): set -euo pipefail
+	# applies and failures exit with a non-zero status.
+	main "$@"
 fi

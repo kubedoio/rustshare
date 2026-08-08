@@ -91,16 +91,21 @@ jobs:
           RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
-      - name: Wait for health endpoint
+      - name: Wait for backend readiness
+        env:
+          # nginx answers /health statically, so it cannot tell a crashed
+          # backend from a healthy one. /health/ready is proxied to the
+          # backend (see docker/nginx.conf) and reflects real readiness.
+          BASE_URL: http://127.0.0.1
         run: |
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1/health >/tmp/pilot-health.json; then
-              cat /tmp/pilot-health.json
+            if curl --fail --silent "${BASE_URL}/health/ready" >/dev/null; then
+              echo "Pilot backend is ready"
               exit 0
             fi
             sleep 5
           done
-          echo "Pilot stack did not become healthy in time" >&2
+          echo "Pilot backend did not become ready in time" >&2
           exit 1
 
       - name: Show service status on failure

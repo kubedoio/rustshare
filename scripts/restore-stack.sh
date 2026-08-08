@@ -12,10 +12,14 @@ Usage: scripts/restore-stack.sh <backup_dir>
 Restores a Rustshare backup bundle created by scripts/backup-stack.sh.
 
 This command will:
-1. stop backend and nginx
-2. recreate the PostgreSQL database from `postgres.sql.gz`
-3. replace the RustFS data volume contents from `rustfs-data.tar.gz`
-4. restart rustfs, backend, and nginx
+1. verify the bundle checksums (SHA256SUMS, when present) before touching any state
+2. stop backend and nginx
+3. recreate the PostgreSQL database from `postgres.sql.gz`
+4. replace the RustFS data volume contents from `rustfs-data.tar.gz`
+5. restart rustfs, backend, and nginx
+
+Note: `config.tar.gz` (the deployment/config snapshot) is kept as a reference
+artifact only; this script does not restore it.
 
 Environment overrides:
 - POSTGRES_SERVICE (default: postgres)
@@ -37,6 +41,34 @@ require_file() {
 	if [[ ! -f "${file}" ]]; then
 		echo "Required backup artifact missing: ${file}" >&2
 		exit 1
+	fi
+}
+
+# Verify the bundle's SHA256SUMS (written by scripts/backup-stack.sh) before
+# any state is touched. Old bundles without a checksum file are accepted with
+# a warning; a present but mismatching checksum aborts the restore.
+verify_bundle_checksums() {
+	local sums_file="${BACKUP_DIR}/SHA256SUMS"
+	if [[ ! -f "${sums_file}" ]]; then
+		echo "No SHA256SUMS found in ${BACKUP_DIR}; skipping checksum verification." >&2
+		return 0
+	fi
+
+	local checksum_cmd=()
+	if command -v sha256sum >/dev/null 2>&1; then
+		checksum_cmd=(sha256sum -c "${sums_file}")
+	elif command -v shasum >/dev/null 2>&1; then
+		checksum_cmd=(shasum -a 256 -c "${sums_file}")
+	else
+		echo "Neither sha256sum nor shasum is available; cannot verify SHA256SUMS." >&2
+		return 1
+	fi
+
+	if ( cd "${BACKUP_DIR}" && "${checksum_cmd[@]}" ); then
+		echo "Checksums verified: ${sums_file}"
+	else
+		echo "Checksum verification FAILED; aborting before touching any state." >&2
+		return 1
 	fi
 }
 
@@ -84,6 +116,8 @@ EDGE_SERVICE="${EDGE_SERVICE:-nginx}"
 
 require_file "${BACKUP_DIR}/postgres.sql.gz"
 require_file "${BACKUP_DIR}/rustfs-data.tar.gz"
+
+verify_bundle_checksums
 
 cd "${PROJECT_ROOT}"
 

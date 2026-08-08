@@ -107,13 +107,15 @@ jobs:
 
       - name: Start RustFS
         run: |
+          # Keep pinned to the same digest as docker-compose.yml — the
+          # mutable beta tag alone is not reproducible.
           docker run -d --name rustfs \
             -p 9000:9000 -p 9001:9001 \
             -e RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER}" \
             -e RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD}" \
             -e RUSTFS_DATA_DIR=/data \
             -e RUSTFS_LOGS_DIR=/logs \
-            rustfs/rustfs:1.0.0-beta.6
+            rustfs/rustfs:1.0.0-beta.6@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a
 
       - name: Wait for RustFS to be ready
         run: |

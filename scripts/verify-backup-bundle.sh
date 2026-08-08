@@ -61,10 +61,21 @@ fi
 
 if [[ -f "${BACKUP_DIR}/SHA256SUMS" ]]; then
 	echo "Verifying SHA256 checksums..."
+	if command -v sha256sum >/dev/null 2>&1; then
+		checksum_cmd=(sha256sum -c)
+	elif command -v shasum >/dev/null 2>&1; then
+		checksum_cmd=(shasum -a 256 -c)
+	else
+		echo "No checksum tool available; cannot verify SHA256SUMS" >&2
+		exit 1
+	fi
 	(
 		cd "${BACKUP_DIR}"
-		shasum -a 256 -c SHA256SUMS
-	)
+		"${checksum_cmd[@]}" SHA256SUMS
+	) || {
+		echo "Checksum verification FAILED" >&2
+		exit 1
+	}
 fi
 
 echo "Backup bundle is structurally valid: ${BACKUP_DIR}"

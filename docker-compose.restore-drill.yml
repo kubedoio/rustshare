@@ -14,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "15432:5432"
+      - "127.0.0.1:15432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustshare"]
       interval: 10s
@@ -46,9 +46,18 @@ services:
       dockerfile: docker/backend.Dockerfile
       args:
         VITE_API_URL: /api/v1
-        VITE_WS_URL: /api/v1
+        VITE_WS_URL: /api/ws
     ports:
-      - "18081:8080"
+      - "127.0.0.1:18081:8080"
+    healthcheck:
+      # Mirrors the base docker-compose.yml backend healthcheck so
+      # wait_for_healthy in scripts/restore-stack.sh does not fall back to
+      # mere "running".
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       RUST_LOG: debug
@@ -85,7 +94,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "18080:80"
+      - "127.0.0.1:18080:80"
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

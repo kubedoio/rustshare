@@ -20,6 +20,7 @@ Environment overrides:
 - POSTGRES_DB (default: rustshare)
 - POSTGRES_USER (default: rustshare)
 - RUSTFS_SERVICE (default: rustfs)
+- RUSTFS_QUIESCE (default: false; briefly stop rustfs during the volume snapshot for consistency)
 
 The backup root defaults to ./backups and a timestamped subdirectory is created.
 EOF
@@ -86,10 +87,27 @@ echo "Creating RustFS volume snapshot..."
 RUSTFS_CONTAINER_ID="$(require_container_id "${RUSTFS_SERVICE}")"
 RUSTFS_VOLUME_NAME="$(require_named_volume_for_mount "${RUSTFS_CONTAINER_ID}" "/data")"
 
+# The RustFS volume is tarred while the rustfs container may still be serving
+# writes, so the snapshot can be inconsistent (in-flight writes may be missed
+# or only partially captured). Set RUSTFS_QUIESCE=true to briefly stop the
+# rustfs service for the duration of the snapshot and start it again
+# afterwards; uploads fail during that window. The EXIT trap guarantees rustfs
+# is restarted even if the snapshot step fails.
+if [[ "${RUSTFS_QUIESCE:-false}" == "true" ]]; then
+	echo "Quiescing rustfs service for a consistent volume snapshot..."
+	trap 'docker compose start "${RUSTFS_SERVICE}" >/dev/null 2>&1 || true' EXIT
+	docker compose stop "${RUSTFS_SERVICE}" >/dev/null
+fi
+
 docker run --rm \
 	-v "${RUSTFS_VOLUME_NAME}:/data:ro" \
 	alpine:3.21 \
 	sh -lc 'tar -czf - -C /data .' >"${TARGET_DIR}/rustfs-data.tar.gz"
+
+if [[ "${RUSTFS_QUIESCE:-false}" == "true" ]]; then
+	docker compose start "${RUSTFS_SERVICE}" >/dev/null
+	echo "rustfs service restarted."
+fi
 
 echo "Creating configuration snapshot..."
 tar -czf "${TARGET_DIR}/config.tar.gz" \
@@ -112,7 +130,12 @@ GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 EOF
 
-if command -v shasum >/dev/null 2>&1; then
+if command -v sha256sum >/dev/null 2>&1; then
+	(
+		cd "${TARGET_DIR}"
+		sha256sum postgres.sql.gz rustfs-data.tar.gz config.tar.gz manifest.env >SHA256SUMS
+	)
+elif command -v shasum >/dev/null 2>&1; then
 	(
 		cd "${TARGET_DIR}"
 		shasum -a 256 postgres.sql.gz rustfs-data.tar.gz config.tar.gz manifest.env >SHA256SUMS

@@ -25,7 +25,7 @@ Environment overrides:
 - DRILL_KEEP_STACK (default: false)
 - DRILL_REPORT_DIR (default: ./restore-drill-reports)
 - ADMIN_EMAIL (default: admin@localhost)
-- ADMIN_PASSWORD (default: )
+- ADMIN_PASSWORD (required; must be the pre-backup admin password)
 - PUBLIC_SHARE_TOKEN (optional)
 - PUBLIC_SHARE_PASSWORD (optional)
 - ALLOW_SKIP_PUBLIC_SHARE (default: true)
@@ -77,6 +77,14 @@ DRILL_REPORT_DIR="${DRILL_REPORT_DIR:-${PROJECT_ROOT}/restore-drill-reports}"
 ALLOW_SKIP_PUBLIC_SHARE="${ALLOW_SKIP_PUBLIC_SHARE:-true}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+
+if [[ -z "${ADMIN_PASSWORD}" ]]; then
+	echo "ADMIN_PASSWORD must be the pre-backup admin password." >&2
+	echo "The restored database holds the original admin's password hash, so an" >&2
+	echo "empty password would make the post-restore smoke login fail." >&2
+	exit 1
+fi
+
 export RUSTSHARE_ADMIN_PASSWORD="${ADMIN_PASSWORD}"
 
 DRILL_STARTED_AT="$(timestamp)"
