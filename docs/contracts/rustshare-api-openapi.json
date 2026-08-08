@@ -22,7 +22,7 @@
           "Notifications"
         ],
         "summary": "List recent activity for the authenticated user.",
-        "description": "GET /api/activity?limit=50&before_timestamp=...&before_id=...\n\nQueries the event store for recent file/module/share mutations,\nfilters out resources the user cannot currently access, and returns\na paginated activity feed.",
+        "description": "GET /api/activity?limit=50&before_timestamp=...&before_id=...\n\nQueries the event store for recent file/application/share mutations,\nfilters out resources the user cannot currently access, and returns\na paginated activity feed.",
         "operationId": "list_activity",
         "responses": {
           "200": {
@@ -13606,7 +13606,7 @@
       },
       "AiIndexingPolicy": {
         "type": "object",
-        "description": "AI indexing policy for a module.",
+        "description": "AI indexing policy for an Application.",
         "properties": {
           "enabled": {
             "type": "boolean"
@@ -13942,7 +13942,7 @@
       },
       "ApplicationPermissions": {
         "type": "object",
-        "description": "Permission settings for a module.",
+        "description": "Permission settings for an Application.",
         "properties": {
           "admin_can_configure": {
             "type": "boolean"
@@ -14057,7 +14057,7 @@
       },
       "ApplicationUserPreference": {
         "type": "object",
-        "description": "Per-user module preference.",
+        "description": "Per-user Application visibility preference.",
         "required": [
           "user_id",
           "application_id",
@@ -14226,7 +14226,7 @@
       },
       "AuditPolicy": {
         "type": "object",
-        "description": "Audit policy for a module.",
+        "description": "Audit policy for an Application.",
         "properties": {
           "enabled": {
             "type": "boolean"
@@ -23107,7 +23107,7 @@
       },
       "Template": {
         "type": "object",
-        "description": "A template configuration for creating module objects.",
+        "description": "A template configuration for creating Application-owned objects.",
         "required": [
           "id",
           "template_key",

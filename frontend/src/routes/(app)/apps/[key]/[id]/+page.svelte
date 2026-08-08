@@ -140,7 +140,7 @@
 	let saveStatus: EditorSaveStatus = $state('saved');
 
 	$effect(() => {
-		// Initialize mode based on module key when it changes
+		// Initialize mode based on the Application route slug when it changes
 		untrack(() => {
 			mode = key === 'notes' ? 'edit' : 'read';
 		});

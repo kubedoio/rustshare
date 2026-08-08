@@ -23,7 +23,7 @@ const manifest = {
 		routes: [{ id: 'notes.page', route: '/apps/notes', renderer: 'okf-note' }],
 		commands: [],
 		dashboard: [{ id: 'notes.dashboard', renderer: 'latest-notes', order: 10 }],
-		settings: [],
+		settings: [{ id: 'notes.settings', label: 'Notes settings', route: '/settings/apps/notes' }],
 		searchProviders: [],
 		renderers: [],
 		admin: []
@@ -48,6 +48,7 @@ describe('Application registry', () => {
 		expect(definition.key).toBe('notes');
 		expect(definition.ui.page.route).toBe('/apps/notes');
 		expect(definition.renderer).toBe('okf-note');
+		expect(definition.settings?.[0].route).toBe('/settings/apps/notes');
 	});
 
 	it('maps disabled state without inventing a second application catalogue', () => {

@@ -142,26 +142,26 @@ export function getActivityVerb(type: string): string {
 
 export function getApplicationColor(applicationId: string): { color: string; bg: string } {
 	const colors: Record<string, { color: string; bg: string }> = {
-		notes: { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
-		meetings: { color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' },
-		standups: { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' },
-		kanban: { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
-		decisions: { color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' },
-		brainstorming: { color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.1)' },
-		shares: { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' }
+		'io.elembra.notes': { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
+		'io.elembra.meetings': { color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' },
+		'io.elembra.standups': { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' },
+		'io.elembra.kanban': { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
+		'io.elembra.decisions': { color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' },
+		'io.elembra.brainstorming': { color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.1)' },
+		'io.elembra.shares': { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' }
 	};
 	return colors[applicationId] ?? { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' };
 }
 
 export function getArtifactIcon(applicationId: string): typeof FileText {
 	const map: Record<string, any> = {
-		notes: FileText,
-		meetings: FileText,
-		standups: FileText,
-		kanban: Columns,
-		decisions: CheckCircle2,
-		brainstorming: Lightbulb,
-		shares: Share2
+		'io.elembra.notes': FileText,
+		'io.elembra.meetings': FileText,
+		'io.elembra.standups': FileText,
+		'io.elembra.kanban': Columns,
+		'io.elembra.decisions': CheckCircle2,
+		'io.elembra.brainstorming': Lightbulb,
+		'io.elembra.shares': Share2
 	};
 	return map[applicationId] ?? FileText;
 }

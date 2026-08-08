@@ -44,7 +44,7 @@ function createUserApplicationPreferenceStore() {
 			try {
 				await updateUserApplicationPreference(applicationId, enabled);
 			} catch (err) {
-				console.error('Failed to update module preference:', err);
+				console.error('Failed to update Application preference:', err);
 				// Revert on error
 				update((s) => ({
 					...s,

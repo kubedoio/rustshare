@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::UserId;
 
-/// Per-user module preference.
+/// Per-user Application visibility preference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ApplicationUserPreference {
     #[schema(value_type = Uuid)]

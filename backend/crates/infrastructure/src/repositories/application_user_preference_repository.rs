@@ -74,7 +74,11 @@ impl ApplicationUserPreferenceRepository {
     }
 
     pub async fn seed_defaults(&self, user_id: UserId) -> anyhow::Result<()> {
-        let defaults = [("notes", true), ("kanban", true), ("brainstorming", true)];
+        let defaults = [
+            ("io.elembra.notes", true),
+            ("io.elembra.kanban", true),
+            ("io.elembra.brainstorming", true),
+        ];
 
         for (key, enabled) in defaults {
             sqlx::query(

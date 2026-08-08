@@ -11,7 +11,7 @@ use serde_json::json;
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::services::application_service::UpdateApplicationInput;
 use crate::{
-    handlers::{AdminUser, AppError},
+    handlers::{AdminUser, AppError, AuthenticatedUser},
     state::ApplicationState,
 };
 
@@ -52,12 +52,13 @@ pub struct UpdateApplicationRequest {
     ),
 )]
 pub async fn list_applications(
-    AdminUser { user_id: _ }: AdminUser,
+    _admin: AdminUser,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
     State(state): State<ApplicationState>,
 ) -> Result<Json<ApplicationListResponse>, AppError> {
     let applications = state
         .application_service
-        .list_applications(state.default_tenant_id)
+        .list_applications(tenant_id)
         .await
         .map_err(|e| admin_internal_error(e.to_string()))?;
 
@@ -74,13 +75,14 @@ pub async fn list_applications(
     ),
 )]
 pub async fn get_application(
-    AdminUser { user_id: _ }: AdminUser,
+    _admin: AdminUser,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
     State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
         .application_service
-        .get_application(&key, state.default_tenant_id)
+        .get_application(&key, tenant_id)
         .await
         .map_err(|e| match e.to_string().contains("not found") {
             true => admin_not_found(e.to_string()),
@@ -101,12 +103,13 @@ pub async fn get_application(
 )]
 pub async fn enable_application(
     AdminUser { user_id }: AdminUser,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
     State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
         .application_service
-        .enable_application(&key, user_id, state.default_tenant_id)
+        .enable_application(&key, user_id, tenant_id)
         .await
         .map_err(|e| match e.to_string().contains("not found") {
             true => admin_not_found(e.to_string()),
@@ -137,12 +140,13 @@ pub async fn enable_application(
 )]
 pub async fn disable_application(
     AdminUser { user_id }: AdminUser,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
     State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
         .application_service
-        .disable_application(&key, user_id, state.default_tenant_id)
+        .disable_application(&key, user_id, tenant_id)
         .await
         .map_err(|e| match e.to_string().contains("not found") {
             true => admin_not_found(e.to_string()),
@@ -173,6 +177,7 @@ pub async fn disable_application(
 )]
 pub async fn update_application(
     AdminUser { user_id }: AdminUser,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
     State(state): State<ApplicationState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateApplicationRequest>,
@@ -193,7 +198,7 @@ pub async fn update_application(
                 audit: body.audit,
                 ui_config: body.ui_config,
             },
-            state.default_tenant_id,
+            tenant_id,
         )
         .await
         .map_err(|e| match e.to_string().contains("not found") {

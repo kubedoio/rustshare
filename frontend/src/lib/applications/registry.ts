@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import type {
 	ApplicationConfig,
+	ApplicationContribution,
 	ApplicationManifest,
 	ApplicationShellEntry,
 	User
@@ -87,6 +88,7 @@ export interface ApplicationDefinition {
 	schemaVersion: string;
 	permissions: ApplicationPermissions;
 	ui: ApplicationUiDefinition;
+	settings?: ApplicationContribution[];
 	okf?: {
 		enabled: boolean;
 		conceptType: string;
@@ -164,7 +166,8 @@ function shellContributionConfig(
 			sortLabel: 'Modified',
 			itemSingular: label.toLowerCase(),
 			itemPlural: `${label.toLowerCase()}s`
-		}
+		},
+		settings: manifest.contributions.settings
 	};
 }
 
@@ -230,6 +233,7 @@ export function applicationConfigToDefinition(config: ApplicationConfig): Applic
 			},
 			page: ui.page!
 		},
+		settings: ui.settings ?? [],
 		aiIndexing: config.ai_indexing,
 		audit: config.audit
 	};

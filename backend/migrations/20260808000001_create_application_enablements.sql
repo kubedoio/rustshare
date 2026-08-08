@@ -59,7 +59,9 @@ CREATE TABLE application_user_preferences (
     enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, application_id)
+    PRIMARY KEY (user_id, application_id),
+    CONSTRAINT application_user_preferences_id_check
+        CHECK (application_id LIKE 'io.elembra.%')
 );
 
 INSERT INTO application_user_preferences (user_id, application_id, enabled)

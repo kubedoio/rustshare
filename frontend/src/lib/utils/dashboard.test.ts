@@ -130,7 +130,7 @@ describe('getArtifactHref', () => {
 		).toBe('/files?folder=folder456');
 	});
 
-	it('routes folders to file browser even when they have a module key', () => {
+	it('routes folders to file browser even when they have an Application ID', () => {
 		expect(
 			getArtifactHref({
 				applicationId: 'io.elembra.meetings',
@@ -229,31 +229,31 @@ describe('getActivityVerb', () => {
 
 describe('getApplicationColor', () => {
 	it('returns correct colors for known keys', () => {
-		expect(getApplicationColor('notes')).toEqual({
+		expect(getApplicationColor('io.elembra.notes')).toEqual({
 			color: '#ea580c',
 			bg: 'rgba(234, 88, 12, 0.1)'
 		});
-		expect(getApplicationColor('meetings')).toEqual({
+		expect(getApplicationColor('io.elembra.meetings')).toEqual({
 			color: '#7c3aed',
 			bg: 'rgba(124, 58, 237, 0.1)'
 		});
-		expect(getApplicationColor('standups')).toEqual({
+		expect(getApplicationColor('io.elembra.standups')).toEqual({
 			color: '#2563eb',
 			bg: 'rgba(37, 99, 235, 0.1)'
 		});
-		expect(getApplicationColor('kanban')).toEqual({
+		expect(getApplicationColor('io.elembra.kanban')).toEqual({
 			color: '#ea580c',
 			bg: 'rgba(234, 88, 12, 0.1)'
 		});
-		expect(getApplicationColor('decisions')).toEqual({
+		expect(getApplicationColor('io.elembra.decisions')).toEqual({
 			color: '#16a34a',
 			bg: 'rgba(22, 163, 74, 0.1)'
 		});
-		expect(getApplicationColor('brainstorming')).toEqual({
+		expect(getApplicationColor('io.elembra.brainstorming')).toEqual({
 			color: '#ca8a04',
 			bg: 'rgba(202, 138, 4, 0.1)'
 		});
-		expect(getApplicationColor('shares')).toEqual({
+		expect(getApplicationColor('io.elembra.shares')).toEqual({
 			color: '#2563eb',
 			bg: 'rgba(37, 99, 235, 0.1)'
 		});
@@ -269,13 +269,13 @@ describe('getApplicationColor', () => {
 
 describe('getArtifactIcon', () => {
 	it('returns correct icon components for known keys', () => {
-		expect(getArtifactIcon('notes')).toBe(FileText);
-		expect(getArtifactIcon('meetings')).toBe(FileText);
-		expect(getArtifactIcon('standups')).toBe(FileText);
-		expect(getArtifactIcon('kanban')).toBe(Columns);
-		expect(getArtifactIcon('decisions')).toBe(CheckCircle2);
-		expect(getArtifactIcon('brainstorming')).toBe(Lightbulb);
-		expect(getArtifactIcon('shares')).toBe(Share2);
+		expect(getArtifactIcon('io.elembra.notes')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.meetings')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.standups')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.kanban')).toBe(Columns);
+		expect(getArtifactIcon('io.elembra.decisions')).toBe(CheckCircle2);
+		expect(getArtifactIcon('io.elembra.brainstorming')).toBe(Lightbulb);
+		expect(getArtifactIcon('io.elembra.shares')).toBe(Share2);
 	});
 
 	it('returns FileText for unknown key', () => {

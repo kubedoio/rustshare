@@ -53,7 +53,7 @@ export interface Activity {
 	artifactId?: string;
 	applicationId?: string;
 	accessible?: boolean;
-	resourceType?: string; // Backend resource type (file/folder/share/module…)
+	resourceType?: string; // Backend resource type (file/folder/share/application…)
 }
 
 const MAX_ACTIVITIES = 50;
@@ -181,14 +181,14 @@ function serverActionToActivityType(action: string): ActivityType {
 }
 
 function inferApplicationKey(resourceType: string, action: string): string | undefined {
-	if (resourceType === 'share') return 'shares';
-	if (resourceType !== 'module') return undefined;
-	if (action.includes('brainstorm')) return 'brainstorming';
-	if (action.includes('meeting')) return 'meetings';
-	if (action.includes('decision')) return 'decisions';
-	if (action.includes('standup')) return 'standups';
-	if (action.includes('kanban')) return 'kanban';
-	if (action.includes('note')) return 'notes';
+	if (resourceType === 'share') return 'io.elembra.shares';
+	if (resourceType !== 'application') return undefined;
+	if (action.includes('brainstorm')) return 'io.elembra.brainstorming';
+	if (action.includes('meeting')) return 'io.elembra.meetings';
+	if (action.includes('decision')) return 'io.elembra.decisions';
+	if (action.includes('standup')) return 'io.elembra.standups';
+	if (action.includes('kanban')) return 'io.elembra.kanban';
+	if (action.includes('note')) return 'io.elembra.notes';
 	return undefined;
 }
 

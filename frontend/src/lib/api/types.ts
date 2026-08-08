@@ -359,6 +359,7 @@ export interface ApplicationUiConfig {
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
 	page?: ApplicationPageDefinition;
+	settings?: ApplicationContribution[];
 }
 
 export interface SidebarConfig {

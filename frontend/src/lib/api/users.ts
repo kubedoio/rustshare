@@ -238,7 +238,7 @@ export async function listUserApplicationPreferences(): Promise<UserApplicationP
 }
 
 /**
- * Update a module preference for the current user.
+ * Update an Application visibility preference for the current user.
  */
 export async function updateUserApplicationPreference(
 	applicationId: string,

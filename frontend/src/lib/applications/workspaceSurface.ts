@@ -122,6 +122,7 @@ export function normalizeApplicationUiConfig(application: ApplicationConfig): Ap
 	return {
 		documentFormat: ui.documentFormat,
 		okf: ui.okf,
+		settings: ui.settings,
 		sidebar,
 		dashboard: normalizedDashboard,
 		page

@@ -24,7 +24,7 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
-	import { getAllApplications } from '$lib/applications/registry';
+	import { applicationsStore } from '$lib/applications/registry';
 	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 	import { createQuery } from '$lib/query-compat';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
@@ -62,6 +62,20 @@
 
 	// State
 	let activeTab = $state<TabId>('general');
+	let applicationSettingLinks = $derived(
+		$applicationsStore
+			.filter((application) => application.enabled)
+			.filter((application) => $userApplicationPreferences.preferences[application.id] !== false)
+			.flatMap((application) =>
+				(application.settings ?? [])
+					.filter((setting) => Boolean(setting.route))
+					.map((setting) => ({
+						id: setting.id,
+						label: setting.label ?? `${application.displayName} settings`,
+						route: setting.route!
+					}))
+			)
+	);
 	let showToast = $state(false);
 	let toastMessage = $state('');
 	let toastType = $state<'success' | 'error' | 'info'>('info');
@@ -358,7 +372,11 @@
 	</div>
 
 	<!-- Tabs -->
-	<SettingsTabs {activeTab} onTabChange={(tab) => (activeTab = tab)} />
+	<SettingsTabs
+		{activeTab}
+		applicationSettings={applicationSettingLinks}
+		onTabChange={(tab) => (activeTab = tab)}
+	/>
 
 	<!-- Tab Content -->
 	<div class="mt-6">
@@ -921,7 +939,7 @@
 						description="Enable or disable Applications you want to use in your workspace."
 					>
 						<div class="flex flex-col gap-4">
-							{#each getAllApplications().filter((m) => m.enabled) as application}
+							{#each $applicationsStore.filter((m) => m.enabled) as application}
 								<div
 									class="flex items-center justify-between rounded-xl border border-base-300 bg-base-100 p-4"
 								>

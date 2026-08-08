@@ -10,6 +10,7 @@
 		getApplicationPageConfig
 	} from '$lib/applications/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 	import {
 		FolderOpen,
 		Settings,
@@ -38,6 +39,8 @@
 	let sidebarApplications = $derived(
 		getEnabledSidebarApplications(
 			($applicationsQuery.data ?? []).map(applicationShellEntryToConfig)
+		).filter(
+			(application) => $userApplicationPreferences.preferences[application.application_id] !== false
 		)
 	);
 

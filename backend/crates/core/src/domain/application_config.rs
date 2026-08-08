@@ -25,7 +25,7 @@ pub struct ApplicationConfig {
 }
 
 impl ApplicationConfig {
-    /// Extract the OKF module config from `ui_config.okf`, if present.
+    /// Extract the OKF Application config from `ui_config.okf`, if present.
     pub fn okf_config(&self) -> ApplicationOkfConfig {
         self.ui_config
             .get("okf")
@@ -34,7 +34,7 @@ impl ApplicationConfig {
     }
 }
 
-/// Permission settings for a module.
+/// Permission settings for an Application.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationPermissions {
     #[serde(default)]
@@ -47,14 +47,14 @@ pub struct ApplicationPermissions {
     pub allow_internal_share: bool,
 }
 
-/// AI indexing policy for a module.
+/// AI indexing policy for an Application.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AiIndexingPolicy {
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
-/// OKF module configuration stored inside `ui_config.okf`.
+/// OKF Application configuration stored inside `ui_config.okf`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationOkfConfig {
     #[serde(default)]
@@ -67,7 +67,7 @@ pub struct ApplicationOkfConfig {
     pub preserve_unknown_fields: bool,
 }
 
-/// Audit policy for a module.
+/// Audit policy for an Application.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuditPolicy {
     #[serde(default = "default_true")]

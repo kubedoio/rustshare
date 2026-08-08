@@ -2,7 +2,9 @@
 -- This is presentation preference data, not Application identity; preserve the
 -- arrays while replacing the obsolete Module field names.
 UPDATE users
-SET dashboard_config = jsonb_build_object(
+SET dashboard_config = (
+    COALESCE(dashboard_config, '{}'::jsonb) - 'enabled_modules' - 'module_order'
+) || jsonb_build_object(
     'enabled_applications', COALESCE(
         dashboard_config->'enabled_applications',
         dashboard_config->'enabled_modules',

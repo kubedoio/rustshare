@@ -7,12 +7,12 @@ use axum::{
     Json,
 };
 use rustshare_auth::PasswordHasher;
-use rustshare_core::domain::Theme;
+use rustshare_core::domain::{ApplicationId, Theme};
 use serde::{Deserialize, Serialize};
 // tracing::{error, warn} are used as tracing::error! and tracing::warn! in the code
 
 use crate::handlers::{AppError, AuthenticatedSession, AuthenticatedUser};
-use crate::AppState;
+use crate::{state::ApplicationState, AppState};
 
 /// Request to update user theme preference.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -728,7 +728,7 @@ pub struct UpdateApplicationPreferenceRequest {
     ),
 )]
 pub async fn list_application_user_preferences(
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<Response, AppError> {
     let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
@@ -763,16 +763,26 @@ pub async fn list_application_user_preferences(
     ),
 )]
 pub async fn update_user_application_preference(
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(application_id): Path<String>,
     Json(req): Json<UpdateApplicationPreferenceRequest>,
 ) -> Result<Response, AppError> {
+    let application_id = ApplicationId::from(application_id.as_str());
+    if state
+        .application_service
+        .registry()
+        .manifest(&application_id)
+        .is_none()
+    {
+        return Err(AppError::bad_request("Unknown Application"));
+    }
+
     let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),
     );
     match repo
-        .set_enabled(user_id, &application_id, req.enabled)
+        .set_enabled(user_id, application_id.0.as_str(), req.enabled)
         .await
     {
         Ok(pref) => {
@@ -783,8 +793,10 @@ pub async fn update_user_application_preference(
             Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
-            tracing::error!("Failed to update user module preference: {:?}", e);
-            Err(AppError::internal("Failed to update module preference"))
+            tracing::error!("Failed to update user Application preference: {:?}", e);
+            Err(AppError::internal(
+                "Failed to update Application preference",
+            ))
         }
     }
 }

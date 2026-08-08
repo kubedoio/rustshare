@@ -607,15 +607,10 @@ impl ApplicationService {
         .await?;
 
         let manifest = self.manifest(key)?;
-        row.map(|row| {
-            self.application_config_from_manifest(
-                manifest,
-                row.try_get("enabled").unwrap_or(false),
-                row.try_get("configuration").unwrap_or_else(|_| json!({})),
-                tenant_id,
-            )
-        })
-        .ok_or_else(|| ApplicationError::NotFound(key.to_string()))
+        let row = row.ok_or_else(|| ApplicationError::NotFound(key.to_string()))?;
+        let enabled = row.try_get("enabled")?;
+        let configuration = row.try_get("configuration")?;
+        Ok(self.application_config_from_manifest(manifest, enabled, configuration, tenant_id))
     }
 
     /// Update Application configuration (admin only). Only certain fields are mutable.
@@ -782,10 +777,8 @@ impl ApplicationService {
         .bind(user_id)
         .bind(&path_prefix)
         .fetch_one(self.metadata_store.pool())
-        .await;
-        let file_count = row
-            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
-            .unwrap_or(0);
+        .await?;
+        let file_count = row.try_get::<i64, _>("count")?;
 
         let row = sqlx::query(
             r#"
@@ -820,10 +813,8 @@ impl ApplicationService {
         .bind(&path_prefix)
         .bind(&root_path)
         .fetch_one(self.metadata_store.pool())
-        .await;
-        let folder_count = row
-            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
-            .unwrap_or(0);
+        .await?;
+        let folder_count = row.try_get::<i64, _>("count")?;
 
         let total_items = file_count + folder_count;
 
@@ -975,16 +966,16 @@ impl ApplicationService {
                     user_id
                 )
                 .fetch_one(self.metadata_store.pool())
-                .await;
-                let public_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+                .await?;
+                let public_count = row.count.unwrap_or(0);
                 let row = sqlx::query!(
                     "SELECT COUNT(*) as count FROM folders WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL AND (path LIKE '/Shares/Internal/%' OR path LIKE '/Workspace/Shares/Internal/%')",
                     tenant_id,
                     user_id
                 )
                 .fetch_one(self.metadata_store.pool())
-                .await;
-                let internal_count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+                .await?;
+                let internal_count = row.count.unwrap_or(0);
                 Ok((
                     "shares-overview".to_string(),
                     items,
@@ -998,8 +989,8 @@ impl ApplicationService {
                     user_id
                 )
                 .fetch_one(self.metadata_store.pool())
-                .await;
-                let count = row.map(|r| r.count.unwrap_or(0)).unwrap_or(0);
+                .await?;
+                let count = row.count.unwrap_or(0);
                 Ok((
                     "mail-summary".to_string(),
                     vec![],

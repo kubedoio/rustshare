@@ -79,7 +79,10 @@ CREATE TABLE templates (
     CONSTRAINT templates_module_key_fkey FOREIGN KEY (module_key, tenant_id)
         REFERENCES modules (module_key, tenant_id)
 );
-INSERT INTO users (id) VALUES ('00000000-0000-0000-0000-000000000001');
+INSERT INTO users (id, dashboard_config) VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    '{"enabled_modules":["notes"],"module_order":["notes"],"sections":[],"custom_layout":{"density":"compact"}}'
+);
 INSERT INTO modules (
     id, tenant_id, module_key, display_name, description, enabled, root_path,
     renderer, default_template, icon, schema_version, permissions, ai_indexing,
@@ -121,6 +124,10 @@ BEGIN
     IF (SELECT count(*) FROM templates WHERE application_id = 'io.elembra.notes') <> 1 THEN
         RAISE EXCEPTION 'template content reference was not preserved';
     END IF;
+    IF (SELECT application_id FROM application_user_preferences
+        WHERE user_id = '00000000-0000-0000-0000-000000000001') <> 'io.elembra.notes' THEN
+        RAISE EXCEPTION 'user Application preference was not canonicalized';
+    END IF;
     IF to_regclass('public.applications') IS NOT NULL THEN RAISE EXCEPTION 'legacy table remains'; END IF;
     IF (SELECT dashboard_config ? 'enabled_modules' FROM users
         WHERE id = '00000000-0000-0000-0000-000000000001') THEN
@@ -129,6 +136,10 @@ BEGIN
     IF NOT (SELECT dashboard_config ? 'enabled_applications' FROM users
             WHERE id = '00000000-0000-0000-0000-000000000001') THEN
         RAISE EXCEPTION 'Application dashboard configuration was not migrated';
+    END IF;
+    IF (SELECT dashboard_config->'custom_layout'->>'density' FROM users
+        WHERE id = '00000000-0000-0000-0000-000000000001') <> 'compact' THEN
+        RAISE EXCEPTION 'unknown dashboard configuration was discarded';
     END IF;
 END $$;
 SQL

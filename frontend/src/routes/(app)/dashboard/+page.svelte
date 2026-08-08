@@ -12,6 +12,7 @@
 	import { runApplicationPrimaryAction } from '$lib/applications/applicationActions';
 	import { applicationShellEntryToConfig } from '$lib/applications/registry';
 	import { todayDateString } from '$lib/utils/dashboard';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
@@ -216,6 +217,7 @@
 		($enabledApplicationsQuery.data ?? [])
 			.map(applicationShellEntryToConfig)
 			.filter((m) => m.enabled)
+			.filter((m) => $userApplicationPreferences.preferences[m.application_id] !== false)
 			.filter((m) => {
 				const dashboard = m.ui_config?.dashboard;
 				return dashboard?.enabled !== false && dashboard?.primaryAction;

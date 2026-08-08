@@ -212,7 +212,7 @@ describe('Activity Store', () => {
 					{
 						id: 'evt-2',
 						action: 'note_modified',
-						resource_type: 'module',
+						resource_type: 'application',
 						resource_id: 'note-1',
 						resource_name: 'My Note',
 						actor_id: 'user-1',
@@ -233,7 +233,7 @@ describe('Activity Store', () => {
 			expect(state.items[0].artifactId).toBe('file-1');
 			expect(state.items[0].accessible).toBe(true);
 			expect(state.items[1].type).toBe('note_modified');
-			expect(state.items[1].applicationId).toBe('notes');
+			expect(state.items[1].applicationId).toBe('io.elembra.notes');
 			expect(state.loading).toBe(false);
 			expect(state.error).toBeNull();
 			expect(state.hasMore).toBe(false);
@@ -319,13 +319,13 @@ describe('Activity Store', () => {
 			expect(get(serverActivityStore).items[0].type).toBe('file_uploaded');
 		});
 
-		it('should infer module keys correctly', async () => {
+		it('should infer canonical Application IDs correctly', async () => {
 			const mockResponse = {
 				items: [
 					{
 						id: 'evt-1',
 						action: 'brainstorm_board_modified',
-						resource_type: 'module',
+						resource_type: 'application',
 						resource_id: 'brd-1',
 						resource_name: 'Ideas',
 						actor_id: 'user-1',
@@ -348,8 +348,8 @@ describe('Activity Store', () => {
 
 			await serverActivityStore.fetch(10);
 			const items = get(serverActivityStore).items;
-			expect(items[0].applicationId).toBe('brainstorming');
-			expect(items[1].applicationId).toBe('shares');
+			expect(items[0].applicationId).toBe('io.elembra.brainstorming');
+			expect(items[1].applicationId).toBe('io.elembra.shares');
 		});
 
 		it('should not call loadMore when already loading', async () => {
