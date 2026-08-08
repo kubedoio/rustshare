@@ -19,6 +19,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including declarative manifests, tenant/workspace enablement persistence,
   `/apps/...` UI routes, and `/api/v1/applications/...` registry APIs (#210).
 
+### Fixed
+
+- **Authorization** — creating a group share now requires the caller to hold at
+  least the permission being granted on the resource (previously any group
+  member could grant a group, including themselves, arbitrary access to any
+  resource); moving a folder now requires Edit on the target parent; shared
+  recipients can create/rename/move folders and move files inside shared
+  folders, and shared Admin recipients can delete mixed-ownership trees.
+- **Invites** — the emailed invite link is now built from the server's
+  configured public URL instead of client-supplied input; invitees are placed
+  in the inviter's tenant (not a hardcoded nil tenant); concurrent accepts no
+  longer surface as 500s; passwords are length-bounded.
+- **Realtime** — WebSocket connections now reject disabled/deleted accounts,
+  matching the HTTP layer; the OIDC post-login redirect rejects backslash and
+  control-character bypasses; client IP extraction trusts the proxy-appended
+  `X-Forwarded-For` entry (nginx now overwrites the header with the real
+  remote address), so per-IP rate limits can no longer be evaded by spoofing.
+- **Uploads** — the resumable-upload completion now verifies the assembled
+  blob size against the declared size, and replication jobs reference the
+  persisted file-version row (previously a dangling id could fail replication
+  on overwrite edits).
+- **Desktop sync** — a failed remote fetch or an unreadable local subtree now
+  aborts the sync cycle instead of deleting local/server content; delete
+  planning preserves edited files (re-upload/download) instead of destroying
+  them; unparseable server timestamps no longer cause infinite resync loops.
+- **Obsidian plugin** — local edits to a remotely-deleted file are preserved
+  (conflict copy + tombstone) instead of being trashed on the next sync;
+  ignore rules now apply to downloads/deletes; transient server errors keep
+  retrying beyond the retry cap; failed batches replay only the failed ops;
+  the pending queue survives plugin reloads; plugin-initiated writes no longer
+  re-trigger sync events.
+- **Frontend** — file replacement sends the required `If-Match` header
+  (replacing a file no longer 400s); kanban label/assignee/checklist actions
+  no longer fail on 204 responses; markdown file previews are sanitized;
+  activity feed maps mail/link events correctly and honors the page size;
+  kanban card description edits are saved; the device pairing QR uses the
+  server-provided path; app item pages render a fallback for unknown apps and
+  gate permissions from the module definition.
+- **Ops** — `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET` is read correctly;
+  the pilot release job verifies backend readiness (not just nginx); the
+  restore drill binds to loopback and fails fast on an empty admin password;
+  restore verifies bundle checksums before touching state; `.env` files are
+  created with `0600`; the sqlx offline query cache is regenerated to match
+  the current schema.
+
 ## [0.7.0] - 2026-08-08
 
 ### Added
