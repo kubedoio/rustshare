@@ -177,6 +177,8 @@
 		smtpLoaded = false;
 		try {
 			const smtp = await mailApi.getSmtpSettings(id);
+			// Ignore stale responses if the user switched accounts while this request was in flight.
+			if (selectedMailAccountId !== id) return;
 			selectedSmtp = smtp;
 			if (smtp) {
 				smtpForm = {
@@ -195,13 +197,16 @@
 				resetSmtpForm(account ?? null, pendingSmtpPreset);
 			}
 		} catch (error) {
+			if (selectedMailAccountId !== id) return;
 			toastStore.show(
 				error instanceof Error ? error.message : 'Failed to load SMTP settings',
 				'error'
 			);
 			resetSmtpForm(account ?? null, pendingSmtpPreset);
 		} finally {
-			smtpLoaded = true;
+			if (selectedMailAccountId === id) {
+				smtpLoaded = true;
+			}
 		}
 	}
 

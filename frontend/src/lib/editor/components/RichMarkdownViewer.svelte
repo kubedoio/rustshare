@@ -34,7 +34,9 @@
 			return attachments.find((a) => a.id === match[1]);
 		}
 		// Also try matching by relative path (fallback for unresolved paths)
-		return attachments.find((a) => url.includes(a.path) || url.endsWith(a.filename));
+		return attachments.find(
+			(a) => (a.path && url.includes(a.path)) || (a.filename && url.endsWith(a.filename))
+		);
 	}
 
 	function escapeHtml(str: string): string {
@@ -101,7 +103,7 @@
 			}
 			// External or unknown link: open in new tab
 			event.preventDefault();
-			window.open(href, '_blank');
+			window.open(href, '_blank', 'noopener,noreferrer');
 			return;
 		}
 

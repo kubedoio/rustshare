@@ -113,9 +113,10 @@
 	}
 
 	function buildFallbackPairingUrl(): string {
-		return qrInfo?.instance_url
-			? `${qrInfo.instance_url}/device/approve?device_code=${deviceCode}`
-			: '';
+		if (!qrInfo?.instance_url) return '';
+		const path = qrInfo.device_pairing_path || '/device/approve';
+		const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+		return `${qrInfo.instance_url}${normalizedPath}?device_code=${deviceCode}`;
 	}
 
 	function startPolling() {

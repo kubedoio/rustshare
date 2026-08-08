@@ -70,7 +70,9 @@ export interface Share {
 	permissions: 'View' | 'Edit' | 'Admin';
 	upload_only: boolean;
 	password_protected: boolean;
-	access_count: number;
+	// Only present on some share endpoints (e.g. /shares); the per-resource
+	// share-listing endpoints (files/{id}/shares, folders/{id}/shares) omit it.
+	access_count?: number;
 	expires_at: string | null;
 	created_at: string;
 	created_by?: string;

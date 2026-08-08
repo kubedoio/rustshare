@@ -42,7 +42,8 @@ export type ActivityType =
 	| 'decision_created'
 	| 'decision_modified'
 	| 'brainstorm_created'
-	| 'brainstorm_board_modified';
+	| 'brainstorm_board_modified'
+	| 'activity';
 
 export interface Activity {
 	id: string;
@@ -177,7 +178,7 @@ function serverActionToActivityType(action: string): ActivityType {
 		kanban_modified: 'kanban_modified',
 		brainstorm_board_modified: 'brainstorm_board_modified'
 	};
-	return directMap[action] || 'file_uploaded';
+	return directMap[action] || 'activity';
 }
 
 function inferApplicationKey(resourceType: string, action: string): string | undefined {
@@ -219,13 +220,11 @@ function createServerActivityStore() {
 					: null
 			});
 		} catch (err) {
-			set({
-				items: [],
+			update((s) => ({
+				...s,
 				loading: false,
-				error: err instanceof Error ? err.message : 'Failed to load activity',
-				hasMore: true,
-				cursor: null
-			});
+				error: err instanceof Error ? err.message : 'Failed to load activity'
+			}));
 		}
 	}
 

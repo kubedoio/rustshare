@@ -167,7 +167,9 @@
 	let expiringSoonCount = $derived(
 		shares.filter((share) => isExpiringSoon(share.expires_at)).length
 	);
-	let totalAccessCount = $derived(shares.reduce((sum, share) => sum + share.access_count, 0));
+	let totalAccessCount = $derived(
+		shares.reduce((sum, share) => sum + (share.access_count ?? 0), 0)
+	);
 </script>
 
 <OfflineBanner />
@@ -434,7 +436,7 @@
 											Access
 										</p>
 										<p class="mt-2 font-data text-sm font-medium text-base-content">
-											{share.access_count} visit{share.access_count === 1 ? '' : 's'}
+											{share.access_count ?? 0} visit{(share.access_count ?? 0) === 1 ? '' : 's'}
 										</p>
 									</div>
 									<div class="rounded-2xl border border-base-300/70 bg-base-100 px-4 py-3">

@@ -60,7 +60,7 @@ export async function updateKanbanBoard(
 }
 
 export async function archiveKanbanBoard(boardId: string): Promise<void> {
-	await apiClient.post(`/applications/kanban/boards/${boardId}/archive`, {});
+	await apiClient.postVoid(`/applications/kanban/boards/${boardId}/archive`, {});
 }
 
 export async function listKanbanCards(boardId: string, limit?: number): Promise<KanbanCard[]> {
@@ -158,7 +158,7 @@ export async function deleteKanbanLabel(boardId: string, labelId: string): Promi
 }
 
 export async function addCardLabel(cardId: string, labelId: string): Promise<void> {
-	await apiClient.post(`/applications/kanban/cards/${cardId}/labels`, { labelId });
+	await apiClient.postVoid(`/applications/kanban/cards/${cardId}/labels`, { labelId });
 }
 
 export async function removeCardLabel(cardId: string, labelId: string): Promise<void> {
@@ -171,7 +171,7 @@ export async function getKanbanAssignableUsers(): Promise<KanbanAssignee[]> {
 }
 
 export async function assignCardMember(cardId: string, assigneeId: string): Promise<void> {
-	await apiClient.post(`/applications/kanban/cards/${cardId}/assignees`, { assigneeId });
+	await apiClient.postVoid(`/applications/kanban/cards/${cardId}/assignees`, { assigneeId });
 }
 
 export async function unassignCardMember(cardId: string, assigneeId: string): Promise<void> {
@@ -219,7 +219,7 @@ export async function toggleChecklistItem(
 	itemId: string,
 	done: boolean
 ): Promise<void> {
-	await apiClient.patch(
+	await apiClient.patchVoid(
 		`/applications/kanban/cards/${cardId}/checklists/${checklistId}/items/${itemId}`,
 		{
 			done

@@ -114,15 +114,6 @@ export function validateBatchUpload(
 	let currentCount = options.existingAttachments.length;
 
 	for (const file of files) {
-		const augmented = {
-			...options,
-			existingAttachments: [
-				...options.existingAttachments,
-				// Fake entries for count tracking
-				...Array.from({ length: currentCount - options.existingAttachments.length })
-			] as RichMarkdownAttachment[]
-		};
-
 		// Re-check count with running total
 		if (currentCount >= (options.maxCount ?? MAX_ATTACHMENTS_PER_DOC)) {
 			results.set(file, {

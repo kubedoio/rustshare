@@ -26,14 +26,16 @@ export function formatDate(dateString: string): string {
 	const date = new Date(dateString);
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
+	const isFuture = diffMs < 0;
 	const diffSec = Math.floor(Math.abs(diffMs) / 1000);
 
 	if (diffSec < 60) return 'Just now';
 
 	const rtf = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' });
-	if (diffSec < 3600) return rtf.format(-Math.floor(diffSec / 60), 'minute');
-	if (diffSec < 86400) return rtf.format(-Math.floor(diffSec / 3600), 'hour');
-	if (diffSec < 604800) return rtf.format(-Math.floor(diffSec / 86400), 'day');
+	const sign = isFuture ? 1 : -1;
+	if (diffSec < 3600) return rtf.format(sign * Math.floor(diffSec / 60), 'minute');
+	if (diffSec < 86400) return rtf.format(sign * Math.floor(diffSec / 3600), 'hour');
+	if (diffSec < 604800) return rtf.format(sign * Math.floor(diffSec / 86400), 'day');
 
 	return new Intl.DateTimeFormat('en-US', {
 		year: 'numeric',

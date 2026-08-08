@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { authStore } from '$lib/stores/auth';
 	import { showKeyboardShortcuts } from '$lib/stores/ui';
@@ -29,10 +28,6 @@
 
 	let checkComplete = $state(false);
 	let mobileMenuOpen = $state(false);
-
-	onMount(() => {
-		// Any initialization
-	});
 
 	$effect(() => {
 		if (!$authStore.isLoading) {

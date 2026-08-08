@@ -396,7 +396,7 @@
 							content={card.content}
 							currentMarkdown={card.content}
 							editable={true}
-							on:change={() => {}}
+							on:change={(e) => (card.content = e.detail.markdown)}
 							hasAttachmentHandler={false}
 						/>
 					</div>

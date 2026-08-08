@@ -280,7 +280,7 @@
 									</div>
 									<div class="mt-2 flex items-center justify-between">
 										<span>Visits</span>
-										<span class="font-medium">{selectedShare.access_count}</span>
+										<span class="font-medium">{selectedShare.access_count ?? 0}</span>
 									</div>
 									{#if selectedShare.expires_at}
 										<div class="mt-2 flex items-center justify-between">

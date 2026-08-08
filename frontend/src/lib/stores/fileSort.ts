@@ -16,13 +16,28 @@ const defaultState: FileSortState = {
 	pageSize: 20
 };
 
+const SORT_FIELDS: readonly SortField[] = ['name', 'modified_at', 'size', 'mime_type'];
+const SORT_ORDERS: readonly SortOrder[] = ['asc', 'desc'];
+const PAGE_SIZES: readonly PageSize[] = [10, 20, 50];
+
 // Load from localStorage if available
 function loadState(): FileSortState {
 	if (typeof window !== 'undefined') {
 		const stored = localStorage.getItem('file-sort-state-v3');
 		if (stored) {
 			try {
-				return { ...defaultState, ...JSON.parse(stored) };
+				const parsed = JSON.parse(stored) as Partial<FileSortState>;
+				return {
+					field: SORT_FIELDS.includes(parsed.field as SortField)
+						? (parsed.field as SortField)
+						: defaultState.field,
+					order: SORT_ORDERS.includes(parsed.order as SortOrder)
+						? (parsed.order as SortOrder)
+						: defaultState.order,
+					pageSize: PAGE_SIZES.includes(parsed.pageSize as PageSize)
+						? (parsed.pageSize as PageSize)
+						: defaultState.pageSize
+				};
 			} catch {
 				return defaultState;
 			}

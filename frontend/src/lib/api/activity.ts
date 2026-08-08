@@ -28,8 +28,9 @@ export interface ListActivityParams {
 
 export async function listActivity(params: ListActivityParams = {}): Promise<ListActivityResponse> {
 	const searchParams = new URLSearchParams();
+	// The backend binds the page size to `per_page`; `limit` is ignored.
 	if (params.limit !== undefined) {
-		searchParams.set('limit', String(params.limit));
+		searchParams.set('per_page', String(params.limit));
 	}
 	if (params.before_timestamp !== undefined) {
 		searchParams.set('before_timestamp', params.before_timestamp);

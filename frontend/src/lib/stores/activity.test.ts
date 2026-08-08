@@ -297,7 +297,7 @@ describe('Activity Store', () => {
 			expect(state.hasMore).toBe(false);
 		});
 
-		it('should map unknown server actions to file_uploaded fallback', async () => {
+		it('should map unknown server actions to a neutral fallback', async () => {
 			const mockResponse = {
 				items: [
 					{
@@ -316,7 +316,7 @@ describe('Activity Store', () => {
 			vi.mocked(apiClient.get).mockResolvedValue(mockResponse);
 
 			await serverActivityStore.fetch(10);
-			expect(get(serverActivityStore).items[0].type).toBe('file_uploaded');
+			expect(get(serverActivityStore).items[0].type).toBe('activity');
 		});
 
 		it('should infer canonical Application IDs correctly', async () => {

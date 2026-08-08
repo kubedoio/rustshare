@@ -29,15 +29,31 @@
 	// -------------------------------------------------------------------------
 
 	const boardQuery = createQuery({
-		queryKey: ['brainstorm-board', $page.params.boardId || ''],
-		queryFn: () => getBrainstormBoard($page.params.boardId || ''),
-		enabled: !!$page.params.boardId
+		queryKey: ['brainstorm-board', boardId],
+		queryFn: () => getBrainstormBoard(boardId),
+		enabled: !!boardId
+	});
+
+	$effect(() => {
+		boardQuery.setOptions({
+			queryKey: ['brainstorm-board', boardId],
+			queryFn: () => getBrainstormBoard(boardId),
+			enabled: !!boardId
+		});
 	});
 
 	const sourceQuery = createQuery({
-		queryKey: ['brainstorm-board-source', $page.params.boardId || ''],
-		queryFn: () => getBrainstormBoardSource($page.params.boardId || ''),
-		enabled: !!$page.params.boardId
+		queryKey: ['brainstorm-board-source', boardId],
+		queryFn: () => getBrainstormBoardSource(boardId),
+		enabled: !!boardId
+	});
+
+	$effect(() => {
+		sourceQuery.setOptions({
+			queryKey: ['brainstorm-board-source', boardId],
+			queryFn: () => getBrainstormBoardSource(boardId),
+			enabled: !!boardId
+		});
 	});
 
 	// -------------------------------------------------------------------------

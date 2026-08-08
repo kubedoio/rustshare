@@ -23,19 +23,26 @@ vi.mock('$lib/query-client', () => ({
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
 		const key = options.queryKey?.[0];
+		const base = { setOptions: vi.fn() };
 		if (key === 'brainstorm-board') {
-			return readable({
-				data: { id: 'test-board-123', title: 'Test Board' },
-				isLoading: false
-			});
+			return {
+				...base,
+				...readable({
+					data: { id: 'test-board-123', title: 'Test Board' },
+					isLoading: false
+				})
+			};
 		}
 		if (key === 'brainstorm-board-source') {
-			return readable({
-				data: '{"type":"excalidraw","version":2,"elements":[]}',
-				isLoading: false
-			});
+			return {
+				...base,
+				...readable({
+					data: '{"type":"excalidraw","version":2,"elements":[]}',
+					isLoading: false
+				})
+			};
 		}
-		return readable({ data: null, isLoading: false });
+		return { ...base, ...readable({ data: null, isLoading: false }) };
 	}),
 	createMutation: vi.fn(() =>
 		readable({

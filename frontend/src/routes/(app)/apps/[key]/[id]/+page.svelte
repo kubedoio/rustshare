@@ -110,6 +110,16 @@
 
 	let dismissedConflict = $state(false);
 
+	// Module-level permission gates (mirrors the list page). Falls back to
+	// permissive defaults while the application registry is still loading.
+	let canRead = $derived(
+		module ? module.enabled && module.permissions.workspaceMembersCanUse : true
+	);
+	let canEdit = $derived(canRead);
+	let canShare = $derived(
+		module ? module.permissions.allowPublicShare || module.permissions.allowInternalShare : true
+	);
+
 	// TanStack keeps the previous query's data while a new key starts fetching.
 	// Never render that stale note under the new route id.
 	let item = $derived.by(() => {
@@ -271,7 +281,9 @@
 		Error,
 		{ title: string; content: string; color?: string | null }
 	>({
-		mutationFn: getUpdateFunction(key, id)
+		// Read key/id at mutation time so duplicate navigation doesn't write to the previous note.
+		mutationFn: (data: { title: string; content: string; color?: string | null }) =>
+			getUpdateFunction(key, id)(data)
 	});
 
 	async function handleSave(
@@ -701,12 +713,12 @@
 			{attachments}
 			metadata={modifiedAt}
 			permissions={{
-				canRead: true,
-				canEdit: true,
+				canRead,
+				canEdit,
 				canUploadAttachments: true,
 				canDeleteAttachments: true,
 				canExport: true,
-				canShare: true
+				canShare
 			}}
 			embedSketchesAsBase64={!isFolderBacked}
 			collab={key === 'notes'}
@@ -826,6 +838,11 @@
 				}}
 			/>
 		{/if}
+	{:else}
+		<div class="flex h-full flex-col items-center justify-center p-8 text-center">
+			<p class="text-error">This application is not available.</p>
+			<button class="btn mt-4 btn-ghost" onclick={() => goto('/apps')}>Back to Apps</button>
+		</div>
 	{/if}
 </div>
 

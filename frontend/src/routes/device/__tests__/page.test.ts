@@ -138,7 +138,7 @@ describe('/device page', () => {
 
 		await waitFor(() => {
 			expect(qrCodeToDataURL).toHaveBeenCalledWith(
-				'https://fallback.example.invalid/device/approve?device_code=device-code-123',
+				'https://fallback.example.invalid/device?device_code=device-code-123',
 				{
 					width: 280,
 					margin: 2,

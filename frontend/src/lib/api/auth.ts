@@ -42,7 +42,7 @@ export function beginOidcLogin(redirectTo = '/files'): void {
 		return;
 	}
 
-	const target = new URL('/api/v1/auth/oidc/login', window.location.origin);
+	const target = new URL(`${apiClient.getBaseURL()}/auth/oidc/login`, window.location.origin);
 	target.searchParams.set('redirect_to', redirectTo);
 	window.location.href = target.toString();
 }

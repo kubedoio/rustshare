@@ -177,7 +177,7 @@ export async function uploadAvatar(file: File): Promise<{ avatar_path: string }>
 		headers['Authorization'] = `Bearer ${token}`;
 	}
 
-	const response = await fetch('/api/v1/users/me/avatar', {
+	const response = await fetch(`${apiClient.getBaseURL()}/users/me/avatar`, {
 		method: 'POST',
 		body: file,
 		headers,
@@ -185,8 +185,8 @@ export async function uploadAvatar(file: File): Promise<{ avatar_path: string }>
 	});
 
 	if (!response.ok) {
-		const error = await response.json();
-		throw new Error(error.error || 'Failed to upload avatar');
+		const error = await response.json().catch(() => null);
+		throw new Error((error as { error?: string } | null)?.error || 'Failed to upload avatar');
 	}
 
 	return response.json();
@@ -203,7 +203,7 @@ export async function deleteAvatar(): Promise<void> {
  * Get the URL for a user's avatar
  */
 export function getAvatarUrl(userId: string): string {
-	return `/api/v1/users/${userId}/avatar`;
+	return `${apiClient.getBaseURL()}/users/${userId}/avatar`;
 }
 
 interface ListDevicesResponse {

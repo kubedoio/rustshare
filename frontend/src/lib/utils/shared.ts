@@ -38,5 +38,9 @@ export function resolveNotificationTarget(notification: Notification): string {
 		return sharedResourcePath('folder', notification.resource_id);
 	}
 
-	return notification.action_url || '/shared-with-me';
+	if (notification.action_url?.startsWith('/') && !notification.action_url.startsWith('//')) {
+		return notification.action_url;
+	}
+
+	return '/shared-with-me';
 }

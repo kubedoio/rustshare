@@ -1,14 +1,4 @@
-import {
-	StickyNote,
-	CalendarDays,
-	GitBranch,
-	Columns,
-	PenTool,
-	Share2,
-	FileText,
-	CheckCircle2,
-	Lightbulb
-} from 'lucide-svelte';
+import { Columns, Share2, FileText, CheckCircle2, Lightbulb } from 'lucide-svelte';
 
 export function formatBytes(bytes: number): string {
 	if (!bytes || bytes === 0) return '0 B';
