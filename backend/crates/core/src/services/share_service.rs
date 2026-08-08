@@ -965,8 +965,23 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
                 .await?
         };
 
-        // Non-admins must be group members
+        // Non-admins must hold at least the granted permission level on the
+        // resource themselves (so a user cannot grant a group — including
+        // themselves — more access than they hold) and must be group members.
         if !has_admin {
+            if !self
+                .check_resource_permission(created_by, resource, permissions)
+                .await?
+            {
+                return Err(ShareError::PermissionDenied {
+                    file_id: match resource {
+                        Resource::File(id) => id,
+                        Resource::Folder(id) => id,
+                    },
+                    user_id: created_by,
+                });
+            }
+
             let is_member = self
                 .metadata_store
                 .is_user_in_group(created_by, group_id)

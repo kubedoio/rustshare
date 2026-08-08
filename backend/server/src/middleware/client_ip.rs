@@ -17,9 +17,11 @@ pub fn extract_client_ip(
     // Check X-Forwarded-For header (most common)
     if let Some(xff) = headers.get("x-forwarded-for") {
         if let Ok(xff_str) = xff.to_str() {
-            // XFF format: "client, proxy1, proxy2"
-            // Take the leftmost (original client) IP
-            if let Some(client_ip) = xff_str.split(',').next() {
+            // XFF format: "client, proxy1, proxy2". The rightmost entry is the
+            // one appended by the immediate proxy from $remote_addr (and nginx
+            // in this deployment overwrites the header entirely with
+            // `$remote_addr`), so a client cannot forge it.
+            if let Some(client_ip) = xff_str.rsplit(',').next() {
                 if let Ok(ip) = client_ip.trim().parse::<IpAddr>() {
                     // Validate it's not a private IP (prevents spoofing)
                     if !is_private_ip(&ip) {
@@ -53,14 +55,18 @@ pub fn extract_client_ip(
             // Format: "for=192.0.2.60;proto=https;by=203.0.113.43"
             if let Some(for_part) = fwd_str.split(';').find(|s| s.trim().starts_with("for=")) {
                 let ip_part = for_part.trim_start_matches("for=").trim();
-                // Remove quotes and port if present
-                let ip_str = ip_part
-                    .trim_matches('"')
-                    .trim_matches('[')
-                    .trim_matches(']')
-                    .split(':')
-                    .next()
-                    .unwrap_or(ip_part);
+                // Remove quotes. RFC 7239 requires IPv6 literals to be in
+                // brackets, so parse the bracketed form before any port.
+                let ip_part = ip_part.trim_matches('"');
+                let ip_str = if let Some(rest) = ip_part.strip_prefix('[') {
+                    // [2001:db8::1] or [2001:db8::1]:8080
+                    rest.split(']').next().unwrap_or("")
+                } else if ip_part.parse::<IpAddr>().is_ok() {
+                    ip_part
+                } else {
+                    // IPv4 with port: 192.0.2.60:8080
+                    ip_part.split(':').next().unwrap_or(ip_part)
+                };
                 if let Ok(ip) = ip_str.parse::<IpAddr>() {
                     if !is_private_ip(&ip) {
                         tracing::debug!("Extracted client IP from Forwarded header: {}", ip);
@@ -118,8 +124,10 @@ mod tests {
             HeaderValue::from_static("203.0.113.1, 198.51.100.1"),
         );
 
+        // The rightmost entry is the one appended by the immediate trusted
+        // proxy; client-supplied entries on the left must not win.
         let ip = extract_client_ip(&headers, None);
-        assert_eq!(ip, Some("203.0.113.1".parse().unwrap()));
+        assert_eq!(ip, Some("198.51.100.1".parse().unwrap()));
     }
 
     #[test]
@@ -171,6 +179,32 @@ mod tests {
 
         let ip = extract_client_ip(&headers, None);
         assert_eq!(ip, None); // Should reject private IP
+    }
+
+    #[test]
+    fn test_xff_takes_rightmost_entry() {
+        // The rightmost entry is the one appended by the immediate proxy from
+        // $remote_addr; client-supplied entries on the left must not win.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("8.8.8.8, 203.0.113.60"),
+        );
+
+        let ip = extract_client_ip(&headers, None);
+        assert_eq!(ip, Some("203.0.113.60".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_forwarded_header_ipv6_with_port() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "forwarded",
+            HeaderValue::from_static(r#"for="[2001:db8::1]:8080""#),
+        );
+
+        let ip = extract_client_ip(&headers, None);
+        assert_eq!(ip, Some("2001:db8::1".parse().unwrap()));
     }
 
     #[test]
@@ -306,7 +340,8 @@ mod tests {
             HeaderValue::from_static("  203.0.113.1  ,  198.51.100.1  "),
         );
 
+        // Rightmost entry wins (see test_extract_from_x_forwarded_for).
         let ip = extract_client_ip(&headers, None);
-        assert_eq!(ip, Some("203.0.113.1".parse().unwrap()));
+        assert_eq!(ip, Some("198.51.100.1".parse().unwrap()));
     }
 }

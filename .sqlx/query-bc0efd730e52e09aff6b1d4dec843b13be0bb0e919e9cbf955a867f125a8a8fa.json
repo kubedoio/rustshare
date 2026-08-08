@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT it.id as token_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,\n                w.terms_enabled, w.terms_text\n         FROM invite_tokens it\n         JOIN workflows w ON it.workflow_id = w.id\n         WHERE it.token = $1",
+  "query": "SELECT it.id as token_id, it.tenant_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,\n                w.terms_enabled, w.terms_text\n         FROM invite_tokens it\n         JOIN workflows w ON it.workflow_id = w.id\n         WHERE it.token = $1",
   "describe": {
     "columns": [
       {
@@ -10,31 +10,36 @@
       },
       {
         "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
         "name": "recipient_email",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "expires_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "used_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "revoked_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "terms_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "terms_text",
         "type_info": "Text"
       }
@@ -48,11 +53,12 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false,
       true
     ]
   },
-  "hash": "417081079c1b298e91e7e8293e165e219177c6d830c7f94b68ba251fd45e5251"
+  "hash": "bc0efd730e52e09aff6b1d4dec843b13be0bb0e919e9cbf955a867f125a8a8fa"
 }
