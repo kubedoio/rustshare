@@ -434,6 +434,13 @@ async fn device_poll_inner(
             }
         }
 
+        // Prune stale entries so the map cannot grow without bound: every poll
+        // creates a fresh key, and device codes expire within minutes, so any
+        // entry older than the retention window is dead weight.
+        const POLL_LIMITER_RETENTION: Duration = Duration::from_secs(15 * 60);
+        rate_limiter
+            .retain(|_, last_request| now.duration_since(*last_request) < POLL_LIMITER_RETENTION);
+
         rate_limiter.insert(rate_limit_key, now);
     }
 

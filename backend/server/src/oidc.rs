@@ -614,7 +614,17 @@ fn internal_oidc_error(message: String) -> (StatusCode, String) {
 
 fn sanitize_redirect_target(value: Option<&str>) -> String {
     match value {
-        Some(path) if path.starts_with('/') && !path.starts_with("//") => path.to_string(),
+        // Must be a same-origin absolute path. Reject "//host" scheme-relative
+        // URLs, backslash variants (WHATWG URL parsing normalizes "/\/host"
+        // to "//host"), and any control characters.
+        Some(path)
+            if path.starts_with('/')
+                && !path.starts_with("//")
+                && !path.contains('\\')
+                && !path.chars().any(|c| c.is_control()) =>
+        {
+            path.to_string()
+        }
         _ => "/files".to_string(),
     }
 }
@@ -757,6 +767,11 @@ mod tests {
             "/files"
         );
         assert_eq!(sanitize_redirect_target(None), "/files");
+        // Backslash variants are normalized to scheme-relative URLs by the
+        // browser's WHATWG URL parser; they must be rejected.
+        assert_eq!(sanitize_redirect_target(Some("/\\/evil.example")), "/files");
+        assert_eq!(sanitize_redirect_target(Some("/\\evil.example")), "/files");
+        assert_eq!(sanitize_redirect_target(Some("/files\n")), "/files");
     }
 
     #[test]

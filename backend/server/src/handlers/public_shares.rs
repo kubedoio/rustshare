@@ -230,18 +230,11 @@ pub async fn get_share_info(
         })
         .into_response())
     } else if share.password_hash.is_some() {
-        Ok(Json(ShareInfoResponse {
-            resource_id: share.id,
-            resource_type: "protected".to_string(),
-            name: "Protected share".to_string(),
-            permissions: share.permissions,
-            upload_only: share.upload_only,
-            file_size: None,
-            mime_type: None,
-            password_protected: true,
-            expires_at: share.expires_at,
-        })
-        .into_response())
+        // The shared resource no longer resolves. Return the same 404 used for
+        // unknown/revoked tokens instead of a distinguishing "protected"
+        // response: the previous shape leaked the internal share id and let
+        // attackers validate tokens before brute-forcing the password.
+        Err(AppError::not_found("Share not found"))
     } else {
         Err(AppError::internal("Share resource is missing"))
     }

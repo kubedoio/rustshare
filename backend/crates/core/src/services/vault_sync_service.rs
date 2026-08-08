@@ -965,7 +965,7 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
         }
         if path.len() > 4096 {
             let truncated = if path.len() > 100 {
-                format!("{}...", &path[..100])
+                format!("{}...", path.floor_char_boundary(100))
             } else {
                 path.to_string()
             };

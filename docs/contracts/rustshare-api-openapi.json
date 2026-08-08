@@ -14695,7 +14695,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Kept for API compatibility; the server ignores it and always builds the\nemailed invite link from `RUSTSHARE_PUBLIC_URL` (see `create_invite`)."
           },
           "recipient_email": {
             "type": "string"

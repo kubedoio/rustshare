@@ -506,6 +506,11 @@ pub async fn register_device(
             "client_type must be 1-100 characters",
         ));
     }
+    if req.client_version.as_deref().is_some_and(|v| v.len() > 100) {
+        return Err(AppError::bad_request(
+            "client_version must be at most 100 characters",
+        ));
+    }
 
     let device = VaultDevice {
         id: Uuid::new_v4(),
