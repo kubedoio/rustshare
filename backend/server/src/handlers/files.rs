@@ -717,7 +717,7 @@ pub struct MoveFileRequest {
 /// Request body: { "new_name": "document.pdf" }
 #[utoipa::path(
     post,
-    path = "/api/vault-sync/v1/vaults/{vault_id}/rename",
+    path = "/api/v1/files/{id}/rename",
     tag = "Files",
     params(("file_id" = Uuid, Path, description = "File Id")),
     request_body = RenameFileRequest,
