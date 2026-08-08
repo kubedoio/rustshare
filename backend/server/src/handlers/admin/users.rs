@@ -349,6 +349,10 @@ pub async fn create_admin_user(
         return Err(admin_conflict("Email already registered"));
     }
 
+    if req.password.len() > 128 {
+        return Err(admin_bad_request("Password must be at most 128 characters"));
+    }
+
     // Hash password
     let password_hash = PasswordHasher::hash(&req.password)
         .map_err(|_| admin_internal_error("Password hashing failed"))?;

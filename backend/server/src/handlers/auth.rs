@@ -28,7 +28,11 @@ use crate::{
 pub struct LoginRequest {
     #[validate(email(message = "Invalid email address"))]
     pub email: String,
-    #[validate(length(min = 1, message = "Password must not be empty"))]
+    #[validate(length(
+        min = 1,
+        max = 128,
+        message = "Password must not be empty and at most 128 characters"
+    ))]
     pub password: String,
     /// Optional tenant ID. When provided, login is scoped to that tenant.
     /// Existing clients may omit this field for backward compatibility.

@@ -63,6 +63,32 @@ pub async fn validate_client_token(
     Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string()))
 }
 
+/// Verify the user still exists and is not disabled, mirroring the HTTP
+/// extractor's checks. A disabled/deleted user with an unexpired JWT or a live
+/// browser session must not keep receiving realtime events or autosaving.
+async fn ensure_ws_user_active(
+    state: &AppState,
+    user_id: UserId,
+) -> Result<(), (StatusCode, String)> {
+    let row: Option<(bool,)> =
+        sqlx::query_as("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error".to_string(),
+                )
+            })?;
+
+    match row {
+        Some((true,)) => Err((StatusCode::FORBIDDEN, "Account disabled".to_string())),
+        Some((false,)) => Ok(()),
+        None => Err((StatusCode::UNAUTHORIZED, "User not found".to_string())),
+    }
+}
+
 /// Resolve a WebSocket client identity from headers + query parameters.
 /// Tries Bearer token, then ?token=, then session cookie.
 pub async fn resolve_ws_client_identity(
@@ -74,6 +100,10 @@ pub async fn resolve_ws_client_identity(
 
     if let Some(token) = bearer_token_from_headers(headers) {
         match validate_client_token(&token, &state.jwt_manager).await {
+            Ok(identity @ ClientIdentity::User { user_id, .. }) => {
+                ensure_ws_user_active(state, user_id).await?;
+                return Ok(identity);
+            }
             Ok(identity) => return Ok(identity),
             Err(error) => last_error = Some(error),
         }
@@ -81,6 +111,10 @@ pub async fn resolve_ws_client_identity(
 
     if let Some(token) = query.token.as_ref() {
         match validate_client_token(token, &state.jwt_manager).await {
+            Ok(identity @ ClientIdentity::User { user_id, .. }) => {
+                ensure_ws_user_active(state, user_id).await?;
+                return Ok(identity);
+            }
             Ok(identity) => return Ok(identity),
             Err(error) => last_error = Some(error),
         }
@@ -95,6 +129,8 @@ pub async fn resolve_ws_client_identity(
         else {
             return Err((StatusCode::UNAUTHORIZED, "Invalid session".to_string()));
         };
+
+        ensure_ws_user_active(state, session.user_id).await?;
 
         return Ok(ClientIdentity::User {
             user_id: session.user_id,

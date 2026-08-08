@@ -16,6 +16,8 @@ use crate::{
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateInviteRequest {
     pub recipient_email: String,
+    /// Kept for API compatibility; the server ignores it and always builds the
+    /// emailed invite link from `RUSTSHARE_PUBLIC_URL` (see `create_invite`).
     pub origin: Option<String>,
 }
 
@@ -82,10 +84,12 @@ pub async fn create_invite(
     .execute(&state.db_pool)
     .await?;
 
-    let origin = req
-        .origin
-        .unwrap_or_else(|| "http://localhost:8080".to_string());
-    let invite_link = format!("{}/invite/{}", origin.trim_end_matches('/'), token);
+    // The invite link must be built from the server's configured public URL,
+    // never from client-supplied input: the link is emailed to a third party
+    // by the server, so trusting the client origin would let an attacker
+    // point the recipient at a phishing page carrying a valid token.
+    let origin = state.public_base_url.trim_end_matches('/').to_string();
+    let invite_link = format!("{}/invite/{}", origin, token);
 
     let email_service = EmailService::new(state.db_pool.clone(), state.secret_key.clone());
     let result = email_service
@@ -221,7 +225,7 @@ pub async fn accept_invite(
 ) -> Result<Json<AcceptInviteResponse>, AppError> {
     let row =
         sqlx::query_as!(InviteAcceptRow,
-        "SELECT it.id as token_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
+        "SELECT it.id as token_id, it.tenant_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
@@ -250,6 +254,12 @@ pub async fn accept_invite(
         ));
     }
 
+    if req.password.len() > 128 {
+        return Err(AppError::bad_request(
+            "Password must be at most 128 characters",
+        ));
+    }
+
     if row.terms_enabled && !req.terms_accepted.unwrap_or(false) {
         return Err(AppError::bad_request(
             "You must accept the Terms & Conditions",
@@ -273,11 +283,13 @@ pub async fn accept_invite(
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
 
-    sqlx::query!(
+    // Insert the user into the inviter's tenant (from the token row), not a
+    // hardcoded nil tenant, so invitees land in the same tenant as the sender.
+    let insert_result = sqlx::query!(
         "INSERT INTO users (id, tenant_id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, false, 10737418240, $7, $7)",
         user_id,
-        Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap(),
+        row.tenant_id,
         &req.email,
         &req.email,
         &password_hash,
@@ -285,7 +297,20 @@ pub async fn accept_invite(
         now
     )
     .execute(&state.db_pool)
-    .await?;
+    .await;
+
+    // The check-then-insert above is not atomic: two concurrent accepts of the
+    // same token/email can both pass the existence check. The users.email
+    // unique constraint is the real guard — map the resulting violation to 409
+    // instead of letting it surface as a 500.
+    if let Err(sqlx::Error::Database(db_err)) = &insert_result {
+        if db_err.is_unique_violation() {
+            return Err(AppError::conflict(
+                "An account with this email already exists",
+            ));
+        }
+    }
+    insert_result?;
 
     // Seed default Application preferences
     let pref_repo =
@@ -341,6 +366,7 @@ struct InviteTokenRow {
 #[allow(dead_code)]
 struct InviteAcceptRow {
     token_id: Uuid,
+    tenant_id: Uuid,
     recipient_email: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     used_at: Option<chrono::DateTime<chrono::Utc>>,

@@ -145,6 +145,12 @@ pub async fn update_user_password(
         ));
     }
 
+    if req.new_password.len() > 128 {
+        return Err(AppError::bad_request(
+            "New password must be at most 128 characters long",
+        ));
+    }
+
     if req.current_password == req.new_password {
         return Err(AppError::bad_request(
             "New password must be different from the current password",
