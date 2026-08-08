@@ -10,7 +10,7 @@ ALTER TABLE applications
     TO applications_application_id_tenant_id_key;
 
 ALTER TABLE templates
-    RENAME CONSTRAINT templates_module_key_tenant_id_key
+    RENAME CONSTRAINT templates_template_key_tenant_id_key
     TO templates_application_id_tenant_id_key;
 
 ALTER TABLE templates
