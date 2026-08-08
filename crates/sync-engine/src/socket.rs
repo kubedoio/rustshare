@@ -315,7 +315,19 @@ impl SocketServer {
 
                     debug!("Received request: {}", trimmed);
 
+                    // JSON-RPC 2.0: a notification (no "id") must not receive a
+                    // response. Determine this before processing so even error
+                    // responses are suppressed for notifications. Malformed
+                    // JSON that is not a notification still gets a parse error.
+                    let is_notification = serde_json::from_str::<serde_json::Value>(trimmed)
+                        .ok()
+                        .map(|value| value.get("id").is_none())
+                        .unwrap_or(false);
+
                     let response = Self::process_request(trimmed, &handlers);
+                    if is_notification {
+                        continue;
+                    }
                     let response_json = serde_json::to_string(&response)?;
                     let response_line = format!("{}\n", response_json);
 
@@ -327,11 +339,6 @@ impl SocketServer {
                     if let Err(e) = writer.flush().await {
                         error!("Failed to flush response: {}", e);
                         break;
-                    }
-
-                    // If this was a notification (no id), no response is expected
-                    if response.id.is_none() && response.error.is_none() {
-                        continue;
                     }
                 }
                 Err(e) => {

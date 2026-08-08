@@ -515,19 +515,45 @@ where
                 });
             }
 
-            (Some(_local), None, Some(_db)) => {
-                plan.deletes.push(SyncOp::DeleteLocal {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                });
+            (Some(local), None, Some(db)) => {
+                // Remote deleted, local copy remains. If the local file changed
+                // since the last sync, the deletion and the edit conflict:
+                // preserve the edit by re-uploading instead of deleting it.
+                if local.hash != db.local_hash || local.modified_at != db.modified_at {
+                    plan.uploads.push(SyncOp::Upload {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        local_path: local.absolute_path.clone(),
+                        size: local.size,
+                    });
+                } else {
+                    plan.deletes.push(SyncOp::DeleteLocal {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                    });
+                }
             }
 
-            (None, Some(remote), Some(_db)) => {
-                plan.deletes.push(SyncOp::DeleteRemote {
-                    root_id,
-                    relative_path: relative_path.clone(),
-                    remote_file_id: remote.id,
-                });
+            (None, Some(remote), Some(db)) => {
+                // Local deleted, remote copy remains. If the remote file changed
+                // since the last sync, the deletion and the edit conflict:
+                // preserve the remote edit by downloading it instead of
+                // deleting it.
+                if remote.hash != db.remote_hash || remote.modified_at != db.modified_at {
+                    plan.downloads.push(SyncOp::Download {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        remote_file_id: remote.id,
+                        remote_hash: remote.hash.clone(),
+                        size: remote.size,
+                    });
+                } else {
+                    plan.deletes.push(SyncOp::DeleteRemote {
+                        root_id,
+                        relative_path: relative_path.clone(),
+                        remote_file_id: remote.id,
+                    });
+                }
             }
 
             // File only in DB: delete from DB (cleanup)
@@ -823,6 +849,85 @@ mod tests {
             }
             _ => panic!("Expected DeleteRemote operation"),
         }
+    }
+
+    #[test]
+    fn test_local_edit_preserved_when_remote_deleted() {
+        let root_id = Uuid::new_v4();
+
+        // Local file changed since the last sync; the remote copy was deleted.
+        // The edit must be re-uploaded, never deleted.
+        let local = create_local_file("note.md", "new_local_hash", 2000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[local],
+            &[],
+            &[],
+            &[PathBuf::from("note.md")],
+            |path| {
+                if path == &PathBuf::from("note.md") {
+                    Some(DbFileState {
+                        local_hash: "old_hash".to_string(),
+                        remote_hash: "old_hash".to_string(),
+                        modified_at: 1000,
+                        _remote_id: None,
+                        is_directory: false,
+                        sync_status: "synced".to_string(),
+                        tombstone_side: None,
+                        tombstone_at: None,
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.deletes.is_empty(), "edited file must not be deleted");
+        assert_eq!(plan.uploads.len(), 1, "edited file should be re-uploaded");
+    }
+
+    #[test]
+    fn test_remote_edit_preserved_when_local_deleted() {
+        let root_id = Uuid::new_v4();
+        let remote_id = Uuid::new_v4();
+
+        // Remote file changed since the last sync; the local copy was deleted.
+        // The remote edit must be downloaded back, never deleted.
+        let remote = create_remote_file(remote_id, "note.md", "new_remote_hash", 2000);
+
+        let plan = generate_plan_with_db_files(
+            root_id,
+            Path::new("/test"),
+            &[],
+            &[remote],
+            &[],
+            &[PathBuf::from("note.md")],
+            |path| {
+                if path == &PathBuf::from("note.md") {
+                    Some(DbFileState {
+                        local_hash: "old_hash".to_string(),
+                        remote_hash: "old_hash".to_string(),
+                        modified_at: 1000,
+                        _remote_id: Some(remote_id),
+                        is_directory: false,
+                        sync_status: "synced".to_string(),
+                        tombstone_side: None,
+                        tombstone_at: None,
+                    })
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert!(plan.deletes.is_empty(), "edited remote must not be deleted");
+        assert_eq!(
+            plan.downloads.len(),
+            1,
+            "edited remote file should be downloaded back"
+        );
     }
 
     #[test]
