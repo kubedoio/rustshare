@@ -2,7 +2,11 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
-	import { getAdminTemplate, updateTemplate, listAdminModules } from '$lib/api/admin-applications';
+	import {
+		getAdminTemplate,
+		updateTemplate,
+		listAdminApplications
+	} from '$lib/api/admin-applications';
 	import { APPROVED_MODULE_ICONS } from '$lib/applications/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Save, AlertCircle, Plus, Trash2 } from 'lucide-svelte';
@@ -31,7 +35,7 @@
 
 	const modulesQuery = createQuery({
 		queryKey: ['admin-applications'],
-		queryFn: () => listAdminModules()
+		queryFn: () => listAdminApplications()
 	});
 
 	$effect(() => {

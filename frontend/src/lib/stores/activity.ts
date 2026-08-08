@@ -525,19 +525,19 @@ export function getActivityHref(activity: Activity): string | null {
 	if (!activity.artifactId || activity.accessible === false) return null;
 
 	switch (activity.applicationId) {
-		case 'notes':
+		case 'io.elembra.notes':
 			return `/apps/notes/${activity.artifactId}`;
-		case 'meetings':
+		case 'io.elembra.meetings':
 			return `/apps/meetings/${activity.artifactId}`;
-		case 'standups':
+		case 'io.elembra.standups':
 			return `/apps/standups/${activity.artifactId}`;
-		case 'decisions':
+		case 'io.elembra.decisions':
 			return `/apps/decisions/${activity.artifactId}`;
-		case 'brainstorming':
+		case 'io.elembra.brainstorming':
 			return `/apps/brainstorming/${activity.artifactId}`;
-		case 'kanban':
+		case 'io.elembra.kanban':
 			return '/apps/kanban';
-		case 'shares':
+		case 'io.elembra.shares':
 			return `/apps/shares/${activity.artifactId}`;
 		default:
 			// Fallback for file-system artifacts

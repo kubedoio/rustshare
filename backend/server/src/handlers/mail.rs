@@ -20,12 +20,12 @@ const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_MAIL_SEND_RECIPIENTS: usize = 50;
 const MAX_MAIL_SEND_BODY_BYTES: usize = 256 * 1024;
 const MAX_MAIL_SEND_ATTACHMENTS: usize = 20;
-const MAIL_MODULE_KEY: &str = "mail";
+const MAIL_APPLICATION_ID: &str = "io.elembra.mail";
 
 async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
         .application_service
-        .get_application(MAIL_MODULE_KEY, tenant_id)
+        .get_application(MAIL_APPLICATION_ID, tenant_id)
         .await;
     let module = match module {
         Ok(module) => module,

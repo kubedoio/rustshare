@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { getApplicationByKey } from '$lib/applications/registry';
+	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import { currentUser } from '$lib/stores/auth';
 	import ApplicationPageRenderer from './ApplicationPageRenderer.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
@@ -9,7 +9,7 @@
 	import { Info, ShieldAlert, Loader2 } from 'lucide-svelte';
 
 	let key = $derived($page.params.key || '');
-	let module = $derived(getApplicationByKey(key));
+	let module = $derived(getApplicationByRouteSlug(key));
 	let user = $derived($currentUser);
 	let moduleResolved = $derived(module !== undefined);
 

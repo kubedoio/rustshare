@@ -20,13 +20,13 @@ export function formatBytes(bytes: number): string {
 
 export function getArtifactTypeLabel(applicationId: string, itemType: string): string {
 	const map: Record<string, string> = {
-		notes: 'Note',
-		meetings: 'Meeting Note',
-		standups: 'Standup',
-		kanban: 'Kanban Board',
-		decisions: 'Decision',
-		brainstorming: 'Idea Board',
-		shares: 'Share'
+		'io.elembra.notes': 'Note',
+		'io.elembra.meetings': 'Meeting Note',
+		'io.elembra.standups': 'Standup',
+		'io.elembra.kanban': 'Kanban Board',
+		'io.elembra.decisions': 'Decision',
+		'io.elembra.brainstorming': 'Idea Board',
+		'io.elembra.shares': 'Share'
 	};
 	return map[applicationId] ?? (itemType === 'folder' ? 'Folder' : 'File');
 }
@@ -37,29 +37,29 @@ export function getArtifactHref(item: {
 	id: string;
 	name?: string;
 }): string {
-	// Folders always route to the file browser regardless of module context
+	// Folders always route to the file browser regardless of Application context.
 	if (item.item_type === 'folder') {
 		return `/files?folder=${item.id}`;
 	}
-	if (item.applicationId === 'notes' && item.item_type === 'file') {
+	if (item.applicationId === 'io.elembra.notes' && item.item_type === 'file') {
 		return `/apps/notes/${item.id}`;
 	}
-	if (item.applicationId === 'meetings') {
+	if (item.applicationId === 'io.elembra.meetings') {
 		return `/apps/meetings/${item.id}`;
 	}
-	if (item.applicationId === 'standups') {
+	if (item.applicationId === 'io.elembra.standups') {
 		return `/apps/standups/${item.id}`;
 	}
-	if (item.applicationId === 'decisions') {
+	if (item.applicationId === 'io.elembra.decisions') {
 		return `/apps/decisions/${item.id}`;
 	}
-	if (item.applicationId === 'brainstorming') {
+	if (item.applicationId === 'io.elembra.brainstorming') {
 		return `/apps/brainstorming/${item.id}`;
 	}
-	if (item.applicationId === 'kanban') {
+	if (item.applicationId === 'io.elembra.kanban') {
 		return '/apps/kanban';
 	}
-	if (item.applicationId === 'shares') {
+	if (item.applicationId === 'io.elembra.shares') {
 		return `/apps/shares/${item.id}`;
 	}
 	if (item.name?.match(/\.excalidraw$/i)) {

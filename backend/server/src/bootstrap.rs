@@ -12,7 +12,7 @@ use rand::RngExt;
 use rustshare_auth::{JwtManager, PasswordHasher};
 #[allow(deprecated)]
 use rustshare_core::{
-    domain::User,
+    domain::{ApplicationRegistry, User},
     events::EventBroadcaster,
     services::{
         AiService, ChatIntegrationService, ContentIndexer, FileService, FolderService,
@@ -262,6 +262,10 @@ async fn init_services(
     secret_key: Arc<SecretEncryptionKey>,
     config: &AppConfig,
 ) -> Result<Services> {
+    let application_registry =
+        Arc::new(ApplicationRegistry::first_party().map_err(|error| {
+            anyhow::anyhow!("invalid first-party Application manifest: {error}")
+        })?);
     let vault_sync_service = Arc::new(VaultSyncService::new(
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
@@ -391,18 +395,22 @@ async fn init_services(
         },
         async {
             Arc::new(
-                crate::services::application_service::ApplicationService::new(
+                crate::services::application_service::ApplicationService::with_registry(
                     Arc::clone(&folder_service),
                     Arc::clone(&metadata_store),
+                    Arc::clone(&application_registry),
                 ),
             )
         },
         async {
-            Arc::new(crate::services::template_service::TemplateService::new(
-                Arc::clone(&file_service),
-                Arc::clone(&folder_service),
-                Arc::clone(&metadata_store),
-            ))
+            Arc::new(
+                crate::services::template_service::TemplateService::with_registry(
+                    Arc::clone(&file_service),
+                    Arc::clone(&folder_service),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&application_registry),
+                ),
+            )
         },
         async {
             Arc::new(crate::services::kanban_service::KanbanService::new(
@@ -675,7 +683,7 @@ pub async fn init_app() -> Result<AppState> {
             );
         if let Err(e) = pref_repo.seed_defaults(admin_user.id).await {
             tracing::warn!(
-                "Failed to seed default module preferences for admin: {:?}",
+                "Failed to seed default Application preferences for admin: {:?}",
                 e
             );
         }
@@ -705,13 +713,13 @@ pub async fn init_app() -> Result<AppState> {
         .application_service
         .ensure_default_applications(default_tenant_id)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to seed default modules: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to seed default Applications: {}", e))?;
     services
         .template_service
         .ensure_default_templates(default_tenant_id)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default templates: {}", e))?;
-    info!("Default modules and templates seeded");
+    info!("Default Applications and templates seeded");
 
     if seed_oidc_config_from_env(&db_pool, &services.secret_key).await? {
         info!("Seeded initial OIDC config from environment bootstrap values");

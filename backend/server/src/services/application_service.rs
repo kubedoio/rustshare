@@ -1,8 +1,8 @@
-//! ApplicationConfig service for workspace module registry management.
+//! ApplicationConfig service for workspace Application configuration.
 
 use chrono::Utc;
 use rustshare_core::{
-    domain::{ApplicationConfig, UserId},
+    domain::{ApplicationConfig, ApplicationRegistry, ApplicationShellEntry, UserId},
     services::FolderService,
 };
 use rustshare_storage::MetadataStore;
@@ -13,160 +13,6 @@ use uuid::Uuid;
 use crate::services::icon_registry::is_approved_icon_key;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use sqlx::Row;
-
-#[allow(clippy::type_complexity)]
-fn default_applications() -> Vec<(
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    Option<&'static str>,
-    &'static str,
-    bool,
-    serde_json::Value,
-)> {
-    vec![
-        (
-            "notes",
-            "Notes",
-            "Write OKF-compatible, file-backed notes for durable company memory.",
-            "/Workspace/Notes",
-            "okf-note",
-            Some("template_default_okf_note"),
-            "sticky-note",
-            true,
-            json!({
-                "documentFormat": "okf-markdown",
-                "okf": { "enabled": true, "conceptType": "Note", "frontmatterRequired": true, "preserveUnknownFields": true },
-                "sidebar": { "enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes" },
-                "dashboard": { "enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent OKF notes.", "summaryMode": "latest-notes", "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" }, "widget": { "enabled": true, "type": "latest-notes", "title": "Notes", "description": "Recent OKF notes.", "size": "small", "columns": { "desktop": 3, "tablet": 6, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" } } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note" },
-                "page": { "enabled": true, "route": "/apps/notes", "renderer": "okf-note", "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note", "primaryAction": { "label": "New note", "action": "create-from-template", "template": "template_default_okf_note" }, "searchPlaceholder": "Search notes...", "filterLabel": "All notes", "sortLabel": "Modified", "itemSingular": "note", "itemPlural": "notes" }
-            }),
-        ),
-        (
-            "meetings",
-            "Meeting Notes",
-            "Record simple meeting notes, decisions, and follow-up items.",
-            "/Workspace/Meetings",
-            "meetings",
-            Some("template_default_meeting"),
-            "calendar-days",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 40, "icon": "calendar-days", "label": "Meeting Notes" },
-                "dashboard": { "enabled": true, "order": 20, "cardTitle": "Meeting Notes", "cardDescription": "Recent meeting notes.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New meeting note", "action": "create-from-template", "template": "template_default_meeting" } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No meeting notes yet", "emptyStateDescription": "Create a meeting note to capture agenda, discussion, decisions, and follow-up items.", "emptyStateAction": "New meeting note" }
-            }),
-        ),
-        (
-            "standups",
-            "Standup Records",
-            "Capture simple daily updates, blockers, and follow-up items.",
-            "/Workspace/Standups",
-            "standups",
-            Some("template_default_standup"),
-            "clipboard-list",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 50, "icon": "clipboard-list", "label": "Standup Records" },
-                "dashboard": { "enabled": true, "order": 30, "cardTitle": "Standup Records", "cardDescription": "Recent standup records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New standup", "action": "create-from-template", "template": "template_default_standup" } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No standup records yet", "emptyStateDescription": "Create a daily update to capture progress, blockers, and follow-up items.", "emptyStateAction": "New standup" }
-            }),
-        ),
-        (
-            "kanban",
-            "Kanban",
-            "Organize lightweight work boards in your workspace.",
-            "/Workspace/Kanban",
-            "kanban",
-            Some("template_default_kanban"),
-            "columns",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 50, "icon": "columns", "label": "Kanban" },
-                "dashboard": { "enabled": true, "order": 40, "widget": { "enabled": true, "type": "kanban-summary", "title": "Kanban", "description": "Recent boards.", "size": "large", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } } },
-                "page": { "enabled": true, "route": "/apps/kanban", "renderer": "kanban", "layout": "kanban-board", "emptyStateTitle": "No boards yet", "emptyStateDescription": "Create a lightweight board to organize work, ideas, or follow-up items.", "primaryAction": { "label": "New board", "action": "create-from-template", "template": "template_default_kanban" } }
-            }),
-        ),
-        (
-            "decisions",
-            "Decisions",
-            "Record important decisions with context and rationale.",
-            "/Workspace/Decisions",
-            "decisions",
-            Some("template_default_decision"),
-            "git-branch",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 70, "icon": "git-branch", "label": "Decisions" },
-                "dashboard": { "enabled": true, "order": 50, "cardTitle": "Decisions", "cardDescription": "Recent decision records.", "summaryMode": "recent-items", "maxItems": 4, "primaryAction": { "label": "New decision", "action": "create-from-template", "template": "template_default_decision" } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No decisions yet", "emptyStateDescription": "Create a decision record to preserve context, rationale, and follow-up.", "emptyStateAction": "New decision" }
-            }),
-        ),
-        (
-            "brainstorming",
-            "Brainstorming",
-            "Capture sketches, flows, and early ideas as visual workspace boards.",
-            "/Workspace/Brainstorming",
-            "brainstorming",
-            Some("template_blank_brainstorm"),
-            "lightbulb",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 55, "icon": "lightbulb", "label": "Brainstorming" },
-                "dashboard": { "enabled": true, "order": 55, "widget": { "enabled": true, "type": "recent-brainstorm-boards", "title": "Brainstorming", "description": "Recent idea boards.", "size": "medium", "columns": { "desktop": 6, "tablet": 12, "mobile": 12 }, "maxItems": 4, "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } } },
-                "page": { "enabled": true, "route": "/apps/brainstorming", "renderer": "brainstorming", "layout": "gallery-grid", "emptyStateTitle": "No idea boards yet", "emptyStateDescription": "Create a simple visual board to capture sketches, flows, or early thinking.", "primaryAction": { "label": "New idea board", "action": "create-from-template", "template": "template_blank_brainstorm" } }
-            }),
-        ),
-        (
-            "shares",
-            "Shares",
-            "Manage items shared from your workspace.",
-            "/Workspace/Shares",
-            "shares",
-            Some("template_default_share"),
-            "share-2",
-            false,
-            json!({
-                "sidebar": { "enabled": true, "order": 80, "icon": "share-2", "label": "Shares" },
-                "dashboard": { "enabled": true, "order": 60, "cardTitle": "Shares", "cardDescription": "Recent shares.", "summaryMode": "shares-overview", "maxItems": 4, "primaryAction": { "label": "New share", "action": "generic-create" } },
-                "modulePage": { "layout": "list-grid", "emptyStateTitle": "No active shares", "emptyStateDescription": "Share a file or folder when you are ready.", "emptyStateAction": "New share" }
-            }),
-        ),
-        (
-            "mail",
-            "Mail",
-            "Import, archive, and reference email inside RustShare workspaces.",
-            "/Workspace/Mail",
-            "mail-list",
-            None,
-            "mail",
-            false,
-            json!({
-                "sidebar": {
-                    "enabled": true,
-                    "icon": "mail",
-                    "order": 60
-                },
-                "dashboard": {
-                    "enabled": true,
-                    "primaryAction": { "label": "Import mail", "action": "generic-create" }
-                }
-            }),
-        ),
-    ]
-}
-
-fn stable_application_id(key: &str) -> String {
-    match key {
-        "notes" => "io.elembra.notes".to_string(),
-        "mail" => "io.elembra.mail".to_string(),
-        "files" => "io.elembra.files".to_string(),
-        other => format!("io.elembra.{other}"),
-    }
-}
 
 /// Errors that can occur in Application operations.
 #[derive(Debug, thiserror::Error)]
@@ -236,6 +82,7 @@ pub struct ApplicationService {
         FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
+    registry: Arc<ApplicationRegistry>,
 }
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
@@ -280,189 +127,348 @@ impl ApplicationService {
         >,
         metadata_store: Arc<MetadataStore>,
     ) -> Self {
+        Self::with_registry(
+            folder_service,
+            metadata_store,
+            Arc::new(ApplicationRegistry::first_party().expect("first-party manifests are valid")),
+        )
+    }
+
+    pub fn with_registry(
+        folder_service: Arc<
+            FolderService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        metadata_store: Arc<MetadataStore>,
+        registry: Arc<ApplicationRegistry>,
+    ) -> Self {
         Self {
             folder_service,
             metadata_store,
+            registry,
         }
     }
 
-    /// Ensure default predefined modules exist. Does not overwrite existing.
+    pub fn registry(&self) -> &ApplicationRegistry {
+        &self.registry
+    }
+
+    fn manifest(
+        &self,
+        key: &str,
+    ) -> Result<&rustshare_core::domain::ApplicationManifest, ApplicationError> {
+        self.registry
+            .available()
+            .find(|manifest| manifest.metadata.id.0 == key)
+            .ok_or_else(|| ApplicationError::NotFound(key.to_string()))
+    }
+
+    fn application_id_for_route_slug(&self, route_slug: &str) -> Result<String, ApplicationError> {
+        self.registry
+            .available()
+            .find(|manifest| {
+                manifest
+                    .contributions
+                    .navigation
+                    .iter()
+                    .any(|contribution| {
+                        contribution
+                            .route
+                            .as_deref()
+                            .and_then(|route| route.strip_prefix("/apps/"))
+                            == Some(route_slug)
+                    })
+            })
+            .map(|manifest| manifest.metadata.id.0.clone())
+            .ok_or_else(|| ApplicationError::NotFound(route_slug.to_string()))
+    }
+
+    pub async fn list_enabled_application_shell(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<ApplicationShellEntry>, ApplicationError> {
+        let rows = sqlx::query(
+            "SELECT application_id, configuration, enabled, health
+             FROM application_enablements
+             WHERE tenant_id = $1 AND workspace_id = $1 AND enabled = true",
+        )
+        .bind(tenant_id)
+        .fetch_all(self.metadata_store.pool())
+        .await?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            let application_id: String = row.try_get("application_id")?;
+            let Some(manifest) = self
+                .registry
+                .available()
+                .find(|manifest| manifest.metadata.id.0 == application_id)
+            else {
+                continue;
+            };
+            let health = match row.try_get::<String, _>("health")?.as_str() {
+                "degraded" => rustshare_core::domain::ApplicationHealth::Degraded,
+                "unavailable" => rustshare_core::domain::ApplicationHealth::Unavailable,
+                _ => rustshare_core::domain::ApplicationHealth::Healthy,
+            };
+            entries.push(ApplicationShellEntry {
+                manifest: manifest.clone(),
+                enabled: true,
+                configuration: row.try_get("configuration")?,
+                health,
+            });
+        }
+        Ok(entries)
+    }
+
+    pub async fn get_application_shell(
+        &self,
+        route_slug: &str,
+        tenant_id: Uuid,
+    ) -> Result<ApplicationShellEntry, ApplicationError> {
+        self.list_enabled_application_shell(tenant_id)
+            .await?
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .manifest
+                    .contributions
+                    .navigation
+                    .iter()
+                    .any(|contribution| {
+                        contribution
+                            .route
+                            .as_deref()
+                            .and_then(|route| route.strip_prefix("/apps/"))
+                            == Some(route_slug)
+                    })
+            })
+            .ok_or_else(|| ApplicationError::NotFound(route_slug.to_string()))
+    }
+
+    fn application_config_from_manifest(
+        &self,
+        manifest: &rustshare_core::domain::ApplicationManifest,
+        enabled: bool,
+        configuration: serde_json::Value,
+        tenant_id: Uuid,
+    ) -> ApplicationConfig {
+        let key = manifest.metadata.id.0.as_str();
+        let slug = manifest
+            .contributions
+            .navigation
+            .iter()
+            .find_map(|contribution| contribution.route.as_deref())
+            .and_then(|route| route.strip_prefix("/apps/"))
+            .unwrap_or_else(|| key.rsplit('.').next().unwrap_or(key));
+        let route_renderer = manifest
+            .contributions
+            .routes
+            .first()
+            .and_then(|contribution| contribution.renderer.as_deref())
+            .unwrap_or(slug);
+        let mut persisted = configuration.as_object().cloned().unwrap_or_default();
+        let display_name = persisted
+            .get("displayName")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&manifest.metadata.name)
+            .to_string();
+        let description = persisted
+            .get("description")
+            .and_then(|value| value.as_str())
+            .unwrap_or(&manifest.metadata.description)
+            .to_string();
+        let default_template = match key {
+            "io.elembra.notes" => Some("template_default_okf_note"),
+            "io.elembra.meetings" => Some("template_default_meeting"),
+            "io.elembra.standups" => Some("template_default_standup"),
+            "io.elembra.kanban" => Some("template_default_kanban"),
+            "io.elembra.decisions" => Some("template_default_decision"),
+            "io.elembra.brainstorming" => Some("template_blank_brainstorm"),
+            "io.elembra.shares" => Some("template_default_share"),
+            _ => None,
+        };
+        let mut ui_config = persisted.remove("ui").unwrap_or_else(|| {
+            let navigation = manifest.contributions.navigation.first();
+            let dashboard = manifest.contributions.dashboard.first();
+            let route = manifest.contributions.routes.first();
+            json!({
+                "sidebar": {
+                    "enabled": navigation.is_some(),
+                    "order": navigation.and_then(|c| c.order).unwrap_or(99),
+                    "icon": navigation.and_then(|c| c.icon.as_deref()).unwrap_or("layout-dashboard"),
+                    "label": navigation.and_then(|c| c.label.as_deref()).unwrap_or(&display_name)
+                },
+                "dashboard": {
+                    "enabled": dashboard.is_some(),
+                    "order": dashboard.and_then(|c| c.order).unwrap_or(99),
+                    "summaryMode": dashboard.and_then(|c| c.renderer.as_deref()).unwrap_or("application-summary"),
+                    "widget": {
+                        "enabled": dashboard.is_some(),
+                        "type": dashboard.and_then(|c| c.renderer.as_deref()).unwrap_or("application-summary"),
+                        "title": display_name,
+                        "description": description,
+                        "size": "medium",
+                        "columns": { "desktop": 6, "tablet": 12, "mobile": 12 },
+                        "maxItems": 4
+                    }
+                },
+                "page": {
+                    "enabled": route.is_some(),
+                    "route": route.and_then(|c| c.route.as_deref()).unwrap_or("/apps/"),
+                    "renderer": route_renderer,
+                    "layout": "list-grid",
+                    "emptyStateTitle": format!("No {} yet", display_name.to_lowercase()),
+                    "emptyStateDescription": description,
+                    "emptyStateAction": format!("Create {}", display_name.to_lowercase())
+                }
+            })
+        });
+        if key == "io.elembra.notes" {
+            if let Some(ui) = ui_config.as_object_mut() {
+                ui.insert("documentFormat".to_string(), json!("okf-markdown"));
+                ui.insert(
+                    "okf".to_string(),
+                    json!({
+                        "enabled": true,
+                        "conceptType": "Note",
+                        "frontmatterRequired": true,
+                        "preserveUnknownFields": true
+                    }),
+                );
+            }
+        }
+        let root_path = persisted
+            .get("rootPath")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("/Workspace/{}", title_case(slug)));
+        let renderer = persisted
+            .get("renderer")
+            .and_then(|value| value.as_str())
+            .unwrap_or(route_renderer)
+            .to_string();
+        let icon = persisted
+            .get("icon")
+            .and_then(|value| value.as_str())
+            .or_else(|| {
+                manifest
+                    .contributions
+                    .navigation
+                    .first()
+                    .and_then(|c| c.icon.as_deref())
+            })
+            .unwrap_or("layout-dashboard")
+            .to_string();
+        let id = Uuid::new_v4();
+        ApplicationConfig {
+            id,
+            application_id: key.to_string(),
+            display_name,
+            description,
+            enabled,
+            root_path,
+            renderer,
+            default_template: persisted
+                .get("defaultTemplate")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| default_template.map(str::to_string)),
+            icon,
+            schema_version: manifest.api_version.clone(),
+            permissions: persisted.remove("permissions").unwrap_or_else(|| {
+                json!({
+                    "admin_can_configure": true,
+                    "workspace_members_can_use": true,
+                    "allow_public_share": false,
+                    "allow_internal_share": true
+                })
+            }),
+            ai_indexing: persisted.remove("aiIndexing").unwrap_or_else(|| {
+                if key == "io.elembra.notes" {
+                    json!({
+                        "enabled": true,
+                        "source": "okf-frontmatter-and-markdown",
+                        "permission_aware": true
+                    })
+                } else {
+                    json!({"enabled": true})
+                }
+            }),
+            audit: persisted
+                .remove("audit")
+                .unwrap_or_else(|| json!({"enabled": true})),
+            ui_config,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            tenant_id,
+        }
+    }
+
+    /// Ensure every build-time manifest has tenant/workspace state without overwriting intent.
     pub async fn ensure_default_applications(
         &self,
         tenant_id: Uuid,
     ) -> Result<(), ApplicationError> {
-        let defaults = default_applications();
-
-        for (
-            key,
-            display_name,
-            description,
-            root_path,
-            renderer,
-            default_template,
-            icon,
-            enabled,
-            ui_config,
-        ) in defaults
-        {
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM applications WHERE application_id = $1 AND tenant_id = $2)",
+        let manifests = self.registry.available().cloned().collect::<Vec<_>>();
+        for manifest in manifests {
+            let key = manifest.metadata.id.0.as_str();
+            let enabled = key == "io.elembra.notes";
+            let existing = sqlx::query(
+                "SELECT enabled, configuration FROM application_enablements
+                 WHERE tenant_id = $1 AND workspace_id = $1 AND application_id = $2",
             )
-            .bind(key)
             .bind(tenant_id)
-            .fetch_one(self.metadata_store.pool())
+            .bind(key)
+            .fetch_optional(self.metadata_store.pool())
             .await?;
-
-            let ai_indexing = if key == "notes" {
-                json!({
-                    "enabled": true,
-                    "source": "okf-frontmatter-and-markdown",
-                    "permission_aware": true
-                })
+            let (enabled, configuration) = if let Some(row) = existing {
+                (row.try_get("enabled")?, row.try_get("configuration")?)
             } else {
-                json!({"enabled": true})
+                (enabled, serde_json::json!({}))
             };
-
-            if !exists {
-                let module = ApplicationConfig {
-                    id: Uuid::new_v4(),
-                    application_id: key.to_string(),
-                    display_name: display_name.to_string(),
-                    description: description.to_string(),
-                    enabled,
-                    root_path: root_path.to_string(),
-                    renderer: renderer.to_string(),
-                    default_template: default_template.map(str::to_string),
-                    icon: icon.to_string(),
-                    schema_version: "1.0".to_string(),
-                    permissions: json!({
-                        "admin_can_configure": true,
-                        "workspace_members_can_use": true,
-                        "allow_public_share": false,
-                        "allow_internal_share": true
-                    }),
-                    ai_indexing,
-                    audit: json!({"enabled": true}),
-                    ui_config,
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
-                    tenant_id,
-                };
-
-                sqlx::query(
-                    r#"
-                    INSERT INTO applications (
-                        id, application_id, display_name, description, enabled, root_path, renderer,
-                        default_template, icon, schema_version, permissions, ai_indexing, audit,
-                        ui_config, created_at, updated_at, tenant_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-                    "#,
-                )
-                .bind(module.id)
-                .bind(&module.application_id)
-                .bind(&module.display_name)
-                .bind(&module.description)
-                .bind(module.enabled)
-                .bind(&module.root_path)
-                .bind(&module.renderer)
-                .bind(module.default_template.as_deref())
-                .bind(&module.icon)
-                .bind(&module.schema_version)
-                .bind(&module.permissions)
-                .bind(&module.ai_indexing)
-                .bind(&module.audit)
-                .bind(&module.ui_config)
-                .bind(module.created_at)
-                .bind(module.updated_at)
-                .bind(module.tenant_id)
-                .execute(self.metadata_store.pool())
-                .await?;
-            }
+            let config =
+                self.application_config_from_manifest(&manifest, enabled, configuration, tenant_id);
 
             sqlx::query(
                 "INSERT INTO application_enablements
                     (tenant_id, workspace_id, application_id, enabled, configuration)
-                 VALUES ($1, $1, $2, $3, '{}')
+                 VALUES ($1, $1, $2, $3, $4)
                  ON CONFLICT (tenant_id, workspace_id, application_id) DO NOTHING",
             )
             .bind(tenant_id)
-            .bind(stable_application_id(key))
+            .bind(key)
             .bind(enabled)
+            .bind(json!({
+                "displayName": config.display_name,
+                "description": config.description,
+                "rootPath": config.root_path,
+                "renderer": config.renderer,
+                "defaultTemplate": config.default_template,
+                "icon": config.icon,
+                "permissions": config.permissions,
+                "aiIndexing": config.ai_indexing,
+                "audit": config.audit,
+                "ui": config.ui_config
+            }))
             .execute(self.metadata_store.pool())
             .await?;
         }
 
-        // Fix brainstorming icon for existing installations (pen-tool → lightbulb)
-        sqlx::query(
-            r#"
-            UPDATE applications
-            SET icon = 'lightbulb',
-                ui_config = jsonb_set(
-                    COALESCE(ui_config, '{}'),
-                    '{sidebar,icon}',
-                    '"lightbulb"'
-                )
-            WHERE application_id = 'brainstorming'
-              AND tenant_id = $1
-              AND icon = 'pen-tool'
-            "#,
-        )
-        .bind(tenant_id)
-        .execute(self.metadata_store.pool())
-        .await?;
-
-        // Migrate legacy Notes modules to the OKF-native defaults without overwriting
-        // admin UI config changes for other fields.
-        let notes_okf_config = json!({
-            "enabled": true,
-            "conceptType": "Note",
-            "frontmatterRequired": true,
-            "preserveUnknownFields": true
-        });
-        let notes_ai_indexing = json!({
-            "enabled": true,
-            "source": "okf-frontmatter-and-markdown",
-            "permission_aware": true
-        });
-        sqlx::query(
-            r#"
-            UPDATE applications
-            SET renderer = 'okf-note',
-                default_template = 'template_default_okf_note',
-                ai_indexing = $1,
-                ui_config = jsonb_set(
-                    jsonb_set(
-                        COALESCE(ui_config, '{}'),
-                        '{okf}',
-                        $2,
-                        true
-                    ),
-                    '{documentFormat}',
-                    $3,
-                    true
-                )
-            WHERE application_id = 'notes'
-              AND tenant_id = $4
-              AND (renderer = 'notes' OR default_template = 'template_default_note')
-            "#,
-        )
-        .bind(&notes_ai_indexing)
-        .bind(&notes_okf_config)
-        .bind(json!("okf-markdown"))
-        .bind(tenant_id)
-        .execute(self.metadata_store.pool())
-        .await?;
-
         if let Some(admin_id) = self.find_admin_user_for_tenant(tenant_id).await? {
-            let enabled_modules = self
+            let enabled_applications = self
                 .list_applications(tenant_id)
                 .await?
                 .into_iter()
-                .filter(|module| module.enabled)
+                .filter(|application| application.enabled)
                 .collect::<Vec<_>>();
 
-            for module in enabled_modules {
-                self.ensure_application_root_folder(&module, admin_id, tenant_id)
+            for application in enabled_applications {
+                self.ensure_application_root_folder(&application, admin_id, tenant_id)
                     .await?;
             }
         }
@@ -470,212 +476,174 @@ impl ApplicationService {
         Ok(())
     }
 
-    /// Enable a module: mark enabled + ensure root folder exists.
+    /// Enable an Application: mark enabled + ensure root folder exists.
     pub async fn enable_application(
         &self,
         key: &str,
         actor_id: UserId,
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
-        let module = self.get_application(key, tenant_id).await?;
+        let application = self.get_application(key, tenant_id).await?;
 
-        if module.enabled {
+        if application.enabled {
             sqlx::query(
                 "UPDATE application_enablements SET enabled = true, updated_at = now()
                  WHERE tenant_id = $1 AND workspace_id = $1 AND application_id = $2",
             )
             .bind(tenant_id)
-            .bind(stable_application_id(key))
+            .bind(key)
             .execute(self.metadata_store.pool())
             .await?;
-            return Ok(module);
+            return Ok(application);
         }
 
         // Ensure root folder exists
-        self.ensure_application_root_folder(&module, actor_id, tenant_id)
+        self.ensure_application_root_folder(&application, actor_id, tenant_id)
             .await?;
 
-        // Mark enabled
-        sqlx::query(
-            "UPDATE applications SET enabled = true, updated_at = now() WHERE application_id = $1 AND tenant_id = $2",
-        )
-        .bind(key)
-        .bind(tenant_id)
-        .execute(self.metadata_store.pool())
-        .await?;
         sqlx::query(
             "UPDATE application_enablements SET enabled = true, updated_at = now()
              WHERE tenant_id = $1 AND workspace_id = $1 AND application_id = $2",
         )
         .bind(tenant_id)
-        .bind(stable_application_id(key))
+        .bind(key)
         .execute(self.metadata_store.pool())
         .await?;
 
         self.get_application(key, tenant_id).await
     }
 
-    /// Disable a module: mark disabled. Does NOT delete files.
+    /// Disable an Application: mark disabled. Does NOT delete files.
     pub async fn disable_application(
         &self,
         key: &str,
         _actor_id: UserId,
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
-        let module = self.get_application(key, tenant_id).await?;
+        let application = self.get_application(key, tenant_id).await?;
 
-        if !module.enabled {
+        if !application.enabled {
             sqlx::query(
                 "UPDATE application_enablements SET enabled = false, updated_at = now()
                  WHERE tenant_id = $1 AND workspace_id = $1 AND application_id = $2",
             )
             .bind(tenant_id)
-            .bind(stable_application_id(key))
+            .bind(key)
             .execute(self.metadata_store.pool())
             .await?;
-            return Ok(module);
+            return Ok(application);
         }
 
-        sqlx::query(
-            "UPDATE applications SET enabled = false, updated_at = now() WHERE application_id = $1 AND tenant_id = $2",
-        )
-        .bind(key)
-        .bind(tenant_id)
-        .execute(self.metadata_store.pool())
-        .await?;
         sqlx::query(
             "UPDATE application_enablements SET enabled = false, updated_at = now()
              WHERE tenant_id = $1 AND workspace_id = $1 AND application_id = $2",
         )
         .bind(tenant_id)
-        .bind(stable_application_id(key))
+        .bind(key)
         .execute(self.metadata_store.pool())
         .await?;
 
         self.get_application(key, tenant_id).await
     }
 
-    /// List all modules (for admin).
+    /// List all configured Applications for the admin shell.
     pub async fn list_applications(
         &self,
         tenant_id: Uuid,
     ) -> Result<Vec<ApplicationConfig>, ApplicationError> {
-        let rows = sqlx::query_as::<_, ApplicationConfig>(
-            "SELECT * FROM applications WHERE tenant_id = $1 ORDER BY display_name",
+        let rows = sqlx::query(
+            "SELECT application_id, enabled, configuration
+             FROM application_enablements
+             WHERE tenant_id = $1 AND workspace_id = $1",
         )
         .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
-        let modules = rows;
-
-        Ok(modules
-            .into_iter()
-            .map(|m| self.normalize_application(m))
-            .collect())
+        let mut applications = Vec::new();
+        for row in rows {
+            let key: String = row.try_get("application_id")?;
+            let manifest = self.manifest(&key)?;
+            applications.push(self.application_config_from_manifest(
+                manifest,
+                row.try_get("enabled")?,
+                row.try_get("configuration")?,
+                tenant_id,
+            ));
+        }
+        applications.sort_by(|left, right| left.display_name.cmp(&right.display_name));
+        Ok(applications)
     }
 
-    /// List enabled modules (for dashboard).
+    /// List enabled Applications for the Shell.
     pub async fn list_enabled_applications(
         &self,
         tenant_id: Uuid,
         user_id: UserId,
     ) -> Result<Vec<ApplicationConfig>, ApplicationError> {
         let is_admin = self.is_admin_user(user_id, tenant_id).await?;
-        let rows = sqlx::query_as::<_, ApplicationConfig>(
-            "SELECT a.* FROM applications a
-             WHERE a.tenant_id = $1
-               AND EXISTS (
-                   SELECT 1 FROM application_enablements e
-                   WHERE e.tenant_id = a.tenant_id
-                     AND e.workspace_id = a.tenant_id
-                     AND e.application_id = CASE a.application_id
-                         WHEN 'notes' THEN 'io.elembra.notes'
-                         WHEN 'mail' THEN 'io.elembra.mail'
-                         WHEN 'files' THEN 'io.elembra.files'
-                         ELSE 'io.elembra.' || a.application_id
-                     END
-                     AND e.enabled = true
-               )
-             ORDER BY a.display_name",
-        )
-        .bind(tenant_id)
-        .fetch_all(self.metadata_store.pool())
-        .await?;
-
-        let modules = rows;
-
-        Ok(modules
+        Ok(self
+            .list_applications(tenant_id)
+            .await?
             .into_iter()
-            .map(|m| self.normalize_application(m))
-            .filter(|module| user_can_access_application(module, is_admin))
+            .filter(|application| application.enabled)
+            .filter(|application| user_can_access_application(application, is_admin))
             .collect())
     }
 
-    /// Get a single module by key.
+    /// Get a single Application by canonical ID.
     pub async fn get_application(
         &self,
         key: &str,
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
-        let row = sqlx::query_as::<_, ApplicationConfig>(
-            "SELECT * FROM applications WHERE application_id = $1 AND tenant_id = $2",
+        let row = sqlx::query(
+            "SELECT enabled, configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2",
         )
         .bind(key)
         .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
-        let module = row;
-
-        module
-            .map(|m| self.normalize_application(m))
-            .ok_or_else(|| ApplicationError::NotFound(key.to_string()))
+        let manifest = self.manifest(key)?;
+        row.map(|row| {
+            self.application_config_from_manifest(
+                manifest,
+                row.try_get("enabled").unwrap_or(false),
+                row.try_get("configuration").unwrap_or_else(|_| json!({})),
+                tenant_id,
+            )
+        })
+        .ok_or_else(|| ApplicationError::NotFound(key.to_string()))
     }
 
-    /// Resolve a module by key, returning the effective definition with defaults merged.
-    fn normalize_application(&self, module: ApplicationConfig) -> ApplicationConfig {
-        let ui_config = normalize_application_ui_config(
-            &module.application_id,
-            &module.display_name,
-            &module.description,
-            &module.icon,
-            &module.root_path,
-            &module.renderer,
-            module.default_template.as_deref(),
-            Some(module.ui_config),
-        );
-
-        ApplicationConfig {
-            ui_config,
-            ..module
-        }
-    }
-
-    /// Update module config (admin only). Only certain fields are mutable.
+    /// Update Application configuration (admin only). Only certain fields are mutable.
     pub async fn update_application(
         &self,
         key: &str,
         input: UpdateApplicationInput,
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
-        let module = self.get_application(key, tenant_id).await?;
+        let application = self.get_application(key, tenant_id).await?;
 
-        let display_name = input.display_name.unwrap_or(module.display_name);
-        let description = input.description.unwrap_or(module.description);
-        let icon = input.icon.unwrap_or(module.icon);
-        validate_module_icon(&icon)?;
-        let root_path = input.root_path.clone().unwrap_or(module.root_path);
+        let display_name = input.display_name.unwrap_or(application.display_name);
+        let description = input.description.unwrap_or(application.description);
+        let icon = input.icon.unwrap_or(application.icon);
+        validate_application_icon(&icon)?;
+        let root_path = input.root_path.clone().unwrap_or(application.root_path);
         // Only enforce canonical path when explicitly changing root_path.
-        // Existing legacy modules may keep their root path for read compatibility.
+        // Existing roots remain readable while changed roots use the canonical layout.
         if input.root_path.is_some() {
             validate_root_path(&root_path)?;
         }
-        let renderer = input.renderer.unwrap_or(module.renderer);
-        let default_template = input.default_template.unwrap_or(module.default_template);
-        let permissions = input.permissions.unwrap_or(module.permissions);
-        let ai_indexing = input.ai_indexing.unwrap_or(module.ai_indexing);
-        let audit = input.audit.unwrap_or(module.audit);
+        let renderer = input.renderer.unwrap_or(application.renderer);
+        let default_template = input
+            .default_template
+            .unwrap_or(application.default_template);
+        let permissions = input.permissions.unwrap_or(application.permissions);
+        let ai_indexing = input.ai_indexing.unwrap_or(application.ai_indexing);
+        let audit = input.audit.unwrap_or(application.audit);
 
         // Validate UI config fields if provided
         if let Some(ref ui) = input.ui_config {
@@ -714,28 +682,27 @@ impl ApplicationService {
             &root_path,
             &renderer,
             default_template.as_deref(),
-            Some(input.ui_config.unwrap_or(module.ui_config)),
+            Some(input.ui_config.unwrap_or(application.ui_config)),
         );
 
+        let configuration = json!({
+            "displayName": display_name,
+            "description": description,
+            "rootPath": root_path,
+            "renderer": renderer,
+            "defaultTemplate": default_template,
+            "icon": icon,
+            "permissions": permissions,
+            "aiIndexing": ai_indexing,
+            "audit": audit,
+            "ui": ui_config
+        });
         sqlx::query(
-            r#"
-            UPDATE applications
-            SET display_name = $1, description = $2, icon = $3, root_path = $4,
-                renderer = $5, default_template = $6, permissions = $7,
-                ai_indexing = $8, audit = $9, ui_config = $10, updated_at = now()
-            WHERE application_id = $11 AND tenant_id = $12
-            "#,
+            "UPDATE application_enablements
+             SET configuration = $1, updated_at = now()
+             WHERE application_id = $2 AND tenant_id = $3 AND workspace_id = $3",
         )
-        .bind(display_name)
-        .bind(description)
-        .bind(icon)
-        .bind(root_path)
-        .bind(renderer)
-        .bind(default_template)
-        .bind(permissions)
-        .bind(ai_indexing)
-        .bind(audit)
-        .bind(ui_config)
+        .bind(configuration)
         .bind(key)
         .bind(tenant_id)
         .execute(self.metadata_store.pool())
@@ -744,25 +711,26 @@ impl ApplicationService {
         self.get_application(key, tenant_id).await
     }
 
-    /// Get a summary of module contents for dashboard cards.
+    /// Get a summary of Application contents for a declared route slug.
     pub async fn get_application_summary(
         &self,
-        key: &str,
+        route_slug: &str,
         tenant_id: Uuid,
         user_id: UserId,
     ) -> Result<ApplicationSummary, ApplicationError> {
-        let module = self.get_application(key, tenant_id).await?;
+        let application_id = self.application_id_for_route_slug(route_slug)?;
+        let application = self.get_application(&application_id, tenant_id).await?;
         let is_admin = self.is_admin_user(user_id, tenant_id).await?;
-        if !module.enabled {
+        if !application.enabled {
             return Err(ApplicationError::InvalidData(
                 "ApplicationConfig disabled".to_string(),
             ));
         }
-        if !user_can_access_application(&module, is_admin) {
+        if !user_can_access_application(&application, is_admin) {
             return Err(ApplicationError::PermissionDenied);
         }
 
-        let ui_config = module.ui_config.as_object().ok_or_else(|| {
+        let ui_config = application.ui_config.as_object().ok_or_else(|| {
             ApplicationError::InvalidData("ui_config is not an object".to_string())
         })?;
 
@@ -775,7 +743,7 @@ impl ApplicationService {
             .and_then(|d| d.get("maxItems"))
             .and_then(|v| v.as_i64())
             .unwrap_or(4) as i64;
-        let root_path = module.root_path.trim_end_matches('/').to_string();
+        let root_path = application.root_path.trim_end_matches('/').to_string();
         let path_prefix = format!("{root_path}/%");
 
         let row = sqlx::query(
@@ -861,7 +829,7 @@ impl ApplicationService {
 
         let (mode, recent_items, extra) = self
             .build_summary_for_mode(
-                key,
+                &application_id,
                 summary_mode,
                 &root_path,
                 &path_prefix,
@@ -872,7 +840,7 @@ impl ApplicationService {
             .await?;
 
         Ok(ApplicationSummary {
-            application_id: key.to_string(),
+            application_id,
             mode,
             total_items,
             recent_items,
@@ -902,19 +870,19 @@ impl ApplicationService {
             .map_err(|e| ApplicationError::Storage(e.to_string()))
     }
 
-    /// Ensure the module root folder exists under /Workspace.
+    /// Ensure the Application root folder exists under /Workspace.
     async fn ensure_application_root_folder(
         &self,
-        module: &ApplicationConfig,
+        application: &ApplicationConfig,
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), ApplicationError> {
-        let root_name = module
+        let root_name = application
             .root_path
             .trim_start_matches('/')
             .rsplit('/')
             .next()
-            .unwrap_or(&module.root_path)
+            .unwrap_or(&application.root_path)
             .to_string();
 
         if root_name.is_empty() {
@@ -954,19 +922,19 @@ impl ApplicationService {
         user_id: UserId,
     ) -> Result<(String, Vec<SummaryItem>, Option<serde_json::Value>), ApplicationError> {
         match key {
-            "notes" => {
+            "io.elembra.notes" => {
                 let items = self
                     .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
-            "meetings" => {
+            "io.elembra.meetings" => {
                 let items = self
                     .recent_folders_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
-            "standups" => {
+            "io.elembra.standups" => {
                 let items = self
                     .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
@@ -978,7 +946,7 @@ impl ApplicationService {
                     Some(json!({ "todayExists": today_exists })),
                 ))
             }
-            "kanban" => {
+            "io.elembra.kanban" => {
                 let boards = self
                     .direct_child_folders(root_path, max_items, tenant_id, user_id)
                     .await?;
@@ -991,13 +959,13 @@ impl ApplicationService {
                     Some(json!({ "boards": boards })),
                 ))
             }
-            "decisions" => {
+            "io.elembra.decisions" => {
                 let items = self
                     .recent_files_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
                 Ok(("recent-items".to_string(), items, None))
             }
-            "shares" => {
+            "io.elembra.shares" => {
                 let items = self
                     .recent_folders_under_path(path_prefix, max_items, tenant_id, user_id)
                     .await?;
@@ -1023,7 +991,7 @@ impl ApplicationService {
                     Some(json!({ "publicCount": public_count, "internalCount": internal_count })),
                 ))
             }
-            "mail" => {
+            "io.elembra.mail" => {
                 let row = sqlx::query!(
                     "SELECT COUNT(*) as count FROM mail_messages WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL",
                     tenant_id,
@@ -1338,24 +1306,24 @@ impl ApplicationService {
     }
 }
 
-fn user_can_access_application(module: &ApplicationConfig, is_admin: bool) -> bool {
+fn user_can_access_application(application: &ApplicationConfig, is_admin: bool) -> bool {
     if is_admin {
         return true;
     }
 
-    module
+    application
         .permissions
         .get("workspace_members_can_use")
         .and_then(|value| value.as_bool())
         .unwrap_or(true)
 }
 
-fn validate_module_icon(icon: &str) -> Result<(), ApplicationError> {
+fn validate_application_icon(icon: &str) -> Result<(), ApplicationError> {
     if is_approved_icon_key(icon) {
         Ok(())
     } else {
         Err(ApplicationError::InvalidData(format!(
-            "Unapproved module icon: {icon}"
+            "Unapproved Application icon: {icon}"
         )))
     }
 }
@@ -1367,7 +1335,7 @@ fn validate_root_path(root_path: &str) -> Result<(), ApplicationError> {
         )));
     }
 
-    // Enforce canonical /Workspace prefix for new/changed module roots.
+    // Enforce canonical /Workspace prefix for new/changed Application roots.
     // Legacy roots are read-only; new writes must be under /Workspace.
     if !root_path.starts_with("/Workspace/") {
         return Err(ApplicationError::InvalidName(format!(
@@ -1412,12 +1380,6 @@ fn normalize_application_ui_config(
         .get("page")
         .and_then(|value| value.as_object())
         .cloned()
-        .or_else(|| {
-            existing
-                .get("modulePage")
-                .and_then(|value| value.as_object())
-                .cloned()
-        })
         .unwrap_or_default();
 
     let widget_type = widget
@@ -1479,7 +1441,12 @@ fn normalize_application_ui_config(
         .get("route")
         .and_then(|value| value.as_str())
         .map(|value| value.to_string())
-        .unwrap_or_else(|| format!("/apps/{application_id}"));
+        .unwrap_or_else(|| {
+            format!(
+                "/apps/{}",
+                application_id.rsplit('.').next().unwrap_or(application_id)
+            )
+        });
     let page_renderer = page
         .get("renderer")
         .and_then(|value| value.as_str())
@@ -1573,15 +1540,6 @@ fn normalize_application_ui_config(
         }),
     );
     result.insert(
-        "modulePage".to_string(),
-        json!({
-            "layout": page_layout,
-            "emptyStateTitle": page_empty_title,
-            "emptyStateDescription": page_empty_description,
-            "emptyStateAction": page_empty_action
-        }),
-    );
-    result.insert(
         "page".to_string(),
         json!({
             "enabled": page_enabled,
@@ -1603,20 +1561,34 @@ fn normalize_application_ui_config(
     serde_json::Value::Object(result)
 }
 
+fn title_case(value: &str) -> String {
+    value
+        .split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn default_widget_type(application_id: &str) -> &str {
     match application_id {
-        "kanban" => "kanban-summary",
-        "meetings" => "decisions-meetings-summary",
-        "notes" => "latest-notes",
-        "shares" => "active-shares",
-        _ => "generic-module-summary",
+        "io.elembra.kanban" => "kanban-summary",
+        "io.elembra.meetings" => "decisions-meetings-summary",
+        "io.elembra.notes" => "latest-notes",
+        "io.elembra.shares" => "active-shares",
+        _ => "generic-application-summary",
     }
 }
 
 fn default_widget_size(application_id: &str) -> &str {
     match application_id {
-        "kanban" => "large",
-        "meetings" => "medium",
+        "io.elembra.kanban" => "large",
+        "io.elembra.meetings" => "medium",
         _ => "small",
     }
 }
@@ -1640,78 +1612,81 @@ fn default_primary_action(
     default_template: Option<&str>,
 ) -> serde_json::Value {
     let label = match application_id {
-        "kanban" => "New board",
-        "brainstorming" => "New idea board",
-        "meetings" => "New meeting note",
-        "standups" => "New standup",
-        "decisions" => "New decision",
-        "shares" => "New share",
-        "mail" => "Import mail",
+        "io.elembra.kanban" => "New board",
+        "io.elembra.brainstorming" => "New idea board",
+        "io.elembra.meetings" => "New meeting note",
+        "io.elembra.standups" => "New standup",
+        "io.elembra.decisions" => "New decision",
+        "io.elembra.shares" => "New share",
+        "io.elembra.mail" => "Import mail",
         _ => "New note",
     };
 
     json!({
         "label": label,
-        "action": if matches!(application_id, "shares" | "mail") { "generic-create" } else { "create-from-template" },
+        "action": if matches!(application_id, "io.elembra.shares" | "io.elembra.mail") { "generic-create" } else { "create-from-template" },
         "template": default_template
     })
 }
 
 fn default_dashboard_enabled(application_id: &str) -> bool {
-    !matches!(application_id, "decisions" | "standups")
+    !matches!(
+        application_id,
+        "io.elembra.decisions" | "io.elembra.standups"
+    )
 }
 
 fn default_dashboard_order(application_id: &str) -> i64 {
     match application_id {
-        "kanban" => 10,
-        "meetings" => 20,
-        "notes" => 30,
-        "shares" => 40,
-        "standups" => 50,
-        "decisions" => 60,
+        "io.elembra.kanban" => 10,
+        "io.elembra.meetings" => 20,
+        "io.elembra.notes" => 30,
+        "io.elembra.shares" => 40,
+        "io.elembra.standups" => 50,
+        "io.elembra.decisions" => 60,
         _ => 99,
     }
 }
 
 fn default_sidebar_order(application_id: &str) -> i64 {
     match application_id {
-        "notes" => 30,
-        "meetings" => 40,
-        "standups" => 50,
-        "kanban" => 60,
-        "decisions" => 70,
-        "shares" => 80,
+        "io.elembra.notes" => 30,
+        "io.elembra.meetings" => 40,
+        "io.elembra.standups" => 50,
+        "io.elembra.kanban" => 60,
+        "io.elembra.decisions" => 70,
+        "io.elembra.shares" => 80,
         _ => 99,
     }
 }
 
 fn default_page_layout(application_id: &str) -> &str {
     match application_id {
-        "kanban" => "kanban-board",
+        "io.elembra.kanban" => "kanban-board",
         _ => "list-grid",
     }
 }
 
 fn default_empty_state_title(application_id: &str, display_name: &str) -> String {
     match application_id {
-        "notes" => "No notes yet".to_string(),
-        "meetings" => "No meeting notes yet".to_string(),
-        "standups" => "No standups yet".to_string(),
-        "kanban" => "No boards yet".to_string(),
-        "decisions" => "No decisions yet".to_string(),
-        "shares" => "No active shares".to_string(),
+        "io.elembra.notes" => "No notes yet".to_string(),
+        "io.elembra.meetings" => "No meeting notes yet".to_string(),
+        "io.elembra.standups" => "No standups yet".to_string(),
+        "io.elembra.kanban" => "No boards yet".to_string(),
+        "io.elembra.decisions" => "No decisions yet".to_string(),
+        "io.elembra.shares" => "No active shares".to_string(),
         _ => format!("No {} yet", display_name.to_lowercase()),
     }
 }
 
 fn default_empty_state_description(application_id: &str, description: &str) -> String {
     match application_id {
-        "notes" => "Create your first file-backed note.".to_string(),
-        "meetings" => "Create your first meeting note.".to_string(),
-        "standups" => "Create your first standup record.".to_string(),
-        "kanban" => "No boards yet. Create your first file-backed board.".to_string(),
-        "decisions" => "No decisions recorded yet.".to_string(),
-        "shares" => "No active shares.".to_string(),
+        "io.elembra.notes" => "Create your first file-backed note.".to_string(),
+        "io.elembra.meetings" => "Create your first meeting note.".to_string(),
+        "io.elembra.standups" => "Create your first standup record.".to_string(),
+        "io.elembra.kanban" => "No boards yet. Create your first file-backed board.".to_string(),
+        "io.elembra.decisions" => "No decisions recorded yet.".to_string(),
+        "io.elembra.shares" => "No active shares.".to_string(),
         _ => description.to_string(),
     }
 }
@@ -1723,7 +1698,7 @@ mod tests {
     #[test]
     fn test_normalize_application_ui_config_contract() {
         let ui = normalize_application_ui_config(
-            "notes",
+            "io.elembra.notes",
             "Notes",
             "Write OKF-compatible, file-backed notes for durable company memory.",
             "sticky-note",
@@ -1735,7 +1710,6 @@ mod tests {
                 "okf": {"enabled": true, "conceptType": "Note", "frontmatterRequired": true, "preserveUnknownFields": true},
                 "sidebar": {"enabled": true, "order": 30, "icon": "sticky-note", "label": "Notes"},
                 "dashboard": {"enabled": true, "order": 10, "cardTitle": "Notes", "cardDescription": "Recent OKF notes.", "summaryMode": "latest-notes", "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}, "widget": {"enabled": true, "type": "latest-notes", "title": "Notes", "description": "Recent OKF notes.", "size": "small", "columns": {"desktop": 3, "tablet": 6, "mobile": 12}, "maxItems": 4, "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}}},
-                "modulePage": {"layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note"},
                 "page": {"enabled": true, "route": "/apps/notes", "renderer": "okf-note", "layout": "list-grid", "emptyStateTitle": "No notes yet", "emptyStateDescription": "Create your first OKF note.", "emptyStateAction": "New note", "primaryAction": {"label": "New note", "action": "create-from-template", "template": "template_default_okf_note"}, "searchPlaceholder": "Search notes...", "filterLabel": "All notes", "sortLabel": "Modified", "itemSingular": "note", "itemPlural": "notes"}
             })),
         );
@@ -1744,11 +1718,6 @@ mod tests {
 
         // Canonical page key must exist
         assert!(ui_obj.contains_key("page"), "canonical 'page' key missing");
-        // Legacy alias must exist for backward compatibility
-        assert!(
-            ui_obj.contains_key("modulePage"),
-            "legacy 'modulePage' alias missing"
-        );
         // OKF metadata must be preserved
         assert!(ui_obj.contains_key("okf"), "okf config missing");
         assert_eq!(
@@ -1791,7 +1760,7 @@ mod tests {
     #[test]
     fn test_normalize_application_ui_config_defaults_match_contract() {
         let ui = normalize_application_ui_config(
-            "kanban",
+            "io.elembra.kanban",
             "Kanban",
             "Organize work.",
             "columns",
@@ -1821,123 +1790,25 @@ mod tests {
     }
 
     #[test]
-    fn notes_default_module_is_okf_native() {
-        let defaults = default_applications();
-        let notes = defaults
-            .iter()
-            .find(|(k, _, _, _, _, _, _, _, _)| *k == "notes")
-            .expect("notes module must exist");
-        let (
-            _,
-            display_name,
-            description,
-            root_path,
-            renderer,
-            default_template,
-            icon,
-            enabled,
-            ui_config,
-        ) = notes;
-
-        assert_eq!(*display_name, "Notes");
-        assert_eq!(
-            *description,
-            "Write OKF-compatible, file-backed notes for durable company memory."
-        );
-        assert_eq!(*root_path, "/Workspace/Notes");
-        assert_eq!(*renderer, "okf-note");
-        assert_eq!(*default_template, Some("template_default_okf_note"));
-        assert_eq!(*icon, "sticky-note");
-        assert!(*enabled);
-
-        let ui = ui_config.as_object().expect("ui_config must be an object");
-        assert_eq!(
-            ui.get("documentFormat").unwrap().as_str().unwrap(),
-            "okf-markdown"
-        );
-        let okf = ui.get("okf").unwrap().as_object().unwrap();
-        assert!(okf.get("enabled").unwrap().as_bool().unwrap());
-        assert_eq!(okf.get("conceptType").unwrap().as_str().unwrap(), "Note");
-        assert!(okf.get("frontmatterRequired").unwrap().as_bool().unwrap());
-        assert!(okf.get("preserveUnknownFields").unwrap().as_bool().unwrap());
-    }
-
-    #[test]
-    fn non_notes_default_applications_are_unaffected_by_okf_change() {
-        let defaults = default_applications();
-        for (key, _, _, _, renderer, default_template, _, _, _) in &defaults {
-            if *key == "notes" {
-                continue;
-            }
-            assert_ne!(
-                *renderer, "okf-note",
-                "module {} should not use the notes renderer",
-                key
-            );
-            assert_ne!(
-                *default_template,
-                Some("template_default_okf_note"),
-                "module {} should not use the notes default template",
-                key
-            );
-        }
-    }
-
-    #[test]
-    fn mail_default_module_uses_registered_template_and_icon() {
-        let defaults = default_applications();
-        let mail = defaults
-            .iter()
-            .find(|(key, _, _, _, _, _, _, _, _)| *key == "mail")
-            .expect("mail module must exist");
-        let (_, _, _, _, renderer, default_template, icon, enabled, ui_config) = mail;
-
-        assert_eq!(*renderer, "mail-list");
-        assert!(default_template.is_none());
-        assert_eq!(*icon, "mail");
-        assert!(validate_module_icon(icon).is_ok());
-        assert!(!enabled);
-
-        let sidebar_icon = ui_config
-            .get("sidebar")
-            .and_then(|sidebar| sidebar.get("icon"))
-            .and_then(|icon| icon.as_str())
-            .expect("mail sidebar icon");
-        assert_eq!(sidebar_icon, "mail");
-
-        let primary_action = ui_config
-            .get("dashboard")
-            .and_then(|dashboard| dashboard.get("primaryAction"))
-            .expect("mail primary action");
-        assert_eq!(
-            primary_action
-                .get("action")
-                .and_then(|value| value.as_str()),
-            Some("generic-create")
-        );
-        assert!(primary_action.get("template").is_none());
-    }
-
-    #[test]
-    fn test_module_error_display() {
+    fn test_application_error_display() {
         let err = ApplicationError::NotFound("notes".to_string());
         assert_eq!(err.to_string(), "Application not found: notes");
     }
 
     #[test]
-    fn test_module_error_display_already_exists() {
+    fn test_application_error_display_already_exists() {
         let err = ApplicationError::AlreadyExists("meetings".to_string());
         assert_eq!(err.to_string(), "Application already exists: meetings");
     }
 
     #[test]
-    fn test_module_error_display_permission_denied() {
+    fn test_application_error_display_permission_denied() {
         let err = ApplicationError::PermissionDenied;
         assert_eq!(err.to_string(), "Permission denied");
     }
 
     #[test]
-    fn test_module_error_display_database() {
+    fn test_application_error_display_database() {
         let err = ApplicationError::Database("connection failed".to_string());
         assert_eq!(err.to_string(), "Database error: connection failed");
     }
@@ -1962,9 +1833,9 @@ mod tests {
     }
 
     #[test]
-    fn test_module_summary_serialize() {
+    fn test_application_summary_serialize() {
         let summary = ApplicationSummary {
-            application_id: "notes".to_string(),
+            application_id: "io.elembra.notes".to_string(),
             mode: "recent-items".to_string(),
             total_items: 5,
             recent_items: vec![SummaryItem {
@@ -1995,46 +1866,16 @@ mod tests {
     }
 
     #[test]
-    fn accepts_approved_module_icons() {
-        assert!(validate_module_icon("sticky-note").is_ok());
-        assert!(validate_module_icon("calendar-days").is_ok());
+    fn accepts_approved_application_icons() {
+        assert!(validate_application_icon("sticky-note").is_ok());
+        assert!(validate_application_icon("calendar-days").is_ok());
     }
 
     #[test]
-    fn rejects_unapproved_module_icons() {
-        assert!(validate_module_icon("users").is_err());
-        assert!(validate_module_icon("invalid-random-icon").is_err());
-        assert!(validate_module_icon("script<alert>1</alert>").is_err());
-    }
-
-    #[test]
-    fn default_module_definitions_use_canonical_workspace_root_paths() {
-        // This test protects the legacy module root policy at the registry level:
-        // all predefined applications must use /Workspace/<Application> so that new writes
-        // go to the canonical path.
-        let expected_roots = [
-            ("notes", "/Workspace/Notes"),
-            ("meetings", "/Workspace/Meetings"),
-            ("standups", "/Workspace/Standups"),
-            ("kanban", "/Workspace/Kanban"),
-            ("decisions", "/Workspace/Decisions"),
-            ("brainstorming", "/Workspace/Brainstorming"),
-            ("shares", "/Workspace/Shares"),
-        ];
-
-        let defaults = default_applications();
-        for (key, expected) in expected_roots {
-            let found = defaults
-                .iter()
-                .find(|(k, _, _, _, _, _, _, _, _)| *k == key);
-            assert!(found.is_some(), "default module {} must exist", key);
-            let (_, _, _, root_path, _, _, _, _, _) = found.unwrap();
-            assert_eq!(
-                *root_path, expected,
-                "module {} must use canonical workspace root",
-                key
-            );
-        }
+    fn rejects_unapproved_application_icons() {
+        assert!(validate_application_icon("users").is_err());
+        assert!(validate_application_icon("invalid-random-icon").is_err());
+        assert!(validate_application_icon("script<alert>1</alert>").is_err());
     }
 
     #[test]
@@ -2053,7 +1894,7 @@ mod tests {
 
     #[test]
     fn validate_root_path_rejects_legacy_roots() {
-        // Legacy roots are read-only; new/changed module roots must be canonical.
+        // Existing roots are read-only; new/changed Application roots must be canonical.
         assert!(validate_root_path("/Notes").is_err());
         assert!(validate_root_path("/Meetings").is_err());
         assert!(validate_root_path("/Standups").is_err());

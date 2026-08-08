@@ -1,9 +1,9 @@
-//! Template service for creating and managing module templates.
+//! Template service for creating and managing Application templates.
 
 use bytes::Bytes;
 use chrono::Utc;
 use rustshare_core::{
-    domain::{CreatedObject, Template, TemplateDefaultFile, UserId},
+    domain::{ApplicationRegistry, CreatedObject, Template, TemplateDefaultFile, UserId},
     services::{FileService, FolderService},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
@@ -136,6 +136,7 @@ pub struct TemplateService {
         FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
+    application_registry: Arc<ApplicationRegistry>,
 }
 
 impl TemplateService {
@@ -157,20 +158,48 @@ impl TemplateService {
         >,
         metadata_store: Arc<MetadataStore>,
     ) -> Self {
+        Self::with_registry(
+            file_service,
+            folder_service,
+            metadata_store,
+            Arc::new(ApplicationRegistry::first_party().expect("first-party manifests are valid")),
+        )
+    }
+
+    pub fn with_registry(
+        file_service: Arc<
+            FileService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                ObjectStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        folder_service: Arc<
+            FolderService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        metadata_store: Arc<MetadataStore>,
+        application_registry: Arc<ApplicationRegistry>,
+    ) -> Self {
         Self {
             file_service,
             folder_service,
             metadata_store,
+            application_registry,
         }
     }
 
-    /// Ensure default templates exist for predefined modules. Idempotent.
+    /// Ensure default templates exist for first-party Applications. Idempotent.
     pub async fn ensure_default_templates(&self, tenant_id: Uuid) -> Result<(), TemplateError> {
         let defaults = vec![
             (
                 "template_default_okf_note",
                 "Default OKF Note",
-                "notes",
+                "io.elembra.notes",
                 "1.0",
                 "Default OKF-native template for notes.",
                 vec![
@@ -229,7 +258,7 @@ rustshare:
             (
                 "template_default_meeting",
                 "Default Meeting Note",
-                "meetings",
+                "io.elembra.meetings",
                 "1.0",
                 "Default template for meeting notes with agenda, attendees, notes, decisions, and action items.",
                 vec!["attachments".to_string()],
@@ -268,7 +297,7 @@ rustshare:
             (
                 "template_default_standup",
                 "Default Standup Record",
-                "standups",
+                "io.elembra.standups",
                 "1.0",
                 "Default template for standup records.",
                 vec![],
@@ -300,7 +329,7 @@ rustshare:
             (
                 "template_default_kanban",
                 "Default Kanban Board",
-                "kanban",
+                "io.elembra.kanban",
                 "1.0",
                 "Creates a standard file-backed Kanban board folder structure.",
                 vec![
@@ -335,7 +364,7 @@ rustshare:
             (
                 "template_default_decision",
                 "Default Decision Record",
-                "decisions",
+                "io.elembra.decisions",
                 "1.0",
                 "Default template for decision records.",
                 vec![],
@@ -369,7 +398,7 @@ rustshare:
             (
                 "template_default_share",
                 "Default Share Package",
-                "shares",
+                "io.elembra.shares",
                 "1.0",
                 "Default template for share packages.",
                 vec!["files".to_string()],
@@ -381,7 +410,7 @@ rustshare:
                     },
                     TemplateDefaultFile {
                         path: ".rustshare-share.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.share","application_id":"shares"}"#.to_string()),
+                        content: Some(r#"{"type":"rustshare.share","application_id":"io.elembra.shares"}"#.to_string()),
                         content_type: Some("application/json".to_string()),
                     },
                 ],
@@ -391,7 +420,7 @@ rustshare:
             (
                 "template_blank_brainstorm",
                 "Blank Board",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A blank visual brainstorming board.",
                 Vec::<String>::new(),
@@ -418,7 +447,7 @@ rustshare:
             (
                 "template_decision_making_brainstorm",
                 "Decision Making & Brainstorming",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A structured board for brainstorming, synthesis, decision making, actions, and learning.",
                 Vec::<String>::new(),
@@ -445,7 +474,7 @@ rustshare:
             (
                 "template_meeting_whiteboard",
                 "Meeting Whiteboard",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A whiteboard template for meeting notes, decisions, and action items.",
                 Vec::<String>::new(),
@@ -665,16 +694,13 @@ rustshare:
             return Err(TemplateError::AlreadyExists(request.template_key));
         }
 
-        // Validate module exists
-        let module_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM applications WHERE application_id = $1 AND tenant_id = $2) as exists",
-        )
-        .bind(&request.application_id)
-        .bind(tenant_id)
-        .fetch_one(self.metadata_store.pool())
-        .await?;
-
-        if !module_exists {
+        if self
+            .application_registry
+            .manifest(&rustshare_core::domain::ApplicationId::new(
+                &request.application_id,
+            ))
+            .is_none()
+        {
             return Err(TemplateError::ApplicationNotFound(request.application_id));
         }
 
@@ -795,7 +821,7 @@ rustshare:
         Ok(templates)
     }
 
-    /// List templates for a specific module.
+    /// List templates for a specific Application.
     pub async fn list_templates_by_application(
         &self,
         application_id: &str,
@@ -1011,27 +1037,36 @@ rustshare:
             return Err(TemplateError::NotFound(template_key.to_string()));
         }
 
-        let module_row = sqlx::query(
-            "SELECT enabled, root_path, permissions FROM applications WHERE application_id = $1 AND tenant_id = $2",
+        let enablement_row = sqlx::query(
+            "SELECT enabled, configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2",
         )
         .bind(&template.application_id)
         .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
-        let Some(module_row) = module_row else {
+        let Some(enablement_row) = enablement_row else {
             return Err(TemplateError::ApplicationNotFound(template.application_id));
         };
-        let module_enabled: bool = module_row.try_get("enabled")?;
-        let root_path: String = module_row.try_get("root_path")?;
-        let permissions: serde_json::Value = module_row.try_get("permissions")?;
+        let application_enabled: bool = enablement_row.try_get("enabled")?;
+        let configuration: serde_json::Value = enablement_row.try_get("configuration")?;
+        let root_path = configuration
+            .get("rootPath")
+            .and_then(|value| value.as_str())
+            .unwrap_or("/Workspace")
+            .to_string();
+        let permissions = configuration
+            .get("permissions")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
-        if !module_enabled {
+        if !application_enabled {
             return Err(TemplateError::ApplicationNotFound(template.application_id));
         }
 
         let is_admin = self.is_admin_user(owner_id, tenant_id).await?;
-        if !user_can_access_template_module(&permissions, is_admin) {
+        if !user_can_access_template_application(&permissions, is_admin) {
             return Err(TemplateError::PermissionDenied);
         }
 
@@ -1040,7 +1075,7 @@ rustshare:
             Some(id)
         } else {
             // Resolve workspace-style paths like /Workspace/Notes:
-            // ensure Workspace exists at root, then find/create module folder under it
+            // ensure Workspace exists at root, then find/create the Application folder under it
             let segments: Vec<&str> = root_path.trim_start_matches('/').split('/').collect();
 
             let ws_folder = {
@@ -1059,10 +1094,10 @@ rustshare:
                 }
             };
 
-            let module_name = segments.last().copied().unwrap_or("");
-            if module_name.is_empty() {
+            let application_name = segments.last().copied().unwrap_or("");
+            if application_name.is_empty() {
                 return Err(TemplateError::InvalidData(
-                    "Invalid module root path".to_string(),
+                    "Invalid Application root path".to_string(),
                 ));
             }
 
@@ -1072,13 +1107,13 @@ rustshare:
                 .await
                 .map_err(|e| TemplateError::Database(e.to_string()))?;
 
-            if let Some(existing) = ws_children.into_iter().find(|f| f.name == module_name) {
+            if let Some(existing) = ws_children.into_iter().find(|f| f.name == application_name) {
                 Some(existing.id)
             } else {
                 let folder = self
                     .folder_service
                     .create_folder_or_get(
-                        module_name.to_string(),
+                        application_name.to_string(),
                         Some(ws_folder.id),
                         owner_id,
                         tenant_id,
@@ -1201,7 +1236,7 @@ rustshare:
             let content =
                 render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
             // Replace OKF note placeholders first so they don't collide with the
-            // generic {{id}} placeholder used by other module templates.
+            // generic {{id}} placeholder used by other Application templates.
             let content = content
                 .replace("{{okf_id}}", &object_okf_id.to_string())
                 .replace("{{workspace_id}}", &tenant_id.to_string())
@@ -1336,7 +1371,7 @@ rustshare:
     }
 }
 
-fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bool) -> bool {
+fn user_can_access_template_application(permissions: &serde_json::Value, is_admin: bool) -> bool {
     if is_admin {
         return true;
     }
@@ -1349,7 +1384,7 @@ fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bo
 
 fn resolve_creation_mode(application_id: &str) -> TemplateCreationMode {
     match application_id {
-        "decisions" => TemplateCreationMode::SingleFile,
+        "io.elembra.decisions" => TemplateCreationMode::SingleFile,
         _ => TemplateCreationMode::Folder,
     }
 }
@@ -1469,7 +1504,7 @@ fn validate_template_application_config(
     application_id: &str,
     application_config: &serde_json::Value,
 ) -> Result<(), TemplateError> {
-    if application_id != "kanban" {
+    if application_id != "io.elembra.kanban" {
         return Ok(());
     }
 
@@ -1614,7 +1649,7 @@ mod tests {
     }
 
     #[test]
-    fn test_template_error_display_module_not_found() {
+    fn test_template_error_display_application_not_found() {
         let err = TemplateError::ApplicationNotFound("unknown".to_string());
         assert_eq!(
             err.to_string(),
@@ -1660,13 +1695,16 @@ mod tests {
 
     #[test]
     fn notes_templates_use_folder_creation_mode() {
-        assert_eq!(resolve_creation_mode("notes"), TemplateCreationMode::Folder);
+        assert_eq!(
+            resolve_creation_mode("io.elembra.notes"),
+            TemplateCreationMode::Folder
+        );
     }
 
     #[test]
     fn standup_templates_use_folder_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("standups"),
+            resolve_creation_mode("io.elembra.standups"),
             TemplateCreationMode::Folder
         );
     }
@@ -1674,7 +1712,7 @@ mod tests {
     #[test]
     fn decision_templates_use_single_file_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("decisions"),
+            resolve_creation_mode("io.elembra.decisions"),
             TemplateCreationMode::SingleFile
         );
     }
@@ -1682,7 +1720,7 @@ mod tests {
     #[test]
     fn meeting_templates_use_folder_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("meetings"),
+            resolve_creation_mode("io.elembra.meetings"),
             TemplateCreationMode::Folder
         );
     }
@@ -1719,7 +1757,7 @@ mod tests {
         // Mirror the default entry used by ensure_default_templates.
         let expected_key = "template_default_okf_note";
         let expected_name = "Default OKF Note";
-        let expected_module = "notes";
+        let expected_application = "notes";
         let expected_renderer = "okf-note";
         let expected_metadata_schema = json!({
             "type": "rustshare.note",
@@ -1736,7 +1774,7 @@ mod tests {
 
         assert_eq!(expected_key, "template_default_okf_note");
         assert_eq!(expected_name, "Default OKF Note");
-        assert_eq!(expected_module, "notes");
+        assert_eq!(expected_application, "notes");
         assert_eq!(expected_renderer, "okf-note");
         assert_eq!(
             expected_metadata_schema.get("type").unwrap(),
@@ -1803,7 +1841,7 @@ rustshare:
 
     #[test]
     fn non_notes_default_templates_keep_legacy_renderers() {
-        // The OKF-native change must not leak into other module templates.
+        // The OKF-native change must not leak into other Application templates.
         let non_notes_renderers = [
             "meetings",
             "standups",

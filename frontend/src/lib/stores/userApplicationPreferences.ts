@@ -32,7 +32,7 @@ function createUserApplicationPreferenceStore() {
 				}
 				set({ preferences: map, loaded: true, loading: false });
 			} catch (err) {
-				console.error('Failed to load user module preferences:', err);
+				console.error('Failed to load user Application preferences:', err);
 				set({ preferences: {}, loaded: true, loading: false });
 			}
 		},

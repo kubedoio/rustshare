@@ -12,7 +12,7 @@ use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_
 use crate::services::application_service::UpdateApplicationInput;
 use crate::{
     handlers::{AdminUser, AppError},
-    state::AppState,
+    state::ApplicationState,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ pub struct UpdateApplicationRequest {
 )]
 pub async fn list_applications(
     AdminUser { user_id: _ }: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
 ) -> Result<Json<ApplicationListResponse>, AppError> {
     let applications = state
         .application_service
@@ -75,7 +75,7 @@ pub async fn list_applications(
 )]
 pub async fn get_application(
     AdminUser { user_id: _ }: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
@@ -101,7 +101,7 @@ pub async fn get_application(
 )]
 pub async fn enable_application(
     AdminUser { user_id }: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
@@ -137,7 +137,7 @@ pub async fn enable_application(
 )]
 pub async fn disable_application(
     AdminUser { user_id }: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
@@ -173,7 +173,7 @@ pub async fn disable_application(
 )]
 pub async fn update_application(
     AdminUser { user_id }: AdminUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateApplicationRequest>,
 ) -> Result<Json<ApplicationConfig>, AppError> {

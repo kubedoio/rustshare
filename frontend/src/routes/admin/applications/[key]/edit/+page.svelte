@@ -2,10 +2,14 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
-	import { getAdminModule, updateModule, listAdminTemplates } from '$lib/api/admin-applications';
+	import {
+		getAdminApplication,
+		updateApplication,
+		listAdminTemplates
+	} from '$lib/api/admin-applications';
 	import { APPROVED_MODULE_ICONS } from '$lib/applications/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
-	import { refreshModules } from '$lib/applications/registry';
+	import { refreshApplications } from '$lib/applications/registry';
 	import { ArrowLeft, Save, AlertCircle } from 'lucide-svelte';
 
 	const queryClient = useQueryClient();
@@ -30,7 +34,7 @@
 	let dashboardCardDescription = $state('');
 	let dashboardSummaryMode = $state('recent-items');
 	let dashboardWidgetEnabled = $state(true);
-	let dashboardWidgetType = $state('generic-module-summary');
+	let dashboardWidgetType = $state('generic-application-summary');
 	let dashboardWidgetSize: 'small' | 'medium' | 'large' = $state('small');
 	let dashboardColumnsDesktop = $state(3);
 	let dashboardColumnsTablet = $state(6);
@@ -42,10 +46,10 @@
 	let pageEnabled = $state(true);
 	let pageRoute = $state('');
 	let pageRenderer = $state('');
-	let modulePageLayout = $state('list-grid');
-	let modulePageEmptyStateTitle = $state('');
-	let modulePageEmptyStateDescription = $state('');
-	let modulePageEmptyStateAction = $state('');
+	let applicationPageLayout = $state('list-grid');
+	let applicationPageEmptyStateTitle = $state('');
+	let applicationPageEmptyStateDescription = $state('');
+	let applicationPageEmptyStateAction = $state('');
 	let pageSearchPlaceholder = $state('');
 	let pageFilterLabel = $state('');
 	let pageSortLabel = $state('');
@@ -54,9 +58,9 @@
 
 	let error = $state('');
 
-	const moduleQuery = createQuery({
-		queryKey: ['admin-module', key],
-		queryFn: () => getAdminModule(key)
+	const applicationQuery = createQuery({
+		queryKey: ['admin-application', key],
+		queryFn: () => getAdminApplication(key)
 	});
 
 	const templatesQuery = createQuery({
@@ -64,13 +68,13 @@
 		queryFn: () => listAdminTemplates()
 	});
 
-	let moduleTemplates = $derived(
+	let applicationTemplates = $derived(
 		($templatesQuery.data ?? []).filter((t) => t.application_id === key)
 	);
 
 	$effect(() => {
-		if ($moduleQuery.data) {
-			const m = $moduleQuery.data;
+		if ($applicationQuery.data) {
+			const m = $applicationQuery.data;
 			displayName = m.display_name;
 			description = m.description ?? '';
 			icon = m.icon ?? 'file-text';
@@ -103,12 +107,10 @@
 			pageEnabled = ui.page?.enabled ?? true;
 			pageRoute = ui.page?.route ?? `/apps/${key}`;
 			pageRenderer = ui.page?.renderer ?? renderer ?? key;
-			modulePageLayout = ui.page?.layout ?? ui.modulePage?.layout ?? 'list-grid';
-			modulePageEmptyStateTitle = ui.page?.emptyStateTitle ?? ui.modulePage?.emptyStateTitle ?? '';
-			modulePageEmptyStateDescription =
-				ui.page?.emptyStateDescription ?? ui.modulePage?.emptyStateDescription ?? '';
-			modulePageEmptyStateAction =
-				ui.page?.emptyStateAction ?? ui.modulePage?.emptyStateAction ?? '';
+			applicationPageLayout = ui.page?.layout ?? 'list-grid';
+			applicationPageEmptyStateTitle = ui.page?.emptyStateTitle ?? '';
+			applicationPageEmptyStateDescription = ui.page?.emptyStateDescription ?? '';
+			applicationPageEmptyStateAction = ui.page?.emptyStateAction ?? '';
 			pageSearchPlaceholder =
 				ui.page?.searchPlaceholder ?? `Search ${displayName.toLowerCase()}...`;
 			pageFilterLabel = ui.page?.filterLabel ?? `All ${displayName.toLowerCase()}`;
@@ -174,19 +176,13 @@
 					itemSingular: string;
 					itemPlural: string;
 				};
-				modulePage: {
-					layout: string;
-					emptyStateTitle: string;
-					emptyStateDescription: string;
-					emptyStateAction: string;
-				};
 			};
-		}) => updateModule(key, payload),
+		}) => updateApplication(key, payload),
 		onSuccess: () => {
-			refreshModules();
+			refreshApplications();
 			queryClient.invalidateQueries({ queryKey: ['admin-applications'] });
-			queryClient.invalidateQueries({ queryKey: ['admin-module', key] });
-			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+			queryClient.invalidateQueries({ queryKey: ['admin-application', key] });
+			queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 			toastStore.show('Application updated', 'success');
 			goto('/admin/applications');
 		},
@@ -237,13 +233,13 @@
 						},
 						maxItems: Number(dashboardMaxItems) || 4,
 						primaryAction: {
-							label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+							label: primaryActionLabel.trim() || applicationPageEmptyStateAction.trim() || 'Open',
 							action: primaryActionAction.trim() || 'create-from-template',
 							...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
 						}
 					},
 					primaryAction: {
-						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+						label: primaryActionLabel.trim() || applicationPageEmptyStateAction.trim() || 'Open',
 						action: primaryActionAction.trim() || 'create-from-template',
 						...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
 					}
@@ -252,14 +248,14 @@
 					enabled: pageEnabled,
 					route: pageRoute.trim() || `/apps/${key}`,
 					renderer: pageRenderer.trim() || renderer.trim() || key,
-					layout: modulePageLayout.trim() || 'list-grid',
+					layout: applicationPageLayout.trim() || 'list-grid',
 					emptyStateTitle:
-						modulePageEmptyStateTitle.trim() || `No ${displayName.trim().toLowerCase()} yet`,
-					emptyStateDescription: modulePageEmptyStateDescription.trim() || description.trim(),
+						applicationPageEmptyStateTitle.trim() || `No ${displayName.trim().toLowerCase()} yet`,
+					emptyStateDescription: applicationPageEmptyStateDescription.trim() || description.trim(),
 					emptyStateAction:
-						modulePageEmptyStateAction.trim() || primaryActionLabel.trim() || 'Create',
+						applicationPageEmptyStateAction.trim() || primaryActionLabel.trim() || 'Create',
 					primaryAction: {
-						label: primaryActionLabel.trim() || modulePageEmptyStateAction.trim() || 'Open',
+						label: primaryActionLabel.trim() || applicationPageEmptyStateAction.trim() || 'Open',
 						action: primaryActionAction.trim() || 'create-from-template',
 						...(primaryActionTemplate.trim() ? { template: primaryActionTemplate.trim() } : {})
 					},
@@ -269,14 +265,6 @@
 					sortLabel: pageSortLabel.trim() || 'Modified',
 					itemSingular: pageItemSingular.trim() || displayName.trim().toLowerCase(),
 					itemPlural: pageItemPlural.trim() || displayName.trim().toLowerCase()
-				},
-				modulePage: {
-					layout: modulePageLayout.trim() || 'list-grid',
-					emptyStateTitle:
-						modulePageEmptyStateTitle.trim() || `No ${displayName.trim().toLowerCase()} yet`,
-					emptyStateDescription: modulePageEmptyStateDescription.trim() || description.trim(),
-					emptyStateAction:
-						modulePageEmptyStateAction.trim() || primaryActionLabel.trim() || 'Create'
 				}
 			}
 		});
@@ -293,24 +281,24 @@
 		class="mb-4 inline-flex items-center gap-1.5 text-sm text-base-content/50 transition-colors hover:text-base-content"
 	>
 		<ArrowLeft size={14} />
-		Back to Modules
+		Back to Applications
 	</a>
 
 	<h1 class="text-2xl font-semibold text-base-content">Edit Application</h1>
 	<p class="mt-1 text-sm text-base-content/60">
-		Configure module visibility, appearance, and behavior.
+		Configure Application visibility, appearance, and behavior.
 	</p>
 
-	{#if $moduleQuery.isLoading}
+	{#if $applicationQuery.isLoading}
 		<div class="flex h-64 items-center justify-center">
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
 		</div>
-	{:else if $moduleQuery.isError}
+	{:else if $applicationQuery.isError}
 		<div
 			class="mt-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error"
 		>
 			<AlertCircle size={16} />
-			Failed to load module: {$moduleQuery.error?.message ?? 'Unknown error'}
+			Failed to load Application: {$applicationQuery.error?.message ?? 'Unknown error'}
 		</div>
 	{:else}
 		{#if error}
@@ -336,11 +324,11 @@
 				<div class="grid gap-4">
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70" for="module-key"
+							<label class="text-xs font-semibold text-base-content/70" for="application-id"
 								>Application Key</label
 							>
 							<input
-								id="module-key"
+								id="application-id"
 								type="text"
 								class="input-bordered input input-sm bg-base-200/50"
 								value={key}
@@ -370,7 +358,7 @@
 						<textarea
 							id="description"
 							class="textarea-bordered textarea textarea-sm"
-							placeholder="What this module does..."
+							placeholder="What this Application does..."
 							bind:value={description}
 							rows={2}></textarea>
 					</div>
@@ -395,7 +383,7 @@
 								bind:value={renderer}
 							/>
 							<p class="text-[10px] text-base-content/40">
-								Renderer resolves the module page view.
+								Renderer resolves the Application page view.
 							</p>
 						</div>
 					</div>
@@ -425,7 +413,7 @@
 								bind:value={defaultTemplate}
 							>
 								<option value="">None</option>
-								{#each moduleTemplates as t}
+								{#each applicationTemplates as t}
 									<option value={t.template_key}>{t.name}</option>
 								{/each}
 							</select>
@@ -441,13 +429,13 @@
 							disabled
 						/>
 						<label for="enabled" class="text-sm text-base-content/80">
-							Enabled (use the toggle on the modules list to change)
+							Enabled (use the toggle on the Applications list to change)
 						</label>
 					</div>
 				</div>
 			</div>
 
-			{#if $moduleQuery.data?.ui_config?.okf?.enabled}
+			{#if $applicationQuery.data?.ui_config?.okf?.enabled}
 				<div class="rounded-2xl border border-info/20 bg-info/5 p-6 shadow-sm">
 					<h2 class="mb-4 text-sm font-semibold tracking-wider text-info uppercase">
 						OKF Configuration
@@ -456,32 +444,32 @@
 						<div class="flex flex-col gap-1">
 							<span class="text-xs font-semibold text-base-content/70">Concept Type</span>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ui_config.okf.conceptType}
+								{$applicationQuery.data.ui_config.okf.conceptType}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1">
 							<span class="text-xs font-semibold text-base-content/70">Document Format</span>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ui_config?.documentFormat || '-'}
+								{$applicationQuery.data.ui_config?.documentFormat || '-'}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1">
 							<span class="text-xs font-semibold text-base-content/70">Frontmatter Required</span>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ui_config.okf.frontmatterRequired ? 'Yes' : 'No'}
+								{$applicationQuery.data.ui_config.okf.frontmatterRequired ? 'Yes' : 'No'}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1">
 							<span class="text-xs font-semibold text-base-content/70">Preserve Unknown Fields</span
 							>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ui_config.okf.preserveUnknownFields ? 'Yes' : 'No'}
+								{$applicationQuery.data.ui_config.okf.preserveUnknownFields ? 'Yes' : 'No'}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1">
 							<span class="text-xs font-semibold text-base-content/70">AI Indexing Source</span>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ai_indexing?.source || '-'}
+								{$applicationQuery.data.ai_indexing?.source || '-'}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1">
@@ -489,13 +477,13 @@
 								>Permission-Aware Indexing</span
 							>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.ai_indexing?.permission_aware ? 'Yes' : 'No'}
+								{$applicationQuery.data.ai_indexing?.permission_aware ? 'Yes' : 'No'}
 							</span>
 						</div>
 						<div class="flex flex-col gap-1 sm:col-span-2">
 							<span class="text-xs font-semibold text-base-content/70">Default Template</span>
 							<span class="text-sm text-base-content">
-								{$moduleQuery.data.default_template || '-'}
+								{$applicationQuery.data.default_template || '-'}
 							</span>
 						</div>
 					</div>
@@ -613,7 +601,7 @@
 								class="select-bordered select select-sm"
 								bind:value={dashboardWidgetType}
 							>
-								<option value="generic-module-summary">Generic Application Summary</option>
+								<option value="generic-application-summary">Generic Application Summary</option>
 								<option value="kanban-summary">Kanban Summary</option>
 								<option value="decisions-meetings-summary">Decisions & Meetings Summary</option>
 								<option value="latest-notes">Latest Notes</option>
@@ -751,7 +739,7 @@
 							bind:value={primaryActionTemplate}
 						>
 							<option value="">None</option>
-							{#each moduleTemplates as t}
+							{#each applicationTemplates as t}
 								<option value={t.template_key}>{t.name}</option>
 							{/each}
 						</select>
@@ -799,13 +787,13 @@
 					</div>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
-							<label class="text-xs font-semibold text-base-content/70" for="module-layout"
+							<label class="text-xs font-semibold text-base-content/70" for="application-layout"
 								>Layout</label
 							>
 							<select
-								id="module-layout"
+								id="application-layout"
 								class="select-bordered select select-sm"
-								bind:value={modulePageLayout}
+								bind:value={applicationPageLayout}
 							>
 								<option value="list-grid">List Grid</option>
 								<option value="file-list">File List</option>
@@ -823,7 +811,7 @@
 								id="empty-state-action"
 								type="text"
 								class="input-bordered input input-sm"
-								bind:value={modulePageEmptyStateAction}
+								bind:value={applicationPageEmptyStateAction}
 							/>
 						</div>
 					</div>
@@ -835,7 +823,7 @@
 							id="empty-state-title"
 							type="text"
 							class="input-bordered input input-sm"
-							bind:value={modulePageEmptyStateTitle}
+							bind:value={applicationPageEmptyStateTitle}
 						/>
 					</div>
 					<div class="flex flex-col gap-1">
@@ -845,7 +833,7 @@
 						<textarea
 							id="empty-state-description"
 							class="textarea-bordered textarea textarea-sm"
-							bind:value={modulePageEmptyStateDescription}
+							bind:value={applicationPageEmptyStateDescription}
 							rows={2}></textarea>
 					</div>
 					<div class="grid gap-4 sm:grid-cols-3">

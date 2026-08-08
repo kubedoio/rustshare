@@ -9,8 +9,8 @@ vi.mock('$app/environment', () => ({
 
 vi.mock('$lib/api/users', () => ({
 	getDashboardConfig: vi.fn().mockResolvedValue({
-		enabled_modules: ['kanban', 'notes', 'unknown'],
-		module_order: ['kanban', 'notes', 'unknown']
+		enabled_applications: ['io.elembra.kanban', 'io.elembra.notes', 'io.elembra.unknown'],
+		application_order: ['io.elembra.kanban', 'io.elembra.notes', 'io.elembra.unknown']
 	}),
 	updateDashboardConfig: vi.fn(),
 	listUserApplicationPreferences: vi.fn().mockResolvedValue([]),
@@ -31,7 +31,7 @@ vi.mock('$lib/applications/applicationActions', () => ({
 const mockEnabledModules = [
 	{
 		id: 'module-notes',
-		application_id: 'notes',
+		application_id: 'io.elembra.notes',
 		display_name: 'Notes',
 		description: 'Recent notes',
 		enabled: true,
@@ -64,7 +64,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-kanban',
-		application_id: 'kanban',
+		application_id: 'io.elembra.kanban',
 		display_name: 'Kanban',
 		description: 'Kanban boards',
 		enabled: true,
@@ -97,7 +97,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-decisions',
-		application_id: 'decisions',
+		application_id: 'io.elembra.decisions',
 		display_name: 'Decisions',
 		description: 'Decision records',
 		enabled: false,
@@ -158,6 +158,71 @@ const mockEnabledModules = [
 	}
 ];
 
+const mockEnabledApplications = mockEnabledModules.map((application) => {
+	const slug = application.application_id;
+	const manifestId = slug.includes('.') ? slug : `io.elembra.${slug}`;
+	const routeSlug = manifestId.split('.').at(-1)!;
+	const primaryAction = application.ui_config?.dashboard?.primaryAction;
+	return {
+		manifest: {
+			apiVersion: 'elembra.io/v1alpha1',
+			kind: 'Application' as const,
+			metadata: {
+				id: manifestId,
+				name: application.display_name,
+				version: '1.0.0',
+				description: application.description
+			},
+			runtime: { kind: 'embedded' as const },
+			contracts: { provides: [], requires: [] },
+			resources: [],
+			contributions: {
+				navigation: [
+					{
+						id: `${routeSlug}.navigation`,
+						label: application.display_name,
+						route: `/apps/${routeSlug}`
+					}
+				],
+				routes: [
+					{ id: `${routeSlug}.route`, route: `/apps/${routeSlug}`, renderer: application.renderer }
+				],
+				commands: [],
+				dashboard: primaryAction
+					? [
+							{
+								id: `${routeSlug}.dashboard`,
+								label: primaryAction.label,
+								renderer: application.renderer,
+								action: `${routeSlug}.create`,
+								template: primaryAction.template
+							}
+						]
+					: [],
+				settings: [],
+				searchProviders: [],
+				renderers: [],
+				admin: []
+			},
+			integrationEvents: { publishes: [], subscribes: [] },
+			configuration: { schema: `contracts/${manifestId}/config-v1alpha1.schema.json` },
+			data: { owner: manifestId, preserveOnDisable: true, exportSupported: true }
+		},
+		enabled: application.enabled,
+		configuration: {
+			rootPath: application.root_path,
+			renderer: application.renderer,
+			defaultTemplate: application.default_template,
+			icon: application.icon,
+			permissions: application.permissions,
+			aiIndexing: application.ai_indexing,
+			audit: application.audit,
+			ui: application.ui_config
+		},
+		health: 'healthy' as const
+	};
+});
+
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
 		const key = options.queryKey?.[0];
@@ -197,9 +262,9 @@ vi.mock('$lib/query-compat', () => ({
 				isLoading: false
 			});
 		}
-		if (key === 'enabled-modules') {
+		if (key === 'enabled-applications') {
 			return readable({
-				data: mockEnabledModules,
+				data: mockEnabledApplications,
 				isLoading: false
 			});
 		}
@@ -256,7 +321,7 @@ vi.mock('$lib/stores/activity', () => ({
 			fileName: 'Old Name.md',
 			timestamp: new Date().toISOString(),
 			artifactId: 'note-123',
-			applicationId: 'notes'
+			applicationId: 'io.elembra.notes'
 		}
 	]),
 	serverActivityStore: {
@@ -268,7 +333,7 @@ vi.mock('$lib/stores/activity', () => ({
 					fileName: 'New Name.md',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					applicationId: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				}
 			],

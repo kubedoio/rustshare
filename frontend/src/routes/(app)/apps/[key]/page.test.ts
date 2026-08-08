@@ -23,7 +23,7 @@ vi.mock('$lib/applications/registry', async () => {
 	const actual = await vi.importActual<any>('$lib/applications/registry');
 	return {
 		...actual,
-		getApplicationByKey: vi.fn()
+		getApplicationByRouteSlug: vi.fn()
 	};
 });
 
@@ -93,7 +93,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'unknown' } });
 			return () => {};
 		});
-		(registry.getApplicationByKey as any).mockReturnValue(undefined);
+		(registry.getApplicationByRouteSlug as any).mockReturnValue(undefined);
 
 		render(Page);
 		expect(screen.getByText('Application Not Found')).toBeTruthy();
@@ -104,7 +104,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByKey as any).mockReturnValue({ ...mockModule, enabled: false });
+		(registry.getApplicationByRouteSlug as any).mockReturnValue({ ...mockModule, enabled: false });
 
 		render(Page);
 		expect(screen.getByText('Application Disabled')).toBeTruthy();
@@ -115,7 +115,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByKey as any).mockReturnValue({
+		(registry.getApplicationByRouteSlug as any).mockReturnValue({
 			...mockModule,
 			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
 		});
@@ -129,7 +129,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByKey as any).mockReturnValue(mockModule);
+		(registry.getApplicationByRouteSlug as any).mockReturnValue(mockModule);
 
 		render(Page);
 		// GenericApplicationView renders inside ApplicationPageShell with module title
@@ -141,7 +141,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByKey as any).mockReturnValue({
+		(registry.getApplicationByRouteSlug as any).mockReturnValue({
 			...mockModule,
 			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
 		});

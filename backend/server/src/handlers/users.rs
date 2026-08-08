@@ -713,11 +713,11 @@ pub struct ApplicationUserPreferenceResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateModulePreferenceRequest {
+pub struct UpdateApplicationPreferenceRequest {
     pub enabled: bool,
 }
 
-/// List the authenticated user's module preferences.
+/// List the authenticated user's Application preferences.
 #[utoipa::path(
     get,
     path = "/api/v1/users/me/applications",
@@ -746,13 +746,13 @@ pub async fn list_application_user_preferences(
             Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
-            tracing::error!("Failed to list user module preferences: {:?}", e);
-            Err(AppError::internal("Failed to list module preferences"))
+            tracing::error!("Failed to list user Application preferences: {:?}", e);
+            Err(AppError::internal("Failed to list Application preferences"))
         }
     }
 }
 
-/// Update a module preference for the authenticated user.
+/// Update an Application preference for the authenticated user.
 #[utoipa::path(
     patch,
     path = "/api/v1/users/me/applications/{key}",
@@ -766,7 +766,7 @@ pub async fn update_user_application_preference(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
     Path(application_id): Path<String>,
-    Json(req): Json<UpdateModulePreferenceRequest>,
+    Json(req): Json<UpdateApplicationPreferenceRequest>,
 ) -> Result<Response, AppError> {
     let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),

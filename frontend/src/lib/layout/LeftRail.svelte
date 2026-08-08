@@ -2,10 +2,12 @@
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
 	import { listEnabledApplications } from '$lib/api/applications';
+	import { applicationShellEntryToConfig } from '$lib/applications/registry';
 	import ApplicationIcon from '$lib/components/dashboard/ApplicationIcon.svelte';
 	import {
-		getEnabledSidebarModules,
-		getApplicationSidebarConfig
+		getEnabledSidebarApplications,
+		getApplicationSidebarConfig,
+		getApplicationPageConfig
 	} from '$lib/applications/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
 	import {
@@ -28,19 +30,23 @@
 
 	const secondaryItems = [{ icon: Settings, label: 'Settings', href: '/settings' }];
 
-	const modulesQuery = createQuery({
-		queryKey: ['enabled-modules'],
+	const applicationsQuery = createQuery({
+		queryKey: ['enabled-applications'],
 		queryFn: () => listEnabledApplications()
 	});
 
-	let sidebarModules = $derived(getEnabledSidebarModules($modulesQuery.data ?? []));
+	let sidebarApplications = $derived(
+		getEnabledSidebarApplications(
+			($applicationsQuery.data ?? []).map(applicationShellEntryToConfig)
+		)
+	);
 
 	// Explicitly derive pathname so template expressions reliably re-evaluate
 	// when the route changes (Svelte 5 legacy mode can miss deps inside
 	// function calls in template expressions).
 	let pathname = $derived($page.url.pathname);
 
-	// Active primary/secondary item href (null when on a module page)
+	// Active primary/secondary item href (null when on an Application page)
 	let activePrimaryHref = $derived(
 		pathname === '/dashboard' || pathname === '/'
 			? '/dashboard'
@@ -53,7 +59,7 @@
 						: null
 	);
 
-	// Active module key extracted from /apps/{key}/... routes
+	// Active route slug extracted from /apps/{slug}/... routes
 	let activeApplicationKey = $derived(pathname.match(/^\/apps\/([^/]+)/)?.[1] ?? null);
 
 	// Hover-based temporary expansion
@@ -136,12 +142,12 @@
 		{/each}
 
 		<!-- Application Navigation -->
-		{#if $modulesQuery.isLoading}
+		{#if $applicationsQuery.isLoading}
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">
 						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
-							>Modules</span
+							>Applications</span
 						>
 					</div>
 				{/if}
@@ -154,12 +160,12 @@
 					</div>
 				{/each}
 			</div>
-		{:else if $modulesQuery.isError}
+		{:else if $applicationsQuery.isError}
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="px-3 py-1.5">
 						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
-							>Modules</span
+							>Applications</span
 						>
 					</div>
 					<div class="px-3 py-2">
@@ -170,7 +176,7 @@
 						<button
 							type="button"
 							class="mt-1 flex items-center gap-1 text-xs text-brand-500 hover:text-brand-600"
-							onclick={() => $modulesQuery.refetch()}
+							onclick={() => $applicationsQuery.refetch()}
 						>
 							<RefreshCw size={12} />
 							Retry
@@ -181,32 +187,33 @@
 						<button
 							type="button"
 							class="flex h-8 w-8 items-center justify-center rounded-lg text-error transition-colors hover:bg-error/10"
-							aria-label="Retry loading modules"
-							onclick={() => $modulesQuery.refetch()}
+							aria-label="Retry loading Applications"
+							onclick={() => $applicationsQuery.refetch()}
 						>
 							<AlertCircle size={18} />
 						</button>
 					</div>
 				{/if}
 			</div>
-		{:else if sidebarModules.length > 0}
+		{:else if sidebarApplications.length > 0}
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">
 						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
-							>Modules</span
+							>Applications</span
 						>
 					</div>
 				{/if}
-				{#each sidebarModules as mod}
+				{#each sidebarApplications as application}
 					<RailItem
-						href="/apps/{mod.application_id}"
-						label={getApplicationSidebarConfig(mod).label}
-						active={activeApplicationKey === mod.application_id}
+						href={getApplicationPageConfig(application).route}
+						label={getApplicationSidebarConfig(application).label}
+						active={activeApplicationKey ===
+							getApplicationPageConfig(application).route.split('/')[2]}
 						expanded={railExpanded}
 					>
 						<ApplicationIcon
-							name={getApplicationSidebarConfig(mod).icon ?? mod.icon}
+							name={getApplicationSidebarConfig(application).icon ?? application.icon}
 							size={22}
 							strokeWidth={1.75}
 						/>

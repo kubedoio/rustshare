@@ -529,7 +529,7 @@ use utoipa::OpenApi;
         crate::handlers::user_shares::ShareRecipientResponse,
         crate::handlers::user_shares::UpdatePermissionRequest,
         crate::handlers::user_shares::UserShareResponse,
-        crate::handlers::users::UpdateModulePreferenceRequest,
+        crate::handlers::users::UpdateApplicationPreferenceRequest,
         crate::handlers::users::UpdatePasswordRequest,
         crate::handlers::users::UpdatePasswordResponse,
         crate::handlers::users::UpdateThemeRequest,

@@ -120,7 +120,7 @@
 			});
 			activityStore.addActivity('note_created', result.name || title || 'Untitled Note', {
 				artifactId: result.id,
-				applicationId: 'notes'
+				applicationId: 'io.elembra.notes'
 			});
 			goto(`/apps/${module.key}/${result.id}`);
 			$notesQuery.refetch();

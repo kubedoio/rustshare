@@ -32,7 +32,7 @@ describe('detectStorageType', () => {
 		expect(
 			detectStorageType({
 				sourcePath: 'doc.md',
-				applicationId: 'notes',
+				applicationId: 'io.elembra.notes',
 				rootPath: '/Workspace/Notes'
 			})
 		).toBe('folder-backed');

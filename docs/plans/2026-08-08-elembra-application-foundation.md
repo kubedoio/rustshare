@@ -9,7 +9,8 @@
 - Migrate current tenant-level Application enablement and user preferences into
   Application-shaped records. The current schema has no authoritative
   workspace table, so the migration uses `tenant_id` as the initial workspace
-  identity.
+  identity. User dashboard preference keys are migrated to
+  `enabled_applications`/`application_order`.
 
 ## Deliberately deferred
 
@@ -22,6 +23,8 @@ introduced here.
 
 ## Safety invariant
 
-The migration only inserts Application configuration/preferences. It does not
-update or delete files, folders, templates, shares, mail, or other durable
-content. Re-running it is safe through `ON CONFLICT` updates.
+The migration changes only Application/template references and configuration
+JSON. It does not update or delete file bytes, folders, shares, mail, or other
+durable content. Re-running the tested cutover path is safe; migration tests
+cover a clean database, a representative legacy database, and replay of the
+final cutover.

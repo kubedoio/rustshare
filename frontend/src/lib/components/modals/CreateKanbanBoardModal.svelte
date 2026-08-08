@@ -69,7 +69,7 @@
 			queryClient.invalidateQueries({ queryKey: ['kanban-boards'] });
 			activityStore.addActivity('kanban_created', name || 'Untitled Board', {
 				artifactId: boardId,
-				applicationId: 'kanban'
+				applicationId: 'io.elembra.kanban'
 			});
 			onSuccess(boardId);
 			boardName = '';

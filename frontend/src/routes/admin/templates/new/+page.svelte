@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { createTemplate } from '$lib/api/admin-applications';
-	import { listAdminModules } from '$lib/api/admin-applications';
+	import { listAdminApplications } from '$lib/api/admin-applications';
 	import { APPROVED_MODULE_ICONS } from '$lib/applications/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Plus, AlertCircle, Trash2 } from 'lucide-svelte';
@@ -25,7 +25,7 @@
 	let applicationConfigJson = '{}';
 	const modulesQuery = createQuery({
 		queryKey: ['admin-applications'],
-		queryFn: () => listAdminModules()
+		queryFn: () => listAdminApplications()
 	});
 
 	const createTemplateMutation = createMutation({
@@ -225,7 +225,9 @@
 	</a>
 
 	<h1 class="text-2xl font-semibold text-base-content">New Template</h1>
-	<p class="mt-1 text-sm text-base-content/60">Create a custom template for workspace modules.</p>
+	<p class="mt-1 text-sm text-base-content/60">
+		Create a custom template for workspace Applications.
+	</p>
 
 	{#if error}
 		<div

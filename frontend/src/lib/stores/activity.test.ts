@@ -93,14 +93,14 @@ describe('Activity Store', () => {
 		it('should add activity with artifactId and applicationId', () => {
 			activityStore.addActivity('note_created', 'My Note', {
 				artifactId: 'abc',
-				applicationId: 'notes'
+				applicationId: 'io.elembra.notes'
 			});
 
 			const activities = get(activityStore);
 			expect(activities[0].type).toBe('note_created');
 			expect(activities[0].fileName).toBe('My Note');
 			expect(activities[0].artifactId).toBe('abc');
-			expect(activities[0].applicationId).toBe('notes');
+			expect(activities[0].applicationId).toBe('io.elembra.notes');
 		});
 
 		it('should maintain chronological order (newest first)', () => {
@@ -577,7 +577,7 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				applicationId: 'notes',
+				applicationId: 'io.elembra.notes',
 				accessible: false
 			};
 			expect(getActivityHref(activity)).toBeNull();
@@ -590,7 +590,7 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				applicationId: 'notes'
+				applicationId: 'io.elembra.notes'
 			};
 			expect(getActivityHref(activity)).toBe('/apps/notes/note-123');
 		});

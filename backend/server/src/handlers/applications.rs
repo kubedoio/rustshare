@@ -4,14 +4,14 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use rustshare_core::domain::{ApplicationConfig, CreateFromTemplateRequest, CreatedObject};
+use rustshare_core::domain::{ApplicationShellEntry, CreateFromTemplateRequest, CreatedObject};
 use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
     handlers::{admin::log_admin_action, extractors::AuthenticatedUser, AppError},
-    state::AppState,
+    state::ApplicationState,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,12 +20,12 @@ use crate::{
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EnabledApplicationsResponse {
-    pub applications: Vec<ApplicationConfig>,
+    pub applications: Vec<ApplicationShellEntry>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApplicationDetailResponse {
-    pub application: ApplicationConfig,
+    pub application: ApplicationShellEntry,
 }
 
 // ---------------------------------------------------------------------------
@@ -42,12 +42,12 @@ pub struct ApplicationDetailResponse {
     ),
 )]
 pub async fn list_enabled_applications(
-    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
-    State(state): State<AppState>,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
+    State(state): State<ApplicationState>,
 ) -> Result<Json<EnabledApplicationsResponse>, AppError> {
     let applications = state
         .application_service
-        .list_enabled_applications(tenant_id, user_id)
+        .list_enabled_application_shell(tenant_id)
         .await?;
 
     Ok(Json(EnabledApplicationsResponse { applications }))
@@ -63,30 +63,14 @@ pub async fn list_enabled_applications(
     ),
 )]
 pub async fn get_application(
-    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
-    State(state): State<AppState>,
+    AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationDetailResponse>, AppError> {
     let application = state
         .application_service
-        .get_application(&key, tenant_id)
+        .get_application_shell(&key, tenant_id)
         .await?;
-
-    if !application.enabled {
-        return Err(AppError::forbidden("Application disabled"));
-    }
-
-    let visible_applications = state
-        .application_service
-        .list_enabled_applications(tenant_id, user_id)
-        .await?;
-
-    if !visible_applications
-        .iter()
-        .any(|visible| visible.application_id == application.application_id)
-    {
-        return Err(AppError::forbidden("Access denied"));
-    }
 
     Ok(Json(ApplicationDetailResponse { application }))
 }
@@ -107,7 +91,7 @@ pub struct ApplicationSummaryResponse {
 )]
 pub async fn get_application_summary(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationSummaryResponse>, AppError> {
     let summary = state
@@ -129,7 +113,7 @@ pub async fn get_application_summary(
 )]
 pub async fn create_from_template(
     AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
-    State(state): State<AppState>,
+    State(state): State<ApplicationState>,
     Json(body): Json<CreateFromTemplateRequest>,
 ) -> Result<Json<CreatedObject>, AppError> {
     let object = state
@@ -149,7 +133,7 @@ pub async fn create_from_template(
         .get_template(&body.template_key, tenant_id)
         .await?;
 
-    if template.application_id == "kanban" {
+    if template.application_id == "io.elembra.kanban" {
         if let Ok(board_id) = Uuid::parse_str(&object.object_id.to_string()) {
             state
                 .kanban_service

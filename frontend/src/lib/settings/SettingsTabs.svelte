@@ -1,6 +1,13 @@
 <script lang="ts" module>
 	export type TabId =
-		'general' | 'security' | 'devices' | 'appearance' | 'sharing' | 'activity' | 'modules' | 'mail';
+		| 'general'
+		| 'security'
+		| 'devices'
+		| 'appearance'
+		| 'sharing'
+		| 'activity'
+		| 'applications'
+		| 'mail';
 </script>
 
 <script lang="ts">
@@ -36,7 +43,7 @@
 		{ id: 'appearance', label: 'Appearance', icon: Palette },
 		{ id: 'sharing', label: 'Sharing', icon: Share2 },
 		{ id: 'activity', label: 'Activity', icon: Activity },
-		{ id: 'modules', label: 'Modules', icon: LayoutGrid },
+		{ id: 'applications', label: 'Applications', icon: LayoutGrid },
 		{ id: 'mail', label: 'Mail', icon: Mail }
 	];
 

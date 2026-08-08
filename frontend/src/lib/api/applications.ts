@@ -1,32 +1,31 @@
 import { apiClient } from './client';
 import type {
-	ApplicationConfig,
+	ApplicationShellEntry,
 	CreateFromTemplateRequest,
 	CreateFromTemplateResponse,
 	ApplicationSummary
 } from './types';
-import { normalizeApplicationConfig } from '$lib/applications/workspaceSurface';
 
 interface EnabledApplicationsResponse {
-	applications: ApplicationConfig[];
+	applications: ApplicationShellEntry[];
 }
 
 interface ApplicationDetailResponse {
-	application: ApplicationConfig;
+	application: ApplicationShellEntry;
 }
 
 interface ApplicationSummaryResponse {
 	summary: ApplicationSummary;
 }
 
-export async function listEnabledApplications(): Promise<ApplicationConfig[]> {
+export async function listEnabledApplications(): Promise<ApplicationShellEntry[]> {
 	const response = await apiClient.get<EnabledApplicationsResponse>('/applications');
-	return response.applications.map(normalizeApplicationConfig);
+	return response.applications;
 }
 
-export async function getApplication(key: string): Promise<ApplicationConfig> {
+export async function getApplication(key: string): Promise<ApplicationShellEntry> {
 	const response = await apiClient.get<ApplicationDetailResponse>(`/applications/${key}`);
-	return normalizeApplicationConfig(response.application);
+	return response.application;
 }
 
 export async function createFromTemplate(

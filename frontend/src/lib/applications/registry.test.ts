@@ -1,146 +1,104 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-	getAllModules,
-	getEnabledModules,
-	getSidebarModulesForUser,
-	isValidIconKey,
-	applicationConfigToDefinition
+	applicationConfigToDefinition,
+	applicationShellEntryToConfig,
+	getApplicationByRouteSlug,
+	applicationsStore
 } from './registry';
 
-describe('Application Registry', () => {
-	it('all predefined modules exist', () => {
-		const modules = getAllModules();
-		expect(modules.length).toBeGreaterThanOrEqual(7);
-		const keys = modules.map((m) => m.key);
-		expect(keys).toContain('notes');
-		expect(keys).toContain('meetings');
-		expect(keys).toContain('standups');
-		expect(keys).toContain('kanban');
-		expect(keys).toContain('decisions');
-		expect(keys).toContain('shares');
-		expect(keys).toContain('mail');
+const manifest = {
+	apiVersion: 'elembra.io/v1alpha1',
+	kind: 'Application' as const,
+	metadata: {
+		id: 'io.elembra.notes',
+		name: 'Notes',
+		version: '1.0.0',
+		description: 'Notes.'
+	},
+	runtime: { kind: 'embedded' as const },
+	contracts: { provides: [], requires: [] },
+	resources: [],
+	contributions: {
+		navigation: [{ id: 'notes.navigation', label: 'Notes', route: '/apps/notes', order: 10 }],
+		routes: [{ id: 'notes.page', route: '/apps/notes', renderer: 'okf-note' }],
+		commands: [],
+		dashboard: [{ id: 'notes.dashboard', renderer: 'latest-notes', order: 10 }],
+		settings: [],
+		searchProviders: [],
+		renderers: [],
+		admin: []
+	},
+	integrationEvents: { publishes: [], subscribes: [] },
+	configuration: { schema: 'schemas/io.elembra.notes.json' },
+	data: { owner: 'io.elembra.notes', preserveOnDisable: true, exportSupported: true }
+};
+
+describe('Application registry', () => {
+	it('derives identity and route slug from the manifest', () => {
+		const definition = applicationConfigToDefinition(
+			applicationShellEntryToConfig({
+				manifest,
+				enabled: true,
+				configuration: {},
+				health: 'healthy'
+			})
+		);
+
+		expect(definition.id).toBe('io.elembra.notes');
+		expect(definition.key).toBe('notes');
+		expect(definition.ui.page.route).toBe('/apps/notes');
+		expect(definition.renderer).toBe('okf-note');
 	});
 
-	it('mail module uses the mail-list renderer', () => {
-		const modules = getAllModules();
-		const mail = modules.find((m) => m.key === 'mail');
-		expect(mail).toBeDefined();
-		expect(mail?.renderer).toBe('mail-list');
-		expect(mail?.ui.page.renderer).toBe('mail-list');
+	it('maps disabled state without inventing a second application catalogue', () => {
+		const definition = applicationConfigToDefinition(
+			applicationShellEntryToConfig({
+				manifest,
+				enabled: false,
+				configuration: {},
+				health: 'unavailable'
+			})
+		);
+
+		expect(definition.enabled).toBe(false);
+		expect(definition.id).toBe('io.elembra.notes');
 	});
 
-	it('keys are unique', () => {
-		const modules = getAllModules();
-		const keys = new Set(modules.map((m) => m.key));
-		expect(keys.size).toBe(modules.length);
-	});
-
-	it('disabled modules are filtered out', () => {
-		const modules = getEnabledModules();
-		// Right now all 6 predefined are enabled, so we just verify none have enabled=false
-		for (const m of modules) {
-			expect(m.enabled).toBe(true);
-		}
-	});
-
-	it('sidebar order works', () => {
-		const user = {
-			id: '1',
-			email: 'test@example.com',
-			display_name: 'Test User',
-			is_admin: true
-		};
-		const sidebarModules = getSidebarModulesForUser(user);
-		for (let i = 1; i < sidebarModules.length; i++) {
-			expect(sidebarModules[i].ui.sidebar.order).toBeGreaterThanOrEqual(
-				sidebarModules[i - 1].ui.sidebar.order
-			);
-		}
-	});
-
-	it('invalid icons rejected', () => {
-		expect(isValidIconKey('layout-dashboard')).toBe(true);
-		expect(isValidIconKey('sticky-note')).toBe(true);
-		expect(isValidIconKey('invalid-random-icon')).toBe(false);
-		expect(isValidIconKey('script<alert>1</alert>')).toBe(false);
-	});
-
-	it('does not drift from canonical workspace root paths', () => {
-		const modules = getAllModules();
-		const expectedRoots: Record<string, string> = {
-			notes: '/Workspace/Notes',
-			meetings: '/Workspace/Meetings',
-			standups: '/Workspace/Standups',
-			kanban: '/Workspace/Kanban',
-			decisions: '/Workspace/Decisions',
-			brainstorming: '/Workspace/Brainstorming',
-			shares: '/Workspace/Shares'
-		};
-
-		for (const module of modules) {
-			const expected = expectedRoots[module.key];
-			if (expected) {
-				expect(module.rootPath).toBe(expected);
-			}
-		}
-	});
-
-	it('applicationConfigToDefinition reflects backend enabled flag', () => {
-		const backendModule = {
-			id: 'module_notes',
-			application_id: 'notes',
-			display_name: 'Notes',
-			description: 'Notes module',
-			enabled: false,
-			root_path: '/Workspace/Notes',
-			renderer: 'notes',
-			default_template: 'template_default_note',
-			icon: 'sticky-note',
-			schema_version: '1.0',
-			permissions: {
-				admin_can_configure: true,
-				workspace_members_can_use: true,
-				allow_public_share: false,
-				allow_internal_share: true
-			},
-			ai_indexing: { enabled: true },
-			audit: { enabled: true },
-			created_at: '2026-04-30T00:00:00Z',
-			updated_at: '2026-04-30T00:00:00Z'
-		};
-
-		const def = applicationConfigToDefinition(backendModule as any);
-		expect(def.enabled).toBe(false);
-		expect(def.key).toBe('notes');
-		expect(def.displayName).toBe('Notes');
-	});
-
-	it('does not drift from approved icon registry', () => {
-		const modules = getAllModules();
-		const approved = new Set([
-			'layout-dashboard',
-			'folder',
-			'file-text',
-			'sticky-note',
-			'calendar-days',
-			'clipboard-list',
-			'columns',
-			'git-branch',
-			'path-separation',
-			'share-2',
-			'lock',
-			'globe',
-			'settings',
-			'lightbulb',
-			'activity',
-			'mail'
+	it('resolves shell applications by declared route slug', () => {
+		applicationsStore.set([
+			applicationConfigToDefinition(
+				applicationShellEntryToConfig({
+					manifest,
+					enabled: true,
+					configuration: {},
+					health: 'healthy'
+				})
+			)
 		]);
 
-		for (const module of modules) {
-			expect(
-				approved.has(module.icon),
-				`module ${module.key} uses unapproved icon: ${module.icon}`
-			).toBe(true);
-		}
+		expect(getApplicationByRouteSlug('notes')?.id).toBe('io.elembra.notes');
+		expect(getApplicationByRouteSlug('io.elembra.notes')).toBeUndefined();
+	});
+
+	it('renders a future Application from its navigation Contribution', () => {
+		const futureManifest = {
+			...manifest,
+			metadata: { ...manifest.metadata, id: 'io.elembra.chat', name: 'Chat' },
+			contributions: {
+				...manifest.contributions,
+				navigation: [{ id: 'chat.navigation', label: 'Chat', route: '/apps/chat', order: 50 }],
+				routes: [{ id: 'chat.route', route: '/apps/chat', renderer: 'chat' }]
+			}
+		};
+		const config = applicationShellEntryToConfig({
+			manifest: futureManifest,
+			enabled: true,
+			configuration: {},
+			health: 'healthy'
+		});
+
+		expect(config.application_id).toBe('io.elembra.chat');
+		expect(config.ui_config?.sidebar?.label).toBe('Chat');
+		expect(config.ui_config?.page?.route).toBe('/apps/chat');
 	});
 });

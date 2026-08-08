@@ -7,14 +7,14 @@
 	import { searchQuery } from '$lib/stores/search';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
-	import { refreshModules } from '$lib/applications/registry';
+	import { refreshApplications } from '$lib/applications/registry';
 	import AppShell from '$lib/layout/AppShell.svelte';
 
 	// Check auth on mount
 	onMount(() => {
 		if (browser) {
 			userApplicationPreferences.load();
-			refreshModules();
+			refreshApplications();
 		}
 	});
 

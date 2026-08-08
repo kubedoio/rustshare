@@ -1024,7 +1024,7 @@ async fn contract_recent_activity_shows_bundle_title() {
         .unwrap();
 
     let summary = application_service
-        .get_application_summary("notes", tenant_id, user.id)
+        .get_application_summary("io.elembra.notes", tenant_id, user.id)
         .await
         .unwrap();
 

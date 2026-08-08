@@ -394,7 +394,7 @@ pub async fn ensure_optional_seed_user(
 
     metadata_store.create_user(&user).await?;
 
-    // Seed default module preferences
+    // Seed default Application preferences
     let pref_repo =
         rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
             metadata_store.pool().clone(),

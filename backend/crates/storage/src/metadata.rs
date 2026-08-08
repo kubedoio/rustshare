@@ -1473,13 +1473,15 @@ impl MetadataStore {
                 SELECT j.id
                 FROM mail_import_jobs j
                 JOIN mail_accounts a ON a.id = j.account_id
-                JOIN applications m ON m.tenant_id = j.tenant_id
+                JOIN application_enablements e
+                  ON e.tenant_id = j.tenant_id
+                 AND e.workspace_id = j.tenant_id
+                 AND e.application_id = 'io.elembra.mail'
                 WHERE j.status = 'pending'
                   AND j.deleted_at IS NULL
                   AND a.deleted_at IS NULL
                   AND a.is_enabled = true
-                  AND m.application_id = 'mail'
-                  AND m.enabled = true
+                  AND e.enabled = true
                   AND (
                       j.source_mode != 'imap_archive'
                       OR j.completed_at IS NULL

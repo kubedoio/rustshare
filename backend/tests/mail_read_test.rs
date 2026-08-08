@@ -313,7 +313,7 @@ async fn enable_mail_module(state: &AppState, tenant_id: Uuid, user_id: Uuid) {
         .expect("ensure_default_applications should succeed");
     state
         .application_service
-        .enable_application("mail", user_id, tenant_id)
+        .enable_application("io.elembra.mail", user_id, tenant_id)
         .await
         .expect("enable mail module should succeed");
 }
@@ -360,7 +360,7 @@ async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
 }
 
 async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM applications WHERE tenant_id = $1")
+    sqlx::query("DELETE FROM application_enablements WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await

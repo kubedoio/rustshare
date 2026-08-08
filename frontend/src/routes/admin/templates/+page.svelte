@@ -70,7 +70,7 @@
 		<div>
 			<h1 class="text-2xl font-semibold text-base-content">Templates</h1>
 			<p class="mt-1 text-sm text-base-content/60">
-				Manage predefined and custom templates for workspace modules.
+				Manage predefined and custom templates for workspace Applications.
 			</p>
 		</div>
 		<a href="/admin/templates/new" class="btn btn-sm btn-primary">

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 macro_rules! string_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
         #[serde(transparent)]
         pub struct $name(pub String);
 
@@ -36,7 +36,9 @@ macro_rules! string_id {
 
 macro_rules! uuid_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema,
+        )]
         #[serde(transparent)]
         pub struct $name(pub Uuid);
 
@@ -66,7 +68,7 @@ uuid_id!(TenantId);
 uuid_id!(WorkspaceId);
 uuid_id!(PrincipalId);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApplicationRuntimeKind {
     Embedded,
@@ -74,20 +76,20 @@ pub enum ApplicationRuntimeKind {
     Bridge,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ContractRef {
     pub id: String,
     pub version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationResource {
     #[serde(rename = "type")]
     pub resource_type: String,
     pub actions: Vec<ActionCapability>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct ApplicationContribution {
     pub id: String,
     #[serde(default)]
@@ -101,10 +103,12 @@ pub struct ApplicationContribution {
     #[serde(default)]
     pub action: Option<ActionCapability>,
     #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
     pub order: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct ApplicationContributions {
     #[serde(default)]
     pub navigation: Vec<ApplicationContribution>,
@@ -124,7 +128,25 @@ pub struct ApplicationContributions {
     pub admin: Vec<ApplicationContribution>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl ApplicationContributions {
+    pub fn all(&self) -> Vec<&ApplicationContribution> {
+        [
+            &self.navigation,
+            &self.routes,
+            &self.commands,
+            &self.dashboard,
+            &self.settings,
+            &self.search_providers,
+            &self.renderers,
+            &self.admin,
+        ]
+        .into_iter()
+        .flat_map(|contributions| contributions.iter())
+        .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationManifest {
     #[serde(rename = "apiVersion")]
     pub api_version: String,
@@ -146,7 +168,7 @@ pub struct ApplicationManifest {
     pub health: Option<HealthMetadata>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationMetadata {
     pub id: ApplicationId,
     pub name: String,
@@ -154,35 +176,35 @@ pub struct ApplicationMetadata {
     #[serde(default)]
     pub description: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApplicationRuntime {
     pub kind: ApplicationRuntimeKind,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct ApplicationContracts {
     #[serde(default)]
     pub provides: Vec<ContractRef>,
     #[serde(default)]
     pub requires: Vec<ContractRef>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct IntegrationEvents {
     #[serde(default)]
     pub publishes: Vec<String>,
     #[serde(default)]
     pub subscribes: Vec<String>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MemoryPolicy {
     #[serde(rename = "sourceTypes", default)]
     pub source_types: Vec<String>,
     pub publication: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConfigurationReference {
     pub schema: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DataPolicy {
     pub owner: ApplicationId,
     #[serde(rename = "preserveOnDisable")]
@@ -190,13 +212,13 @@ pub struct DataPolicy {
     #[serde(rename = "exportSupported")]
     pub export_supported: bool,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HealthMetadata {
     pub liveness: String,
     pub readiness: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApplicationHealth {
     Healthy,
@@ -224,6 +246,14 @@ pub struct ApplicationEnablement {
     pub health: ApplicationHealth,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ApplicationShellEntry {
+    pub manifest: ApplicationManifest,
+    pub enabled: bool,
+    pub configuration: serde_json::Value,
+    pub health: ApplicationHealth,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ApplicationRegistryError {
     #[error("invalid application manifest: {0}")]
@@ -244,6 +274,10 @@ pub struct ApplicationRegistry {
 }
 
 impl ApplicationRegistry {
+    pub fn first_party() -> Result<Self, ApplicationRegistryError> {
+        Self::new(first_party_manifests())
+    }
+
     pub fn new(
         manifests: impl IntoIterator<Item = ApplicationManifest>,
     ) -> Result<Self, ApplicationRegistryError> {
@@ -278,8 +312,8 @@ impl ApplicationRegistry {
                 .chain(
                     manifest
                         .contributions
-                        .commands
-                        .iter()
+                        .all()
+                        .into_iter()
                         .filter_map(|contribution| contribution.action.as_ref()),
                 )
             {
@@ -426,6 +460,120 @@ impl ApplicationRegistry {
     }
 }
 
+/// Returns the code-owned first-party Application contracts.
+///
+/// This is the only first-party identity/contribution catalogue. Tenant
+/// configuration is persisted separately and is never allowed to redefine
+/// an Application identity or its Shell contributions.
+pub fn first_party_manifests() -> Vec<ApplicationManifest> {
+    [
+        ("files", "Files", "folder", "files", 10),
+        ("notes", "Notes", "sticky-note", "okf-note", 20),
+        ("mail", "Mail", "mail", "mail", 30),
+        ("memory", "Memory", "brain", "memory", 40),
+        ("chat", "Chat", "message-circle", "chat", 50),
+        ("agents", "Agents", "bot", "agents", 60),
+        ("meetings", "Meeting Notes", "calendar-days", "meetings", 70),
+        ("standups", "Standups", "activity", "standups", 80),
+        ("kanban", "Kanban", "columns", "kanban", 90),
+        ("decisions", "Decisions", "git-branch", "decisions", 100),
+        (
+            "brainstorming",
+            "Brainstorming",
+            "lightbulb",
+            "brainstorming",
+            110,
+        ),
+        ("shares", "Shares", "share-2", "shares", 120),
+    ]
+    .into_iter()
+    .map(|(slug, name, icon, renderer, order)| {
+        let id = ApplicationId::new(format!("io.elembra.{slug}"));
+        let dashboard_action = match slug {
+            "notes" | "meetings" | "standups" | "kanban" | "decisions" | "brainstorming" => {
+                Some(ActionCapability::new(format!("{slug}.create")))
+            }
+            _ => None,
+        };
+        let dashboard_template = match slug {
+            "notes" => Some("template_default_okf_note"),
+            "meetings" => Some("template_default_meeting"),
+            "standups" => Some("template_default_standup"),
+            "kanban" => Some("template_default_kanban"),
+            "decisions" => Some("template_default_decision"),
+            "brainstorming" => Some("template_blank_brainstorm"),
+            _ => None,
+        };
+        ApplicationManifest {
+            api_version: "elembra.io/v1alpha1".into(),
+            kind: "Application".into(),
+            metadata: ApplicationMetadata {
+                id: id.clone(),
+                name: name.into(),
+                version: "1.0.0".into(),
+                description: format!("Elembra {name} Application"),
+            },
+            runtime: ApplicationRuntime {
+                kind: ApplicationRuntimeKind::Embedded,
+            },
+            contracts: ApplicationContracts {
+                provides: vec![ContractRef {
+                    id: format!("{id}.api"),
+                    version: "v1alpha1".into(),
+                }],
+                requires: Vec::new(),
+            },
+            resources: vec![ApplicationResource {
+                resource_type: format!("{slug}.resource"),
+                actions: vec![ActionCapability::new(format!("{slug}.read"))],
+            }],
+            contributions: ApplicationContributions {
+                navigation: vec![ApplicationContribution {
+                    id: format!("{slug}.navigation"),
+                    label: Some(name.into()),
+                    icon: Some(icon.into()),
+                    route: Some(format!("/apps/{slug}")),
+                    order: Some(order),
+                    ..Default::default()
+                }],
+                routes: vec![ApplicationContribution {
+                    id: format!("{slug}.route"),
+                    route: Some(format!("/apps/{slug}")),
+                    renderer: Some(renderer.into()),
+                    ..Default::default()
+                }],
+                dashboard: vec![ApplicationContribution {
+                    id: format!("{slug}.dashboard"),
+                    label: Some(name.into()),
+                    renderer: Some(format!("{renderer}-dashboard")),
+                    order: Some(order),
+                    action: dashboard_action,
+                    template: dashboard_template.map(str::to_string),
+                    ..Default::default()
+                }],
+                settings: vec![ApplicationContribution {
+                    id: format!("{slug}.settings"),
+                    route: Some(format!("/settings/apps/{slug}")),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            integration_events: IntegrationEvents::default(),
+            memory: None,
+            configuration: ConfigurationReference {
+                schema: format!("contracts/{id}/config-v1alpha1.schema.json"),
+            },
+            data: DataPolicy {
+                owner: id,
+                preserve_on_disable: true,
+                export_supported: true,
+            },
+            health: None,
+        }
+    })
+    .collect()
+}
+
 pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), ApplicationRegistryError> {
     if manifest.api_version != "elembra.io/v1alpha1"
         || manifest.kind != "Application"
@@ -450,11 +598,29 @@ pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), Applicati
         &manifest.contributions.renderers,
         &manifest.contributions.admin,
     ];
+    let application_namespace = manifest
+        .metadata
+        .id
+        .0
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
     for contribution in families.into_iter().flat_map(|v| v.iter()) {
         if contribution.id.trim().is_empty() || !ids.insert(&contribution.id) {
             return Err(ApplicationRegistryError::DuplicateContribution(
                 contribution.id.clone(),
             ));
+        }
+        if !valid_namespace(&contribution.id)
+            || (contribution.id != application_namespace
+                && !contribution
+                    .id
+                    .starts_with(&format!("{application_namespace}.")))
+        {
+            return Err(ApplicationRegistryError::InvalidManifest(format!(
+                "contribution {} is outside {} namespace",
+                contribution.id, application_namespace
+            )));
         }
     }
     if manifest
@@ -495,8 +661,8 @@ pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), Applicati
         .chain(
             manifest
                 .contributions
-                .commands
-                .iter()
+                .all()
+                .into_iter()
                 .filter_map(|c| c.action.as_ref()),
         )
     {
@@ -505,13 +671,6 @@ pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), Applicati
                 "invalid action capability: {action}"
             ))
         })?;
-        let application_namespace = manifest
-            .metadata
-            .id
-            .0
-            .rsplit('.')
-            .next()
-            .unwrap_or_default();
         if namespace != application_namespace {
             return Err(ApplicationRegistryError::InvalidManifest(format!(
                 "action namespace {namespace} is not owned by {}",
@@ -556,7 +715,7 @@ metadata: {{ id: {id}, name: Test, version: 1.0.0 }}
 runtime: {{ kind: embedded }}
 contracts: {{ provides: [{{ id: {id}.api, version: v1alpha1 }}] }}
 resources: [{{ type: note, actions: [notes.read] }}]
-contributions: {{ navigation: [{{ id: home, label: Home, route: /apps/test }}] }}
+contributions: {{ navigation: [{{ id: notes, label: Home, route: /apps/test }}] }}
 configuration: {{ schema: config.json }}
 data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
 "#
@@ -566,6 +725,30 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
     #[test]
     fn parses_and_validates_manifest() {
         assert!(validate_manifest(&manifest("io.elembra.notes")).is_ok());
+    }
+
+    #[test]
+    fn first_party_registry_exposes_canonical_shell_identity() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let chat = registry
+            .manifest(&ApplicationId::from("io.elembra.chat"))
+            .unwrap();
+        assert_eq!(chat.runtime.kind, ApplicationRuntimeKind::Embedded);
+        assert_eq!(chat.metadata.id.0, "io.elembra.chat");
+        assert_eq!(
+            chat.contributions.navigation[0].route.as_deref(),
+            Some("/apps/chat")
+        );
+    }
+
+    #[test]
+    fn rejects_contribution_outside_application_namespace() {
+        let mut application = manifest("io.elembra.notes");
+        application.contributions.navigation[0].id = "chat.navigation".to_string();
+        assert!(matches!(
+            validate_manifest(&application),
+            Err(ApplicationRegistryError::InvalidManifest(_))
+        ));
     }
     #[test]
     fn rejects_duplicate_application() {
@@ -628,6 +811,22 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert!(r.is_configured(t, w, &id));
         assert!(!r.is_enabled(t, w, &id));
         assert!(!r.enablement(t, w, &id).unwrap().enabled);
+        let other_tenant = TenantId(Uuid::new_v4());
+        let other_workspace = WorkspaceId(Uuid::new_v4());
+        assert_eq!(
+            r.state(other_tenant, other_workspace, &id),
+            Some(ApplicationState::Available)
+        );
+        assert!(!r.is_enabled(other_tenant, other_workspace, &id));
+        r.configure(
+            other_tenant,
+            other_workspace,
+            &id,
+            true,
+            serde_json::json!({}),
+        );
+        assert!(r.is_enabled(other_tenant, other_workspace, &id));
+        assert!(!r.is_enabled(t, w, &id));
         assert!(r.set_health(t, w, &id, ApplicationHealth::Degraded));
         a.runtime.kind = ApplicationRuntimeKind::Service;
         assert_eq!(a.metadata.id, id);

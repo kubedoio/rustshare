@@ -28,7 +28,7 @@ pub struct ListBoardsResponse {
 async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
         .application_service
-        .get_application("brainstorming", tenant_id)
+        .get_application("io.elembra.brainstorming", tenant_id)
         .await;
     let module = match module {
         Ok(m) => m,

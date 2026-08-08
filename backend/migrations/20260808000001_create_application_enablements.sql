@@ -33,6 +33,8 @@ SELECT
     END,
     enabled,
     jsonb_build_object(
+        'displayName', display_name,
+        'description', description,
         'rootPath', root_path,
         'renderer', renderer,
         'defaultTemplate', default_template,

@@ -231,7 +231,7 @@ export interface UserApplicationPreference {
 }
 
 /**
- * List the current user's module preferences.
+ * List the current user's Application preferences.
  */
 export async function listUserApplicationPreferences(): Promise<UserApplicationPreference[]> {
 	return apiClient.get<UserApplicationPreference[]>('/users/me/applications');
@@ -250,8 +250,8 @@ export async function updateUserApplicationPreference(
 }
 
 export interface DashboardConfig {
-	enabled_modules: string[];
-	module_order: string[];
+	enabled_applications: string[];
+	application_order: string[];
 	sections: any[];
 }
 

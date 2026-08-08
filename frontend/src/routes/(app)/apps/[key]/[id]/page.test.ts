@@ -75,7 +75,7 @@ vi.mock('$lib/api/folders', () => ({
 }));
 
 vi.mock('$lib/applications/registry', () => ({
-	getApplicationByKey: vi.fn(() => ({
+	getApplicationByRouteSlug: vi.fn(() => ({
 		key: 'notes',
 		displayName: 'Notes',
 		rootPath: '/Notes'

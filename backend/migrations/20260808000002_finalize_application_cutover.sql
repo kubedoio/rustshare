@@ -1,6 +1,7 @@
--- Final #210 cutover: the code-owned Application registry now uses the
--- persisted application table. The previous migration copied state first;
--- this rename changes storage identity without touching content rows.
+-- Transitional #210 cutover: expose the legacy rows under the final table
+-- name long enough for the following migration to copy configuration into
+-- application_enablements. Manifests remain code-owned; content rows are not
+-- changed by this rename.
 ALTER TABLE modules RENAME TO applications;
 ALTER TABLE applications RENAME COLUMN module_key TO application_id;
 ALTER TABLE templates RENAME COLUMN module_key TO application_id;

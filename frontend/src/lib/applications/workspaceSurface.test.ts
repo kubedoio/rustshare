@@ -4,20 +4,20 @@ import {
 	getApplicationDashboardWidgetConfig,
 	getApplicationPageConfig,
 	getApplicationSidebarConfig,
-	getEnabledSidebarModules,
-	getEnabledDashboardModules,
+	getEnabledSidebarApplications,
+	getEnabledDashboardApplications,
 	normalizeApplicationUiConfig
 } from './workspaceSurface';
 
-const baseModule: ApplicationConfig = {
-	id: 'module-notes',
-	application_id: 'notes',
+const baseApplication: ApplicationConfig = {
+	id: 'io.elembra.notes',
+	application_id: 'io.elembra.notes',
 	display_name: 'Notes',
 	description: 'Recent notes.',
 	enabled: true,
 	root_path: '/Workspace/Notes',
-	renderer: 'notes',
-	default_template: 'template_default_note',
+	renderer: 'okf-note',
+	default_template: 'template_default_okf_note',
 	icon: 'sticky-note',
 	schema_version: '1.0',
 	permissions: {
@@ -32,10 +32,10 @@ const baseModule: ApplicationConfig = {
 	updated_at: '2026-04-30T00:00:00Z'
 };
 
-describe('workspace surface module normalization', () => {
-	it('normalizes legacy dashboard and modulePage config into widget and page contracts', () => {
-		const module = {
-			...baseModule,
+describe('workspace surface application normalization', () => {
+	it('normalizes declarative dashboard and page Contributions into surface contracts', () => {
+		const application = {
+			...baseApplication,
 			ui_config: {
 				sidebar: {
 					enabled: true,
@@ -56,7 +56,10 @@ describe('workspace surface module normalization', () => {
 						template: 'template_default_note'
 					}
 				},
-				modulePage: {
+				page: {
+					enabled: true,
+					route: '/apps/notes',
+					renderer: 'okf-note',
 					layout: 'list-grid',
 					emptyStateTitle: 'No notes yet',
 					emptyStateDescription: 'Create your first note.',
@@ -65,21 +68,21 @@ describe('workspace surface module normalization', () => {
 			}
 		} satisfies ApplicationConfig;
 
-		const normalized = normalizeApplicationUiConfig(module);
+		const normalized = normalizeApplicationUiConfig(application);
 
 		expect(normalized.dashboard?.widget?.enabled).toBe(true);
 		expect(normalized.dashboard?.widget?.type).toBe('latest-notes');
 		expect(normalized.dashboard?.widget?.title).toBe('Latest Notes');
-		expect(normalized.dashboard?.widget?.columns.desktop).toBe(3);
+		expect(normalized.dashboard?.widget?.columns.desktop).toBe(4);
 		expect(normalized.page?.enabled).toBe(true);
 		expect(normalized.page?.route).toBe('/apps/notes');
-		expect(normalized.page?.renderer).toBe('notes');
+		expect(normalized.page?.renderer).toBe('okf-note');
 		expect(normalized.page?.primaryAction?.label).toBe('New Note');
 	});
 
 	it('preserves explicit workspace widget and page config when already present', () => {
-		const module = {
-			...baseModule,
+		const application = {
+			...baseApplication,
 			ui_config: {
 				sidebar: {
 					enabled: true,
@@ -108,7 +111,7 @@ describe('workspace surface module normalization', () => {
 				page: {
 					enabled: true,
 					route: '/apps/notes',
-					renderer: 'notes',
+					renderer: 'okf-note',
 					layout: 'list-grid',
 					emptyStateTitle: 'No notes yet',
 					emptyStateDescription: 'Create your first note.',
@@ -122,46 +125,42 @@ describe('workspace surface module normalization', () => {
 			}
 		} satisfies ApplicationConfig;
 
-		expect(getApplicationSidebarConfig(module).label).toBe('Notes');
-		expect(getApplicationDashboardWidgetConfig(module).type).toBe('latest-notes');
-		expect(getApplicationPageConfig(module).renderer).toBe('notes');
-	});
-
-	it('maps legacy modulePage to canonical page shape', () => {
-		const module = {
-			...baseModule,
-			ui_config: {
-				modulePage: {
-					layout: 'kanban-board',
-					emptyStateTitle: 'No boards yet',
-					emptyStateDescription: 'Create your first board.',
-					emptyStateAction: 'New Board'
-				}
-			}
-		} satisfies ApplicationConfig;
-
-		const normalized = normalizeApplicationUiConfig(module);
-		expect(normalized.page?.layout).toBe('kanban-board');
-		expect(normalized.page?.emptyStateTitle).toBe('No boards yet');
-		expect(normalized.modulePage?.layout).toBe('kanban-board');
+		expect(getApplicationSidebarConfig(application).label).toBe('Notes');
+		expect(getApplicationDashboardWidgetConfig(application).type).toBe('latest-notes');
+		expect(getApplicationPageConfig(application).renderer).toBe('okf-note');
 	});
 });
 
 describe('workspace surface contract drift guard', () => {
 	it('does not drift from canonical widget types', () => {
-		const module = {
-			...baseModule,
-			application_id: 'kanban'
+		const application = {
+			...baseApplication,
+			application_id: 'io.elembra.kanban',
+			ui_config: {
+				dashboard: {
+					enabled: true,
+					order: 1,
+					widget: {
+						enabled: true,
+						type: 'kanban-summary',
+						title: 'Kanban',
+						description: 'Boards.',
+						size: 'large',
+						columns: { desktop: 6, tablet: 12, mobile: 12 },
+						maxItems: 4
+					}
+				}
+			}
 		} satisfies ApplicationConfig;
 
-		const widget = getApplicationDashboardWidgetConfig(module);
+		const widget = getApplicationDashboardWidgetConfig(application);
 		expect(widget.type).toBe('kanban-summary');
 	});
 
 	it('preserves canonical page layouts and does not drift to unknown values', () => {
 		const kanban = {
-			...baseModule,
-			application_id: 'kanban',
+			...baseApplication,
+			application_id: 'io.elembra.kanban',
 			renderer: 'kanban',
 			ui_config: {
 				page: {
@@ -176,9 +175,9 @@ describe('workspace surface contract drift guard', () => {
 			}
 		} satisfies ApplicationConfig;
 		const notes = {
-			...baseModule,
-			application_id: 'notes',
-			renderer: 'notes'
+			...baseApplication,
+			application_id: 'io.elembra.notes',
+			renderer: 'okf-note'
 		} satisfies ApplicationConfig;
 
 		expect(getApplicationPageConfig(kanban).layout).toBe('kanban-board');
@@ -186,7 +185,7 @@ describe('workspace surface contract drift guard', () => {
 	});
 
 	it('does not drift from canonical module root in base config', () => {
-		expect(baseModule.root_path).toBe('/Workspace/Notes');
+		expect(baseApplication.root_path).toBe('/Workspace/Notes');
 	});
 
 	it('does not drift from approved icon keys', () => {
@@ -207,12 +206,12 @@ describe('workspace surface contract drift guard', () => {
 			'lightbulb',
 			'activity'
 		]);
-		expect(approved.has(baseModule.icon)).toBe(true);
+		expect(approved.has(baseApplication.icon)).toBe(true);
 	});
 
 	it('preserves all canonical snake_case fields through normalization', () => {
 		const module = {
-			...baseModule,
+			...baseApplication,
 			ui_config: {
 				sidebar: { enabled: true, order: 1, icon: 'sticky-note', label: 'Notes' },
 				dashboard: {
@@ -236,7 +235,7 @@ describe('workspace surface contract drift guard', () => {
 				page: {
 					enabled: true,
 					route: '/apps/notes',
-					renderer: 'notes',
+					renderer: 'okf-note',
 					layout: 'list-grid',
 					emptyStateTitle: 'No notes yet',
 					emptyStateDescription: 'Create your first note.',
@@ -254,41 +253,41 @@ describe('workspace surface contract drift guard', () => {
 		expect(normalized.sidebar?.enabled).toBe(true);
 		expect(normalized.dashboard?.widget?.type).toBe('latest-notes');
 		expect(normalized.page?.route).toBe('/apps/notes');
-		expect(normalized.page?.renderer).toBe('notes');
+		expect(normalized.page?.renderer).toBe('okf-note');
 		expect(normalized.page?.layout).toBe('list-grid');
 	});
 
 	it('filters disabled modules from sidebar', () => {
 		const enabled = {
-			...baseModule,
+			...baseApplication,
 			ui_config: {
 				sidebar: { enabled: true, order: 1, icon: 'sticky-note', label: 'Notes' }
 			}
 		} satisfies ApplicationConfig;
 		const disabled = {
-			...baseModule,
-			application_id: 'disabled',
+			...baseApplication,
+			application_id: 'io.elembra.disabled',
 			enabled: false,
 			ui_config: {
 				sidebar: { enabled: true, order: 2, icon: 'folder', label: 'Disabled' }
 			}
 		} satisfies ApplicationConfig;
 		const sidebarHidden = {
-			...baseModule,
-			application_id: 'hidden',
+			...baseApplication,
+			application_id: 'io.elembra.hidden',
 			enabled: true,
 			ui_config: {
 				sidebar: { enabled: false, order: 3, icon: 'folder', label: 'Hidden' }
 			}
 		} satisfies ApplicationConfig;
 
-		const result = getEnabledSidebarModules([enabled, disabled, sidebarHidden]);
-		expect(result.map((m) => m.application_id)).toEqual(['notes']);
+		const result = getEnabledSidebarApplications([enabled, disabled, sidebarHidden]);
+		expect(result.map((m) => m.application_id)).toEqual(['io.elembra.notes']);
 	});
 
 	it('filters disabled modules from dashboard', () => {
 		const enabled = {
-			...baseModule,
+			...baseApplication,
 			ui_config: {
 				dashboard: {
 					enabled: true,
@@ -306,8 +305,8 @@ describe('workspace surface contract drift guard', () => {
 			}
 		} satisfies ApplicationConfig;
 		const disabled = {
-			...baseModule,
-			application_id: 'disabled',
+			...baseApplication,
+			application_id: 'io.elembra.disabled',
 			enabled: false,
 			ui_config: {
 				dashboard: {
@@ -315,7 +314,7 @@ describe('workspace surface contract drift guard', () => {
 					order: 2,
 					widget: {
 						enabled: true,
-						type: 'generic-module-summary',
+						type: 'application-summary',
 						title: 'Disabled',
 						description: 'Disabled module.',
 						size: 'small' as const,
@@ -326,8 +325,8 @@ describe('workspace surface contract drift guard', () => {
 			}
 		} satisfies ApplicationConfig;
 		const dashboardHidden = {
-			...baseModule,
-			application_id: 'hidden',
+			...baseApplication,
+			application_id: 'io.elembra.hidden',
 			enabled: true,
 			ui_config: {
 				dashboard: {
@@ -335,7 +334,7 @@ describe('workspace surface contract drift guard', () => {
 					order: 3,
 					widget: {
 						enabled: false,
-						type: 'generic-module-summary',
+						type: 'application-summary',
 						title: 'Hidden',
 						description: 'Hidden module.',
 						size: 'small' as const,
@@ -346,27 +345,13 @@ describe('workspace surface contract drift guard', () => {
 			}
 		} satisfies ApplicationConfig;
 
-		const result = getEnabledDashboardModules([enabled, disabled, dashboardHidden]);
-		expect(result.map((m) => m.application_id)).toEqual(['notes']);
+		const result = getEnabledDashboardApplications([enabled, disabled, dashboardHidden]);
+		expect(result.map((m) => m.application_id)).toEqual(['io.elembra.notes']);
 	});
 
-	it('does not drift from canonical default widget types for all predefined modules', () => {
-		// When the backend sends a minimal payload (no ui_config), the frontend
-		// normalization must produce the canonical default widget types.
-		const expectations: Record<string, string> = {
-			notes: 'latest-notes',
-			meetings: 'decisions-meetings-summary',
-			standups: 'generic-module-summary',
-			kanban: 'kanban-summary',
-			decisions: 'generic-module-summary',
-			brainstorming: 'recent-brainstorm-boards',
-			shares: 'active-shares'
-		};
-
-		for (const [key, expectedWidgetType] of Object.entries(expectations)) {
-			const module = { ...baseModule, application_id: key } satisfies ApplicationConfig;
-			const widget = getApplicationDashboardWidgetConfig(module);
-			expect(widget.type).toBe(expectedWidgetType);
-		}
+	it('does not invent widget identity when a manifest omits a dashboard Contribution', () => {
+		const application = { ...baseApplication } satisfies ApplicationConfig;
+		const widget = getApplicationDashboardWidgetConfig(application);
+		expect(widget.type).toBe('application-summary');
 	});
 });

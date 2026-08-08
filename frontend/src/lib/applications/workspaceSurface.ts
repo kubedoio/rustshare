@@ -48,65 +48,35 @@ const DEFAULT_SURFACE: WorkspaceSurfaceDefinition = {
 	]
 };
 
-function getDefaultWidgetType(module: ApplicationConfig): string {
-	switch (module.application_id) {
-		case 'kanban':
-			return 'kanban-summary';
-		case 'meetings':
-			return 'decisions-meetings-summary';
-		case 'notes':
-			return 'latest-notes';
-		case 'shares':
-			return 'active-shares';
-		case 'brainstorming':
-			return 'recent-brainstorm-boards';
-		default:
-			return 'generic-module-summary';
-	}
-}
-
-function getDefaultWidgetSize(module: ApplicationConfig): WorkspaceWidgetSize {
-	switch (module.application_id) {
-		case 'kanban':
-			return 'large';
-		case 'meetings':
-		case 'decisions':
-			return 'medium';
-		default:
-			return 'small';
-	}
-}
-
 function fallbackPrimaryAction(
-	module: ApplicationConfig,
+	_application: ApplicationConfig,
 	dashboard?: DashboardConfig
 ): PrimaryActionConfig | undefined {
 	return dashboard?.primaryAction ?? undefined;
 }
 
-export function normalizeApplicationUiConfig(module: ApplicationConfig): ApplicationUiConfig {
-	const ui = module.ui_config ?? {};
+export function normalizeApplicationUiConfig(application: ApplicationConfig): ApplicationUiConfig {
+	const ui = application.ui_config ?? {};
 	const sidebar = ui.sidebar ?? {
 		enabled: false,
 		order: 99,
-		icon: module.icon,
-		label: module.display_name
+		icon: application.icon,
+		label: application.display_name
 	};
 
 	const legacyDashboard = ui.dashboard;
-	const widgetSize = getDefaultWidgetSize(module);
+	const widgetSize: WorkspaceWidgetSize = legacyDashboard?.widget?.size ?? 'medium';
 	const widgetColumns =
 		legacyDashboard?.widget?.columns ??
 		DEFAULT_WIDGET_COLUMNS_BY_SIZE[legacyDashboard?.widget?.size ?? widgetSize];
 	const widget: WorkspaceWidgetConfig = {
 		enabled: legacyDashboard?.widget?.enabled ?? legacyDashboard?.enabled ?? true,
-		type:
-			legacyDashboard?.widget?.type ?? legacyDashboard?.summaryMode ?? getDefaultWidgetType(module),
-		title: legacyDashboard?.widget?.title ?? legacyDashboard?.cardTitle ?? module.display_name,
+		type: legacyDashboard?.widget?.type ?? legacyDashboard?.summaryMode ?? 'application-summary',
+		title: legacyDashboard?.widget?.title ?? legacyDashboard?.cardTitle ?? application.display_name,
 		description:
 			legacyDashboard?.widget?.description ??
 			legacyDashboard?.cardDescription ??
-			module.description,
+			application.description,
 		size: legacyDashboard?.widget?.size ?? widgetSize,
 		columns: {
 			desktop: widgetColumns.desktop,
@@ -115,7 +85,7 @@ export function normalizeApplicationUiConfig(module: ApplicationConfig): Applica
 		},
 		maxItems: legacyDashboard?.widget?.maxItems ?? legacyDashboard?.maxItems ?? 4,
 		primaryAction:
-			legacyDashboard?.widget?.primaryAction ?? fallbackPrimaryAction(module, legacyDashboard)
+			legacyDashboard?.widget?.primaryAction ?? fallbackPrimaryAction(application, legacyDashboard)
 	};
 
 	const normalizedDashboard: DashboardConfig = {
@@ -125,27 +95,28 @@ export function normalizeApplicationUiConfig(module: ApplicationConfig): Applica
 		cardDescription: legacyDashboard?.cardDescription ?? widget.description,
 		summaryMode: legacyDashboard?.summaryMode ?? widget.type,
 		maxItems: legacyDashboard?.maxItems ?? widget.maxItems,
-		primaryAction: fallbackPrimaryAction(module, legacyDashboard) ?? widget.primaryAction,
+		primaryAction: fallbackPrimaryAction(application, legacyDashboard) ?? widget.primaryAction,
 		widget
 	};
 
-	const legacyPage = ui.page ?? ui.modulePage;
+	const pageConfig = ui.page;
 	const page: ApplicationPageDefinition = {
 		enabled: ui.page?.enabled ?? true,
-		route: ui.page?.route ?? `/apps/${module.application_id}`,
-		renderer: ui.page?.renderer ?? module.renderer,
-		layout: legacyPage?.layout ?? 'list-grid',
-		emptyStateTitle: legacyPage?.emptyStateTitle ?? `No ${module.display_name.toLowerCase()} yet`,
-		emptyStateDescription: legacyPage?.emptyStateDescription ?? module.description,
+		route: ui.page?.route ?? `/apps/${application.application_id.split('.').at(-1)}`,
+		renderer: ui.page?.renderer ?? application.renderer,
+		layout: pageConfig?.layout ?? 'list-grid',
+		emptyStateTitle:
+			pageConfig?.emptyStateTitle ?? `No ${application.display_name.toLowerCase()} yet`,
+		emptyStateDescription: pageConfig?.emptyStateDescription ?? application.description,
 		emptyStateAction:
-			legacyPage?.emptyStateAction ?? normalizedDashboard.primaryAction?.label ?? 'Create',
+			pageConfig?.emptyStateAction ?? normalizedDashboard.primaryAction?.label ?? 'Create',
 		primaryAction: ui.page?.primaryAction ?? normalizedDashboard.primaryAction,
 		searchPlaceholder:
-			ui.page?.searchPlaceholder ?? `Search ${module.display_name.toLowerCase()}...`,
-		filterLabel: ui.page?.filterLabel ?? `All ${module.display_name.toLowerCase()}`,
+			ui.page?.searchPlaceholder ?? `Search ${application.display_name.toLowerCase()}...`,
+		filterLabel: ui.page?.filterLabel ?? `All ${application.display_name.toLowerCase()}`,
 		sortLabel: ui.page?.sortLabel ?? 'Modified',
-		itemSingular: ui.page?.itemSingular ?? module.display_name.toLowerCase(),
-		itemPlural: ui.page?.itemPlural ?? module.display_name.toLowerCase()
+		itemSingular: ui.page?.itemSingular ?? application.display_name.toLowerCase(),
+		itemPlural: ui.page?.itemPlural ?? application.display_name.toLowerCase()
 	};
 
 	return {
@@ -153,47 +124,45 @@ export function normalizeApplicationUiConfig(module: ApplicationConfig): Applica
 		okf: ui.okf,
 		sidebar,
 		dashboard: normalizedDashboard,
-		modulePage: {
-			layout: page.layout,
-			emptyStateTitle: page.emptyStateTitle,
-			emptyStateDescription: page.emptyStateDescription,
-			emptyStateAction: page.emptyStateAction
-		},
 		page
 	};
 }
 
-export function normalizeApplicationConfig(module: ApplicationConfig): ApplicationConfig {
+export function normalizeApplicationConfig(application: ApplicationConfig): ApplicationConfig {
 	return {
-		...module,
-		ui_config: normalizeApplicationUiConfig(module)
+		...application,
+		ui_config: normalizeApplicationUiConfig(application)
 	};
 }
 
-export function getApplicationSidebarConfig(module: ApplicationConfig): SidebarConfig {
-	return normalizeApplicationUiConfig(module).sidebar!;
+export function getApplicationSidebarConfig(application: ApplicationConfig): SidebarConfig {
+	return normalizeApplicationUiConfig(application).sidebar!;
 }
 
-export function getApplicationDashboardConfig(module: ApplicationConfig): DashboardConfig {
-	return normalizeApplicationUiConfig(module).dashboard!;
+export function getApplicationDashboardConfig(application: ApplicationConfig): DashboardConfig {
+	return normalizeApplicationUiConfig(application).dashboard!;
 }
 
 export function getApplicationDashboardWidgetConfig(
-	module: ApplicationConfig
+	application: ApplicationConfig
 ): WorkspaceWidgetConfig {
-	return getApplicationDashboardConfig(module).widget!;
+	return getApplicationDashboardConfig(application).widget!;
 }
 
-export function getApplicationPageConfig(module: ApplicationConfig): ApplicationPageDefinition {
-	return normalizeApplicationUiConfig(module).page!;
+export function getApplicationPageConfig(
+	application: ApplicationConfig
+): ApplicationPageDefinition {
+	return normalizeApplicationUiConfig(application).page!;
 }
 
-export function getEnabledDashboardModules(modules: ApplicationConfig[]): ApplicationConfig[] {
-	return modules
+export function getEnabledDashboardApplications(
+	applications: ApplicationConfig[]
+): ApplicationConfig[] {
+	return applications
 		.map(normalizeApplicationConfig)
-		.filter((module) => {
-			if (module.enabled === false) return false;
-			const dashboard = getApplicationDashboardConfig(module);
+		.filter((application) => {
+			if (application.enabled === false) return false;
+			const dashboard = getApplicationDashboardConfig(application);
 			return dashboard.enabled !== false && dashboard.widget?.enabled !== false;
 		})
 		.sort(
@@ -201,11 +170,14 @@ export function getEnabledDashboardModules(modules: ApplicationConfig[]): Applic
 		);
 }
 
-export function getEnabledSidebarModules(modules: ApplicationConfig[]): ApplicationConfig[] {
-	return modules
+export function getEnabledSidebarApplications(
+	applications: ApplicationConfig[]
+): ApplicationConfig[] {
+	return applications
 		.map(normalizeApplicationConfig)
 		.filter(
-			(module) => module.enabled !== false && getApplicationSidebarConfig(module).enabled === true
+			(application) =>
+				application.enabled !== false && getApplicationSidebarConfig(application).enabled === true
 		)
 		.sort((a, b) => getApplicationSidebarConfig(a).order - getApplicationSidebarConfig(b).order);
 }

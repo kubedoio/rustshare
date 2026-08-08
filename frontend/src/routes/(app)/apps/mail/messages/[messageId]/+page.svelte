@@ -18,7 +18,7 @@
 	import FilePreviewModal from '$lib/components/modals/FilePreviewModal.svelte';
 	import MailComposeModal from '$lib/components/apps/MailComposeModal.svelte';
 	import { mailBodyText, quoteMailBody, uniqueMailAddresses } from '$lib/mail/compose';
-	import { getApplicationByKey } from '$lib/applications/registry';
+	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import { toastStore } from '$lib/stores/toast';
 	import { sanitizeEmailHtml } from '$lib/editor/adapter/security';
 	import { formatAbsoluteDateTime } from '$lib/utils/format';
@@ -36,7 +36,7 @@
 	} from 'lucide-svelte';
 
 	let messageId = $derived($page.params.messageId);
-	let mailEnabled = $derived(getApplicationByKey('mail')?.enabled !== false);
+	let mailEnabled = $derived(getApplicationByRouteSlug('mail')?.enabled !== false);
 
 	const messageQuery = createQuery<MailMessage>({
 		queryKey: ['mail-message', null],

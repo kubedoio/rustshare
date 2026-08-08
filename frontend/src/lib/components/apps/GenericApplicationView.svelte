@@ -68,7 +68,7 @@
 			if (activityType) {
 				activityStore.addActivity(activityType, name || 'Untitled', {
 					artifactId: result.object_id,
-					applicationId: module.key
+					applicationId: module.id
 				});
 			}
 			goto(getApplicationObjectHref(module.key, result.object_type, result.object_id));

@@ -4,25 +4,25 @@ import { queryClient } from '$lib/query-client';
 import AdminModulesPage from './+page.svelte';
 
 const mocks = vi.hoisted(() => ({
-	listAdminModules: vi.fn(),
-	enableModule: vi.fn(),
-	disableModule: vi.fn()
+	listAdminApplications: vi.fn(),
+	enableApplication: vi.fn(),
+	disableApplication: vi.fn()
 }));
 
 vi.mock('$lib/api/admin-applications', () => ({
-	listAdminModules: mocks.listAdminModules,
-	enableModule: mocks.enableModule,
-	disableModule: mocks.disableModule
+	listAdminApplications: mocks.listAdminApplications,
+	enableApplication: mocks.enableApplication,
+	disableApplication: mocks.disableApplication
 }));
 
 describe('AdminModulesPage', () => {
 	beforeEach(() => {
 		queryClient.clear();
 		vi.clearAllMocks();
-		mocks.listAdminModules.mockResolvedValue([
+		mocks.listAdminApplications.mockResolvedValue([
 			{
 				id: 'module_notes',
-				application_id: 'notes',
+				application_id: 'io.elembra.notes',
 				display_name: 'Notes',
 				description: 'OKF notes.',
 				enabled: true,
@@ -57,7 +57,7 @@ describe('AdminModulesPage', () => {
 			},
 			{
 				id: 'module_meetings',
-				application_id: 'meetings',
+				application_id: 'io.elembra.meetings',
 				display_name: 'Meeting Notes',
 				description: 'Meeting notes.',
 				enabled: true,

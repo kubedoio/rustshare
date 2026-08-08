@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
-	import { listAdminModules, enableModule, disableModule } from '$lib/api/admin-applications';
+	import {
+		listAdminApplications,
+		enableApplication,
+		disableApplication
+	} from '$lib/api/admin-applications';
 	import ApplicationIcon from '$lib/components/dashboard/ApplicationIcon.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { ToggleLeft, ToggleRight, Edit } from 'lucide-svelte';
@@ -10,24 +14,24 @@
 
 	const modulesQuery = createQuery({
 		queryKey: ['admin-applications'],
-		queryFn: () => listAdminModules()
+		queryFn: () => listAdminApplications()
 	});
 
 	const enableMutation = createMutation({
-		mutationFn: (key: string) => enableModule(key),
+		mutationFn: (key: string) => enableApplication(key),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-applications'] });
-			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+			queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 			toastStore.show('Application enabled', 'success');
 		},
 		onError: (err: Error) => toastStore.show(err.message, 'error')
 	});
 
 	const disableMutation = createMutation({
-		mutationFn: (key: string) => disableModule(key),
+		mutationFn: (key: string) => disableApplication(key),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-applications'] });
-			queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+			queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 			toastStore.show('Application disabled', 'success');
 		},
 		onError: (err: Error) => toastStore.show(err.message, 'error')
@@ -56,15 +60,15 @@
 </script>
 
 <svelte:head>
-	<title>Modules - Admin - RustShare</title>
+	<title>Applications - Admin - RustShare</title>
 </svelte:head>
 
 <div class="mx-auto max-w-6xl">
 	<div class="mb-6">
-		<h1 class="text-2xl font-semibold text-base-content">Modules</h1>
+		<h1 class="text-2xl font-semibold text-base-content">Applications</h1>
 		<p class="mt-1 text-sm text-base-content/60">
-			Enable or disable workspace modules. Disabled modules hide from the dashboard but preserve all
-			files.
+			Enable or disable workspace Applications. Disabled Applications hide from the dashboard but
+			preserve all files.
 		</p>
 	</div>
 
@@ -163,7 +167,7 @@
 										</span>
 									</button>
 									<a
-										href="/admin/apps/{module.application_id}/edit"
+										href="/admin/applications/{module.application_id}/edit"
 										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
 										title="Edit"
 									>

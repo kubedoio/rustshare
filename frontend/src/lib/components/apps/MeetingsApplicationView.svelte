@@ -138,7 +138,7 @@
 				result.name || title || 'Untitled Meeting Note',
 				{
 					artifactId: result.id,
-					applicationId: 'meetings'
+					applicationId: 'io.elembra.meetings'
 				}
 			);
 			goto(`/apps/${module.key}/${result.id}`);

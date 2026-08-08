@@ -18,7 +18,7 @@ use crate::services::application_service::ApplicationError;
 async fn require_kanban_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
         .application_service
-        .get_application("kanban", tenant_id)
+        .get_application("io.elembra.kanban", tenant_id)
         .await;
     let module = match module {
         Ok(m) => m,

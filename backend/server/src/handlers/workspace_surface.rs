@@ -41,7 +41,7 @@ pub struct WorkspaceSurfaceResponse {
 #[utoipa::path(
     get,
     path = "/api/v1/workspace-surface",
-    tag = "Modules",
+    tag = "Applications",
     responses(
         (status = 200, description = "Success", body = WorkspaceSurfaceResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),

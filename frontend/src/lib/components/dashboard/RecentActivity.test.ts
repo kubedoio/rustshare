@@ -57,14 +57,18 @@ vi.mock('$lib/stores/activity', () => ({
 	getRelativeTime: vi.fn(() => '2 hours ago'),
 	getActivityHref: vi.fn((activity) => {
 		if (!activity.artifactId || activity.accessible === false) return null;
-		if (activity.applicationId === 'notes') return `/apps/notes/${activity.artifactId}`;
-		if (activity.applicationId === 'meetings') return `/apps/meetings/${activity.artifactId}`;
-		if (activity.applicationId === 'standups') return `/apps/standups/${activity.artifactId}`;
-		if (activity.applicationId === 'decisions') return `/apps/decisions/${activity.artifactId}`;
-		if (activity.applicationId === 'brainstorming')
+		if (activity.applicationId === 'io.elembra.notes') return `/apps/notes/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.meetings')
+			return `/apps/meetings/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.standups')
+			return `/apps/standups/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.decisions')
+			return `/apps/decisions/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.brainstorming')
 			return `/apps/brainstorming/${activity.artifactId}`;
-		if (activity.applicationId === 'kanban') return '/apps/kanban';
-		if (activity.applicationId === 'shares') return `/apps/shares/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.kanban') return '/apps/kanban';
+		if (activity.applicationId === 'io.elembra.shares')
+			return `/apps/shares/${activity.artifactId}`;
 		return `/files?preview=${activity.artifactId}`;
 	})
 }));
@@ -119,7 +123,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					applicationId: 'notes'
+					applicationId: 'io.elembra.notes'
 				},
 				{
 					id: '2',
@@ -127,7 +131,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Board',
 					timestamp: new Date().toISOString(),
 					artifactId: 'board-456',
-					applicationId: 'kanban'
+					applicationId: 'io.elembra.kanban'
 				}
 			],
 			loading: false,
@@ -183,7 +187,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					applicationId: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				},
 				{
@@ -192,7 +196,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Board',
 					timestamp: new Date().toISOString(),
 					artifactId: 'board-456',
-					applicationId: 'kanban',
+					applicationId: 'io.elembra.kanban',
 					accessible: true
 				}
 			],
@@ -275,7 +279,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					applicationId: 'notes'
+					applicationId: 'io.elembra.notes'
 				}
 			],
 			loading: false,
@@ -304,7 +308,7 @@ describe('RecentActivity', () => {
 					fileName: 'Unknown',
 					timestamp: new Date().toISOString(),
 					artifactId: 'share-123',
-					applicationId: 'shares',
+					applicationId: 'io.elembra.shares',
 					resourceType: 'share',
 					accessible: true
 				}
@@ -332,7 +336,7 @@ describe('RecentActivity', () => {
 					fileName: 'Unknown',
 					timestamp: new Date().toISOString(),
 					artifactId: 'share-456',
-					applicationId: 'shares',
+					applicationId: 'io.elembra.shares',
 					resourceType: 'folder',
 					accessible: true
 				}
@@ -403,7 +407,7 @@ describe('RecentActivity', () => {
 					fileName: 'Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'n-id',
-					applicationId: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				},
 				{
@@ -412,7 +416,7 @@ describe('RecentActivity', () => {
 					fileName: 'Meeting',
 					timestamp: new Date().toISOString(),
 					artifactId: 'm-id',
-					applicationId: 'meetings',
+					applicationId: 'io.elembra.meetings',
 					accessible: true
 				},
 				{
@@ -421,7 +425,7 @@ describe('RecentActivity', () => {
 					fileName: 'Standup',
 					timestamp: new Date().toISOString(),
 					artifactId: 's-id',
-					applicationId: 'standups',
+					applicationId: 'io.elembra.standups',
 					accessible: true
 				},
 				{
@@ -430,7 +434,7 @@ describe('RecentActivity', () => {
 					fileName: 'Decision',
 					timestamp: new Date().toISOString(),
 					artifactId: 'd-id',
-					applicationId: 'decisions',
+					applicationId: 'io.elembra.decisions',
 					accessible: true
 				},
 				{
@@ -439,7 +443,7 @@ describe('RecentActivity', () => {
 					fileName: 'Brainstorm',
 					timestamp: new Date().toISOString(),
 					artifactId: 'b-id',
-					applicationId: 'brainstorming',
+					applicationId: 'io.elembra.brainstorming',
 					accessible: true
 				},
 				{
@@ -448,7 +452,7 @@ describe('RecentActivity', () => {
 					fileName: 'Share',
 					timestamp: new Date().toISOString(),
 					artifactId: 'sh-id',
-					applicationId: 'shares',
+					applicationId: 'io.elembra.shares',
 					accessible: true
 				},
 				{

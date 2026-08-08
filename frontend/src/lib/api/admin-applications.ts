@@ -8,8 +8,8 @@ import type {
 } from './types';
 import { normalizeApplicationConfig } from '$lib/applications/workspaceSurface';
 
-interface AdminModulesResponse {
-	modules: ApplicationConfig[];
+interface AdminApplicationsResponse {
+	applications: ApplicationConfig[];
 }
 
 interface AdminTemplatesResponse {
@@ -40,30 +40,30 @@ export interface UpdateApplicationRequest {
 	ui_config?: ApplicationUiConfig;
 }
 
-export async function listAdminModules(): Promise<ApplicationConfig[]> {
-	const response = await apiClient.get<AdminModulesResponse>('/admin/applications');
-	return response.modules.map(normalizeApplicationConfig);
+export async function listAdminApplications(): Promise<ApplicationConfig[]> {
+	const response = await apiClient.get<AdminApplicationsResponse>('/admin/applications');
+	return response.applications.map(normalizeApplicationConfig);
 }
 
-export async function getAdminModule(key: string): Promise<ApplicationConfig> {
+export async function getAdminApplication(key: string): Promise<ApplicationConfig> {
 	return normalizeApplicationConfig(
 		await apiClient.get<ApplicationConfig>(`/admin/applications/${key}`)
 	);
 }
 
-export async function enableModule(key: string): Promise<ApplicationConfig> {
+export async function enableApplication(key: string): Promise<ApplicationConfig> {
 	return normalizeApplicationConfig(
 		await apiClient.post<ApplicationConfig>(`/admin/applications/${key}/enable`, {})
 	);
 }
 
-export async function disableModule(key: string): Promise<ApplicationConfig> {
+export async function disableApplication(key: string): Promise<ApplicationConfig> {
 	return normalizeApplicationConfig(
 		await apiClient.post<ApplicationConfig>(`/admin/applications/${key}/disable`, {})
 	);
 }
 
-export async function updateModule(
+export async function updateApplication(
 	key: string,
 	updates: UpdateApplicationRequest
 ): Promise<ApplicationConfig> {

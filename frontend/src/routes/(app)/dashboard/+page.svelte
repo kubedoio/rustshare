@@ -10,6 +10,7 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { resolveApplicationFolderId } from '$lib/applications/applicationPages';
 	import { runApplicationPrimaryAction } from '$lib/applications/applicationActions';
+	import { applicationShellEntryToConfig } from '$lib/applications/registry';
 	import { todayDateString } from '$lib/utils/dashboard';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
@@ -42,8 +43,8 @@
 		queryFn: () => listAllFiles()
 	});
 
-	const enabledModulesQuery = createQuery({
-		queryKey: ['enabled-modules'],
+	const enabledApplicationsQuery = createQuery({
+		queryKey: ['enabled-applications'],
 		queryFn: () => listEnabledApplications()
 	});
 
@@ -75,10 +76,10 @@
 		return map;
 	});
 
-	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
-	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError);
+	let isLoading = $derived($allFilesQuery.isLoading || $enabledApplicationsQuery.isLoading);
+	let isError = $derived($allFilesQuery.isError || $enabledApplicationsQuery.isError);
 	let errorMessage = $derived(
-		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || 'Unknown error'
+		$allFilesQuery.error?.message || $enabledApplicationsQuery.error?.message || 'Unknown error'
 	);
 
 	// ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@
 			});
 			activityStore.addActivity('note_created', result.name || 'Untitled Note', {
 				artifactId: result.id,
-				applicationId: 'notes'
+				applicationId: 'io.elembra.notes'
 			});
 			goto(`/apps/notes/${result.id}`);
 		} catch (err) {
@@ -139,7 +140,7 @@
 			const result = await decisionsApi.create({ title: trimmed, category: 'General', content });
 			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
 				artifactId: result.id,
-				applicationId: 'decisions'
+				applicationId: 'io.elembra.decisions'
 			});
 			showDecisionModal = false;
 			goto(`/apps/decisions/${result.id}`);
@@ -163,7 +164,7 @@
 			});
 			activityStore.addActivity('kanban_created', boardName, {
 				artifactId: result.object_id,
-				applicationId: 'kanban'
+				applicationId: 'io.elembra.kanban'
 			});
 			goto('/apps/kanban');
 		} catch (err) {
@@ -184,7 +185,7 @@
 			);
 			activityStore.addActivity('brainstorm_created', result.title || 'Untitled Idea Board', {
 				artifactId: result.id,
-				applicationId: 'brainstorming'
+				applicationId: 'io.elembra.brainstorming'
 			});
 			goto(`/apps/brainstorming/${result.id}`);
 		} catch (err) {
@@ -196,15 +197,15 @@
 
 	function getQuickActionLabel(applicationId: string, fallback: string): string {
 		switch (applicationId) {
-			case 'brainstorming':
+			case 'io.elembra.brainstorming':
 				return 'New idea board';
-			case 'kanban':
+			case 'io.elembra.kanban':
 				return 'New Kanban board';
-			case 'meetings':
+			case 'io.elembra.meetings':
 				return 'New meeting note';
-			case 'notes':
+			case 'io.elembra.notes':
 				return 'New note';
-			case 'shares':
+			case 'io.elembra.shares':
 				return 'New share';
 			default:
 				return fallback;
@@ -212,7 +213,8 @@
 	}
 
 	const quickActions = $derived(
-		($enabledModulesQuery.data ?? [])
+		($enabledApplicationsQuery.data ?? [])
+			.map(applicationShellEntryToConfig)
 			.filter((m) => m.enabled)
 			.filter((m) => {
 				const dashboard = m.ui_config?.dashboard;
@@ -223,19 +225,19 @@
 				let handler: () => Promise<void> | void;
 
 				switch (module.application_id) {
-					case 'notes':
+					case 'io.elembra.notes':
 						handler = () => handleNewNote(module.root_path);
 						break;
-					case 'meetings':
+					case 'io.elembra.meetings':
 						handler = handleNewMeeting;
 						break;
-					case 'decisions':
+					case 'io.elembra.decisions':
 						handler = handleNewDecision;
 						break;
-					case 'kanban':
+					case 'io.elembra.kanban':
 						handler = handleNewKanban;
 						break;
-					case 'brainstorming':
+					case 'io.elembra.brainstorming':
 						handler = handleNewBrainstorm;
 						break;
 					default:

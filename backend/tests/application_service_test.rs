@@ -95,7 +95,7 @@ async fn cleanup_modules_and_folders(pool: &PgPool, tenant_id: Uuid, user_id: Uu
         .await
         .ok();
 
-    sqlx::query("DELETE FROM applications WHERE tenant_id = $1")
+    sqlx::query("DELETE FROM application_enablements WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await
@@ -126,13 +126,13 @@ async fn contract_ensure_default_applications_creates_canonical_roots() {
         .expect("list_applications should succeed");
 
     let expected = [
-        ("notes", "/Workspace/Notes"),
-        ("meetings", "/Workspace/Meetings"),
-        ("standups", "/Workspace/Standups"),
-        ("kanban", "/Workspace/Kanban"),
-        ("decisions", "/Workspace/Decisions"),
-        ("brainstorming", "/Workspace/Brainstorming"),
-        ("shares", "/Workspace/Shares"),
+        ("io.elembra.notes", "/Workspace/Notes"),
+        ("io.elembra.meetings", "/Workspace/Meetings"),
+        ("io.elembra.standups", "/Workspace/Standups"),
+        ("io.elembra.kanban", "/Workspace/Kanban"),
+        ("io.elembra.decisions", "/Workspace/Decisions"),
+        ("io.elembra.brainstorming", "/Workspace/Brainstorming"),
+        ("io.elembra.shares", "/Workspace/Shares"),
     ];
 
     for (key, expected_root) in expected {
@@ -170,7 +170,7 @@ async fn contract_notes_module_is_okf_native() {
         .expect("ensure_default_applications should succeed");
 
     let notes = application_service
-        .get_application("notes", tenant_id)
+        .get_application("io.elembra.notes", tenant_id)
         .await
         .expect("notes module should exist");
 
@@ -291,13 +291,13 @@ async fn contract_enable_application_ensures_canonical_root_without_duplicates()
 
     // Enable a module that starts disabled (e.g., kanban)
     application_service
-        .enable_application("kanban", user.id, tenant_id)
+        .enable_application("io.elembra.kanban", user.id, tenant_id)
         .await
         .expect("enable_application should succeed");
 
     // Enable again should be idempotent
     application_service
-        .enable_application("kanban", user.id, tenant_id)
+        .enable_application("io.elembra.kanban", user.id, tenant_id)
         .await
         .expect("re-enable_application should succeed");
 
@@ -350,7 +350,7 @@ async fn contract_module_summary_reads_from_canonical_root() {
 
     // Enable notes so we can get a summary
     application_service
-        .enable_application("notes", user.id, tenant_id)
+        .enable_application("io.elembra.notes", user.id, tenant_id)
         .await
         .unwrap();
 
@@ -359,7 +359,7 @@ async fn contract_module_summary_reads_from_canonical_root() {
         .await
         .expect("get_application_summary should succeed");
 
-    assert_eq!(summary.application_id, "notes");
+    assert_eq!(summary.application_id, "io.elembra.notes");
     // With no notes created yet, total_items should be 0
     assert_eq!(summary.total_items, 0);
 
@@ -388,7 +388,7 @@ async fn contract_kanban_summary_includes_directly_shared_board_without_shared_r
         .await
         .unwrap();
     application_service
-        .enable_application("kanban", owner.id, tenant_id)
+        .enable_application("io.elembra.kanban", owner.id, tenant_id)
         .await
         .unwrap();
 

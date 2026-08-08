@@ -287,7 +287,7 @@ pub async fn accept_invite(
     .execute(&state.db_pool)
     .await?;
 
-    // Seed default module preferences
+    // Seed default Application preferences
     let pref_repo =
         rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
             state.db_pool.clone(),

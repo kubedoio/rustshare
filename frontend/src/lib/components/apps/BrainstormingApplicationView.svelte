@@ -79,7 +79,7 @@
 			createError = '';
 			activityStore.addActivity('brainstorm_created', data.title || 'Untitled Idea Board', {
 				artifactId: data.id,
-				applicationId: 'brainstorming'
+				applicationId: 'io.elembra.brainstorming'
 			});
 			goto(`/apps/brainstorming/${data.id}`);
 		},

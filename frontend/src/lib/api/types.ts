@@ -277,6 +277,56 @@ export class ApiError extends Error {
 // Application & Template Types
 // ---------------------------------------------------------------------------
 
+export interface ApplicationContribution {
+	id: string;
+	label?: string;
+	icon?: string;
+	route?: string;
+	renderer?: string;
+	action?: string;
+	template?: string;
+	order?: number;
+}
+
+export interface ApplicationManifest {
+	apiVersion: string;
+	kind: 'Application';
+	metadata: {
+		id: string;
+		name: string;
+		version: string;
+		description: string;
+	};
+	runtime: { kind: 'embedded' | 'service' | 'bridge' };
+	contracts: {
+		provides: Array<{ id: string; version: string }>;
+		requires: Array<{ id: string; version: string }>;
+	};
+	resources: Array<{ type: string; actions: string[] }>;
+	contributions: {
+		navigation: ApplicationContribution[];
+		routes: ApplicationContribution[];
+		commands: ApplicationContribution[];
+		dashboard: ApplicationContribution[];
+		settings: ApplicationContribution[];
+		searchProviders: ApplicationContribution[];
+		renderers: ApplicationContribution[];
+		admin: ApplicationContribution[];
+	};
+	integrationEvents: { publishes: string[]; subscribes: string[] };
+	memory?: { sourceTypes: string[]; publication: string };
+	configuration: { schema: string };
+	data: { owner: string; preserveOnDisable: boolean; exportSupported: boolean };
+	health?: { liveness: string; readiness: string };
+}
+
+export interface ApplicationShellEntry {
+	manifest: ApplicationManifest;
+	enabled: boolean;
+	configuration: Record<string, unknown>;
+	health: 'healthy' | 'degraded' | 'unavailable';
+}
+
 export interface ApplicationConfig {
 	id: string;
 	application_id: string;
@@ -308,7 +358,6 @@ export interface ApplicationUiConfig {
 	okf?: OkfApplicationUiConfig;
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
-	modulePage?: ApplicationPageConfig;
 	page?: ApplicationPageDefinition;
 }
 
@@ -334,13 +383,6 @@ export interface PrimaryActionConfig {
 	label: string;
 	action: string;
 	template?: string;
-}
-
-export interface ApplicationPageConfig {
-	layout: string;
-	emptyStateTitle: string;
-	emptyStateDescription: string;
-	emptyStateAction: string;
 }
 
 export interface ApplicationPageDefinition {

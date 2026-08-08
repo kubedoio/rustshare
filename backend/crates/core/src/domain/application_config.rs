@@ -86,7 +86,7 @@ mod tests {
     fn test_module_creation() {
         let module = ApplicationConfig {
             id: Uuid::new_v4(),
-            application_id: "notes".to_string(),
+            application_id: "io.elembra.notes".to_string(),
             display_name: "Notes".to_string(),
             description: "Write OKF-compatible, file-backed notes for durable company memory."
                 .to_string(),
@@ -108,7 +108,7 @@ mod tests {
             tenant_id: Uuid::nil(),
         };
 
-        assert_eq!(module.application_id, "notes");
+        assert_eq!(module.application_id, "io.elembra.notes");
         assert!(module.enabled);
         assert_eq!(module.root_path, "/Workspace/Notes");
         assert_eq!(module.renderer, "okf-note");
@@ -155,7 +155,7 @@ mod tests {
         // or omits required keys), this test will fail.
         let module = ApplicationConfig {
             id: Uuid::nil(),
-            application_id: "notes".to_string(),
+            application_id: "io.elembra.notes".to_string(),
             display_name: "Notes".to_string(),
             description: "Write OKF-compatible, file-backed notes for durable company memory."
                 .to_string(),
@@ -217,12 +217,6 @@ mod tests {
                             "template": "template_default_okf_note"
                         }
                     }
-                },
-                "modulePage": {
-                    "layout": "list-grid",
-                    "emptyStateTitle": "No notes yet",
-                    "emptyStateDescription": "Create your first OKF note.",
-                    "emptyStateAction": "New note"
                 },
                 "page": {
                     "enabled": true,

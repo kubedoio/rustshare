@@ -86,7 +86,7 @@ mod tests {
             id: Uuid::nil(),
             template_key: "template_default_okf_note".to_string(),
             name: "Default OKF Note".to_string(),
-            application_id: "notes".to_string(),
+            application_id: "io.elembra.notes".to_string(),
             version: "1.0".to_string(),
             description: "Default OKF-native template for notes.".to_string(),
             ui_config: serde_json::json!({

@@ -24,114 +24,55 @@ describe('applications API', () => {
 		vi.clearAllMocks();
 	});
 
+	const shellEntry = {
+		manifest: {
+			apiVersion: 'elembra.io/v1alpha1',
+			kind: 'Application' as const,
+			metadata: {
+				id: 'io.elembra.notes',
+				name: 'Notes',
+				version: '1.0.0',
+				description: 'Shared notes'
+			},
+			runtime: { kind: 'embedded' as const },
+			contracts: { provides: [], requires: [] },
+			resources: [],
+			contributions: {
+				navigation: [{ id: 'notes.navigation', label: 'Notes', route: '/apps/notes', order: 1 }],
+				routes: [{ id: 'notes.route', route: '/apps/notes', renderer: 'okf-note' }],
+				commands: [],
+				dashboard: [{ id: 'notes.dashboard', renderer: 'latest-notes', order: 1 }],
+				settings: [],
+				searchProviders: [],
+				renderers: [],
+				admin: []
+			},
+			integrationEvents: { publishes: [], subscribes: [] },
+			configuration: { schema: 'config.json' },
+			data: { owner: 'io.elembra.notes', preserveOnDisable: true, exportSupported: true }
+		},
+		enabled: true,
+		configuration: {},
+		health: 'healthy' as const
+	};
+
 	it('unwraps enabled applications from the backend response', async () => {
-		const applications = [
-			{
-				id: '1',
-				application_id: 'notes',
-				display_name: 'Notes',
-				description: 'Shared notes',
-				enabled: true,
-				root_path: '/Workspace/Notes',
-				renderer: 'notes',
-				default_template: null,
-				icon: 'sticky-note',
-				schema_version: '1',
-				permissions: {
-					admin_can_configure: true,
-					workspace_members_can_use: true,
-					allow_public_share: true,
-					allow_internal_share: true
-				},
-				ai_indexing: { enabled: true },
-				audit: { enabled: true },
-				ui_config: {
-					sidebar: { enabled: true, order: 1, icon: 'sticky-note', label: 'Notes' },
-					dashboard: {
-						enabled: true,
-						order: 1,
-						cardTitle: 'Notes',
-						cardDescription: 'Shared notes',
-						summaryMode: 'recent-items',
-						maxItems: 4
-					}
-				},
-				created_at: '2026-04-30T00:00:00Z',
-				updated_at: '2026-04-30T00:00:00Z'
-			}
-		];
+		vi.mocked(apiClient.get).mockResolvedValue({ applications: [shellEntry] });
 
-		vi.mocked(apiClient.get).mockResolvedValue({ applications });
-
-		await expect(listEnabledApplications()).resolves.toEqual([
-			expect.objectContaining({
-				application_id: 'notes',
-				ui_config: expect.objectContaining({
-					sidebar: expect.objectContaining({ label: 'Notes' }),
-					dashboard: expect.objectContaining({
-						summaryMode: 'recent-items',
-						widget: expect.objectContaining({
-							type: 'recent-items',
-							title: 'Notes'
-						})
-					}),
-					page: expect.objectContaining({
-						route: '/apps/notes',
-						renderer: 'notes'
-					})
-				})
-			})
-		]);
+		await expect(listEnabledApplications()).resolves.toEqual([shellEntry]);
 		expect(apiClient.get).toHaveBeenCalledWith('/applications');
 	});
 
 	it('unwraps a single application detail response', async () => {
-		const application = {
-			id: '1',
-			application_id: 'notes',
-			display_name: 'Notes',
-			description: 'Shared notes',
-			enabled: true,
-			root_path: '/Workspace/Notes',
-			renderer: 'notes',
-			default_template: null,
-			icon: 'sticky-note',
-			schema_version: '1',
-			permissions: {
-				admin_can_configure: true,
-				workspace_members_can_use: true,
-				allow_public_share: true,
-				allow_internal_share: true
-			},
-			ai_indexing: { enabled: true },
-			audit: { enabled: true },
-			ui_config: {},
-			created_at: '2026-04-30T00:00:00Z',
-			updated_at: '2026-04-30T00:00:00Z'
-		};
+		vi.mocked(apiClient.get).mockResolvedValue({ application: shellEntry });
 
-		vi.mocked(apiClient.get).mockResolvedValue({ application });
-
-		await expect(getApplication('notes')).resolves.toEqual(
-			expect.objectContaining({
-				application_id: 'notes',
-				ui_config: expect.objectContaining({
-					dashboard: expect.objectContaining({
-						widget: expect.objectContaining({ type: 'latest-notes' })
-					}),
-					page: expect.objectContaining({
-						route: '/apps/notes',
-						renderer: 'notes'
-					})
-				})
-			})
-		);
+		await expect(getApplication('notes')).resolves.toEqual(shellEntry);
 		expect(apiClient.get).toHaveBeenCalledWith('/applications/notes');
 	});
 
 	it('unwraps application summary payloads', async () => {
 		const summary = {
-			application_id: 'notes',
+			application_id: 'io.elembra.notes',
 			mode: 'recent-items',
 			total_items: 2,
 			recent_items: [

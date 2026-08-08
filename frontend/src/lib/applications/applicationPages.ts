@@ -14,21 +14,21 @@ export function getApplicationObjectHref(
 	objectType: ApplicationObjectType,
 	objectId: string
 ): string {
-	// Known module keys — route to their dedicated editor regardless of
+	// Known Application IDs — route to their dedicated editor regardless of
 	// whether the underlying storage is a file or a folder.
-	const moduleRouteMap: Record<string, string> = {
-		notes: `/apps/notes/${objectId}`,
-		meetings: `/apps/meetings/${objectId}`,
-		standups: `/apps/standups/${objectId}`,
-		decisions: `/apps/decisions/${objectId}`,
-		kanban: `/apps/kanban/${objectId}`,
-		brainstorming: `/apps/brainstorming/${objectId}`,
-		shares: `/apps/shares/${objectId}`,
-		mail: `/apps/mail/messages/${objectId}`
+	const applicationRouteMap: Record<string, string> = {
+		'io.elembra.notes': `/apps/notes/${objectId}`,
+		'io.elembra.meetings': `/apps/meetings/${objectId}`,
+		'io.elembra.standups': `/apps/standups/${objectId}`,
+		'io.elembra.decisions': `/apps/decisions/${objectId}`,
+		'io.elembra.kanban': `/apps/kanban/${objectId}`,
+		'io.elembra.brainstorming': `/apps/brainstorming/${objectId}`,
+		'io.elembra.shares': `/apps/shares/${objectId}`,
+		'io.elembra.mail': `/apps/mail/messages/${objectId}`
 	};
 
-	if (moduleRouteMap[applicationId]) {
-		return moduleRouteMap[applicationId];
+	if (applicationRouteMap[applicationId]) {
+		return applicationRouteMap[applicationId];
 	}
 
 	if (objectType === 'folder') {

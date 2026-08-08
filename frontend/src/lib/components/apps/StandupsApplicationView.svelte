@@ -134,7 +134,7 @@ What needs follow-up or support?
 				result.metadata?.title || title || 'Untitled Standup',
 				{
 					artifactId: result.id,
-					applicationId: 'standups'
+					applicationId: 'io.elembra.standups'
 				}
 			);
 			goto(`/apps/${module.key}/${result.id}`);

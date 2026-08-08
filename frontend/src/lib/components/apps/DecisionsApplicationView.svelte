@@ -112,7 +112,7 @@
 			createError = '';
 			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
 				artifactId: result.id,
-				applicationId: 'decisions'
+				applicationId: 'io.elembra.decisions'
 			});
 			goto(`/apps/${module.key}/${result.id}`);
 			$decisionsQuery.refetch();

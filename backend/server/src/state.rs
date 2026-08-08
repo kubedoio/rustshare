@@ -112,6 +112,17 @@ pub struct ServiceState {
     pub mail_service: Arc<services::mail_service::MailService>,
 }
 
+/// Typed dependencies for the Application boundary. New Application handlers
+/// should depend on this state instead of the complete service graph.
+#[derive(Clone)]
+pub struct ApplicationState {
+    pub db_pool: PgPool,
+    pub default_tenant_id: Uuid,
+    pub application_service: Arc<services::application_service::ApplicationService>,
+    pub template_service: Arc<services::template_service::TemplateService>,
+    pub kanban_service: Arc<services::kanban_service::KanbanService>,
+}
+
 /// Application configuration and runtime state.
 #[derive(Clone)]
 pub struct AppConfigState {
@@ -239,6 +250,18 @@ impl FromRef<AppState> for ServiceState {
             user_repository: state.user_repository.clone(),
             vault_sync_service: state.vault_sync_service.clone(),
             mail_service: state.mail_service.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for ApplicationState {
+    fn from_ref(state: &AppState) -> ApplicationState {
+        ApplicationState {
+            db_pool: state.db_pool.clone(),
+            default_tenant_id: state.default_tenant_id,
+            application_service: state.application_service.clone(),
+            template_service: state.template_service.clone(),
+            kanban_service: state.kanban_service.clone(),
         }
     }
 }
