@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{debug, trace, warn};
 use walkdir::WalkDir;
@@ -23,11 +23,17 @@ pub fn scan_local_root(root_path: &Path) -> Result<Vec<FileScanResult>> {
         .canonicalize()
         .with_context(|| format!("Failed to canonicalize root path: {}", root_path.display()))?;
 
-    for entry in WalkDir::new(&canonical_root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(&canonical_root).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                // Abort the scan instead of treating the subtree as absent: a
+                // transient read error must never look like the files were
+                // deleted, or the planner would propagate DeleteRemote for
+                // them (and DeleteLocal for local edits under the subtree).
+                bail!("Failed to walk {}: {}", canonical_root.display(), e);
+            }
+        };
         let absolute_path = entry.path();
 
         // Skip the root directory itself

@@ -396,17 +396,17 @@ impl SyncManager {
 
     async fn fetch_remote_state(&self, root: &SyncRoot) -> Result<RemoteState> {
         let quarantined_remote_files = self.get_quarantined_remote_files(root.id).await?;
-        let all_remote_files = match self.client.list_files().await {
-            Ok(files) => files,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to fetch remote files for {}: {:#}. Treating remote file state as empty.",
-                    root.remote_path,
-                    e
-                );
-                Vec::new()
-            }
-        };
+        // A failed remote fetch must abort the sync cycle, never substitute an
+        // empty state: the planner would otherwise interpret every tracked file
+        // as "remote deleted" and delete local content (and any unsynced local
+        // edits) on a transient network blip.
+        let all_remote_files = self.client.list_files().await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to fetch remote files for {}: {:#}",
+                root.remote_path,
+                e
+            )
+        })?;
 
         let prefix = normalize_remote_path(&root.remote_path);
         let mut files = Vec::new();
@@ -426,7 +426,11 @@ impl SyncManager {
 
                 let modified_at = chrono::DateTime::parse_from_rfc3339(&file.modified_at)
                     .map(|dt| dt.timestamp() as u64)
-                    .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u64);
+                    // Unparseable server timestamps must not fall back to "now":
+                    // that value is different on every sync and causes a
+                    // permanent re-download/re-upload loop. A stable 0 keeps
+                    // the state consistent (worst case: an epoch mtime).
+                    .unwrap_or(0);
 
                 let remote_hash = file
                     .content_hash
@@ -445,16 +449,14 @@ impl SyncManager {
 
         let mut absolute_folder_ids = HashMap::new();
         let mut dirs = Vec::new();
-        match self.client.get_folder_tree().await {
-            Ok(tree) => collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to fetch remote folder tree for {}: {:#}. Treating remote folder state as empty.",
-                    root.remote_path,
-                    e
-                );
-            }
-        }
+        let tree = self.client.get_folder_tree().await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to fetch remote folder tree for {}: {:#}",
+                root.remote_path,
+                e
+            )
+        })?;
+        collect_remote_folders(&tree, &prefix, &mut dirs, &mut absolute_folder_ids);
 
         Ok(RemoteState {
             files,
