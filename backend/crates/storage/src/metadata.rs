@@ -3017,8 +3017,8 @@ impl MetadataStore {
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         version: &FileVersion,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<Uuid> {
+        let row = sqlx::query!(
             r#"
             INSERT INTO file_versions (
                 id,
@@ -3041,6 +3041,7 @@ impl MetadataStore {
                 replication_state = EXCLUDED.replication_state,
                 created_at = EXCLUDED.created_at,
                 change_description = EXCLUDED.change_description
+            RETURNING id
             "#,
             version.id,
             version.file_id,
@@ -3054,10 +3055,10 @@ impl MetadataStore {
             version.change_description.as_deref(),
             version.tenant_id,
         )
-        .execute(&mut **tx)
+        .fetch_one(&mut **tx)
         .await?;
 
-        Ok(())
+        Ok(row.id)
     }
 
     /// Create a new file version in the projection table
@@ -3652,6 +3653,42 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Delete a folder and the files directly under it inside a transaction,
+    /// without owner filtering.
+    ///
+    /// ⚠️ Only use when the caller has already verified access to the subtree
+    /// (e.g. Admin via share), so shared-admin deletions work on
+    /// mixed-ownership trees.
+    pub async fn delete_folder_in_tx_unchecked(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE folders
+            SET deleted_at = NOW(), starred_at = NULL
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE files
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE parent_folder_id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(())
+    }
+
     /// List folders with optional filters
     ///
     /// Returns folders owned by the specified user, optionally filtered by parent folder.
@@ -4239,6 +4276,12 @@ impl MetadataStore {
                 locked_at = NULL,
                 locked_by = NULL,
                 completed_at = NULL,
+                -- A re-referenced and released blob starts a fresh grace period,
+                -- so its attempt history must reset too; otherwise a blob that
+                -- was retried near max_attempts would be operator-held after a
+                -- single transient failure on its next cycle.
+                attempt_count = 0,
+                last_attempt_at = NULL,
                 updated_at = NOW()
             "#,
         )
@@ -6227,7 +6270,7 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         &self,
         tx: &mut Self::Tx,
         version: &rustshare_core::domain::FileVersion,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<uuid::Uuid> {
         self.create_file_version_in_tx(tx, version).await
     }
 
@@ -6380,6 +6423,14 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
         self.delete_folder_in_tx(tx, id, owner_id).await
     }
 
+    async fn delete_folder_in_tx_unchecked(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        self.delete_folder_in_tx_unchecked(tx, id).await
+    }
+
     async fn list_folders(
         &self,
         parent_id: Option<uuid::Uuid>,
@@ -6403,6 +6454,13 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
         owner_id: uuid::Uuid,
     ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
         self.find_descendant_folders(folder_id, owner_id).await
+    }
+
+    async fn find_descendant_folders_unchecked(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_unchecked(folder_id).await
     }
 
     async fn list_files(

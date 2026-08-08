@@ -97,9 +97,9 @@ impl FileMetadataStoreOps for MockMetadataStore {
         &self,
         _tx: &mut Self::Tx,
         version: &FileVersion,
-    ) -> Result<()> {
+    ) -> Result<Uuid> {
         self.created_versions.lock().unwrap().push(version.clone());
-        Ok(())
+        Ok(version.id)
     }
 
     async fn find_folder_by_id(&self, id: Uuid, _owner_id: Uuid) -> Result<Option<Folder>> {

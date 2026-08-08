@@ -23,7 +23,7 @@ BEGIN
                 (tenant_id, workspace_id, application_id, enabled, configuration)
             SELECT tenant_id,
                    tenant_id,
-                   application_id,
+                   'io.elembra.' || application_id,
                    enabled,
                    jsonb_build_object(
                        'displayName', display_name,
@@ -38,7 +38,7 @@ BEGIN
                        'ui', ui_config
                    )
             FROM applications
-            WHERE application_id LIKE 'io.elembra.%'
+            WHERE application_id NOT LIKE 'io.elembra.%'
             ON CONFLICT (tenant_id, workspace_id, application_id) DO UPDATE
             SET enabled = EXCLUDED.enabled,
                 configuration = EXCLUDED.configuration,

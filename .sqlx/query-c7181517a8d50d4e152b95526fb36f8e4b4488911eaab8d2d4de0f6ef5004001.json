@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO file_versions (\n                id,\n                file_id,\n                version_number,\n                content_hash,\n                storage_key,\n                size,\n                replication_state,\n                created_by,\n                created_at,\n                change_description,\n                tenant_id\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)\n            ON CONFLICT (file_id, version_number) DO UPDATE SET\n                content_hash = EXCLUDED.content_hash,\n                storage_key = EXCLUDED.storage_key,\n                size = EXCLUDED.size,\n                replication_state = EXCLUDED.replication_state,\n                created_at = EXCLUDED.created_at,\n                change_description = EXCLUDED.change_description\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Uuid",
+        "Timestamptz",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c7181517a8d50d4e152b95526fb36f8e4b4488911eaab8d2d4de0f6ef5004001"
+}

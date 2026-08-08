@@ -86,11 +86,15 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_file_version(&self, version: &FileVersion) -> Result<()>;
 
     /// Create a file version in the metadata store inside a transaction.
+    ///
+    /// Returns the persisted version id. Callers must use this id (not the
+    /// version struct's id) for anything referencing the row afterwards,
+    /// because the upsert may have kept an existing row's id.
     async fn create_file_version_in_tx(
         &self,
         tx: &mut Self::Tx,
         version: &FileVersion,
-    ) -> Result<()>;
+    ) -> Result<uuid::Uuid>;
 
     /// Find a folder by ID.
     async fn find_folder_by_id(
@@ -557,7 +561,8 @@ where
                 .update_file_in_tx(&mut tx, &existing)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
-            self.metadata_store
+            let persisted_version_id = self
+                .metadata_store
                 .create_file_version_in_tx(&mut tx, &version)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
@@ -567,8 +572,13 @@ where
                 .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
             self.broadcaster.publish(event);
 
-            self.queue_replication_if_needed(existing.id, file_owner_id, &version)
-                .await?;
+            self.queue_replication_if_needed(
+                existing.id,
+                file_owner_id,
+                persisted_version_id,
+                &version.storage_key(),
+            )
+            .await?;
 
             return Ok(existing);
         }
@@ -645,7 +655,8 @@ where
             .create_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        self.metadata_store
+        let persisted_version_id = self
+            .metadata_store
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
@@ -655,8 +666,13 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(file.id, file_owner_id, &version)
-            .await?;
+        self.queue_replication_if_needed(
+            file.id,
+            file_owner_id,
+            persisted_version_id,
+            &version.storage_key(),
+        )
+        .await?;
 
         // 7. Return File
         Ok(file)
@@ -868,7 +884,8 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        self.metadata_store
+        let persisted_version_id = self
+            .metadata_store
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
@@ -878,8 +895,13 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
+        self.queue_replication_if_needed(
+            file.id,
+            user_id,
+            persisted_version_id,
+            &version.storage_key(),
+        )
+        .await?;
 
         // 8. Return updated file
         Ok(file)
@@ -906,13 +928,14 @@ where
         file_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<Vec<FileVersion>, FileError> {
-        // 1. Get file and verify ownership
-        let _file = self.get_file(file_id, user_id).await?;
+        // 1. Get file and verify access
+        let file = self.get_file(file_id, user_id).await?;
 
-        // 2. Get all versions from metadata store (already ordered DESC)
+        // 2. Get all versions from metadata store (already ordered DESC).
+        //    Query by the file owner: shared View/Edit recipients may see versions too.
         let versions = self
             .metadata_store
-            .list_file_versions(file_id, user_id)
+            .list_file_versions(file_id, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
@@ -952,10 +975,11 @@ where
         self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
-        // 2. Find the old version
+        // 2. Find the old version (by the file owner: shared Edit recipients
+        //    may restore versions too)
         let old_file_version = self
             .metadata_store
-            .find_file_version(file_id, version_number, user_id)
+            .find_file_version(file_id, version_number, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::VersionNotFound(version_number))?;
@@ -1020,7 +1044,8 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        self.metadata_store
+        let persisted_version_id = self
+            .metadata_store
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
@@ -1030,8 +1055,13 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
+        self.queue_replication_if_needed(
+            file.id,
+            user_id,
+            persisted_version_id,
+            &version.storage_key(),
+        )
+        .await?;
 
         // 7. Return updated file
         // Note: content is already in RustFS, we just needed to read it to verify it exists
@@ -1067,14 +1097,32 @@ where
         self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
-        // 2. If target folder is specified, verify it exists
+        // 2. If target folder is specified, verify it exists and the user may
+        //    write to it (unchecked lookup + Edit check, so shared recipients
+        //    can move files into shared folders)
         let new_path = if let Some(folder_id) = target_folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(folder_id))?;
+            let has_edit = self
+                .permission_resolver
+                .check_folder_permission(
+                    user_id,
+                    folder.tenant_id,
+                    folder_id,
+                    SharePermissions::Edit,
+                )
+                .await
+                .map_err(|e| FileError::Database(e.to_string()))?;
+            if !has_edit {
+                return Err(FileError::PermissionDenied {
+                    file_id: folder_id,
+                    user_id,
+                });
+            }
             format!("{}/{}", folder.path, file.name)
         } else {
             format!("/{}", file.name)
@@ -1427,7 +1475,8 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        self.metadata_store
+        let persisted_version_id = self
+            .metadata_store
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
@@ -1437,8 +1486,13 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(file.id, user_id, &version)
-            .await?;
+        self.queue_replication_if_needed(
+            file.id,
+            user_id,
+            persisted_version_id,
+            &version.storage_key(),
+        )
+        .await?;
 
         // 9. Return updated file
         Ok(file)
@@ -1621,7 +1675,8 @@ where
         &self,
         file_id: uuid::Uuid,
         owner_id: UserId,
-        version: &FileVersion,
+        persisted_version_id: uuid::Uuid,
+        storage_key: &str,
     ) -> Result<(), FileError> {
         let target_count = self
             .metadata_store
@@ -1633,7 +1688,7 @@ where
             return Ok(());
         }
 
-        let job = ReplicationJob::new(file_id, version.id, version.storage_key());
+        let job = ReplicationJob::new(file_id, persisted_version_id, storage_key.to_string());
 
         self.metadata_store
             .create_replication_job(&job)
@@ -1641,14 +1696,14 @@ where
             .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.metadata_store
-            .update_file_version_replication_state(version.id, ReplicationState::Queued)
+            .update_file_version_replication_state(persisted_version_id, ReplicationState::Queued)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
         self.publish_replication_state_event(ReplicationEventContext {
             file_id,
             owner_id,
-            file_version_id: version.id,
+            file_version_id: persisted_version_id,
             replication_state: ReplicationState::Queued,
             job_status: Some(job.status.as_str().to_string()),
             attempt_count: job.attempt_count,

@@ -120,6 +120,24 @@ impl EventStore {
         last_seen_event_id: Option<Uuid>,
         limit: i64,
     ) -> Result<Vec<Event>> {
+        // An unknown cursor previously made the tuple comparison
+        // `(timestamp, event_id) > NULL` filter out every row, which returned an
+        // empty page and looked like a completed catch-up to sync clients.
+        // Resolve the cursor explicitly so a bad cursor is an error, not a
+        // silent "you are up to date".
+        if let Some(cursor) = last_seen_event_id {
+            let exists: Option<Uuid> = sqlx::query_scalar!(
+                "SELECT event_id FROM events WHERE event_id = $1 AND user_id = $2",
+                cursor,
+                user_id
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if exists.is_none() {
+                anyhow::bail!("Unknown event cursor: {}", cursor);
+            }
+        }
+
         let rows = sqlx::query!(
             r#"
             SELECT event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version

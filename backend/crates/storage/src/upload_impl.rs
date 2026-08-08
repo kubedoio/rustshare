@@ -101,7 +101,7 @@ impl UploadObjectStore for ObjectStore {
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<(String, Box<dyn Send>), UploadError> {
+    ) -> Result<(String, u64, Box<dyn Send>), UploadError> {
         let temp_file = tokio::task::spawn_blocking(tempfile::NamedTempFile::new)
             .await
             .map_err(|e| UploadError::Storage(format!("Failed to create temp file: {e}")))?
@@ -112,6 +112,7 @@ impl UploadObjectStore for ObjectStore {
                 .map_err(|e| UploadError::Storage(format!("Failed to reopen temp file: {e}")))?,
         );
         let mut hasher = Sha256::new();
+        let mut assembled_size: u64 = 0;
 
         for chunk_index in 0..total_chunks {
             let key = format!("temp/uploads/{}/{}", session_id, chunk_index);
@@ -125,6 +126,7 @@ impl UploadObjectStore for ObjectStore {
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|e| UploadError::Storage(e.to_string()))?;
                 hasher.update(&chunk);
+                assembled_size += chunk.len() as u64;
                 assembled_file
                     .write_all(&chunk)
                     .await
@@ -149,7 +151,7 @@ impl UploadObjectStore for ObjectStore {
             .await
             .map_err(|e| UploadError::Storage(e.to_string()))?;
 
-        Ok((final_hash, Box::new(blob_write_lock)))
+        Ok((final_hash, assembled_size, Box::new(blob_write_lock)))
     }
 }
 

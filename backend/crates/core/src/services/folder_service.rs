@@ -80,6 +80,14 @@ pub trait MetadataStoreOps: Send + Sync {
         owner_id: UserId,
     ) -> Result<()>;
 
+    /// Delete a folder and the files directly under it inside a transaction,
+    /// without owner filtering.
+    ///
+    /// Only use when the caller has already verified access to the subtree root
+    /// (e.g. Admin via share), so shared-admin operations work on
+    /// mixed-ownership trees.
+    async fn delete_folder_in_tx_unchecked(&self, tx: &mut Self::Tx, id: FolderId) -> Result<()>;
+
     /// List folders with optional parent filter.
     async fn list_folders(
         &self,
@@ -101,6 +109,13 @@ pub trait MetadataStoreOps: Send + Sync {
         folder_id: FolderId,
         owner_id: UserId,
     ) -> Result<Vec<Folder>>;
+
+    /// Find all descendant folders of a given folder without owner filtering.
+    ///
+    /// Only use when the caller has already verified access to the subtree root
+    /// (e.g. Admin via share), so shared-admin operations work on
+    /// mixed-ownership trees.
+    async fn find_descendant_folders_unchecked(&self, folder_id: FolderId) -> Result<Vec<Folder>>;
 
     /// List files with optional parent filter.
     async fn list_files(
@@ -185,10 +200,11 @@ where
 
         // Verify parent folder if specified, and construct path and ancestor_ids
         let (_path, folder) = if let Some(parent_id) = parent_folder_id {
-            // Verify parent folder exists and user has access
+            // Verify parent folder exists (unchecked lookup: shared recipients may
+            // create under a shared folder; permission is enforced below)
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, owner_id)
+                .find_folder_by_id_unchecked(parent_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -497,9 +513,11 @@ where
 
         // Calculate new path
         let new_path = if let Some(parent_id) = folder.parent_folder_id {
+            // Unchecked lookup: the user already has Edit on the folder itself;
+            // the parent is only needed to compute the new path.
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, user_id)
+                .find_folder_by_id_unchecked(parent_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -593,18 +611,30 @@ where
 
         // Verify new parent exists and check for circular reference
         let (new_path, new_parent_ancestors) = if let Some(parent_id) = new_parent_id {
-            // Check if new parent exists and user owns it
+            // Check if new parent exists and user has access
             let parent = self.get_folder(parent_id, user_id).await?;
+
+            // Moving into a folder restructures it: require Edit on the target
+            // parent, matching create_folder / upload_file semantics.
+            self.require_folder_permission(
+                user_id,
+                parent.tenant_id,
+                parent_id,
+                SharePermissions::Edit,
+            )
+            .await?;
 
             // Check for circular reference using ancestor_ids if available
             let would_create_cycle = if let Some(ref parent_ancestors) = parent.ancestor_ids {
                 // Fast path: check if folder_id is in parent's ancestors
                 parent_ancestors.contains(&folder_id)
             } else {
-                // Slow path: check descendants
+                // Slow path: check descendants (unchecked — Edit on the moved
+                // folder already verified, and the cycle check must see the
+                // whole tree, not just the caller's own folders)
                 let descendants = self
                     .metadata_store
-                    .find_descendant_folders(folder_id, user_id)
+                    .find_descendant_folders_unchecked(folder_id)
                     .await
                     .map_err(|e| FolderError::Database(e.to_string()))?;
                 descendants.iter().any(|d| d.id == parent_id)
@@ -715,10 +745,12 @@ where
             return Err(FolderError::CannotDeleteRoot(folder_id));
         }
 
-        // Get all descendant folders (including this folder)
+        // Get all descendant folders (including this folder).
+        // Unchecked: Admin on the subtree root (verified above) authorizes the
+        // whole tree, including mixed-ownership subtrees.
         let descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id, user_id)
+            .find_descendant_folders_unchecked(folder_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -740,7 +772,9 @@ where
                 user_id,
             );
 
-            // Delete from metadata store atomically with the event
+            // Delete from metadata store atomically with the event.
+            // Unchecked delete: the Admin check on the subtree root covers the
+            // whole tree, so mixed-ownership descendants are deleted too.
             let mut tx = self.event_store.begin_transaction().await.map_err(|e| {
                 FolderError::Database(format!("Failed to begin transaction: {}", e))
             })?;
@@ -749,7 +783,7 @@ where
                 .await
                 .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
             self.metadata_store
-                .delete_folder_in_tx(&mut tx, descendant.id, user_id)
+                .delete_folder_in_tx_unchecked(&mut tx, descendant.id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?;
             self.event_store.commit_transaction(tx).await.map_err(|e| {
@@ -773,10 +807,12 @@ where
         new_ancestor_ids: Option<Vec<Uuid>>,
         _user_id: UserId,
     ) -> Result<(), FolderError> {
-        // Get all descendants (excluding the folder itself)
+        // Get all descendants (excluding the folder itself).
+        // Unchecked: the caller already holds Edit on the subtree root, which
+        // authorizes path rewrites of the whole (possibly mixed-ownership) tree.
         let all_descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id, _user_id)
+            .find_descendant_folders_unchecked(folder_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -974,6 +1010,15 @@ mod tests {
             Ok(())
         }
 
+        async fn delete_folder_in_tx_unchecked(
+            &self,
+            _tx: &mut Self::Tx,
+            id: FolderId,
+        ) -> Result<()> {
+            self.folders.lock().unwrap().remove(&id);
+            Ok(())
+        }
+
         async fn list_folders(
             &self,
             parent_id: Option<FolderId>,
@@ -993,6 +1038,13 @@ mod tests {
             &self,
             folder_id: FolderId,
             _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
+            self.find_descendant_folders_unchecked(folder_id).await
+        }
+
+        async fn find_descendant_folders_unchecked(
+            &self,
+            folder_id: FolderId,
         ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let mut result = Vec::new();
