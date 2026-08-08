@@ -41,6 +41,173 @@
         }
       }
     },
+    "/api/v1/admin/applications": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "list_applications",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/applications/{key}": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "get_application",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "update_application",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/applications/{key}/disable": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "disable_application",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/applications/{key}/enable": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "enable_application",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/applications/{key}/templates": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "list_templates_by_application",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "description": "ApplicationConfig Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Template"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/audit": {
       "get": {
         "tags": [
@@ -755,173 +922,6 @@
         }
       }
     },
-    "/api/v1/admin/modules": {
-      "get": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "list_modules",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/admin/modules/{key}": {
-      "get": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "get_module",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "update_module",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/admin/modules/{key}/disable": {
-      "post": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "disable_module",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/admin/modules/{key}/enable": {
-      "post": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "enable_module",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/admin/modules/{key}/templates": {
-      "get": {
-        "tags": [
-          "Admin"
-        ],
-        "operationId": "list_templates_by_module",
-        "parameters": [
-          {
-            "name": "module_key",
-            "in": "path",
-            "description": "Module Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Template"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/admin/templates": {
       "get": {
         "tags": [
@@ -1562,6 +1562,2006 @@
           },
           "503": {
             "description": "AI service not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "list_enabled_applications",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/brainstorming/boards": {
+      "get": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "list_brainstorm_boards",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBoardsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "create_brainstorm_board",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBoardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateBoardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/brainstorming/boards/{board_id}": {
+      "get": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "get_brainstorm_board",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBoardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "delete_brainstorm_board",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/brainstorming/boards/{board_id}/preview": {
+      "put": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "update_brainstorm_board_preview",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBoardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/brainstorming/boards/{board_id}/source": {
+      "get": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "get_brainstorm_board_source",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBoardSourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Brainstorming"
+        ],
+        "operationId": "save_brainstorm_board_source",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveBoardSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBoardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/from-template": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "create_from_template",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/assignable-users": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "get_assignable_users",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KanbanAssignee"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "list_boards",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KanbanBoardSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "create_board",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBoardInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards/{board_id}": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "get_board",
+        "parameters": [
+          {
+            "name": "board_id_or_slug",
+            "in": "path",
+            "description": "Board Id Or Slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "update_board",
+        "parameters": [
+          {
+            "name": "board_id_or_slug",
+            "in": "path",
+            "description": "Board Id Or Slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBoardInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards/{board_id}/archive": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "archive_board",
+        "parameters": [
+          {
+            "name": "board_id_or_slug",
+            "in": "path",
+            "description": "Board Id Or Slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards/{board_id}/cards": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "list_cards",
+        "parameters": [
+          {
+            "name": "board_id_or_slug",
+            "in": "path",
+            "description": "Board Id Or Slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KanbanCard"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "create_card",
+        "parameters": [
+          {
+            "name": "board_id_or_slug",
+            "in": "path",
+            "description": "Board Id Or Slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCardInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards/{board_id}/labels": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "create_label",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLabelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanLabel"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/boards/{board_id}/labels/{label_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "delete_label",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "label_id",
+            "in": "path",
+            "description": "Label Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "update_label",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "description": "Board Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "label_id",
+            "in": "path",
+            "description": "Label Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLabelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanLabel"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "get_card",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "delete_card",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "update_card",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCardInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/archive": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "archive_card",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/assignees": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "assign_card_member",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/assignees/{assignee_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "unassign_card_member",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "assignee_id",
+            "in": "path",
+            "description": "Assignee Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/attachments": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "add_card_attachment",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCardAttachment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/attachments/{attachment_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "delete_card_attachment",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "Attachment Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/checklists": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "create_checklist",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddChecklistInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanChecklistGroup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "delete_checklist",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checklist_id",
+            "in": "path",
+            "description": "Checklist Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "create_checklist_item",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checklist_id",
+            "in": "path",
+            "description": "Checklist Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddChecklistItemInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanChecklistItem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "delete_checklist_item",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checklist_id",
+            "in": "path",
+            "description": "Checklist Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "description": "Item Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "toggle_checklist_item",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checklist_id",
+            "in": "path",
+            "description": "Checklist Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "description": "Item Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleChecklistItemInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/description": {
+      "put": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "update_card_description",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCardDescriptionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/detail": {
+      "get": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "get_card_detail",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanCardDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/labels": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "add_card_label",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/labels/{label_id}": {
+      "delete": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "remove_card_label",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "label_id",
+            "in": "path",
+            "description": "Label Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/kanban/cards/{card_id}/move": {
+      "post": {
+        "tags": [
+          "Kanban"
+        ],
+        "operationId": "move_card",
+        "parameters": [
+          {
+            "name": "card_id",
+            "in": "path",
+            "description": "Card Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveCardInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KanbanBoard"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{key}": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "get_application",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{key}/summary": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "get_application_summary",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
@@ -7955,1983 +9955,6 @@
         }
       }
     },
-    "/api/v1/modules": {
-      "get": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "list_enabled_modules",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/brainstorming/boards": {
-      "get": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "list_brainstorm_boards",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListBoardsResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "create_brainstorm_board",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateBoardRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreateBoardResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/brainstorming/boards/{board_id}": {
-      "get": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "get_brainstorm_board",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetBoardResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "delete_brainstorm_board",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/brainstorming/boards/{board_id}/preview": {
-      "put": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "update_brainstorm_board_preview",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetBoardResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/brainstorming/boards/{board_id}/source": {
-      "get": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "get_brainstorm_board_source",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetBoardSourceResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Brainstorming"
-        ],
-        "operationId": "save_brainstorm_board_source",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveBoardSourceRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetBoardResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/from-template": {
-      "post": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "create_from_template",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/assignable-users": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "get_assignable_users",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/KanbanAssignee"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "list_boards",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/KanbanBoardSummary"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "create_board",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateBoardInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanBoard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards/{board_id}": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "get_board",
-        "parameters": [
-          {
-            "name": "board_id_or_slug",
-            "in": "path",
-            "description": "Board Id Or Slug",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanBoard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "update_board",
-        "parameters": [
-          {
-            "name": "board_id_or_slug",
-            "in": "path",
-            "description": "Board Id Or Slug",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateBoardInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanBoard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards/{board_id}/archive": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "archive_board",
-        "parameters": [
-          {
-            "name": "board_id_or_slug",
-            "in": "path",
-            "description": "Board Id Or Slug",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards/{board_id}/cards": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "list_cards",
-        "parameters": [
-          {
-            "name": "board_id_or_slug",
-            "in": "path",
-            "description": "Board Id Or Slug",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/KanbanCard"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "create_card",
-        "parameters": [
-          {
-            "name": "board_id_or_slug",
-            "in": "path",
-            "description": "Board Id Or Slug",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateCardInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards/{board_id}/labels": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "create_label",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateLabelInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanLabel"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "delete_label",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "label_id",
-            "in": "path",
-            "description": "Label Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "update_label",
-        "parameters": [
-          {
-            "name": "board_id",
-            "in": "path",
-            "description": "Board Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "label_id",
-            "in": "path",
-            "description": "Label Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateLabelInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanLabel"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "get_card",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "delete_card",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "update_card",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateCardInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/archive": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "archive_card",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/assignees": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "assign_card_member",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/assignees/{assignee_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "unassign_card_member",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "assignee_id",
-            "in": "path",
-            "description": "Assignee Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/attachments": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "add_card_attachment",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCardAttachment"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/attachments/{attachment_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "delete_card_attachment",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "attachment_id",
-            "in": "path",
-            "description": "Attachment Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/checklists": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "create_checklist",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddChecklistInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanChecklistGroup"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "delete_checklist",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "checklist_id",
-            "in": "path",
-            "description": "Checklist Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "create_checklist_item",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "checklist_id",
-            "in": "path",
-            "description": "Checklist Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddChecklistItemInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanChecklistItem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "delete_checklist_item",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "checklist_id",
-            "in": "path",
-            "description": "Checklist Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "item_id",
-            "in": "path",
-            "description": "Item Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "toggle_checklist_item",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "checklist_id",
-            "in": "path",
-            "description": "Checklist Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "item_id",
-            "in": "path",
-            "description": "Item Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ToggleChecklistItemInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/description": {
-      "put": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "update_card_description",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateCardDescriptionInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/detail": {
-      "get": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "get_card_detail",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanCardDetail"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/labels": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "add_card_label",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/labels/{label_id}": {
-      "delete": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "remove_card_label",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "label_id",
-            "in": "path",
-            "description": "Label Id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/kanban/cards/{card_id}/move": {
-      "post": {
-        "tags": [
-          "Kanban"
-        ],
-        "operationId": "move_card",
-        "parameters": [
-          {
-            "name": "card_id",
-            "in": "path",
-            "description": "Card Id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MoveCardInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KanbanBoard"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/modules/{key}/summary": {
-      "get": {
-        "tags": [
-          "Modules"
-        ],
-        "operationId": "get_module_summary",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/notes": {
       "get": {
         "tags": [
@@ -12202,6 +12225,54 @@
         }
       }
     },
+    "/api/v1/users/me/applications": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List the authenticated user's Application preferences.",
+        "operationId": "list_application_user_preferences",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/applications/{key}": {
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update an Application preference for the authenticated user.",
+        "operationId": "update_user_application_preference",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me/avatar": {
       "post": {
         "tags": [
@@ -12279,54 +12350,6 @@
         ],
         "summary": "Update the authenticated user's dashboard configuration.",
         "operationId": "update_dashboard_config",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/users/me/modules": {
-      "get": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "List the authenticated user's module preferences.",
-        "operationId": "list_user_module_preferences",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/users/me/modules/{key}": {
-      "patch": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Update a module preference for the authenticated user.",
-        "operationId": "update_user_module_preference",
         "responses": {
           "200": {
             "description": "Success"
@@ -12467,7 +12490,7 @@
     "/api/v1/workspace-surface": {
       "get": {
         "tags": [
-          "Modules"
+          "Applications"
         ],
         "operationId": "get_workspace_surface",
         "responses": {
@@ -13405,6 +13428,9 @@
           }
         }
       },
+      "ActionCapability": {
+        "type": "string"
+      },
       "ActivityCursor": {
         "type": "object",
         "description": "Cursor for paginating the activity feed.",
@@ -13582,6 +13608,494 @@
         "type": "object",
         "description": "AI indexing policy for a module.",
         "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApplicationConfig": {
+        "type": "object",
+        "description": "Persisted configuration for an enabled Application.",
+        "required": [
+          "id",
+          "application_id",
+          "display_name",
+          "description",
+          "enabled",
+          "root_path",
+          "renderer",
+          "icon",
+          "schema_version",
+          "permissions",
+          "ai_indexing",
+          "audit",
+          "ui_config",
+          "created_at",
+          "updated_at",
+          "tenant_id"
+        ],
+        "properties": {
+          "ai_indexing": {},
+          "application_id": {
+            "type": "string"
+          },
+          "audit": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "permissions": {},
+          "renderer": {
+            "type": "string"
+          },
+          "root_path": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ui_config": {},
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ApplicationContracts": {
+        "type": "object",
+        "properties": {
+          "provides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractRef"
+            }
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractRef"
+            }
+          }
+        }
+      },
+      "ApplicationContribution": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "action": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ActionCapability"
+              }
+            ]
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "renderer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ApplicationContributions": {
+        "type": "object",
+        "properties": {
+          "admin": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "dashboard": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "navigation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "renderers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "searchProviders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationContribution"
+            }
+          }
+        }
+      },
+      "ApplicationDetailResponse": {
+        "type": "object",
+        "required": [
+          "application"
+        ],
+        "properties": {
+          "application": {
+            "$ref": "#/components/schemas/ApplicationShellEntry"
+          }
+        }
+      },
+      "ApplicationHealth": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded",
+          "unavailable"
+        ]
+      },
+      "ApplicationId": {
+        "type": "string"
+      },
+      "ApplicationListResponse": {
+        "type": "object",
+        "required": [
+          "applications"
+        ],
+        "properties": {
+          "applications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationConfig"
+            }
+          }
+        }
+      },
+      "ApplicationManifest": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "runtime",
+          "contracts",
+          "configuration",
+          "data"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationReference"
+          },
+          "contracts": {
+            "$ref": "#/components/schemas/ApplicationContracts"
+          },
+          "contributions": {
+            "$ref": "#/components/schemas/ApplicationContributions"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DataPolicy"
+          },
+          "health": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HealthMetadata"
+              }
+            ]
+          },
+          "integrationEvents": {
+            "$ref": "#/components/schemas/IntegrationEvents"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "memory": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemoryPolicy"
+              }
+            ]
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ApplicationMetadata"
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplicationResource"
+            }
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/ApplicationRuntime"
+          }
+        }
+      },
+      "ApplicationMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ApplicationId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationPermissions": {
+        "type": "object",
+        "description": "Permission settings for a module.",
+        "properties": {
+          "admin_can_configure": {
+            "type": "boolean"
+          },
+          "allow_internal_share": {
+            "type": "boolean"
+          },
+          "allow_public_share": {
+            "type": "boolean"
+          },
+          "workspace_members_can_use": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApplicationResource": {
+        "type": "object",
+        "required": [
+          "type",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionCapability"
+            }
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationRuntime": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ApplicationRuntimeKind"
+          }
+        }
+      },
+      "ApplicationRuntimeKind": {
+        "type": "string",
+        "enum": [
+          "embedded",
+          "service",
+          "bridge"
+        ]
+      },
+      "ApplicationShellEntry": {
+        "type": "object",
+        "required": [
+          "manifest",
+          "enabled",
+          "configuration",
+          "health"
+        ],
+        "properties": {
+          "configuration": {},
+          "enabled": {
+            "type": "boolean"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ApplicationHealth"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/ApplicationManifest"
+          }
+        }
+      },
+      "ApplicationSummary": {
+        "type": "object",
+        "required": [
+          "application_id",
+          "mode",
+          "total_items",
+          "recent_items"
+        ],
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "extra": {},
+          "mode": {
+            "type": "string"
+          },
+          "recent_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SummaryItem"
+            }
+          },
+          "total_items": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ApplicationSummaryResponse": {
+        "type": "object",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/ApplicationSummary"
+          }
+        }
+      },
+      "ApplicationUserPreference": {
+        "type": "object",
+        "description": "Per-user module preference.",
+        "required": [
+          "user_id",
+          "application_id",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApplicationUserPreferenceResponse": {
+        "type": "object",
+        "required": [
+          "application_id",
+          "enabled"
+        ],
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
           "enabled": {
             "type": "boolean"
           }
@@ -13879,6 +14393,32 @@
             ]
           },
           "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ConfigurationReference": {
+        "type": "object",
+        "required": [
+          "schema"
+        ],
+        "properties": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "ContractRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
             "type": "string"
           }
         }
@@ -14540,7 +15080,7 @@
         "required": [
           "template_key",
           "name",
-          "module_key",
+          "application_id",
           "description",
           "folder_structure",
           "default_files",
@@ -14548,6 +15088,10 @@
           "visibility_policy"
         ],
         "properties": {
+          "application_config": {},
+          "application_id": {
+            "type": "string"
+          },
           "default_files": {
             "type": "array",
             "items": {
@@ -14564,10 +15108,6 @@
             }
           },
           "metadata_schema": {},
-          "module_config": {},
-          "module_key": {
-            "type": "string"
-          },
           "name": {
             "type": "string"
           },
@@ -14818,18 +15358,18 @@
         "type": "object",
         "description": "User's dashboard configuration",
         "required": [
-          "enabled_modules",
-          "module_order",
+          "enabled_applications",
+          "application_order",
           "sections"
         ],
         "properties": {
-          "enabled_modules": {
+          "application_order": {
             "type": "array",
             "items": {
               "type": "string"
             }
           },
-          "module_order": {
+          "enabled_applications": {
             "type": "array",
             "items": {
               "type": "string"
@@ -14838,6 +15378,25 @@
           "sections": {
             "type": "array",
             "items": {}
+          }
+        }
+      },
+      "DataPolicy": {
+        "type": "object",
+        "required": [
+          "owner",
+          "preserveOnDisable",
+          "exportSupported"
+        ],
+        "properties": {
+          "exportSupported": {
+            "type": "boolean"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ApplicationId"
+          },
+          "preserveOnDisable": {
+            "type": "boolean"
           }
         }
       },
@@ -15269,16 +15828,16 @@
           }
         }
       },
-      "EnabledModulesResponse": {
+      "EnabledApplicationsResponse": {
         "type": "object",
         "required": [
-          "modules"
+          "applications"
         ],
         "properties": {
-          "modules": {
+          "applications": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Module"
+              "$ref": "#/components/schemas/ApplicationShellEntry"
             }
           }
         }
@@ -17432,6 +17991,21 @@
           }
         }
       },
+      "HealthMetadata": {
+        "type": "object",
+        "required": [
+          "liveness",
+          "readiness"
+        ],
+        "properties": {
+          "liveness": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "string"
+          }
+        }
+      },
       "IncomingChatEvent": {
         "type": "object",
         "description": "Incoming chat event from external chat system.",
@@ -17454,6 +18028,23 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "IntegrationEvents": {
+        "type": "object",
+        "properties": {
+          "publishes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subscribes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -19652,159 +20243,20 @@
           }
         }
       },
-      "Module": {
-        "type": "object",
-        "description": "A workspace module configuration.",
-        "required": [
-          "id",
-          "module_key",
-          "display_name",
-          "description",
-          "enabled",
-          "root_path",
-          "renderer",
-          "icon",
-          "schema_version",
-          "permissions",
-          "ai_indexing",
-          "audit",
-          "ui_config",
-          "created_at",
-          "updated_at",
-          "tenant_id"
-        ],
-        "properties": {
-          "ai_indexing": {},
-          "audit": {},
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "default_template": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": "string"
-          },
-          "display_name": {
-            "type": "string"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "icon": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "module_key": {
-            "type": "string"
-          },
-          "permissions": {},
-          "renderer": {
-            "type": "string"
-          },
-          "root_path": {
-            "type": "string"
-          },
-          "schema_version": {
-            "type": "string"
-          },
-          "tenant_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "ui_config": {},
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "ModuleDetailResponse": {
+      "MemoryPolicy": {
         "type": "object",
         "required": [
-          "module"
+          "publication"
         ],
         "properties": {
-          "module": {
-            "$ref": "#/components/schemas/Module"
-          }
-        }
-      },
-      "ModuleListResponse": {
-        "type": "object",
-        "required": [
-          "modules"
-        ],
-        "properties": {
-          "modules": {
+          "publication": {
+            "type": "string"
+          },
+          "sourceTypes": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Module"
+              "type": "string"
             }
-          }
-        }
-      },
-      "ModulePermissions": {
-        "type": "object",
-        "description": "Permission settings for a module.",
-        "properties": {
-          "admin_can_configure": {
-            "type": "boolean"
-          },
-          "allow_internal_share": {
-            "type": "boolean"
-          },
-          "allow_public_share": {
-            "type": "boolean"
-          },
-          "workspace_members_can_use": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ModuleSummary": {
-        "type": "object",
-        "required": [
-          "module_key",
-          "mode",
-          "total_items",
-          "recent_items"
-        ],
-        "properties": {
-          "extra": {},
-          "mode": {
-            "type": "string"
-          },
-          "module_key": {
-            "type": "string"
-          },
-          "recent_items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SummaryItem"
-            }
-          },
-          "total_items": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
-      },
-      "ModuleSummaryResponse": {
-        "type": "object",
-        "required": [
-          "summary"
-        ],
-        "properties": {
-          "summary": {
-            "$ref": "#/components/schemas/ModuleSummary"
           }
         }
       },
@@ -22660,7 +23112,7 @@
           "id",
           "template_key",
           "name",
-          "module_key",
+          "application_id",
           "version",
           "description",
           "ui_config",
@@ -22670,7 +23122,7 @@
           "visibility_policy",
           "ai_indexing_policy",
           "audit_logging_policy",
-          "module_config",
+          "application_config",
           "created_at",
           "updated_at",
           "enabled",
@@ -22679,6 +23131,10 @@
         ],
         "properties": {
           "ai_indexing_policy": {},
+          "application_config": {},
+          "application_id": {
+            "type": "string"
+          },
           "audit_logging_policy": {},
           "created_at": {
             "type": "string",
@@ -22704,10 +23160,6 @@
             "format": "uuid"
           },
           "metadata_schema": {},
-          "module_config": {},
-          "module_key": {
-            "type": "string"
-          },
           "name": {
             "type": "string"
           },
@@ -22913,6 +23365,62 @@
             "type": "integer",
             "format": "int64"
           }
+        }
+      },
+      "UpdateApplicationPreferenceRequest": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateApplicationRequest": {
+        "type": "object",
+        "properties": {
+          "ai_indexing": {},
+          "audit": {},
+          "default_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissions": {},
+          "renderer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ui_config": {}
         }
       },
       "UpdateBoardInput": {
@@ -23179,62 +23687,6 @@
               "null"
             ]
           }
-        }
-      },
-      "UpdateModulePreferenceRequest": {
-        "type": "object",
-        "required": [
-          "enabled"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
-        }
-      },
-      "UpdateModuleRequest": {
-        "type": "object",
-        "properties": {
-          "ai_indexing": {},
-          "audit": {},
-          "default_template": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "icon": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "permissions": {},
-          "renderer": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "root_path": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ui_config": {}
         }
       },
       "UpdateOidcConfigRequest": {
@@ -23558,6 +24010,7 @@
         "type": "object",
         "description": "Request to update a template.",
         "properties": {
+          "application_config": {},
           "default_files": {
             "type": [
               "array",
@@ -23589,7 +24042,6 @@
             }
           },
           "metadata_schema": {},
-          "module_config": {},
           "name": {
             "type": [
               "string",
@@ -24074,52 +24526,6 @@
             "format": "int64"
           },
           "name": {
-            "type": "string"
-          }
-        }
-      },
-      "UserModulePreference": {
-        "type": "object",
-        "description": "Per-user module preference.",
-        "required": [
-          "user_id",
-          "module_key",
-          "enabled",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "module_key": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "user_id": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
-      },
-      "UserModulePreferenceResponse": {
-        "type": "object",
-        "required": [
-          "module_key",
-          "enabled"
-        ],
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "module_key": {
             "type": "string"
           }
         }
