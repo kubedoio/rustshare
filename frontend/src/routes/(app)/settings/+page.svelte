@@ -24,8 +24,8 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
-	import { getAllModules } from '$lib/modules/registry';
-	import { userModulePreferences } from '$lib/stores/userModulePreferences';
+	import { getAllModules } from '$lib/applications/registry';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 	import { createQuery } from '$lib/query-compat';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
 	import {
@@ -917,7 +917,7 @@
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
 					<SettingsSection
-						title="Module Preferences"
+						title="Application Preferences"
 						description="Enable or disable modules you want to use in your workspace."
 					>
 						<div class="flex flex-col gap-4">
@@ -940,9 +940,9 @@
 										<input
 											type="checkbox"
 											class="peer sr-only"
-											checked={$userModulePreferences.preferences[module.key] !== false}
+											checked={$userApplicationPreferences.preferences[module.key] !== false}
 											onchange={(e) =>
-												userModulePreferences.toggle(module.key, e.currentTarget.checked)}
+												userApplicationPreferences.toggle(module.key, e.currentTarget.checked)}
 										/>
 										<div
 											class="peer h-6 w-11 rounded-full bg-base-300 peer-checked:bg-brand-500 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full"

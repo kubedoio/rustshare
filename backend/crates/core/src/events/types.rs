@@ -60,7 +60,7 @@ pub enum EventType {
     ConflictResolved,
     ReplicationStateChanged,
 
-    // Module events
+    // ApplicationConfig events
     BrainstormBoardModified,
     MeetingNoteModified,
     DecisionModified,

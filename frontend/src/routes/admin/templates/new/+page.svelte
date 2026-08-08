@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
-	import { createTemplate } from '$lib/api/admin-modules';
-	import { listAdminModules } from '$lib/api/admin-modules';
-	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
+	import { createTemplate } from '$lib/api/admin-applications';
+	import { listAdminModules } from '$lib/api/admin-applications';
+	import { APPROVED_MODULE_ICONS } from '$lib/applications/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Plus, AlertCircle, Trash2 } from 'lucide-svelte';
 
@@ -11,7 +11,7 @@
 
 	let templateKey = '';
 	let name = '';
-	let moduleKey = '';
+	let applicationId = '';
 	let description = '';
 	let createLabel = '';
 	let icon = 'file-text';
@@ -22,9 +22,9 @@
 	let renderer = '';
 	let visibilityPolicy = 'workspace';
 	let error = '';
-	let moduleConfigJson = '{}';
+	let applicationConfigJson = '{}';
 	const modulesQuery = createQuery({
-		queryKey: ['admin-modules'],
+		queryKey: ['admin-applications'],
 		queryFn: () => listAdminModules()
 	});
 
@@ -90,7 +90,7 @@
 	function ensureKanbanConfig() {
 		let config: any = {};
 		try {
-			config = JSON.parse(moduleConfigJson);
+			config = JSON.parse(applicationConfigJson);
 		} catch {
 			/* ignore parse error */
 		}
@@ -116,7 +116,7 @@
 	}
 
 	function syncKanbanConfig(kb: any) {
-		moduleConfigJson = JSON.stringify({ kanban: kb }, null, 2);
+		applicationConfigJson = JSON.stringify({ kanban: kb }, null, 2);
 	}
 
 	function addKanbanColumn() {
@@ -178,7 +178,7 @@
 	function handleSubmit() {
 		error = '';
 
-		if (!templateKey.trim() || !name.trim() || !moduleKey.trim()) {
+		if (!templateKey.trim() || !name.trim() || !applicationId.trim()) {
 			error = 'Template key, name, and module are required.';
 			return;
 		}
@@ -187,12 +187,12 @@
 			const folderStructure = validateJson('Folder Structure', folderStructureJson) as string[];
 			const defaultFiles = validateJson('Default Files', defaultFilesJson);
 			const metadataSchema = validateJson('Metadata Schema', metadataSchemaJson);
-			const moduleConfig = validateJson('Module Config', moduleConfigJson);
+			const applicationConfig = validateJson('Application Config', applicationConfigJson);
 
 			$createTemplateMutation.mutate({
 				template_key: templateKey.trim(),
 				name: name.trim(),
-				module_key: moduleKey,
+				application_id: applicationId,
 				description: description.trim(),
 				ui_config: {
 					createLabel: createLabel.trim() || undefined,
@@ -203,7 +203,7 @@
 				metadata_schema: metadataSchema as Record<string, unknown>,
 				renderer: renderer.trim() || null,
 				visibility_policy: visibilityPolicy,
-				module_config: moduleConfig as Record<string, unknown>
+				application_config: applicationConfig as Record<string, unknown>
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -281,16 +281,18 @@
 				</div>
 
 				<div class="flex flex-col gap-1">
-					<label class="text-xs font-semibold text-base-content/70" for="module">Module *</label>
+					<label class="text-xs font-semibold text-base-content/70" for="module"
+						>Application *</label
+					>
 					<select
 						id="module"
 						class="select-bordered select select-sm"
-						bind:value={moduleKey}
+						bind:value={applicationId}
 						required
 					>
 						<option value="" disabled>Select a module</option>
 						{#each $modulesQuery.data ?? [] as mod}
-							<option value={mod.module_key}>{mod.display_name}</option>
+							<option value={mod.application_id}>{mod.display_name}</option>
 						{/each}
 					</select>
 				</div>
@@ -401,9 +403,9 @@
 
 		<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 			<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
-				Module Configuration
+				Application Configuration
 			</h2>
-			{#if moduleKey === 'kanban'}
+			{#if applicationId === 'kanban'}
 				<div class="flex flex-col gap-5">
 					<!-- Columns -->
 					<div>
@@ -526,12 +528,12 @@
 			{:else}
 				<div class="flex flex-col gap-1">
 					<label class="text-xs font-semibold text-base-content/70" for="module-config-json-object"
-						>Module Config (JSON object)</label
+						>Application Config (JSON object)</label
 					>
 					<textarea
 						id="module-config-json-object"
 						class="textarea-bordered textarea font-mono text-xs textarea-sm"
-						bind:value={moduleConfigJson}
+						bind:value={applicationConfigJson}
 						rows={4}></textarea>
 				</div>
 			{/if}

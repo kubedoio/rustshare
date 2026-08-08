@@ -4,7 +4,7 @@
  * Resolves the file paths for the two supported storage layouts:
  *
  * 1. Folder-backed document:
- *    /{ModuleRoot}/{DocumentSlug}/
+ *    /{ApplicationRoot}/{DocumentSlug}/
  *      index.md
  *      .rustshare.json
  *      /attachments/
@@ -50,7 +50,7 @@ export function resolveDocumentPaths(target: RichMarkdownDocumentTarget): Resolv
  * - sourcePath ends with /index.md
  * - sourcePath is exactly "index.md"
  * - metadataPath is .rustshare.json (relative, no filename prefix)
- * - a rootPath and moduleKey are specified (module documents are folder-backed)
+ * - a rootPath and applicationId are specified (module documents are folder-backed)
  */
 export function detectStorageType(target: RichMarkdownDocumentTarget): DocumentStorageType {
 	const source = target.sourcePath;
@@ -65,8 +65,8 @@ export function detectStorageType(target: RichMarkdownDocumentTarget): DocumentS
 		return 'folder-backed';
 	}
 
-	// Module documents are folder-backed by convention
-	if (target.moduleKey && target.rootPath) {
+	// Application documents are folder-backed by convention
+	if (target.applicationId && target.rootPath) {
 		return 'folder-backed';
 	}
 

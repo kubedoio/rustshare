@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
         .merge(routes::ai_routes())
         .merge(routes::sync_routes())
         .merge(routes::trash_routes())
-        .merge(routes::module_routes())
+        .merge(routes::application_routes())
         .merge(routes::mail_routes())
         .merge(routes::kanban_routes())
         .merge(routes::brainstorming_routes())

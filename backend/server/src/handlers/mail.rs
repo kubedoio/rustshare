@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
+use crate::services::application_service::ApplicationError;
 use crate::services::mail_service::MailAttachmentBody;
-use crate::services::module_service::ModuleError;
 use crate::state::AppState;
 
 const MAX_MAIL_UPLOAD_SIZE_BYTES: usize = 25 * 1024 * 1024;
@@ -24,12 +24,12 @@ const MAIL_MODULE_KEY: &str = "mail";
 
 async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
-        .module_service
-        .get_module(MAIL_MODULE_KEY, tenant_id)
+        .application_service
+        .get_application(MAIL_MODULE_KEY, tenant_id)
         .await;
     let module = match module {
         Ok(module) => module,
-        Err(ModuleError::NotFound(_)) => {
+        Err(ApplicationError::NotFound(_)) => {
             return Err(AppError::forbidden("Mail module is disabled"));
         }
         Err(err) => return Err(AppError::internal(err.to_string())),

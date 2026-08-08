@@ -759,6 +759,6 @@ mod tests {
 mod compilation_check {
     #[test]
     fn test_this_module_is_compiled() {
-        // Module compilation check
+        // ApplicationConfig compilation check
     }
 }

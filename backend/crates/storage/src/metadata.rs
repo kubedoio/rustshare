@@ -1467,19 +1467,18 @@ impl MetadataStore {
     /// The SELECT, UPDATE, and RETURN are performed in a single CTE statement
     /// so the row transitions to `running` before the lock is released.
     pub async fn claim_next_pending_mail_import_job(&self) -> Result<Option<MailImportJob>> {
-        let job = sqlx::query_as!(
-            MailImportJob,
+        let job = sqlx::query_as::<_, MailImportJob>(
             r#"
             WITH target AS (
                 SELECT j.id
                 FROM mail_import_jobs j
                 JOIN mail_accounts a ON a.id = j.account_id
-                JOIN modules m ON m.tenant_id = j.tenant_id
+                JOIN applications m ON m.tenant_id = j.tenant_id
                 WHERE j.status = 'pending'
                   AND j.deleted_at IS NULL
                   AND a.deleted_at IS NULL
                   AND a.is_enabled = true
-                  AND m.module_key = 'mail'
+                  AND m.application_id = 'mail'
                   AND m.enabled = true
                   AND (
                       j.source_mode != 'imap_archive'

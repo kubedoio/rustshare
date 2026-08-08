@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
+use crate::services::application_service::ApplicationError;
 use crate::services::brainstorming_service::BrainstormBoard;
-use crate::services::module_service::ModuleError;
 use crate::AppState;
 use rustshare_core::events::{AggregateType, BrainstormBoardModifiedPayload, Event, EventType};
 
@@ -27,12 +27,12 @@ pub struct ListBoardsResponse {
 
 async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
-        .module_service
-        .get_module("brainstorming", tenant_id)
+        .application_service
+        .get_application("brainstorming", tenant_id)
         .await;
     let module = match module {
         Ok(m) => m,
-        Err(ModuleError::NotFound(_)) => {
+        Err(ApplicationError::NotFound(_)) => {
             return Err(AppError::forbidden("Brainstorming module is disabled"));
         }
         Err(e) => {
@@ -47,7 +47,7 @@ async fn require_brainstorming_enabled(state: &AppState, tenant_id: Uuid) -> Res
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/brainstorming/boards",
+    path = "/api/v1/applications/brainstorming/boards",
     tag = "Brainstorming",
     responses(
         (status = 200, description = "Success", body = ListBoardsResponse),
@@ -91,7 +91,7 @@ pub struct CreateBoardResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/brainstorming/boards",
+    path = "/api/v1/applications/brainstorming/boards",
     tag = "Brainstorming",
     request_body = CreateBoardRequest,
     responses(
@@ -204,7 +204,7 @@ pub struct GetBoardResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/brainstorming/boards/{board_id}",
+    path = "/api/v1/applications/brainstorming/boards/{board_id}",
     tag = "Brainstorming",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     responses(
@@ -248,7 +248,7 @@ pub struct GetBoardSourceResponse {
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/brainstorming/boards/{board_id}/source",
+    path = "/api/v1/applications/brainstorming/boards/{board_id}/source",
     tag = "Brainstorming",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     responses(
@@ -288,7 +288,7 @@ pub struct SaveBoardSourceRequest {
 
 #[utoipa::path(
     put,
-    path = "/api/v1/modules/brainstorming/boards/{board_id}/source",
+    path = "/api/v1/applications/brainstorming/boards/{board_id}/source",
     tag = "Brainstorming",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     request_body = SaveBoardSourceRequest,
@@ -353,7 +353,7 @@ pub async fn save_brainstorm_board_source(
 
 #[utoipa::path(
     put,
-    path = "/api/v1/modules/brainstorming/boards/{board_id}/preview",
+    path = "/api/v1/applications/brainstorming/boards/{board_id}/preview",
     tag = "Brainstorming",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     responses(
@@ -411,7 +411,7 @@ pub async fn update_brainstorm_board_preview(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/brainstorming/boards/{board_id}",
+    path = "/api/v1/applications/brainstorming/boards/{board_id}",
     tag = "Brainstorming",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     responses(

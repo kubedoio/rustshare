@@ -90,17 +90,17 @@ describe('Activity Store', () => {
 			expect(activities[0].details).toBe('old.txt');
 		});
 
-		it('should add activity with artifactId and moduleKey', () => {
+		it('should add activity with artifactId and applicationId', () => {
 			activityStore.addActivity('note_created', 'My Note', {
 				artifactId: 'abc',
-				moduleKey: 'notes'
+				applicationId: 'notes'
 			});
 
 			const activities = get(activityStore);
 			expect(activities[0].type).toBe('note_created');
 			expect(activities[0].fileName).toBe('My Note');
 			expect(activities[0].artifactId).toBe('abc');
-			expect(activities[0].moduleKey).toBe('notes');
+			expect(activities[0].applicationId).toBe('notes');
 		});
 
 		it('should maintain chronological order (newest first)', () => {
@@ -233,7 +233,7 @@ describe('Activity Store', () => {
 			expect(state.items[0].artifactId).toBe('file-1');
 			expect(state.items[0].accessible).toBe(true);
 			expect(state.items[1].type).toBe('note_modified');
-			expect(state.items[1].moduleKey).toBe('notes');
+			expect(state.items[1].applicationId).toBe('notes');
 			expect(state.loading).toBe(false);
 			expect(state.error).toBeNull();
 			expect(state.hasMore).toBe(false);
@@ -348,8 +348,8 @@ describe('Activity Store', () => {
 
 			await serverActivityStore.fetch(10);
 			const items = get(serverActivityStore).items;
-			expect(items[0].moduleKey).toBe('brainstorming');
-			expect(items[1].moduleKey).toBe('shares');
+			expect(items[0].applicationId).toBe('brainstorming');
+			expect(items[1].applicationId).toBe('shares');
 		});
 
 		it('should not call loadMore when already loading', async () => {
@@ -516,7 +516,7 @@ describe('Activity Store', () => {
 			expect(display.description).toContain('new.txt');
 		});
 
-		it('should handle old-format activity without artifactId and moduleKey', () => {
+		it('should handle old-format activity without artifactId and applicationId', () => {
 			const oldActivity = {
 				id: 'old-1',
 				type: 'file_uploaded',
@@ -577,7 +577,7 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				moduleKey: 'notes',
+				applicationId: 'notes',
 				accessible: false
 			};
 			expect(getActivityHref(activity)).toBeNull();
@@ -590,9 +590,9 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				moduleKey: 'notes'
+				applicationId: 'notes'
 			};
-			expect(getActivityHref(activity)).toBe('/modules/notes/note-123');
+			expect(getActivityHref(activity)).toBe('/apps/notes/note-123');
 		});
 
 		it('should return file preview fallback', () => {

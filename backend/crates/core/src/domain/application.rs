@@ -1,0 +1,635 @@
+//! Declarative Elembra Application contracts.
+//!
+//! This module contains identity and manifest metadata only. It deliberately
+//! does not load code, resolve services, or implement application business
+//! logic.
+
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use uuid::Uuid;
+
+macro_rules! string_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(pub String);
+
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self {
+                Self::new(value)
+            }
+        }
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
+
+macro_rules! uuid_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(pub Uuid);
+
+        impl From<Uuid> for $name {
+            fn from(value: Uuid) -> Self {
+                Self(value)
+            }
+        }
+        impl From<$name> for Uuid {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+    };
+}
+
+string_id!(ApplicationId);
+string_id!(ActionCapability);
+string_id!(CorrelationId);
+string_id!(CausationId);
+uuid_id!(TenantId);
+uuid_id!(WorkspaceId);
+uuid_id!(PrincipalId);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApplicationRuntimeKind {
+    Embedded,
+    Service,
+    Bridge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractRef {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationResource {
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    pub actions: Vec<ActionCapability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ApplicationContribution {
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub renderer: Option<String>,
+    #[serde(default)]
+    pub action: Option<ActionCapability>,
+    #[serde(default)]
+    pub order: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ApplicationContributions {
+    #[serde(default)]
+    pub navigation: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub routes: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub commands: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub dashboard: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub settings: Vec<ApplicationContribution>,
+    #[serde(default, rename = "searchProviders")]
+    pub search_providers: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub renderers: Vec<ApplicationContribution>,
+    #[serde(default)]
+    pub admin: Vec<ApplicationContribution>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationManifest {
+    #[serde(rename = "apiVersion")]
+    pub api_version: String,
+    pub kind: String,
+    pub metadata: ApplicationMetadata,
+    pub runtime: ApplicationRuntime,
+    pub contracts: ApplicationContracts,
+    #[serde(default)]
+    pub resources: Vec<ApplicationResource>,
+    #[serde(default)]
+    pub contributions: ApplicationContributions,
+    #[serde(rename = "integrationEvents", default)]
+    pub integration_events: IntegrationEvents,
+    #[serde(default)]
+    pub memory: Option<MemoryPolicy>,
+    pub configuration: ConfigurationReference,
+    pub data: DataPolicy,
+    #[serde(default)]
+    pub health: Option<HealthMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationMetadata {
+    pub id: ApplicationId,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationRuntime {
+    pub kind: ApplicationRuntimeKind,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ApplicationContracts {
+    #[serde(default)]
+    pub provides: Vec<ContractRef>,
+    #[serde(default)]
+    pub requires: Vec<ContractRef>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct IntegrationEvents {
+    #[serde(default)]
+    pub publishes: Vec<String>,
+    #[serde(default)]
+    pub subscribes: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryPolicy {
+    #[serde(rename = "sourceTypes", default)]
+    pub source_types: Vec<String>,
+    pub publication: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigurationReference {
+    pub schema: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataPolicy {
+    pub owner: ApplicationId,
+    #[serde(rename = "preserveOnDisable")]
+    pub preserve_on_disable: bool,
+    #[serde(rename = "exportSupported")]
+    pub export_supported: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthMetadata {
+    pub liveness: String,
+    pub readiness: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApplicationHealth {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplicationState {
+    Available,
+    Configured,
+    Enabled,
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationEnablement {
+    pub tenant_id: TenantId,
+    pub workspace_id: WorkspaceId,
+    pub application_id: ApplicationId,
+    pub enabled: bool,
+    pub configuration: serde_json::Value,
+    pub health: ApplicationHealth,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ApplicationRegistryError {
+    #[error("invalid application manifest: {0}")]
+    InvalidManifest(String),
+    #[error("duplicate application id: {0}")]
+    DuplicateApplication(ApplicationId),
+    #[error("required contract is not provided: {0}@{1}")]
+    MissingContract(String, String),
+    #[error("duplicate contribution id: {0}")]
+    DuplicateContribution(String),
+    #[error("duplicate action capability namespace: {0}")]
+    DuplicateActionNamespace(String),
+}
+
+pub struct ApplicationRegistry {
+    manifests: HashMap<ApplicationId, ApplicationManifest>,
+    enablement: HashMap<(TenantId, WorkspaceId, ApplicationId), ApplicationEnablement>,
+}
+
+impl ApplicationRegistry {
+    pub fn new(
+        manifests: impl IntoIterator<Item = ApplicationManifest>,
+    ) -> Result<Self, ApplicationRegistryError> {
+        let mut registry = Self {
+            manifests: HashMap::new(),
+            enablement: HashMap::new(),
+        };
+        for manifest in manifests {
+            registry.register(manifest)?;
+        }
+        let provided: HashSet<_> = registry
+            .manifests
+            .values()
+            .flat_map(|m| m.contracts.provides.iter().map(|c| (&c.id, &c.version)))
+            .collect();
+        for manifest in registry.manifests.values() {
+            for required in &manifest.contracts.requires {
+                if !provided.contains(&(&required.id, &required.version)) {
+                    return Err(ApplicationRegistryError::MissingContract(
+                        required.id.clone(),
+                        required.version.clone(),
+                    ));
+                }
+            }
+        }
+        let mut action_owners = HashMap::<String, ApplicationId>::new();
+        for manifest in registry.manifests.values() {
+            for action in manifest
+                .resources
+                .iter()
+                .flat_map(|resource| resource.actions.iter())
+                .chain(
+                    manifest
+                        .contributions
+                        .commands
+                        .iter()
+                        .filter_map(|contribution| contribution.action.as_ref()),
+                )
+            {
+                let namespace = action_namespace(action).ok_or_else(|| {
+                    ApplicationRegistryError::InvalidManifest(format!(
+                        "invalid action capability: {action}"
+                    ))
+                })?;
+                if let Some(owner) =
+                    action_owners.insert(namespace.clone(), manifest.metadata.id.clone())
+                {
+                    if owner != manifest.metadata.id {
+                        return Err(ApplicationRegistryError::DuplicateActionNamespace(
+                            namespace,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(registry)
+    }
+
+    fn register(&mut self, manifest: ApplicationManifest) -> Result<(), ApplicationRegistryError> {
+        validate_manifest(&manifest)?;
+        if self.manifests.contains_key(&manifest.metadata.id) {
+            return Err(ApplicationRegistryError::DuplicateApplication(
+                manifest.metadata.id,
+            ));
+        }
+        self.manifests
+            .insert(manifest.metadata.id.clone(), manifest);
+        Ok(())
+    }
+
+    pub fn available(&self) -> impl Iterator<Item = &ApplicationManifest> {
+        self.manifests.values()
+    }
+    pub fn manifest(&self, id: &ApplicationId) -> Option<&ApplicationManifest> {
+        self.manifests.get(id)
+    }
+    pub fn state(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+    ) -> Option<ApplicationState> {
+        self.manifests.get(application_id)?;
+        let enablement = self.enablement(tenant_id, workspace_id, application_id);
+        Some(match enablement {
+            None => ApplicationState::Available,
+            Some(entry) if !entry.enabled => ApplicationState::Configured,
+            Some(entry) => match entry.health {
+                ApplicationHealth::Healthy => ApplicationState::Healthy,
+                ApplicationHealth::Degraded => ApplicationState::Degraded,
+                ApplicationHealth::Unavailable => ApplicationState::Unavailable,
+            },
+        })
+    }
+    pub fn is_configured(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+    ) -> bool {
+        self.enablement(tenant_id, workspace_id, application_id)
+            .is_some()
+    }
+    pub fn is_enabled(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+    ) -> bool {
+        self.enablement(tenant_id, workspace_id, application_id)
+            .is_some_and(|entry| entry.enabled)
+    }
+    pub fn configure(
+        &mut self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+        enabled: bool,
+        configuration: serde_json::Value,
+    ) -> Option<&ApplicationEnablement> {
+        self.manifests.get(application_id)?;
+        let key = (tenant_id, workspace_id, application_id.clone());
+        self.enablement.insert(
+            key.clone(),
+            ApplicationEnablement {
+                tenant_id,
+                workspace_id,
+                application_id: application_id.clone(),
+                enabled,
+                configuration,
+                health: ApplicationHealth::Healthy,
+            },
+        );
+        self.enablement.get(&key)
+    }
+    pub fn enablement(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+    ) -> Option<&ApplicationEnablement> {
+        self.enablement
+            .get(&(tenant_id, workspace_id, application_id.clone()))
+    }
+    pub fn set_health(
+        &mut self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        application_id: &ApplicationId,
+        health: ApplicationHealth,
+    ) -> bool {
+        self.enablement
+            .get_mut(&(tenant_id, workspace_id, application_id.clone()))
+            .map(|entry| entry.health = health)
+            .is_some()
+    }
+    pub fn contributions(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+    ) -> Vec<&ApplicationContribution> {
+        self.enablement
+            .values()
+            .filter(|e| e.tenant_id == tenant_id && e.workspace_id == workspace_id && e.enabled)
+            .filter_map(|e| self.manifests.get(&e.application_id))
+            .flat_map(|m| {
+                [
+                    &m.contributions.navigation,
+                    &m.contributions.routes,
+                    &m.contributions.commands,
+                    &m.contributions.dashboard,
+                    &m.contributions.settings,
+                    &m.contributions.search_providers,
+                    &m.contributions.renderers,
+                    &m.contributions.admin,
+                ]
+            })
+            .flat_map(|v| v.iter())
+            .collect()
+    }
+}
+
+pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), ApplicationRegistryError> {
+    if manifest.api_version != "elembra.io/v1alpha1"
+        || manifest.kind != "Application"
+        || !valid_namespace(&manifest.metadata.id.0)
+        || manifest.metadata.name.trim().is_empty()
+        || manifest.metadata.version.trim().is_empty()
+        || manifest.data.owner != manifest.metadata.id
+        || manifest.configuration.schema.trim().is_empty()
+    {
+        return Err(ApplicationRegistryError::InvalidManifest(
+            "invalid identity or ownership".into(),
+        ));
+    }
+    let mut ids = HashSet::new();
+    let families = [
+        &manifest.contributions.navigation,
+        &manifest.contributions.routes,
+        &manifest.contributions.commands,
+        &manifest.contributions.dashboard,
+        &manifest.contributions.settings,
+        &manifest.contributions.search_providers,
+        &manifest.contributions.renderers,
+        &manifest.contributions.admin,
+    ];
+    for contribution in families.into_iter().flat_map(|v| v.iter()) {
+        if contribution.id.trim().is_empty() || !ids.insert(&contribution.id) {
+            return Err(ApplicationRegistryError::DuplicateContribution(
+                contribution.id.clone(),
+            ));
+        }
+    }
+    if manifest
+        .resources
+        .iter()
+        .any(|resource| resource.resource_type.trim().is_empty())
+        || manifest
+            .contracts
+            .provides
+            .iter()
+            .chain(manifest.contracts.requires.iter())
+            .any(|contract| contract.id.trim().is_empty() || contract.version.trim().is_empty())
+        || manifest
+            .integration_events
+            .publishes
+            .iter()
+            .chain(manifest.integration_events.subscribes.iter())
+            .any(|event| event.trim().is_empty())
+    {
+        return Err(ApplicationRegistryError::InvalidManifest(
+            "empty contract, resource, or event declaration".into(),
+        ));
+    }
+    if let Some(memory) = &manifest.memory {
+        if !matches!(
+            memory.publication.as_str(),
+            "none" | "reference-first" | "artifact-backed"
+        ) {
+            return Err(ApplicationRegistryError::InvalidManifest(
+                "invalid memory publication policy".into(),
+            ));
+        }
+    }
+    for action in manifest
+        .resources
+        .iter()
+        .flat_map(|r| r.actions.iter())
+        .chain(
+            manifest
+                .contributions
+                .commands
+                .iter()
+                .filter_map(|c| c.action.as_ref()),
+        )
+    {
+        let namespace = action_namespace(action).ok_or_else(|| {
+            ApplicationRegistryError::InvalidManifest(format!(
+                "invalid action capability: {action}"
+            ))
+        })?;
+        let application_namespace = manifest
+            .metadata
+            .id
+            .0
+            .rsplit('.')
+            .next()
+            .unwrap_or_default();
+        if namespace != application_namespace {
+            return Err(ApplicationRegistryError::InvalidManifest(format!(
+                "action namespace {namespace} is not owned by {}",
+                manifest.metadata.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn valid_namespace(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        })
+}
+
+fn action_namespace(action: &ActionCapability) -> Option<String> {
+    let mut parts = action.0.split('.');
+    let namespace = parts.next()?;
+    let verb = parts.next()?;
+    if namespace.is_empty() || verb.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    if !valid_namespace(namespace) || !valid_namespace(verb) {
+        return None;
+    }
+    Some(namespace.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn manifest(id: &str) -> ApplicationManifest {
+        serde_yaml::from_str(&format!(
+            r#"apiVersion: elembra.io/v1alpha1
+kind: Application
+metadata: {{ id: {id}, name: Test, version: 1.0.0 }}
+runtime: {{ kind: embedded }}
+contracts: {{ provides: [{{ id: {id}.api, version: v1alpha1 }}] }}
+resources: [{{ type: note, actions: [notes.read] }}]
+contributions: {{ navigation: [{{ id: home, label: Home, route: /apps/test }}] }}
+configuration: {{ schema: config.json }}
+data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
+"#
+        ))
+        .unwrap()
+    }
+    #[test]
+    fn parses_and_validates_manifest() {
+        assert!(validate_manifest(&manifest("io.elembra.notes")).is_ok());
+    }
+    #[test]
+    fn rejects_duplicate_application() {
+        let id = manifest("io.elembra.notes");
+        assert!(matches!(
+            ApplicationRegistry::new([id.clone(), id]),
+            Err(ApplicationRegistryError::DuplicateApplication(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_unsatisfied_contract() {
+        let mut application = manifest("io.elembra.notes");
+        application.contracts.requires.push(ContractRef {
+            id: "io.elembra.files.api".into(),
+            version: "v1alpha1".into(),
+        });
+        assert!(matches!(
+            ApplicationRegistry::new([application]),
+            Err(ApplicationRegistryError::MissingContract(_, _))
+        ));
+    }
+
+    #[test]
+    fn rejects_contribution_collision() {
+        let mut application = manifest("io.elembra.notes");
+        application
+            .contributions
+            .routes
+            .push(application.contributions.navigation[0].clone());
+        assert!(matches!(
+            ApplicationRegistry::new([application]),
+            Err(ApplicationRegistryError::DuplicateContribution(_))
+        ));
+    }
+
+    #[test]
+    fn allows_multiple_actions_owned_by_one_application() {
+        let mut application = manifest("io.elembra.notes");
+        application.resources[0]
+            .actions
+            .push(ActionCapability::from("notes.write"));
+        assert!(ApplicationRegistry::new([application]).is_ok());
+    }
+    #[test]
+    fn isolates_enablement_and_preserves_identity_across_runtime_change() {
+        let mut a = manifest("io.elembra.notes");
+        let id = a.metadata.id.clone();
+        let mut r = ApplicationRegistry::new([a.clone()]).unwrap();
+        let t = TenantId(Uuid::new_v4());
+        let w = WorkspaceId(Uuid::new_v4());
+        r.configure(
+            t,
+            w,
+            &id,
+            false,
+            serde_json::json!({"rootPath":"/Workspace/Notes"}),
+        );
+        assert_eq!(r.state(t, w, &id), Some(ApplicationState::Configured));
+        assert!(r.is_configured(t, w, &id));
+        assert!(!r.is_enabled(t, w, &id));
+        assert!(!r.enablement(t, w, &id).unwrap().enabled);
+        assert!(r.set_health(t, w, &id, ApplicationHealth::Degraded));
+        a.runtime.kind = ApplicationRuntimeKind::Service;
+        assert_eq!(a.metadata.id, id);
+    }
+}

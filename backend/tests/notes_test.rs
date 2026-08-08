@@ -7,7 +7,7 @@ use rustshare_core::domain::User;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use rustshare_server::services::module_service::ModuleService;
+use rustshare_server::services::application_service::ApplicationService;
 use rustshare_server::services::note_service::{
     NoteConflictResolution, NoteError, NoteService, NoteVisibility,
 };
@@ -1004,11 +1004,11 @@ async fn contract_recent_activity_shows_bundle_title() {
         metadata_store.clone(),
         &pool,
     ));
-    let module_service = ModuleService::new(folder_service, metadata_store.clone());
+    let application_service = ApplicationService::new(folder_service, metadata_store.clone());
 
     // Ensure default modules exist for this tenant
-    module_service
-        .ensure_default_modules(tenant_id)
+    application_service
+        .ensure_default_applications(tenant_id)
         .await
         .unwrap();
 
@@ -1023,8 +1023,8 @@ async fn contract_recent_activity_shows_bundle_title() {
         .await
         .unwrap();
 
-    let summary = module_service
-        .get_module_summary("notes", tenant_id, user.id)
+    let summary = application_service
+        .get_application_summary("notes", tenant_id, user.id)
         .await
         .unwrap();
 

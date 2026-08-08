@@ -386,10 +386,11 @@ impl MeetingService {
             let meta: MeetingMetadata = match serde_json::from_slice(&data) {
                 Ok(m) => m,
                 Err(parse_err) => {
-                    // Fallback: old templates wrote {"type":"rustshare.module","module_key":"meetings"}
+                    // Fallback: old templates wrote {"type":"rustshare.module","application_id":"meetings"}
                     if let Ok(marker) = serde_json::from_slice::<serde_json::Value>(&data) {
                         if marker.get("type").and_then(|v| v.as_str()) == Some("rustshare.module")
-                            && marker.get("module_key").and_then(|v| v.as_str()) == Some("meetings")
+                            && marker.get("application_id").and_then(|v| v.as_str())
+                                == Some("meetings")
                         {
                             MeetingMetadata {
                                 kind: "meeting".to_string(),

@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
-	import { listEnabledModules } from '$lib/api/modules';
-	import ModuleIcon from '$lib/components/dashboard/ModuleIcon.svelte';
-	import { getEnabledSidebarModules, getModuleSidebarConfig } from '$lib/modules/workspaceSurface';
+	import { listEnabledApplications } from '$lib/api/applications';
+	import ApplicationIcon from '$lib/components/dashboard/ApplicationIcon.svelte';
+	import {
+		getEnabledSidebarModules,
+		getApplicationSidebarConfig
+	} from '$lib/applications/workspaceSurface';
 	import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
 	import {
 		FolderOpen,
@@ -27,7 +30,7 @@
 
 	const modulesQuery = createQuery({
 		queryKey: ['enabled-modules'],
-		queryFn: () => listEnabledModules()
+		queryFn: () => listEnabledApplications()
 	});
 
 	let sidebarModules = $derived(getEnabledSidebarModules($modulesQuery.data ?? []));
@@ -50,8 +53,8 @@
 						: null
 	);
 
-	// Active module key extracted from /modules/{key}/... routes
-	let activeModuleKey = $derived(pathname.match(/^\/modules\/([^/]+)/)?.[1] ?? null);
+	// Active module key extracted from /apps/{key}/... routes
+	let activeApplicationKey = $derived(pathname.match(/^\/apps\/([^/]+)/)?.[1] ?? null);
 
 	// Hover-based temporary expansion
 	let hoverExpanded = $state(false);
@@ -132,7 +135,7 @@
 			</RailItem>
 		{/each}
 
-		<!-- Module Navigation -->
+		<!-- Application Navigation -->
 		{#if $modulesQuery.isLoading}
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
@@ -197,13 +200,13 @@
 				{/if}
 				{#each sidebarModules as mod}
 					<RailItem
-						href="/modules/{mod.module_key}"
-						label={getModuleSidebarConfig(mod).label}
-						active={activeModuleKey === mod.module_key}
+						href="/apps/{mod.application_id}"
+						label={getApplicationSidebarConfig(mod).label}
+						active={activeApplicationKey === mod.application_id}
 						expanded={railExpanded}
 					>
-						<ModuleIcon
-							name={getModuleSidebarConfig(mod).icon ?? mod.icon}
+						<ApplicationIcon
+							name={getApplicationSidebarConfig(mod).icon ?? mod.icon}
 							size={22}
 							strokeWidth={1.75}
 						/>

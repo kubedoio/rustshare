@@ -18,7 +18,7 @@ export function formatBytes(bytes: number): string {
 	return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export function getArtifactTypeLabel(moduleKey: string, itemType: string): string {
+export function getArtifactTypeLabel(applicationId: string, itemType: string): string {
 	const map: Record<string, string> = {
 		notes: 'Note',
 		meetings: 'Meeting Note',
@@ -28,11 +28,11 @@ export function getArtifactTypeLabel(moduleKey: string, itemType: string): strin
 		brainstorming: 'Idea Board',
 		shares: 'Share'
 	};
-	return map[moduleKey] ?? (itemType === 'folder' ? 'Folder' : 'File');
+	return map[applicationId] ?? (itemType === 'folder' ? 'Folder' : 'File');
 }
 
 export function getArtifactHref(item: {
-	moduleKey: string;
+	applicationId: string;
 	item_type: string;
 	id: string;
 	name?: string;
@@ -41,26 +41,26 @@ export function getArtifactHref(item: {
 	if (item.item_type === 'folder') {
 		return `/files?folder=${item.id}`;
 	}
-	if (item.moduleKey === 'notes' && item.item_type === 'file') {
-		return `/modules/notes/${item.id}`;
+	if (item.applicationId === 'notes' && item.item_type === 'file') {
+		return `/apps/notes/${item.id}`;
 	}
-	if (item.moduleKey === 'meetings') {
-		return `/modules/meetings/${item.id}`;
+	if (item.applicationId === 'meetings') {
+		return `/apps/meetings/${item.id}`;
 	}
-	if (item.moduleKey === 'standups') {
-		return `/modules/standups/${item.id}`;
+	if (item.applicationId === 'standups') {
+		return `/apps/standups/${item.id}`;
 	}
-	if (item.moduleKey === 'decisions') {
-		return `/modules/decisions/${item.id}`;
+	if (item.applicationId === 'decisions') {
+		return `/apps/decisions/${item.id}`;
 	}
-	if (item.moduleKey === 'brainstorming') {
-		return `/modules/brainstorming/${item.id}`;
+	if (item.applicationId === 'brainstorming') {
+		return `/apps/brainstorming/${item.id}`;
 	}
-	if (item.moduleKey === 'kanban') {
-		return '/modules/kanban';
+	if (item.applicationId === 'kanban') {
+		return '/apps/kanban';
 	}
-	if (item.moduleKey === 'shares') {
-		return `/modules/shares/${item.id}`;
+	if (item.applicationId === 'shares') {
+		return `/apps/shares/${item.id}`;
 	}
 	if (item.name?.match(/\.excalidraw$/i)) {
 		return `/files?preview=${item.id}`;
@@ -140,7 +140,7 @@ export function getActivityVerb(type: string): string {
 	}
 }
 
-export function getModuleColor(moduleKey: string): { color: string; bg: string } {
+export function getApplicationColor(applicationId: string): { color: string; bg: string } {
 	const colors: Record<string, { color: string; bg: string }> = {
 		notes: { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
 		meetings: { color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' },
@@ -150,10 +150,10 @@ export function getModuleColor(moduleKey: string): { color: string; bg: string }
 		brainstorming: { color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.1)' },
 		shares: { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' }
 	};
-	return colors[moduleKey] ?? { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' };
+	return colors[applicationId] ?? { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' };
 }
 
-export function getArtifactIcon(moduleKey: string): typeof FileText {
+export function getArtifactIcon(applicationId: string): typeof FileText {
 	const map: Record<string, any> = {
 		notes: FileText,
 		meetings: FileText,
@@ -163,5 +163,5 @@ export function getArtifactIcon(moduleKey: string): typeof FileText {
 		brainstorming: Lightbulb,
 		shares: Share2
 	};
-	return map[moduleKey] ?? FileText;
+	return map[applicationId] ?? FileText;
 }

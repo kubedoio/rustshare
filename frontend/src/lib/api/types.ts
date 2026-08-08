@@ -274,12 +274,12 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Module & Template Types
+// Application & Template Types
 // ---------------------------------------------------------------------------
 
-export interface ModuleConfig {
+export interface ApplicationConfig {
 	id: string;
-	module_key: string;
+	application_id: string;
 	display_name: string;
 	description: string;
 	enabled: boolean;
@@ -288,28 +288,28 @@ export interface ModuleConfig {
 	default_template: string | null;
 	icon: string;
 	schema_version: string;
-	permissions: ModulePermissions;
+	permissions: ApplicationPermissions;
 	ai_indexing: AiIndexingPolicy;
 	audit: AuditPolicy;
-	ui_config?: ModuleUiConfig;
+	ui_config?: ApplicationUiConfig;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface OkfModuleUiConfig {
+export interface OkfApplicationUiConfig {
 	enabled: boolean;
 	conceptType: string;
 	frontmatterRequired: boolean;
 	preserveUnknownFields?: boolean;
 }
 
-export interface ModuleUiConfig {
+export interface ApplicationUiConfig {
 	documentFormat?: string;
-	okf?: OkfModuleUiConfig;
+	okf?: OkfApplicationUiConfig;
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
-	modulePage?: ModulePageConfig;
-	page?: ModulePageDefinition;
+	modulePage?: ApplicationPageConfig;
+	page?: ApplicationPageDefinition;
 }
 
 export interface SidebarConfig {
@@ -336,14 +336,14 @@ export interface PrimaryActionConfig {
 	template?: string;
 }
 
-export interface ModulePageConfig {
+export interface ApplicationPageConfig {
 	layout: string;
 	emptyStateTitle: string;
 	emptyStateDescription: string;
 	emptyStateAction: string;
 }
 
-export interface ModulePageDefinition {
+export interface ApplicationPageDefinition {
 	enabled: boolean;
 	route: string;
 	renderer: string;
@@ -404,7 +404,7 @@ export interface WorkspaceSurfaceDefinition {
 	sections: WorkspaceSurfaceSection[];
 }
 
-export interface ModulePermissions {
+export interface ApplicationPermissions {
 	admin_can_configure: boolean;
 	workspace_members_can_use: boolean;
 	allow_public_share: boolean;
@@ -425,7 +425,7 @@ export interface TemplateConfig {
 	id: string;
 	template_key: string;
 	name: string;
-	module_key: string;
+	application_id: string;
 	version: string;
 	description: string;
 	ui_config?: TemplateUiConfig;
@@ -434,7 +434,7 @@ export interface TemplateConfig {
 	metadata_schema: Record<string, unknown>;
 	renderer: string | null;
 	visibility_policy: string;
-	module_config?: Record<string, unknown>;
+	application_config?: Record<string, unknown>;
 	enabled: boolean;
 	system_template: boolean;
 	created_by: string | null;
@@ -473,8 +473,8 @@ export interface SummaryItem {
 	updated_at: string;
 }
 
-export interface ModuleSummary {
-	module_key: string;
+export interface ApplicationSummary {
+	application_id: string;
 	mode: string;
 	total_items: number;
 	recent_items: SummaryItem[];

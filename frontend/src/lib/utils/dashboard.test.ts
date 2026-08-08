@@ -7,7 +7,7 @@ import {
 	todayDateString,
 	getUserInitials,
 	getActivityVerb,
-	getModuleColor,
+	getApplicationColor,
 	getArtifactIcon
 } from './dashboard';
 import { Columns, Share2, FileText, CheckCircle2, Lightbulb } from 'lucide-svelte';
@@ -55,58 +55,58 @@ describe('getArtifactTypeLabel', () => {
 });
 
 describe('getArtifactHref', () => {
-	it('returns /modules/notes/{id} for notes file', () => {
-		expect(getArtifactHref({ moduleKey: 'notes', item_type: 'file', id: 'abc123' })).toBe(
-			'/modules/notes/abc123'
+	it('returns /apps/notes/{id} for notes file', () => {
+		expect(getArtifactHref({ applicationId: 'notes', item_type: 'file', id: 'abc123' })).toBe(
+			'/apps/notes/abc123'
 		);
 	});
 
-	it('returns /modules/decisions/{id} for decisions', () => {
-		expect(getArtifactHref({ moduleKey: 'decisions', item_type: 'file', id: 'def456' })).toBe(
-			'/modules/decisions/def456'
+	it('returns /apps/decisions/{id} for decisions', () => {
+		expect(getArtifactHref({ applicationId: 'decisions', item_type: 'file', id: 'def456' })).toBe(
+			'/apps/decisions/def456'
 		);
 	});
 
 	it('returns /files?folder={id} for folder', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'folder', id: 'ghi789' })).toBe(
+		expect(getArtifactHref({ applicationId: 'files', item_type: 'folder', id: 'ghi789' })).toBe(
 			'/files?folder=ghi789'
 		);
 	});
 
-	it('returns /modules/meetings/{id} for meetings', () => {
-		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'file', id: 'meet456' })).toBe(
-			'/modules/meetings/meet456'
+	it('returns /apps/meetings/{id} for meetings', () => {
+		expect(getArtifactHref({ applicationId: 'meetings', item_type: 'file', id: 'meet456' })).toBe(
+			'/apps/meetings/meet456'
 		);
 	});
 
-	it('returns /modules/standups/{id} for standups', () => {
-		expect(getArtifactHref({ moduleKey: 'standups', item_type: 'file', id: 'stand789' })).toBe(
-			'/modules/standups/stand789'
+	it('returns /apps/standups/{id} for standups', () => {
+		expect(getArtifactHref({ applicationId: 'standups', item_type: 'file', id: 'stand789' })).toBe(
+			'/apps/standups/stand789'
 		);
 	});
 
-	it('returns /modules/brainstorming/{id} for brainstorming', () => {
-		expect(getArtifactHref({ moduleKey: 'brainstorming', item_type: 'file', id: 'brain012' })).toBe(
-			'/modules/brainstorming/brain012'
+	it('returns /apps/brainstorming/{id} for brainstorming', () => {
+		expect(
+			getArtifactHref({ applicationId: 'brainstorming', item_type: 'file', id: 'brain012' })
+		).toBe('/apps/brainstorming/brain012');
+	});
+
+	it('returns /apps/kanban for kanban', () => {
+		expect(getArtifactHref({ applicationId: 'kanban', item_type: 'file', id: 'kanban345' })).toBe(
+			'/apps/kanban'
 		);
 	});
 
-	it('returns /modules/kanban for kanban', () => {
-		expect(getArtifactHref({ moduleKey: 'kanban', item_type: 'file', id: 'kanban345' })).toBe(
-			'/modules/kanban'
-		);
-	});
-
-	it('returns /modules/shares/{id} for shares', () => {
-		expect(getArtifactHref({ moduleKey: 'shares', item_type: 'file', id: 'share789' })).toBe(
-			'/modules/shares/share789'
+	it('returns /apps/shares/{id} for shares', () => {
+		expect(getArtifactHref({ applicationId: 'shares', item_type: 'file', id: 'share789' })).toBe(
+			'/apps/shares/share789'
 		);
 	});
 
 	it('returns /files?preview={id} for excalidraw files', () => {
 		expect(
 			getArtifactHref({
-				moduleKey: 'files',
+				applicationId: 'files',
 				item_type: 'file',
 				id: 'exc123',
 				name: 'diagram.excalidraw'
@@ -115,21 +115,21 @@ describe('getArtifactHref', () => {
 	});
 
 	it('returns /files?preview={id} for default file', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'jkl012' })).toBe(
+		expect(getArtifactHref({ applicationId: 'files', item_type: 'file', id: 'jkl012' })).toBe(
 			'/files?preview=jkl012'
 		);
 	});
 
 	it('returns /files?folder={id} for folder', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'folder', id: 'folder456' })).toBe(
+		expect(getArtifactHref({ applicationId: 'files', item_type: 'folder', id: 'folder456' })).toBe(
 			'/files?folder=folder456'
 		);
 	});
 
 	it('routes folders to file browser even when they have a module key', () => {
-		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'folder', id: 'meet-folder' })).toBe(
-			'/files?folder=meet-folder'
-		);
+		expect(
+			getArtifactHref({ applicationId: 'meetings', item_type: 'folder', id: 'meet-folder' })
+		).toBe('/files?folder=meet-folder');
 	});
 });
 
@@ -219,22 +219,40 @@ describe('getActivityVerb', () => {
 	});
 });
 
-describe('getModuleColor', () => {
+describe('getApplicationColor', () => {
 	it('returns correct colors for known keys', () => {
-		expect(getModuleColor('notes')).toEqual({ color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' });
-		expect(getModuleColor('meetings')).toEqual({ color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' });
-		expect(getModuleColor('standups')).toEqual({ color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' });
-		expect(getModuleColor('kanban')).toEqual({ color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' });
-		expect(getModuleColor('decisions')).toEqual({ color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' });
-		expect(getModuleColor('brainstorming')).toEqual({
+		expect(getApplicationColor('notes')).toEqual({
+			color: '#ea580c',
+			bg: 'rgba(234, 88, 12, 0.1)'
+		});
+		expect(getApplicationColor('meetings')).toEqual({
+			color: '#7c3aed',
+			bg: 'rgba(124, 58, 237, 0.1)'
+		});
+		expect(getApplicationColor('standups')).toEqual({
+			color: '#2563eb',
+			bg: 'rgba(37, 99, 235, 0.1)'
+		});
+		expect(getApplicationColor('kanban')).toEqual({
+			color: '#ea580c',
+			bg: 'rgba(234, 88, 12, 0.1)'
+		});
+		expect(getApplicationColor('decisions')).toEqual({
+			color: '#16a34a',
+			bg: 'rgba(22, 163, 74, 0.1)'
+		});
+		expect(getApplicationColor('brainstorming')).toEqual({
 			color: '#ca8a04',
 			bg: 'rgba(202, 138, 4, 0.1)'
 		});
-		expect(getModuleColor('shares')).toEqual({ color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' });
+		expect(getApplicationColor('shares')).toEqual({
+			color: '#2563eb',
+			bg: 'rgba(37, 99, 235, 0.1)'
+		});
 	});
 
 	it('returns gray fallback for unknown key', () => {
-		expect(getModuleColor('unknown')).toEqual({
+		expect(getApplicationColor('unknown')).toEqual({
 			color: '#6b7280',
 			bg: 'rgba(107, 114, 128, 0.1)'
 		});

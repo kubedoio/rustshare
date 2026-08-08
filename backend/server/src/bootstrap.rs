@@ -48,7 +48,7 @@ struct Services {
     decision_service: Arc<crate::services::decision_service::DecisionService>,
     meeting_service: Arc<crate::services::meeting_service::MeetingService>,
     standup_service: Arc<crate::services::standup_service::StandupService>,
-    module_service: Arc<crate::services::module_service::ModuleService>,
+    application_service: Arc<crate::services::application_service::ApplicationService>,
     template_service: Arc<crate::services::template_service::TemplateService>,
     kanban_service: Arc<crate::services::kanban_service::KanbanService>,
     brainstorming_service: Arc<crate::services::brainstorming_service::BrainstormingService>,
@@ -338,7 +338,7 @@ async fn init_services(
         decision_service,
         meeting_service,
         standup_service,
-        module_service,
+        application_service,
         template_service,
         kanban_service,
         brainstorming_service,
@@ -390,10 +390,12 @@ async fn init_services(
             ))
         },
         async {
-            Arc::new(crate::services::module_service::ModuleService::new(
-                Arc::clone(&folder_service),
-                Arc::clone(&metadata_store),
-            ))
+            Arc::new(
+                crate::services::application_service::ApplicationService::new(
+                    Arc::clone(&folder_service),
+                    Arc::clone(&metadata_store),
+                ),
+            )
         },
         async {
             Arc::new(crate::services::template_service::TemplateService::new(
@@ -503,7 +505,7 @@ async fn init_services(
         decision_service,
         meeting_service,
         standup_service,
-        module_service,
+        application_service,
         template_service,
         kanban_service,
         brainstorming_service,
@@ -667,9 +669,10 @@ pub async fn init_app() -> Result<AppState> {
 
         metadata_store.create_user(&admin_user).await?;
 
-        let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
-            db_pool.clone(),
-        );
+        let pref_repo =
+            rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
+                db_pool.clone(),
+            );
         if let Err(e) = pref_repo.seed_defaults(admin_user.id).await {
             tracing::warn!(
                 "Failed to seed default module preferences for admin: {:?}",
@@ -699,8 +702,8 @@ pub async fn init_app() -> Result<AppState> {
     .await?;
 
     services
-        .module_service
-        .ensure_default_modules(default_tenant_id)
+        .application_service
+        .ensure_default_applications(default_tenant_id)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to seed default modules: {}", e))?;
     services
@@ -753,7 +756,7 @@ pub async fn init_app() -> Result<AppState> {
         decision_service: services.decision_service,
         meeting_service: services.meeting_service,
         standup_service: services.standup_service,
-        module_service: services.module_service,
+        application_service: services.application_service,
         template_service: services.template_service,
         kanban_service: services.kanban_service,
         brainstorming_service: services.brainstorming_service,

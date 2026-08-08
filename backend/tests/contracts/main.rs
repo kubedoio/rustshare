@@ -18,7 +18,7 @@
 //! - A-01 through A-07: AI permission tests (`ai_permission_contract`)
 //! - ST-01 through ST-06: Storage verification tests (`storage_verification_contract`)
 //! - E-MAP-01 through E-MAP-06: Editor file API mapping tests (`editor_file_api_mapping_contract`)
-//! - LB-02: Module tenant and permission contract tests (`module_permission_contract`)
+//! - LB-02: ApplicationConfig tenant and permission contract tests (`application_permission_contract`)
 //! - E-STUB-01 through E-STUB-05: Deferred dedicated editor API stub tests
 //!
 //! ## Running the Tests
@@ -32,13 +32,13 @@
 //! cargo test --test contracts share_link -- --ignored
 //! ```
 
-// Module declarations
+// ApplicationConfig declarations
 mod ai_permission_contract;
+mod application_permission_contract;
 mod chat_integration_contract;
 pub mod common;
 mod device_pairing_contract;
 mod editor_file_api_mapping_contract;
-mod module_permission_contract;
 mod public_upload_only_contract;
 mod restore_contract;
 mod search_authorization_contract;
@@ -50,10 +50,10 @@ mod versioning_contract;
 
 // Re-export all tests so they are discovered by the test runner
 pub use ai_permission_contract::*;
+pub use application_permission_contract::*;
 pub use chat_integration_contract::*;
 pub use device_pairing_contract::*;
 pub use editor_file_api_mapping_contract::*;
-pub use module_permission_contract::*;
 pub use public_upload_only_contract::*;
 pub use restore_contract::*;
 pub use search_authorization_contract::*;

@@ -13,25 +13,25 @@ vi.mock('$lib/api/users', () => ({
 		module_order: ['kanban', 'notes', 'unknown']
 	}),
 	updateDashboardConfig: vi.fn(),
-	listUserModulePreferences: vi.fn().mockResolvedValue([]),
-	updateUserModulePreference: vi.fn()
+	listUserApplicationPreferences: vi.fn().mockResolvedValue([]),
+	updateUserApplicationPreference: vi.fn()
 }));
 
-vi.mock('$lib/modules/registry', async (importOriginal) => {
-	const mod = await importOriginal<typeof import('$lib/modules/registry')>();
+vi.mock('$lib/applications/registry', async (importOriginal) => {
+	const mod = await importOriginal<typeof import('$lib/applications/registry')>();
 	return {
 		...mod
 	};
 });
 
-vi.mock('$lib/modules/moduleActions', () => ({
-	runModulePrimaryAction: vi.fn()
+vi.mock('$lib/applications/applicationActions', () => ({
+	runApplicationPrimaryAction: vi.fn()
 }));
 
 const mockEnabledModules = [
 	{
 		id: 'module-notes',
-		module_key: 'notes',
+		application_id: 'notes',
 		display_name: 'Notes',
 		description: 'Recent notes',
 		enabled: true,
@@ -64,7 +64,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-kanban',
-		module_key: 'kanban',
+		application_id: 'kanban',
 		display_name: 'Kanban',
 		description: 'Kanban boards',
 		enabled: true,
@@ -97,7 +97,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-decisions',
-		module_key: 'decisions',
+		application_id: 'decisions',
 		display_name: 'Decisions',
 		description: 'Decision records',
 		enabled: false,
@@ -130,8 +130,8 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-no-action',
-		module_key: 'no-action',
-		display_name: 'No Action Module',
+		application_id: 'no-action',
+		display_name: 'No Action Application',
 		description: 'A module without a primary action',
 		enabled: true,
 		root_path: '/Workspace/NoAction',
@@ -256,7 +256,7 @@ vi.mock('$lib/stores/activity', () => ({
 			fileName: 'Old Name.md',
 			timestamp: new Date().toISOString(),
 			artifactId: 'note-123',
-			moduleKey: 'notes'
+			applicationId: 'notes'
 		}
 	]),
 	serverActivityStore: {
@@ -268,7 +268,7 @@ vi.mock('$lib/stores/activity', () => ({
 					fileName: 'New Name.md',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					moduleKey: 'notes',
+					applicationId: 'notes',
 					accessible: true
 				}
 			],
@@ -288,7 +288,7 @@ vi.mock('$lib/stores/activity', () => ({
 		color: '#ea580c'
 	})),
 	getRelativeTime: vi.fn(() => 'Just now'),
-	getActivityHref: vi.fn(() => '/modules/notes/note-123')
+	getActivityHref: vi.fn(() => '/apps/notes/note-123')
 }));
 
 vi.mock('$lib/stores/auth', () => ({
@@ -398,7 +398,7 @@ describe('Dashboard Page Registry-Driven Quick Actions', () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.queryByText('New No Action Module')).toBeNull();
+			expect(screen.queryByText('New No Action Application')).toBeNull();
 		});
 	});
 });

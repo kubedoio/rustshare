@@ -10,6 +10,9 @@ pub mod validation;
 
 // Re-export commonly used types
 pub use domain::{
-    File, FileVersion, Folder, Share, User, Vault, VaultAdapter, VaultDevice, VaultFile,
+    ActionCapability, ApplicationContribution, ApplicationHealth, ApplicationId,
+    ApplicationManifest, ApplicationRegistry, ApplicationRuntimeKind, CausationId, CorrelationId,
+    File, FileVersion, Folder, PrincipalId, Share, TenantId, User, Vault, VaultAdapter,
+    VaultDevice, VaultFile, WorkspaceId,
 };
 pub use events::{AggregateType, Event, EventType};

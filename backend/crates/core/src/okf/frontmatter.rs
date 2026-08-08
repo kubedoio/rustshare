@@ -22,7 +22,7 @@ pub struct RustshareFrontmatter {
     /// Stable identity of the note.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Uuid>,
-    /// Module key, e.g. `notes`.
+    /// ApplicationConfig key, e.g. `notes`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module: Option<String>,
     /// Kind of source that owns the note, e.g. `workspace`.

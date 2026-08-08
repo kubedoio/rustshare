@@ -88,7 +88,7 @@ export interface RichMarkdownDocumentMetadata {
  */
 export interface RichMarkdownDocumentTarget {
 	documentId?: string;
-	moduleKey?: string;
+	applicationId?: string;
 	rootPath?: string;
 	sourcePath: string;
 	metadataPath?: string;

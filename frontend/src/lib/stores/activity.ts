@@ -51,7 +51,7 @@ export interface Activity {
 	timestamp: string; // ISO 8601
 	details?: string; // Additional context
 	artifactId?: string;
-	moduleKey?: string;
+	applicationId?: string;
 	accessible?: boolean;
 	resourceType?: string; // Backend resource type (file/folder/share/module…)
 }
@@ -88,7 +88,7 @@ function createActivityStore() {
 		addActivity: (
 			type: ActivityType,
 			fileName: string,
-			options?: { details?: string; artifactId?: string; moduleKey?: string }
+			options?: { details?: string; artifactId?: string; applicationId?: string }
 		) => {
 			// Skip activities for internal RustShare files/metadata
 			if (isInternalRustShareFile(fileName)) {
@@ -138,7 +138,7 @@ export interface ServerActivityState {
 
 function mapServerItemToActivity(item: ActivityItem): Activity {
 	const type = serverActionToActivityType(item.action);
-	const moduleKey = inferModuleKey(item.resource_type, item.action);
+	const applicationId = inferApplicationKey(item.resource_type, item.action);
 
 	return {
 		id: item.id,
@@ -146,7 +146,7 @@ function mapServerItemToActivity(item: ActivityItem): Activity {
 		fileName: item.resource_name || 'Unknown',
 		timestamp: item.timestamp,
 		artifactId: item.resource_id,
-		moduleKey,
+		applicationId,
 		accessible: true, // Server already filters by permission
 		resourceType: item.resource_type
 	};
@@ -180,7 +180,7 @@ function serverActionToActivityType(action: string): ActivityType {
 	return directMap[action] || 'file_uploaded';
 }
 
-function inferModuleKey(resourceType: string, action: string): string | undefined {
+function inferApplicationKey(resourceType: string, action: string): string | undefined {
 	if (resourceType === 'share') return 'shares';
 	if (resourceType !== 'module') return undefined;
 	if (action.includes('brainstorm')) return 'brainstorming';
@@ -524,21 +524,21 @@ export function getActivityDisplay(activity: Activity): {
 export function getActivityHref(activity: Activity): string | null {
 	if (!activity.artifactId || activity.accessible === false) return null;
 
-	switch (activity.moduleKey) {
+	switch (activity.applicationId) {
 		case 'notes':
-			return `/modules/notes/${activity.artifactId}`;
+			return `/apps/notes/${activity.artifactId}`;
 		case 'meetings':
-			return `/modules/meetings/${activity.artifactId}`;
+			return `/apps/meetings/${activity.artifactId}`;
 		case 'standups':
-			return `/modules/standups/${activity.artifactId}`;
+			return `/apps/standups/${activity.artifactId}`;
 		case 'decisions':
-			return `/modules/decisions/${activity.artifactId}`;
+			return `/apps/decisions/${activity.artifactId}`;
 		case 'brainstorming':
-			return `/modules/brainstorming/${activity.artifactId}`;
+			return `/apps/brainstorming/${activity.artifactId}`;
 		case 'kanban':
-			return '/modules/kanban';
+			return '/apps/kanban';
 		case 'shares':
-			return `/modules/shares/${activity.artifactId}`;
+			return `/apps/shares/${activity.artifactId}`;
 		default:
 			// Fallback for file-system artifacts
 			return `/files?preview=${activity.artifactId}`;

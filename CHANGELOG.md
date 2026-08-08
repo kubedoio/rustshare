@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the pre-release Module product boundary with Elembra Applications,
+  including declarative manifests, tenant/workspace enablement persistence,
+  `/apps/...` UI routes, and `/api/v1/applications/...` registry APIs (#210).
+
 ## [0.7.0] - 2026-08-08
 
 ### Added

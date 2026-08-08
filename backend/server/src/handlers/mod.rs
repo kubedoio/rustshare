@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod ai;
+pub mod applications;
 pub mod auth;
 pub mod brainstorming;
 pub mod chat_integration;
@@ -19,7 +20,6 @@ pub mod invites;
 pub mod kanban;
 pub mod mail;
 pub mod meetings;
-pub mod modules;
 pub mod notes;
 pub mod notifications;
 pub mod profile;
@@ -83,6 +83,9 @@ pub use trash::{empty_trash, get_trash_summary};
 pub use validated_json::ValidatedJson;
 
 pub use ai::{ask_question, semantic_search, summarize_file};
+pub use applications::{
+    create_from_template, get_application, get_application_summary, list_enabled_applications,
+};
 pub use auth::{ensure_optional_seed_user, login, logout};
 pub use decisions::{
     create_decision, delete_decision, duplicate_decision, get_decision, list_decisions,
@@ -98,7 +101,6 @@ pub use meetings::{
     create_meeting, delete_meeting, duplicate_meeting, get_meeting, list_meetings, move_meeting,
     update_meeting,
 };
-pub use modules::{create_from_template, get_module, get_module_summary, list_enabled_modules};
 pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
     list_recent_notes, move_note, rename_note, resolve_conflict, save_note, toggle_visibility,
@@ -114,8 +116,8 @@ pub use user_shares::{
 };
 pub use users::{
     delete_avatar, delete_user_session, get_avatar, get_dashboard_config, get_user_profile,
-    list_user_module_preferences, list_user_security_events, list_user_sessions,
-    update_dashboard_config, update_user_module_preference, update_user_password,
+    list_application_user_preferences, list_user_security_events, list_user_sessions,
+    update_dashboard_config, update_user_application_preference, update_user_password,
     update_user_theme, upload_avatar,
 };
 pub use workspace_surface::get_workspace_surface;
@@ -554,17 +556,17 @@ impl From<crate::services::decision_service::DecisionError> for AppError {
     }
 }
 
-impl From<crate::services::module_service::ModuleError> for AppError {
-    fn from(err: crate::services::module_service::ModuleError) -> Self {
-        use crate::services::module_service::ModuleError;
+impl From<crate::services::application_service::ApplicationError> for AppError {
+    fn from(err: crate::services::application_service::ApplicationError) -> Self {
+        use crate::services::application_service::ApplicationError;
         match err {
-            ModuleError::NotFound(_) => AppError::NotFound(err.to_string()),
-            ModuleError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
-            ModuleError::PermissionDenied => AppError::Forbidden(err.to_string()),
-            ModuleError::InvalidName(_) | ModuleError::InvalidData(_) => {
+            ApplicationError::NotFound(_) => AppError::NotFound(err.to_string()),
+            ApplicationError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
+            ApplicationError::PermissionDenied => AppError::Forbidden(err.to_string()),
+            ApplicationError::InvalidName(_) | ApplicationError::InvalidData(_) => {
                 AppError::BadRequest(err.to_string())
             }
-            ModuleError::Storage(_) | ModuleError::Database(_) => {
+            ApplicationError::Storage(_) | ApplicationError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
         }
@@ -612,7 +614,7 @@ impl From<crate::services::template_service::TemplateError> for AppError {
         match err {
             TemplateError::NotFound(_) => AppError::NotFound(err.to_string()),
             TemplateError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
-            TemplateError::ModuleNotFound(_) => AppError::NotFound(err.to_string()),
+            TemplateError::ApplicationNotFound(_) => AppError::NotFound(err.to_string()),
             TemplateError::PermissionDenied => AppError::Forbidden(err.to_string()),
             TemplateError::InvalidData(_) => AppError::BadRequest(err.to_string()),
             TemplateError::Storage(_) | TemplateError::Database(_) => {

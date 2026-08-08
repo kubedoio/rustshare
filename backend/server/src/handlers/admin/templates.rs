@@ -36,23 +36,23 @@ pub async fn list_templates(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/admin/modules/{key}/templates",
+    path = "/api/v1/admin/applications/{key}/templates",
     tag = "Admin",
-    params(("module_key" = String, Path, description = "Module Key")),
+    params(("application_id" = String, Path, description = "ApplicationConfig Key")),
     responses(
         (status = 200, description = "Success", body = Vec<Template>),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
     ),
 )]
-pub async fn list_templates_by_module(
+pub async fn list_templates_by_application(
     _admin: AdminUser,
     State(state): State<AppState>,
-    Path(module_key): Path<String>,
+    Path(application_id): Path<String>,
 ) -> Result<Json<Vec<Template>>, AppError> {
     let templates = state
         .template_service
-        .list_templates_by_module(&module_key, state.default_tenant_id)
+        .list_templates_by_application(&application_id, state.default_tenant_id)
         .await
         .map_err(|e| AppError::internal(e.to_string()))?;
 
@@ -219,7 +219,7 @@ pub async fn duplicate_template(
     let request = CreateTemplateRequest {
         template_key: new_key,
         name: format!("{} (Copy)", template.name),
-        module_key: template.module_key,
+        application_id: template.application_id,
         description: template.description,
         ui_config: Some(template.ui_config),
         folder_structure: serde_json::from_value(template.folder_structure).unwrap_or_default(),
@@ -227,7 +227,7 @@ pub async fn duplicate_template(
         metadata_schema: template.metadata_schema,
         renderer: template.renderer,
         visibility_policy: template.visibility_policy,
-        module_config: Some(template.module_config),
+        application_config: Some(template.application_config),
     };
 
     let new_template = state

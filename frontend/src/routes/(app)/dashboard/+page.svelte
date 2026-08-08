@@ -2,14 +2,14 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
-	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
+	import { listEnabledApplications, createFromTemplate } from '$lib/api/applications';
 	import { createNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { createBrainstormBoard } from '$lib/api/brainstorming';
 	import { activityStore } from '$lib/stores/activity';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
-	import { resolveModuleFolderId } from '$lib/modules/modulePages';
-	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
+	import { resolveApplicationFolderId } from '$lib/applications/applicationPages';
+	import { runApplicationPrimaryAction } from '$lib/applications/applicationActions';
 	import { todayDateString } from '$lib/utils/dashboard';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
@@ -44,7 +44,7 @@
 
 	const enabledModulesQuery = createQuery({
 		queryKey: ['enabled-modules'],
-		queryFn: () => listEnabledModules()
+		queryFn: () => listEnabledApplications()
 	});
 
 	// ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@
 		creating = true;
 		createError = '';
 		try {
-			const parentFolderId = rootPath ? await resolveModuleFolderId(rootPath) : null;
+			const parentFolderId = rootPath ? await resolveApplicationFolderId(rootPath) : null;
 			const result = await createNote({
 				title: 'Untitled Note',
 				content: '# Untitled Note\n\n',
@@ -104,9 +104,9 @@
 			});
 			activityStore.addActivity('note_created', result.name || 'Untitled Note', {
 				artifactId: result.id,
-				moduleKey: 'notes'
+				applicationId: 'notes'
 			});
-			goto(`/modules/notes/${result.id}`);
+			goto(`/apps/notes/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create note';
 		} finally {
@@ -115,7 +115,7 @@
 	}
 
 	function handleNewMeeting() {
-		goto('/modules/meetings?action=new');
+		goto('/apps/meetings?action=new');
 	}
 
 	function handleNewDecision() {
@@ -139,10 +139,10 @@
 			const result = await decisionsApi.create({ title: trimmed, category: 'General', content });
 			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
 				artifactId: result.id,
-				moduleKey: 'decisions'
+				applicationId: 'decisions'
 			});
 			showDecisionModal = false;
-			goto(`/modules/decisions/${result.id}`);
+			goto(`/apps/decisions/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create decision';
 		} finally {
@@ -163,9 +163,9 @@
 			});
 			activityStore.addActivity('kanban_created', boardName, {
 				artifactId: result.object_id,
-				moduleKey: 'kanban'
+				applicationId: 'kanban'
 			});
-			goto('/modules/kanban');
+			goto('/apps/kanban');
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create board';
 		} finally {
@@ -184,9 +184,9 @@
 			);
 			activityStore.addActivity('brainstorm_created', result.title || 'Untitled Idea Board', {
 				artifactId: result.id,
-				moduleKey: 'brainstorming'
+				applicationId: 'brainstorming'
 			});
-			goto(`/modules/brainstorming/${result.id}`);
+			goto(`/apps/brainstorming/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create idea board';
 		} finally {
@@ -194,8 +194,8 @@
 		}
 	}
 
-	function getQuickActionLabel(moduleKey: string, fallback: string): string {
-		switch (moduleKey) {
+	function getQuickActionLabel(applicationId: string, fallback: string): string {
+		switch (applicationId) {
 			case 'brainstorming':
 				return 'New idea board';
 			case 'kanban':
@@ -222,7 +222,7 @@
 				const primaryAction = module.ui_config?.dashboard?.primaryAction;
 				let handler: () => Promise<void> | void;
 
-				switch (module.module_key) {
+				switch (module.application_id) {
 					case 'notes':
 						handler = () => handleNewNote(module.root_path);
 						break;
@@ -239,13 +239,13 @@
 						handler = handleNewBrainstorm;
 						break;
 					default:
-						handler = () => runModulePrimaryAction(module, primaryAction);
+						handler = () => runApplicationPrimaryAction(module, primaryAction);
 						break;
 				}
 
 				return {
 					label: getQuickActionLabel(
-						module.module_key,
+						module.application_id,
 						primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`
 					),
 					subtitle: module.description,

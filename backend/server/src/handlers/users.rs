@@ -703,12 +703,12 @@ pub async fn get_avatar(
 }
 
 // ---------------------------------------------------------------------------
-// User Module Preferences
+// User ApplicationConfig Preferences
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct UserModulePreferenceResponse {
-    pub module_key: String,
+pub struct ApplicationUserPreferenceResponse {
+    pub application_id: String,
     pub enabled: bool,
 }
 
@@ -720,26 +720,26 @@ pub struct UpdateModulePreferenceRequest {
 /// List the authenticated user's module preferences.
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me/modules",
+    path = "/api/v1/users/me/applications",
     tag = "Users",
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
-pub async fn list_user_module_preferences(
+pub async fn list_application_user_preferences(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<Response, AppError> {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+    let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),
     );
     match repo.get_for_user(user_id).await {
         Ok(prefs) => {
-            let response: Vec<UserModulePreferenceResponse> = prefs
+            let response: Vec<ApplicationUserPreferenceResponse> = prefs
                 .into_iter()
-                .map(|p| UserModulePreferenceResponse {
-                    module_key: p.module_key,
+                .map(|p| ApplicationUserPreferenceResponse {
+                    application_id: p.application_id,
                     enabled: p.enabled,
                 })
                 .collect();
@@ -755,26 +755,29 @@ pub async fn list_user_module_preferences(
 /// Update a module preference for the authenticated user.
 #[utoipa::path(
     patch,
-    path = "/api/v1/users/me/modules/{key}",
+    path = "/api/v1/users/me/applications/{key}",
     tag = "Users",
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
-pub async fn update_user_module_preference(
+pub async fn update_user_application_preference(
     State(state): State<AppState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-    Path(module_key): Path<String>,
+    Path(application_id): Path<String>,
     Json(req): Json<UpdateModulePreferenceRequest>,
 ) -> Result<Response, AppError> {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+    let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),
     );
-    match repo.set_enabled(user_id, &module_key, req.enabled).await {
+    match repo
+        .set_enabled(user_id, &application_id, req.enabled)
+        .await
+    {
         Ok(pref) => {
-            let response = UserModulePreferenceResponse {
-                module_key: pref.module_key,
+            let response = ApplicationUserPreferenceResponse {
+                application_id: pref.application_id,
                 enabled: pref.enabled,
             };
             Ok((StatusCode::OK, Json(response)).into_response())

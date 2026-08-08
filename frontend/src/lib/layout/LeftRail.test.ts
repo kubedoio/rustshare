@@ -6,7 +6,7 @@ vi.mock('$app/stores', async () => {
 	const { writable } = await import('svelte/store');
 	return {
 		page: writable({
-			url: new URL('http://localhost/modules/notes')
+			url: new URL('http://localhost/apps/notes')
 		})
 	};
 });
@@ -17,7 +17,7 @@ vi.mock('$lib/query-compat', () => ({
 			data: [
 				{
 					id: 'm2',
-					module_key: 'standups',
+					application_id: 'standups',
 					display_name: 'Standups',
 					description: 'Daily updates',
 					enabled: true,
@@ -42,7 +42,7 @@ vi.mock('$lib/query-compat', () => ({
 				},
 				{
 					id: 'm1',
-					module_key: 'notes',
+					application_id: 'notes',
 					display_name: 'Notes',
 					description: 'Notes',
 					enabled: true,
@@ -71,7 +71,7 @@ vi.mock('$lib/query-compat', () => ({
 	)
 }));
 
-vi.mock('$lib/components/dashboard/ModuleIcon.svelte', () => ({
+vi.mock('$lib/components/dashboard/ApplicationIcon.svelte', () => ({
 	default: vi.fn()
 }));
 
@@ -89,7 +89,7 @@ import LeftRail from './LeftRail.svelte';
 describe('LeftRail', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(page as any).set({ url: new URL('http://localhost/modules/notes') });
+		(page as any).set({ url: new URL('http://localhost/apps/notes') });
 		(sidebarExpanded as any).set(false);
 	});
 

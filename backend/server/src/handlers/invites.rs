@@ -288,9 +288,10 @@ pub async fn accept_invite(
     .await?;
 
     // Seed default module preferences
-    let pref_repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
-        state.db_pool.clone(),
-    );
+    let pref_repo =
+        rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
+            state.db_pool.clone(),
+        );
     pref_repo.seed_defaults(user_id).await.ok();
 
     sqlx::query!(

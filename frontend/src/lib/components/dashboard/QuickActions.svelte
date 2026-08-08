@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronRight } from 'lucide-svelte';
-	import ModuleIcon from './ModuleIcon.svelte';
+	import ApplicationIcon from './ApplicationIcon.svelte';
 
 	import type { Component } from 'svelte';
 
@@ -31,7 +31,7 @@
 			<button type="button" class="action-item" onclick={action.onClick} disabled={creating}>
 				<div class="action-icon" style="background: {action.iconBg}; color: {action.iconColor};">
 					{#if typeof action.icon === 'string'}
-						<ModuleIcon name={action.icon} size={18} />
+						<ApplicationIcon name={action.icon} size={18} />
 					{:else}
 						{@const ActionIcon = action.icon as Component}
 						<ActionIcon size={18} />

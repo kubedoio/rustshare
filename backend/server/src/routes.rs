@@ -237,24 +237,27 @@ pub fn replication_routes() -> Router<AppState> {
         )
 }
 
-pub fn module_routes() -> Router<AppState> {
+pub fn application_routes() -> Router<AppState> {
     use axum::routing::{get, post};
     Router::new()
         .route(
-            "/api/v1/modules",
-            get(crate::handlers::list_enabled_modules),
+            "/api/v1/applications",
+            get(crate::handlers::list_enabled_applications),
         )
-        .route("/api/v1/modules/{key}", get(crate::handlers::get_module))
         .route(
-            "/api/v1/modules/{key}/summary",
-            get(crate::handlers::get_module_summary),
+            "/api/v1/applications/{key}",
+            get(crate::handlers::get_application),
+        )
+        .route(
+            "/api/v1/applications/{key}/summary",
+            get(crate::handlers::get_application_summary),
         )
         .route(
             "/api/v1/workspace-surface",
             get(crate::handlers::get_workspace_surface),
         )
         .route(
-            "/api/v1/modules/from-template",
+            "/api/v1/applications/from-template",
             post(crate::handlers::create_from_template),
         )
 }
@@ -448,123 +451,123 @@ pub fn kanban_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route(
-            "/api/v1/modules/kanban/boards",
+            "/api/v1/applications/kanban/boards",
             get(crate::handlers::list_boards),
         )
         .route(
-            "/api/v1/modules/kanban/boards",
+            "/api/v1/applications/kanban/boards",
             post(crate::handlers::create_board),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}",
+            "/api/v1/applications/kanban/boards/{board_id}",
             get(crate::handlers::get_board),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}",
+            "/api/v1/applications/kanban/boards/{board_id}",
             patch(crate::handlers::update_board),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/archive",
+            "/api/v1/applications/kanban/boards/{board_id}/archive",
             post(crate::handlers::archive_board),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/cards",
+            "/api/v1/applications/kanban/boards/{board_id}/cards",
             get(crate::handlers::list_cards),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/cards",
+            "/api/v1/applications/kanban/boards/{board_id}/cards",
             post(crate::handlers::create_card),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}",
+            "/api/v1/applications/kanban/cards/{card_id}",
             get(crate::handlers::get_card),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/detail",
+            "/api/v1/applications/kanban/cards/{card_id}/detail",
             get(crate::handlers::get_card_detail),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}",
+            "/api/v1/applications/kanban/cards/{card_id}",
             patch(crate::handlers::update_card),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/description",
+            "/api/v1/applications/kanban/cards/{card_id}/description",
             put(crate::handlers::update_card_description),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/move",
+            "/api/v1/applications/kanban/cards/{card_id}/move",
             post(crate::handlers::move_card),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/archive",
+            "/api/v1/applications/kanban/cards/{card_id}/archive",
             post(crate::handlers::archive_card),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}",
+            "/api/v1/applications/kanban/cards/{card_id}",
             delete(crate::handlers::delete_card),
         )
         // Labels
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/labels",
+            "/api/v1/applications/kanban/boards/{board_id}/labels",
             post(crate::handlers::create_label),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+            "/api/v1/applications/kanban/boards/{board_id}/labels/{label_id}",
             patch(crate::handlers::update_label),
         )
         .route(
-            "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+            "/api/v1/applications/kanban/boards/{board_id}/labels/{label_id}",
             delete(crate::handlers::delete_label),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/labels",
+            "/api/v1/applications/kanban/cards/{card_id}/labels",
             post(crate::handlers::add_card_label),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/labels/{label_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/labels/{label_id}",
             delete(crate::handlers::remove_card_label),
         )
         // Assignees
         .route(
-            "/api/v1/modules/kanban/assignable-users",
+            "/api/v1/applications/kanban/assignable-users",
             get(crate::handlers::get_assignable_users),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/assignees",
+            "/api/v1/applications/kanban/cards/{card_id}/assignees",
             post(crate::handlers::assign_card_member),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/assignees/{assignee_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/assignees/{assignee_id}",
             delete(crate::handlers::unassign_card_member),
         )
         // Attachments
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/attachments",
+            "/api/v1/applications/kanban/cards/{card_id}/attachments",
             post(crate::handlers::add_card_attachment),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/attachments/{attachment_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/attachments/{attachment_id}",
             delete(crate::handlers::delete_card_attachment),
         )
         // Checklists
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/checklists",
+            "/api/v1/applications/kanban/cards/{card_id}/checklists",
             post(crate::handlers::create_checklist),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items",
+            "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items",
             post(crate::handlers::create_checklist_item),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
             patch(crate::handlers::toggle_checklist_item),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
             delete(crate::handlers::delete_checklist_item),
         )
         .route(
-            "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}",
+            "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}",
             delete(crate::handlers::delete_checklist),
         )
 }
@@ -649,31 +652,31 @@ pub fn brainstorming_routes() -> Router<AppState> {
     use axum::routing::{delete, get, post, put};
     Router::new()
         .route(
-            "/api/v1/modules/brainstorming/boards",
+            "/api/v1/applications/brainstorming/boards",
             get(crate::handlers::list_brainstorm_boards),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards",
+            "/api/v1/applications/brainstorming/boards",
             post(crate::handlers::create_brainstorm_board),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards/{board_id}",
+            "/api/v1/applications/brainstorming/boards/{board_id}",
             get(crate::handlers::get_brainstorm_board),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards/{board_id}/source",
+            "/api/v1/applications/brainstorming/boards/{board_id}/source",
             get(crate::handlers::get_brainstorm_board_source),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards/{board_id}/source",
+            "/api/v1/applications/brainstorming/boards/{board_id}/source",
             put(crate::handlers::save_brainstorm_board_source),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards/{board_id}/preview",
+            "/api/v1/applications/brainstorming/boards/{board_id}/preview",
             put(crate::handlers::update_brainstorm_board_preview),
         )
         .route(
-            "/api/v1/modules/brainstorming/boards/{board_id}",
+            "/api/v1/applications/brainstorming/boards/{board_id}",
             delete(crate::handlers::delete_brainstorm_board),
         )
 }
@@ -711,28 +714,28 @@ pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route(
-            "/api/v1/admin/modules",
-            get(crate::handlers::admin::modules::list_modules),
+            "/api/v1/admin/applications",
+            get(crate::handlers::admin::applications::list_applications),
         )
         .route(
-            "/api/v1/admin/modules/{key}",
-            get(crate::handlers::admin::modules::get_module),
+            "/api/v1/admin/applications/{key}",
+            get(crate::handlers::admin::applications::get_application),
         )
         .route(
-            "/api/v1/admin/modules/{key}/enable",
-            post(crate::handlers::admin::modules::enable_module),
+            "/api/v1/admin/applications/{key}/enable",
+            post(crate::handlers::admin::applications::enable_application),
         )
         .route(
-            "/api/v1/admin/modules/{key}/disable",
-            post(crate::handlers::admin::modules::disable_module),
+            "/api/v1/admin/applications/{key}/disable",
+            post(crate::handlers::admin::applications::disable_application),
         )
         .route(
-            "/api/v1/admin/modules/{key}",
-            patch(crate::handlers::admin::modules::update_module),
+            "/api/v1/admin/applications/{key}",
+            patch(crate::handlers::admin::applications::update_application),
         )
         .route(
-            "/api/v1/admin/modules/{key}/templates",
-            get(crate::handlers::admin::templates::list_templates_by_module),
+            "/api/v1/admin/applications/{key}/templates",
+            get(crate::handlers::admin::templates::list_templates_by_application),
         )
         .route(
             "/api/v1/admin/templates",
@@ -1171,12 +1174,12 @@ pub fn user_routes() -> Router<AppState> {
             get(crate::handlers::get_avatar),
         )
         .route(
-            "/api/v1/users/me/modules",
-            get(crate::handlers::list_user_module_preferences),
+            "/api/v1/users/me/applications",
+            get(crate::handlers::list_application_user_preferences),
         )
         .route(
-            "/api/v1/users/me/modules/{key}",
-            patch(crate::handlers::update_user_module_preference),
+            "/api/v1/users/me/applications/{key}",
+            patch(crate::handlers::update_user_application_preference),
         )
         .route(
             "/api/v1/users/me/dashboard-config",

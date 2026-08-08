@@ -625,7 +625,7 @@
 		onSuccess: (data) => {
 			activityStore.addActivity('note_created', data.name || 'Untitled Note', {
 				artifactId: data.id,
-				moduleKey: 'notes'
+				applicationId: 'notes'
 			});
 			navigateToNote(data.id, getFilesReturnUrl());
 		}

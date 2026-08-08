@@ -495,7 +495,7 @@ fn aggregate_type_to_resource_type(
     aggregate_type: &AggregateType,
     event_type: &EventType,
 ) -> &'static str {
-    // Module events are stored with AggregateType::File but represent modules.
+    // ApplicationConfig events are stored with AggregateType::File but represent modules.
     match event_type {
         EventType::BrainstormBoardModified
         | EventType::MeetingNoteModified
