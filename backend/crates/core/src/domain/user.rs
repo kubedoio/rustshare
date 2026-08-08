@@ -43,23 +43,23 @@ impl std::str::FromStr for Theme {
 /// User's dashboard configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DashboardConfig {
-    pub enabled_modules: Vec<String>,
-    pub module_order: Vec<String>,
+    pub enabled_applications: Vec<String>,
+    pub application_order: Vec<String>,
     pub sections: Vec<serde_json::Value>,
 }
 
 impl Default for DashboardConfig {
     fn default() -> Self {
         Self {
-            enabled_modules: vec![
-                "notes".to_string(),
-                "kanban".to_string(),
-                "brainstorming".to_string(),
+            enabled_applications: vec![
+                "io.elembra.notes".to_string(),
+                "io.elembra.kanban".to_string(),
+                "io.elembra.brainstorming".to_string(),
             ],
-            module_order: vec![
-                "notes".to_string(),
-                "kanban".to_string(),
-                "brainstorming".to_string(),
+            application_order: vec![
+                "io.elembra.notes".to_string(),
+                "io.elembra.kanban".to_string(),
+                "io.elembra.brainstorming".to_string(),
             ],
             sections: vec![],
         }

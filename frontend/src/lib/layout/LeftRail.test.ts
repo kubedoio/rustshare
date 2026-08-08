@@ -6,72 +6,52 @@ vi.mock('$app/stores', async () => {
 	const { writable } = await import('svelte/store');
 	return {
 		page: writable({
-			url: new URL('http://localhost/modules/notes')
+			url: new URL('http://localhost/apps/notes')
 		})
 	};
 });
 
 vi.mock('$lib/query-compat', () => ({
-	createQuery: vi.fn(() =>
-		writable({
-			data: [
-				{
-					id: 'm2',
-					module_key: 'standups',
-					display_name: 'Standups',
-					description: 'Daily updates',
-					enabled: true,
-					root_path: '/Workspace/Standups',
-					renderer: 'standups',
-					default_template: 'template_default_standup',
-					icon: 'clipboard-list',
-					schema_version: '1',
-					permissions: {
-						admin_can_configure: true,
-						workspace_members_can_use: true,
-						allow_public_share: true,
-						allow_internal_share: true
-					},
-					ai_indexing: { enabled: true },
-					audit: { enabled: true },
-					ui_config: {
-						sidebar: { enabled: true, order: 20, icon: 'clipboard-list', label: 'Standups' }
-					},
-					created_at: '2026-04-30T00:00:00Z',
-					updated_at: '2026-04-30T00:00:00Z'
+	createQuery: vi.fn(() => {
+		const entry = (id: string, name: string, icon: string, slug: string, order: number) => ({
+			manifest: {
+				apiVersion: 'elembra.io/v1alpha1',
+				kind: 'Application' as const,
+				metadata: { id: `io.elembra.${slug}`, name, version: '1.0.0', description: name },
+				runtime: { kind: 'embedded' as const },
+				contracts: { provides: [], requires: [] },
+				resources: [],
+				contributions: {
+					navigation: [
+						{ id: `${slug}.navigation`, label: name, icon, route: `/apps/${slug}`, order }
+					],
+					routes: [{ id: `${slug}.route`, route: `/apps/${slug}`, renderer: slug }],
+					commands: [],
+					dashboard: [],
+					settings: [],
+					searchProviders: [],
+					renderers: [],
+					admin: []
 				},
-				{
-					id: 'm1',
-					module_key: 'notes',
-					display_name: 'Notes',
-					description: 'Notes',
-					enabled: true,
-					root_path: '/Workspace/Notes',
-					renderer: 'notes',
-					default_template: 'template_default_note',
-					icon: 'sticky-note',
-					schema_version: '1',
-					permissions: {
-						admin_can_configure: true,
-						workspace_members_can_use: true,
-						allow_public_share: true,
-						allow_internal_share: true
-					},
-					ai_indexing: { enabled: true },
-					audit: { enabled: true },
-					ui_config: {
-						sidebar: { enabled: true, order: 10, icon: 'sticky-note', label: 'Notes' }
-					},
-					created_at: '2026-04-30T00:00:00Z',
-					updated_at: '2026-04-30T00:00:00Z'
-				}
+				integrationEvents: { publishes: [], subscribes: [] },
+				configuration: { schema: 'config.json' },
+				data: { owner: `io.elembra.${slug}`, preserveOnDisable: true, exportSupported: true }
+			},
+			enabled: true,
+			configuration: {},
+			health: 'healthy' as const
+		});
+		return writable({
+			data: [
+				entry('m2', 'Standups', 'clipboard-list', 'standups', 20),
+				entry('m1', 'Notes', 'sticky-note', 'notes', 10)
 			],
 			isLoading: false
-		})
-	)
+		});
+	})
 }));
 
-vi.mock('$lib/components/dashboard/ModuleIcon.svelte', () => ({
+vi.mock('$lib/components/dashboard/ApplicationIcon.svelte', () => ({
 	default: vi.fn()
 }));
 
@@ -89,7 +69,7 @@ import LeftRail from './LeftRail.svelte';
 describe('LeftRail', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(page as any).set({ url: new URL('http://localhost/modules/notes') });
+		(page as any).set({ url: new URL('http://localhost/apps/notes') });
 		(sidebarExpanded as any).set(false);
 	});
 

@@ -6,7 +6,7 @@
 	const noteId = $page.params.id as string;
 
 	onMount(() => {
-		goto(`/modules/notes/${noteId}`, { replaceState: true });
+		goto(`/apps/notes/${noteId}`, { replaceState: true });
 	});
 </script>
 

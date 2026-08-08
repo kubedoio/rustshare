@@ -153,8 +153,8 @@ pub async fn setup_test_server() -> (AppState, String) {
         ),
     );
 
-    let module_service = Arc::new(
-        rustshare_server::services::module_service::ModuleService::new(
+    let application_service = Arc::new(
+        rustshare_server::services::application_service::ApplicationService::new(
             folder_service.clone(),
             metadata_store.clone(),
         ),
@@ -240,7 +240,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         decision_service,
         meeting_service,
         standup_service,
-        module_service,
+        application_service,
         template_service,
         kanban_service,
         brainstorming_service,

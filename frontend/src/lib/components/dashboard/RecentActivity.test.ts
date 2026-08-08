@@ -9,7 +9,7 @@ const mockDeps = vi.hoisted(() => {
 			fileName: string;
 			timestamp: string;
 			artifactId?: string;
-			moduleKey?: string;
+			applicationId?: string;
 			accessible?: boolean;
 			resourceType?: string;
 		}>;
@@ -57,14 +57,18 @@ vi.mock('$lib/stores/activity', () => ({
 	getRelativeTime: vi.fn(() => '2 hours ago'),
 	getActivityHref: vi.fn((activity) => {
 		if (!activity.artifactId || activity.accessible === false) return null;
-		if (activity.moduleKey === 'notes') return `/modules/notes/${activity.artifactId}`;
-		if (activity.moduleKey === 'meetings') return `/modules/meetings/${activity.artifactId}`;
-		if (activity.moduleKey === 'standups') return `/modules/standups/${activity.artifactId}`;
-		if (activity.moduleKey === 'decisions') return `/modules/decisions/${activity.artifactId}`;
-		if (activity.moduleKey === 'brainstorming')
-			return `/modules/brainstorming/${activity.artifactId}`;
-		if (activity.moduleKey === 'kanban') return '/modules/kanban';
-		if (activity.moduleKey === 'shares') return `/modules/shares/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.notes') return `/apps/notes/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.meetings')
+			return `/apps/meetings/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.standups')
+			return `/apps/standups/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.decisions')
+			return `/apps/decisions/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.brainstorming')
+			return `/apps/brainstorming/${activity.artifactId}`;
+		if (activity.applicationId === 'io.elembra.kanban') return '/apps/kanban';
+		if (activity.applicationId === 'io.elembra.shares')
+			return `/apps/shares/${activity.artifactId}`;
 		return `/files?preview=${activity.artifactId}`;
 	})
 }));
@@ -72,7 +76,7 @@ vi.mock('$lib/stores/activity', () => ({
 vi.mock('$lib/utils/dashboard', () => ({
 	getActivityVerb: vi.fn(() => 'created'),
 	getUserInitials: vi.fn(() => 'AJ'),
-	getModuleColor: vi.fn(() => ({ color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' }))
+	getApplicationColor: vi.fn(() => ({ color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' }))
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -119,7 +123,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					moduleKey: 'notes'
+					applicationId: 'io.elembra.notes'
 				},
 				{
 					id: '2',
@@ -127,7 +131,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Board',
 					timestamp: new Date().toISOString(),
 					artifactId: 'board-456',
-					moduleKey: 'kanban'
+					applicationId: 'io.elembra.kanban'
 				}
 			],
 			loading: false,
@@ -183,7 +187,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					moduleKey: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				},
 				{
@@ -192,7 +196,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Board',
 					timestamp: new Date().toISOString(),
 					artifactId: 'board-456',
-					moduleKey: 'kanban',
+					applicationId: 'io.elembra.kanban',
 					accessible: true
 				}
 			],
@@ -210,10 +214,10 @@ describe('RecentActivity', () => {
 		expect(links).toHaveLength(2);
 
 		const noteLink = screen.getByRole('link', { name: /open my note/i });
-		expect(noteLink.getAttribute('href')).toBe('/modules/notes/note-123');
+		expect(noteLink.getAttribute('href')).toBe('/apps/notes/note-123');
 
 		const kanbanLink = screen.getByRole('link', { name: /open my board/i });
-		expect(kanbanLink.getAttribute('href')).toBe('/modules/kanban');
+		expect(kanbanLink.getAttribute('href')).toBe('/apps/kanban');
 	});
 
 	it('renders stale items for inaccessible activities', () => {
@@ -275,7 +279,7 @@ describe('RecentActivity', () => {
 					fileName: 'My Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					moduleKey: 'notes'
+					applicationId: 'io.elembra.notes'
 				}
 			],
 			loading: false,
@@ -304,7 +308,7 @@ describe('RecentActivity', () => {
 					fileName: 'Unknown',
 					timestamp: new Date().toISOString(),
 					artifactId: 'share-123',
-					moduleKey: 'shares',
+					applicationId: 'io.elembra.shares',
 					resourceType: 'share',
 					accessible: true
 				}
@@ -332,7 +336,7 @@ describe('RecentActivity', () => {
 					fileName: 'Unknown',
 					timestamp: new Date().toISOString(),
 					artifactId: 'share-456',
-					moduleKey: 'shares',
+					applicationId: 'io.elembra.shares',
 					resourceType: 'folder',
 					accessible: true
 				}
@@ -403,7 +407,7 @@ describe('RecentActivity', () => {
 					fileName: 'Note',
 					timestamp: new Date().toISOString(),
 					artifactId: 'n-id',
-					moduleKey: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				},
 				{
@@ -412,7 +416,7 @@ describe('RecentActivity', () => {
 					fileName: 'Meeting',
 					timestamp: new Date().toISOString(),
 					artifactId: 'm-id',
-					moduleKey: 'meetings',
+					applicationId: 'io.elembra.meetings',
 					accessible: true
 				},
 				{
@@ -421,7 +425,7 @@ describe('RecentActivity', () => {
 					fileName: 'Standup',
 					timestamp: new Date().toISOString(),
 					artifactId: 's-id',
-					moduleKey: 'standups',
+					applicationId: 'io.elembra.standups',
 					accessible: true
 				},
 				{
@@ -430,7 +434,7 @@ describe('RecentActivity', () => {
 					fileName: 'Decision',
 					timestamp: new Date().toISOString(),
 					artifactId: 'd-id',
-					moduleKey: 'decisions',
+					applicationId: 'io.elembra.decisions',
 					accessible: true
 				},
 				{
@@ -439,7 +443,7 @@ describe('RecentActivity', () => {
 					fileName: 'Brainstorm',
 					timestamp: new Date().toISOString(),
 					artifactId: 'b-id',
-					moduleKey: 'brainstorming',
+					applicationId: 'io.elembra.brainstorming',
 					accessible: true
 				},
 				{
@@ -448,7 +452,7 @@ describe('RecentActivity', () => {
 					fileName: 'Share',
 					timestamp: new Date().toISOString(),
 					artifactId: 'sh-id',
-					moduleKey: 'shares',
+					applicationId: 'io.elembra.shares',
 					accessible: true
 				},
 				{
@@ -474,22 +478,22 @@ describe('RecentActivity', () => {
 		expect(links).toHaveLength(7);
 
 		expect(screen.getByRole('link', { name: /open note/i }).getAttribute('href')).toBe(
-			'/modules/notes/n-id'
+			'/apps/notes/n-id'
 		);
 		expect(screen.getByRole('link', { name: /open meeting/i }).getAttribute('href')).toBe(
-			'/modules/meetings/m-id'
+			'/apps/meetings/m-id'
 		);
 		expect(screen.getByRole('link', { name: /open standup/i }).getAttribute('href')).toBe(
-			'/modules/standups/s-id'
+			'/apps/standups/s-id'
 		);
 		expect(screen.getByRole('link', { name: /open decision/i }).getAttribute('href')).toBe(
-			'/modules/decisions/d-id'
+			'/apps/decisions/d-id'
 		);
 		expect(screen.getByRole('link', { name: /open brainstorm/i }).getAttribute('href')).toBe(
-			'/modules/brainstorming/b-id'
+			'/apps/brainstorming/b-id'
 		);
 		expect(screen.getByRole('link', { name: /open share/i }).getAttribute('href')).toBe(
-			'/modules/shares/sh-id'
+			'/apps/shares/sh-id'
 		);
 		expect(screen.getByRole('link', { name: /open file/i }).getAttribute('href')).toBe(
 			'/files?preview=f-id'

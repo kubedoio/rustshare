@@ -1,9 +1,9 @@
 //! Admin panel handlers. All routes require `AdminUser` extractor (is_admin = true).
 
+pub mod applications;
 pub mod audit;
 pub mod config;
 pub mod groups;
-pub mod modules;
 pub mod templates;
 pub mod users;
 pub mod webhooks;

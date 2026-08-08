@@ -6,15 +6,15 @@
 	import { showKeyboardShortcuts } from '$lib/stores/ui';
 	import { searchQuery } from '$lib/stores/search';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
-	import { userModulePreferences } from '$lib/stores/userModulePreferences';
-	import { refreshModules } from '$lib/modules/registry';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
+	import { refreshApplications } from '$lib/applications/registry';
 	import AppShell from '$lib/layout/AppShell.svelte';
 
 	// Check auth on mount
 	onMount(() => {
 		if (browser) {
-			userModulePreferences.load();
-			refreshModules();
+			userApplicationPreferences.load();
+			refreshApplications();
 		}
 	});
 

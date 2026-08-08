@@ -9,29 +9,29 @@ vi.mock('$app/environment', () => ({
 
 vi.mock('$lib/api/users', () => ({
 	getDashboardConfig: vi.fn().mockResolvedValue({
-		enabled_modules: ['kanban', 'notes', 'unknown'],
-		module_order: ['kanban', 'notes', 'unknown']
+		enabled_applications: ['io.elembra.kanban', 'io.elembra.notes', 'io.elembra.unknown'],
+		application_order: ['io.elembra.kanban', 'io.elembra.notes', 'io.elembra.unknown']
 	}),
 	updateDashboardConfig: vi.fn(),
-	listUserModulePreferences: vi.fn().mockResolvedValue([]),
-	updateUserModulePreference: vi.fn()
+	listUserApplicationPreferences: vi.fn().mockResolvedValue([]),
+	updateUserApplicationPreference: vi.fn()
 }));
 
-vi.mock('$lib/modules/registry', async (importOriginal) => {
-	const mod = await importOriginal<typeof import('$lib/modules/registry')>();
+vi.mock('$lib/applications/registry', async (importOriginal) => {
+	const mod = await importOriginal<typeof import('$lib/applications/registry')>();
 	return {
 		...mod
 	};
 });
 
-vi.mock('$lib/modules/moduleActions', () => ({
-	runModulePrimaryAction: vi.fn()
+vi.mock('$lib/applications/applicationActions', () => ({
+	runApplicationPrimaryAction: vi.fn()
 }));
 
 const mockEnabledModules = [
 	{
 		id: 'module-notes',
-		module_key: 'notes',
+		application_id: 'io.elembra.notes',
 		display_name: 'Notes',
 		description: 'Recent notes',
 		enabled: true,
@@ -64,7 +64,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-kanban',
-		module_key: 'kanban',
+		application_id: 'io.elembra.kanban',
 		display_name: 'Kanban',
 		description: 'Kanban boards',
 		enabled: true,
@@ -97,7 +97,7 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-decisions',
-		module_key: 'decisions',
+		application_id: 'io.elembra.decisions',
 		display_name: 'Decisions',
 		description: 'Decision records',
 		enabled: false,
@@ -130,8 +130,8 @@ const mockEnabledModules = [
 	},
 	{
 		id: 'module-no-action',
-		module_key: 'no-action',
-		display_name: 'No Action Module',
+		application_id: 'no-action',
+		display_name: 'No Action Application',
 		description: 'A module without a primary action',
 		enabled: true,
 		root_path: '/Workspace/NoAction',
@@ -157,6 +157,71 @@ const mockEnabledModules = [
 		updated_at: '2026-04-30T00:00:00Z'
 	}
 ];
+
+const mockEnabledApplications = mockEnabledModules.map((application) => {
+	const slug = application.application_id;
+	const manifestId = slug.includes('.') ? slug : `io.elembra.${slug}`;
+	const routeSlug = manifestId.split('.').at(-1)!;
+	const primaryAction = application.ui_config?.dashboard?.primaryAction;
+	return {
+		manifest: {
+			apiVersion: 'elembra.io/v1alpha1',
+			kind: 'Application' as const,
+			metadata: {
+				id: manifestId,
+				name: application.display_name,
+				version: '1.0.0',
+				description: application.description
+			},
+			runtime: { kind: 'embedded' as const },
+			contracts: { provides: [], requires: [] },
+			resources: [],
+			contributions: {
+				navigation: [
+					{
+						id: `${routeSlug}.navigation`,
+						label: application.display_name,
+						route: `/apps/${routeSlug}`
+					}
+				],
+				routes: [
+					{ id: `${routeSlug}.route`, route: `/apps/${routeSlug}`, renderer: application.renderer }
+				],
+				commands: [],
+				dashboard: primaryAction
+					? [
+							{
+								id: `${routeSlug}.dashboard`,
+								label: primaryAction.label,
+								renderer: application.renderer,
+								action: `${routeSlug}.create`,
+								template: primaryAction.template
+							}
+						]
+					: [],
+				settings: [],
+				searchProviders: [],
+				renderers: [],
+				admin: []
+			},
+			integrationEvents: { publishes: [], subscribes: [] },
+			configuration: { schema: `contracts/${manifestId}/config-v1alpha1.schema.json` },
+			data: { owner: manifestId, preserveOnDisable: true, exportSupported: true }
+		},
+		enabled: application.enabled,
+		configuration: {
+			rootPath: application.root_path,
+			renderer: application.renderer,
+			defaultTemplate: application.default_template,
+			icon: application.icon,
+			permissions: application.permissions,
+			aiIndexing: application.ai_indexing,
+			audit: application.audit,
+			ui: application.ui_config
+		},
+		health: 'healthy' as const
+	};
+});
 
 vi.mock('$lib/query-compat', () => ({
 	createQuery: vi.fn((options: { queryKey?: unknown[] }) => {
@@ -197,9 +262,9 @@ vi.mock('$lib/query-compat', () => ({
 				isLoading: false
 			});
 		}
-		if (key === 'enabled-modules') {
+		if (key === 'enabled-applications') {
 			return readable({
-				data: mockEnabledModules,
+				data: mockEnabledApplications,
 				isLoading: false
 			});
 		}
@@ -256,7 +321,7 @@ vi.mock('$lib/stores/activity', () => ({
 			fileName: 'Old Name.md',
 			timestamp: new Date().toISOString(),
 			artifactId: 'note-123',
-			moduleKey: 'notes'
+			applicationId: 'io.elembra.notes'
 		}
 	]),
 	serverActivityStore: {
@@ -268,7 +333,7 @@ vi.mock('$lib/stores/activity', () => ({
 					fileName: 'New Name.md',
 					timestamp: new Date().toISOString(),
 					artifactId: 'note-123',
-					moduleKey: 'notes',
+					applicationId: 'io.elembra.notes',
 					accessible: true
 				}
 			],
@@ -288,7 +353,7 @@ vi.mock('$lib/stores/activity', () => ({
 		color: '#ea580c'
 	})),
 	getRelativeTime: vi.fn(() => 'Just now'),
-	getActivityHref: vi.fn(() => '/modules/notes/note-123')
+	getActivityHref: vi.fn(() => '/apps/notes/note-123')
 }));
 
 vi.mock('$lib/stores/auth', () => ({
@@ -398,7 +463,7 @@ describe('Dashboard Page Registry-Driven Quick Actions', () => {
 		render(DashboardPage);
 
 		await vi.waitFor(() => {
-			expect(screen.queryByText('New No Action Module')).toBeNull();
+			expect(screen.queryByText('New No Action Application')).toBeNull();
 		});
 	});
 });

@@ -7,12 +7,12 @@ use axum::{
     Json,
 };
 use rustshare_auth::PasswordHasher;
-use rustshare_core::domain::Theme;
+use rustshare_core::domain::{ApplicationId, Theme};
 use serde::{Deserialize, Serialize};
 // tracing::{error, warn} are used as tracing::error! and tracing::warn! in the code
 
 use crate::handlers::{AppError, AuthenticatedSession, AuthenticatedUser};
-use crate::AppState;
+use crate::{state::ApplicationState, AppState};
 
 /// Request to update user theme preference.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -703,85 +703,100 @@ pub async fn get_avatar(
 }
 
 // ---------------------------------------------------------------------------
-// User Module Preferences
+// User ApplicationConfig Preferences
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct UserModulePreferenceResponse {
-    pub module_key: String,
+pub struct ApplicationUserPreferenceResponse {
+    pub application_id: String,
     pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateModulePreferenceRequest {
+pub struct UpdateApplicationPreferenceRequest {
     pub enabled: bool,
 }
 
-/// List the authenticated user's module preferences.
+/// List the authenticated user's Application preferences.
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me/modules",
+    path = "/api/v1/users/me/applications",
     tag = "Users",
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
-pub async fn list_user_module_preferences(
-    State(state): State<AppState>,
+pub async fn list_application_user_preferences(
+    State(state): State<ApplicationState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
 ) -> Result<Response, AppError> {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+    let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),
     );
     match repo.get_for_user(user_id).await {
         Ok(prefs) => {
-            let response: Vec<UserModulePreferenceResponse> = prefs
+            let response: Vec<ApplicationUserPreferenceResponse> = prefs
                 .into_iter()
-                .map(|p| UserModulePreferenceResponse {
-                    module_key: p.module_key,
+                .map(|p| ApplicationUserPreferenceResponse {
+                    application_id: p.application_id,
                     enabled: p.enabled,
                 })
                 .collect();
             Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
-            tracing::error!("Failed to list user module preferences: {:?}", e);
-            Err(AppError::internal("Failed to list module preferences"))
+            tracing::error!("Failed to list user Application preferences: {:?}", e);
+            Err(AppError::internal("Failed to list Application preferences"))
         }
     }
 }
 
-/// Update a module preference for the authenticated user.
+/// Update an Application preference for the authenticated user.
 #[utoipa::path(
     patch,
-    path = "/api/v1/users/me/modules/{key}",
+    path = "/api/v1/users/me/applications/{key}",
     tag = "Users",
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
-pub async fn update_user_module_preference(
-    State(state): State<AppState>,
+pub async fn update_user_application_preference(
+    State(state): State<ApplicationState>,
     AuthenticatedUser { user_id, .. }: AuthenticatedUser,
-    Path(module_key): Path<String>,
-    Json(req): Json<UpdateModulePreferenceRequest>,
+    Path(application_id): Path<String>,
+    Json(req): Json<UpdateApplicationPreferenceRequest>,
 ) -> Result<Response, AppError> {
-    let repo = rustshare_infrastructure::repositories::UserModulePreferenceRepository::new(
+    let application_id = ApplicationId::from(application_id.as_str());
+    if state
+        .application_service
+        .registry()
+        .manifest(&application_id)
+        .is_none()
+    {
+        return Err(AppError::bad_request("Unknown Application"));
+    }
+
+    let repo = rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
         state.db_pool.clone(),
     );
-    match repo.set_enabled(user_id, &module_key, req.enabled).await {
+    match repo
+        .set_enabled(user_id, application_id.0.as_str(), req.enabled)
+        .await
+    {
         Ok(pref) => {
-            let response = UserModulePreferenceResponse {
-                module_key: pref.module_key,
+            let response = ApplicationUserPreferenceResponse {
+                application_id: pref.application_id,
                 enabled: pref.enabled,
             };
             Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
-            tracing::error!("Failed to update user module preference: {:?}", e);
-            Err(AppError::internal("Failed to update module preference"))
+            tracing::error!("Failed to update user Application preference: {:?}", e);
+            Err(AppError::internal(
+                "Failed to update Application preference",
+            ))
         }
     }
 }

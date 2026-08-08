@@ -7,7 +7,7 @@ import {
 	todayDateString,
 	getUserInitials,
 	getActivityVerb,
-	getModuleColor,
+	getApplicationColor,
 	getArtifactIcon
 } from './dashboard';
 import { Columns, Share2, FileText, CheckCircle2, Lightbulb } from 'lucide-svelte';
@@ -35,14 +35,14 @@ describe('formatBytes', () => {
 });
 
 describe('getArtifactTypeLabel', () => {
-	it('returns correct labels for all known module keys', () => {
-		expect(getArtifactTypeLabel('notes', 'file')).toBe('Note');
-		expect(getArtifactTypeLabel('meetings', 'file')).toBe('Meeting Note');
-		expect(getArtifactTypeLabel('standups', 'file')).toBe('Standup');
-		expect(getArtifactTypeLabel('kanban', 'file')).toBe('Kanban Board');
-		expect(getArtifactTypeLabel('decisions', 'file')).toBe('Decision');
-		expect(getArtifactTypeLabel('brainstorming', 'file')).toBe('Idea Board');
-		expect(getArtifactTypeLabel('shares', 'file')).toBe('Share');
+	it('returns correct labels for canonical Application IDs', () => {
+		expect(getArtifactTypeLabel('io.elembra.notes', 'file')).toBe('Note');
+		expect(getArtifactTypeLabel('io.elembra.meetings', 'file')).toBe('Meeting Note');
+		expect(getArtifactTypeLabel('io.elembra.standups', 'file')).toBe('Standup');
+		expect(getArtifactTypeLabel('io.elembra.kanban', 'file')).toBe('Kanban Board');
+		expect(getArtifactTypeLabel('io.elembra.decisions', 'file')).toBe('Decision');
+		expect(getArtifactTypeLabel('io.elembra.brainstorming', 'file')).toBe('Idea Board');
+		expect(getArtifactTypeLabel('io.elembra.shares', 'file')).toBe('Share');
 	});
 
 	it('falls back to Folder for unknown module with folder item_type', () => {
@@ -55,58 +55,62 @@ describe('getArtifactTypeLabel', () => {
 });
 
 describe('getArtifactHref', () => {
-	it('returns /modules/notes/{id} for notes file', () => {
-		expect(getArtifactHref({ moduleKey: 'notes', item_type: 'file', id: 'abc123' })).toBe(
-			'/modules/notes/abc123'
-		);
+	it('returns /apps/notes/{id} for notes file', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.notes', item_type: 'file', id: 'abc123' })
+		).toBe('/apps/notes/abc123');
 	});
 
-	it('returns /modules/decisions/{id} for decisions', () => {
-		expect(getArtifactHref({ moduleKey: 'decisions', item_type: 'file', id: 'def456' })).toBe(
-			'/modules/decisions/def456'
-		);
+	it('returns /apps/decisions/{id} for decisions', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.decisions', item_type: 'file', id: 'def456' })
+		).toBe('/apps/decisions/def456');
 	});
 
 	it('returns /files?folder={id} for folder', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'folder', id: 'ghi789' })).toBe(
-			'/files?folder=ghi789'
-		);
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.files', item_type: 'folder', id: 'ghi789' })
+		).toBe('/files?folder=ghi789');
 	});
 
-	it('returns /modules/meetings/{id} for meetings', () => {
-		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'file', id: 'meet456' })).toBe(
-			'/modules/meetings/meet456'
-		);
+	it('returns /apps/meetings/{id} for meetings', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.meetings', item_type: 'file', id: 'meet456' })
+		).toBe('/apps/meetings/meet456');
 	});
 
-	it('returns /modules/standups/{id} for standups', () => {
-		expect(getArtifactHref({ moduleKey: 'standups', item_type: 'file', id: 'stand789' })).toBe(
-			'/modules/standups/stand789'
-		);
+	it('returns /apps/standups/{id} for standups', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.standups', item_type: 'file', id: 'stand789' })
+		).toBe('/apps/standups/stand789');
 	});
 
-	it('returns /modules/brainstorming/{id} for brainstorming', () => {
-		expect(getArtifactHref({ moduleKey: 'brainstorming', item_type: 'file', id: 'brain012' })).toBe(
-			'/modules/brainstorming/brain012'
-		);
+	it('returns /apps/brainstorming/{id} for brainstorming', () => {
+		expect(
+			getArtifactHref({
+				applicationId: 'io.elembra.brainstorming',
+				item_type: 'file',
+				id: 'brain012'
+			})
+		).toBe('/apps/brainstorming/brain012');
 	});
 
-	it('returns /modules/kanban for kanban', () => {
-		expect(getArtifactHref({ moduleKey: 'kanban', item_type: 'file', id: 'kanban345' })).toBe(
-			'/modules/kanban'
-		);
+	it('returns /apps/kanban for kanban', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.kanban', item_type: 'file', id: 'kanban345' })
+		).toBe('/apps/kanban');
 	});
 
-	it('returns /modules/shares/{id} for shares', () => {
-		expect(getArtifactHref({ moduleKey: 'shares', item_type: 'file', id: 'share789' })).toBe(
-			'/modules/shares/share789'
-		);
+	it('returns /apps/shares/{id} for shares', () => {
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.shares', item_type: 'file', id: 'share789' })
+		).toBe('/apps/shares/share789');
 	});
 
 	it('returns /files?preview={id} for excalidraw files', () => {
 		expect(
 			getArtifactHref({
-				moduleKey: 'files',
+				applicationId: 'io.elembra.files',
 				item_type: 'file',
 				id: 'exc123',
 				name: 'diagram.excalidraw'
@@ -115,21 +119,25 @@ describe('getArtifactHref', () => {
 	});
 
 	it('returns /files?preview={id} for default file', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'file', id: 'jkl012' })).toBe(
-			'/files?preview=jkl012'
-		);
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.files', item_type: 'file', id: 'jkl012' })
+		).toBe('/files?preview=jkl012');
 	});
 
 	it('returns /files?folder={id} for folder', () => {
-		expect(getArtifactHref({ moduleKey: 'files', item_type: 'folder', id: 'folder456' })).toBe(
-			'/files?folder=folder456'
-		);
+		expect(
+			getArtifactHref({ applicationId: 'io.elembra.files', item_type: 'folder', id: 'folder456' })
+		).toBe('/files?folder=folder456');
 	});
 
-	it('routes folders to file browser even when they have a module key', () => {
-		expect(getArtifactHref({ moduleKey: 'meetings', item_type: 'folder', id: 'meet-folder' })).toBe(
-			'/files?folder=meet-folder'
-		);
+	it('routes folders to file browser even when they have an Application ID', () => {
+		expect(
+			getArtifactHref({
+				applicationId: 'io.elembra.meetings',
+				item_type: 'folder',
+				id: 'meet-folder'
+			})
+		).toBe('/files?folder=meet-folder');
 	});
 });
 
@@ -219,22 +227,40 @@ describe('getActivityVerb', () => {
 	});
 });
 
-describe('getModuleColor', () => {
+describe('getApplicationColor', () => {
 	it('returns correct colors for known keys', () => {
-		expect(getModuleColor('notes')).toEqual({ color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' });
-		expect(getModuleColor('meetings')).toEqual({ color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' });
-		expect(getModuleColor('standups')).toEqual({ color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' });
-		expect(getModuleColor('kanban')).toEqual({ color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' });
-		expect(getModuleColor('decisions')).toEqual({ color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' });
-		expect(getModuleColor('brainstorming')).toEqual({
+		expect(getApplicationColor('io.elembra.notes')).toEqual({
+			color: '#ea580c',
+			bg: 'rgba(234, 88, 12, 0.1)'
+		});
+		expect(getApplicationColor('io.elembra.meetings')).toEqual({
+			color: '#7c3aed',
+			bg: 'rgba(124, 58, 237, 0.1)'
+		});
+		expect(getApplicationColor('io.elembra.standups')).toEqual({
+			color: '#2563eb',
+			bg: 'rgba(37, 99, 235, 0.1)'
+		});
+		expect(getApplicationColor('io.elembra.kanban')).toEqual({
+			color: '#ea580c',
+			bg: 'rgba(234, 88, 12, 0.1)'
+		});
+		expect(getApplicationColor('io.elembra.decisions')).toEqual({
+			color: '#16a34a',
+			bg: 'rgba(22, 163, 74, 0.1)'
+		});
+		expect(getApplicationColor('io.elembra.brainstorming')).toEqual({
 			color: '#ca8a04',
 			bg: 'rgba(202, 138, 4, 0.1)'
 		});
-		expect(getModuleColor('shares')).toEqual({ color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' });
+		expect(getApplicationColor('io.elembra.shares')).toEqual({
+			color: '#2563eb',
+			bg: 'rgba(37, 99, 235, 0.1)'
+		});
 	});
 
 	it('returns gray fallback for unknown key', () => {
-		expect(getModuleColor('unknown')).toEqual({
+		expect(getApplicationColor('unknown')).toEqual({
 			color: '#6b7280',
 			bg: 'rgba(107, 114, 128, 0.1)'
 		});
@@ -243,13 +269,13 @@ describe('getModuleColor', () => {
 
 describe('getArtifactIcon', () => {
 	it('returns correct icon components for known keys', () => {
-		expect(getArtifactIcon('notes')).toBe(FileText);
-		expect(getArtifactIcon('meetings')).toBe(FileText);
-		expect(getArtifactIcon('standups')).toBe(FileText);
-		expect(getArtifactIcon('kanban')).toBe(Columns);
-		expect(getArtifactIcon('decisions')).toBe(CheckCircle2);
-		expect(getArtifactIcon('brainstorming')).toBe(Lightbulb);
-		expect(getArtifactIcon('shares')).toBe(Share2);
+		expect(getArtifactIcon('io.elembra.notes')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.meetings')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.standups')).toBe(FileText);
+		expect(getArtifactIcon('io.elembra.kanban')).toBe(Columns);
+		expect(getArtifactIcon('io.elembra.decisions')).toBe(CheckCircle2);
+		expect(getArtifactIcon('io.elembra.brainstorming')).toBe(Lightbulb);
+		expect(getArtifactIcon('io.elembra.shares')).toBe(Share2);
 	});
 
 	it('returns FileText for unknown key', () => {

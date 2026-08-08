@@ -2,8 +2,12 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
-	import { getAdminTemplate, updateTemplate, listAdminModules } from '$lib/api/admin-modules';
-	import { APPROVED_MODULE_ICONS } from '$lib/modules/iconRegistry';
+	import {
+		getAdminTemplate,
+		updateTemplate,
+		listAdminApplications
+	} from '$lib/api/admin-applications';
+	import { APPROVED_MODULE_ICONS } from '$lib/applications/iconRegistry';
 	import { toastStore } from '$lib/stores/toast';
 	import { ArrowLeft, Save, AlertCircle, Plus, Trash2 } from 'lucide-svelte';
 
@@ -11,7 +15,7 @@
 	const key = $page.params.key!;
 
 	let name = $state('');
-	let moduleKey = $state('');
+	let applicationId = $state('');
 	let description = $state('');
 	let createLabel = $state('');
 	let icon = $state('file-text');
@@ -23,22 +27,22 @@
 	let enabled = $state(true);
 	let isSystemTemplate = $state(false);
 	let error = $state('');
-	let moduleConfigJson = $state('{}');
+	let applicationConfigJson = $state('{}');
 	const templateQuery = createQuery({
 		queryKey: ['admin-template', key],
 		queryFn: () => getAdminTemplate(key)
 	});
 
 	const modulesQuery = createQuery({
-		queryKey: ['admin-modules'],
-		queryFn: () => listAdminModules()
+		queryKey: ['admin-applications'],
+		queryFn: () => listAdminApplications()
 	});
 
 	$effect(() => {
 		if ($templateQuery.data) {
 			const t = $templateQuery.data;
 			name = t.name;
-			moduleKey = t.module_key;
+			applicationId = t.application_id;
 			description = t.description ?? '';
 			createLabel = t.ui_config?.createLabel ?? '';
 			icon = t.ui_config?.icon ?? 'file-text';
@@ -49,14 +53,14 @@
 			visibilityPolicy = t.visibility_policy ?? 'workspace';
 			enabled = t.enabled ?? true;
 			isSystemTemplate = t.system_template ?? false;
-			moduleConfigJson = JSON.stringify(t.module_config ?? {}, null, 2);
+			applicationConfigJson = JSON.stringify(t.application_config ?? {}, null, 2);
 		}
 	});
 
 	const updateMutation = createMutation({
 		mutationFn: (payload: {
 			name: string;
-			module_key: string;
+			application_id: string;
 			description: string;
 			ui_config: {
 				createLabel?: string;
@@ -68,7 +72,7 @@
 			renderer: string | null;
 			visibility_policy: string;
 			enabled: boolean;
-			module_config: Record<string, unknown>;
+			application_config: Record<string, unknown>;
 		}) => updateTemplate(key, payload),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['admin-templates'] });
@@ -131,7 +135,7 @@
 	function ensureKanbanConfig() {
 		let config: any = {};
 		try {
-			config = JSON.parse(moduleConfigJson);
+			config = JSON.parse(applicationConfigJson);
 		} catch {
 			/* ignore parse error */
 		}
@@ -157,7 +161,7 @@
 	}
 
 	function syncKanbanConfig(kb: any) {
-		moduleConfigJson = JSON.stringify({ kanban: kb }, null, 2);
+		applicationConfigJson = JSON.stringify({ kanban: kb }, null, 2);
 		if (Array.isArray(kb.columns)) {
 			folderStructureJson = JSON.stringify(
 				kb.columns
@@ -230,7 +234,7 @@
 	function handleSubmit() {
 		error = '';
 
-		if (!name.trim() || !moduleKey.trim()) {
+		if (!name.trim() || !applicationId.trim()) {
 			error = 'Template name and module are required.';
 			return;
 		}
@@ -239,11 +243,11 @@
 			const folderStructure = validateJson('Folder Structure', folderStructureJson) as string[];
 			const defaultFiles = validateJson('Default Files', defaultFilesJson);
 			const metadataSchema = validateJson('Metadata Schema', metadataSchemaJson);
-			const moduleConfig = validateJson('Module Config', moduleConfigJson);
+			const applicationConfig = validateJson('Application Config', applicationConfigJson);
 
 			$updateMutation.mutate({
 				name: name.trim(),
-				module_key: moduleKey,
+				application_id: applicationId,
 				description: description.trim(),
 				ui_config: {
 					createLabel: createLabel.trim() || undefined,
@@ -255,7 +259,7 @@
 				renderer: renderer.trim() || null,
 				visibility_policy: visibilityPolicy,
 				enabled,
-				module_config: moduleConfig as Record<string, unknown>
+				application_config: applicationConfig as Record<string, unknown>
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -352,16 +356,18 @@
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<label class="text-xs font-semibold text-base-content/70" for="module">Module *</label>
+						<label class="text-xs font-semibold text-base-content/70" for="module"
+							>Application *</label
+						>
 						<select
 							id="module"
 							class="select-bordered select select-sm"
-							bind:value={moduleKey}
+							bind:value={applicationId}
 							required
 						>
 							<option value="" disabled>Select a module</option>
 							{#each $modulesQuery.data ?? [] as mod}
-								<option value={mod.module_key}>{mod.display_name}</option>
+								<option value={mod.application_id}>{mod.display_name}</option>
 							{/each}
 						</select>
 					</div>
@@ -486,9 +492,9 @@
 
 			<div class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 				<h2 class="mb-4 text-sm font-semibold tracking-wider text-base-content uppercase">
-					Module Configuration
+					Application Configuration
 				</h2>
-				{#if moduleKey === 'kanban'}
+				{#if applicationId === 'kanban'}
 					<div class="flex flex-col gap-5">
 						<!-- Columns -->
 						<div>
@@ -636,12 +642,12 @@
 					<div class="flex flex-col gap-1">
 						<label
 							class="text-xs font-semibold text-base-content/70"
-							for="module-config-json-object">Module Config (JSON object)</label
+							for="module-config-json-object">Application Config (JSON object)</label
 						>
 						<textarea
 							id="module-config-json-object"
 							class="textarea-bordered textarea font-mono text-xs textarea-sm"
-							bind:value={moduleConfigJson}
+							bind:value={applicationConfigJson}
 							rows={4}
 							disabled={isSystemTemplate}></textarea>
 					</div>

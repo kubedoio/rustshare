@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { createQuery, createMutation, useQueryClient } from '$lib/query-compat';
-	import { listAdminTemplates, deleteTemplate, duplicateTemplate } from '$lib/api/admin-modules';
+	import {
+		listAdminTemplates,
+		deleteTemplate,
+		duplicateTemplate
+	} from '$lib/api/admin-applications';
 	import { toastStore } from '$lib/stores/toast';
 	import { Plus, Trash2, Edit, Copy } from 'lucide-svelte';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
@@ -66,7 +70,7 @@
 		<div>
 			<h1 class="text-2xl font-semibold text-base-content">Templates</h1>
 			<p class="mt-1 text-sm text-base-content/60">
-				Manage predefined and custom templates for workspace modules.
+				Manage predefined and custom templates for workspace Applications.
 			</p>
 		</div>
 		<a href="/admin/templates/new" class="btn btn-sm btn-primary">
@@ -87,7 +91,7 @@
 						class="border-b border-base-300/50 bg-base-200/30 text-left text-xs tracking-wider text-base-content/60 uppercase"
 					>
 						<th class="px-4 py-3 font-semibold">Template</th>
-						<th class="px-4 py-3 font-semibold">Module</th>
+						<th class="px-4 py-3 font-semibold">Application</th>
 						<th class="px-4 py-3 font-semibold">Renderer</th>
 						<th class="px-4 py-3 font-semibold">Version</th>
 						<th class="px-4 py-3 font-semibold">Created</th>
@@ -113,7 +117,7 @@
 									<span class="text-xs text-base-content/40">{template.template_key}</span>
 								</div>
 							</td>
-							<td class="px-4 py-3 text-sm text-base-content/70">{template.module_key}</td>
+							<td class="px-4 py-3 text-sm text-base-content/70">{template.application_id}</td>
 							<td class="px-4 py-3 text-sm text-base-content/70">
 								{template.renderer || '-'}
 								{#if template.template_key === 'template_default_okf_note'}

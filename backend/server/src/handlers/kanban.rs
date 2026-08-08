@@ -13,13 +13,16 @@ use crate::{
     state::AppState,
 };
 
-use crate::services::module_service::ModuleError;
+use crate::services::application_service::ApplicationError;
 
 async fn require_kanban_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
-    let module = state.module_service.get_module("kanban", tenant_id).await;
+    let module = state
+        .application_service
+        .get_application("io.elembra.kanban", tenant_id)
+        .await;
     let module = match module {
         Ok(m) => m,
-        Err(ModuleError::NotFound(_)) => {
+        Err(ApplicationError::NotFound(_)) => {
             return Err(AppError::forbidden("Kanban module is disabled"));
         }
         Err(e) => {
@@ -46,7 +49,7 @@ use axum::extract::Multipart;
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/boards",
+    path = "/api/v1/applications/kanban/boards",
     tag = "Kanban",
     responses(
         (status = 200, description = "Success", body = Vec<KanbanBoardSummary>),
@@ -69,7 +72,7 @@ pub async fn list_boards(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/boards",
+    path = "/api/v1/applications/kanban/boards",
     tag = "Kanban",
     request_body = CreateBoardInput,
     responses(
@@ -93,7 +96,7 @@ pub async fn create_board(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/boards/{board_id}",
+    path = "/api/v1/applications/kanban/boards/{board_id}",
     tag = "Kanban",
     params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
     responses(
@@ -118,7 +121,7 @@ pub async fn get_board(
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/modules/kanban/boards/{board_id}",
+    path = "/api/v1/applications/kanban/boards/{board_id}",
     tag = "Kanban",
     params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
     request_body = UpdateBoardInput,
@@ -145,7 +148,7 @@ pub async fn update_board(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/boards/{board_id}/archive",
+    path = "/api/v1/applications/kanban/boards/{board_id}/archive",
     tag = "Kanban",
     params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
     responses(
@@ -174,7 +177,7 @@ pub async fn archive_board(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/boards/{board_id}/labels",
+    path = "/api/v1/applications/kanban/boards/{board_id}/labels",
     tag = "Kanban",
     params(("board_id" = Uuid, Path, description = "Board Id")),
     request_body = CreateLabelInput,
@@ -201,7 +204,7 @@ pub async fn create_label(
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+    path = "/api/v1/applications/kanban/boards/{board_id}/labels/{label_id}",
     tag = "Kanban",
     params(("board_id" = Uuid, Path, description = "Board Id"), ("label_id" = String, Path, description = "Label Id")),
     request_body = UpdateLabelInput,
@@ -228,7 +231,7 @@ pub async fn update_label(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/boards/{board_id}/labels/{label_id}",
+    path = "/api/v1/applications/kanban/boards/{board_id}/labels/{label_id}",
     tag = "Kanban",
     params(("board_id" = Uuid, Path, description = "Board Id"), ("label_id" = String, Path, description = "Label Id")),
     responses(
@@ -253,7 +256,7 @@ pub async fn delete_label(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/labels",
+    path = "/api/v1/applications/kanban/cards/{card_id}/labels",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = serde_json::Value,
@@ -285,7 +288,7 @@ pub async fn add_card_label(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}/labels/{label_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/labels/{label_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("label_id" = String, Path, description = "Label Id")),
     responses(
@@ -314,7 +317,7 @@ pub async fn remove_card_label(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/assignable-users",
+    path = "/api/v1/applications/kanban/assignable-users",
     tag = "Kanban",
     responses(
         (status = 200, description = "Success", body = Vec<KanbanAssignee>),
@@ -336,7 +339,7 @@ pub async fn get_assignable_users(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/assignees",
+    path = "/api/v1/applications/kanban/cards/{card_id}/assignees",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = serde_json::Value,
@@ -368,7 +371,7 @@ pub async fn assign_card_member(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}/assignees/{assignee_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/assignees/{assignee_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("assignee_id" = String, Path, description = "Assignee Id")),
     responses(
@@ -397,7 +400,7 @@ pub async fn unassign_card_member(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/boards/{board_id}/cards",
+    path = "/api/v1/applications/kanban/boards/{board_id}/cards",
     tag = "Kanban",
     params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
     responses(
@@ -429,7 +432,7 @@ pub async fn list_cards(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/boards/{board_id}/cards",
+    path = "/api/v1/applications/kanban/boards/{board_id}/cards",
     tag = "Kanban",
     params(("board_id_or_slug" = String, Path, description = "Board Id Or Slug")),
     request_body = CreateCardInput,
@@ -456,7 +459,7 @@ pub async fn create_card(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/cards/{card_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     responses(
@@ -481,7 +484,7 @@ pub async fn get_card(
 
 #[utoipa::path(
     get,
-    path = "/api/v1/modules/kanban/cards/{card_id}/detail",
+    path = "/api/v1/applications/kanban/cards/{card_id}/detail",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     responses(
@@ -506,7 +509,7 @@ pub async fn get_card_detail(
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/modules/kanban/cards/{card_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = UpdateCardInput,
@@ -533,7 +536,7 @@ pub async fn update_card(
 
 #[utoipa::path(
     put,
-    path = "/api/v1/modules/kanban/cards/{card_id}/description",
+    path = "/api/v1/applications/kanban/cards/{card_id}/description",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = UpdateCardDescriptionInput,
@@ -565,7 +568,7 @@ pub struct UpdateCardDescriptionInput {
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/move",
+    path = "/api/v1/applications/kanban/cards/{card_id}/move",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = MoveCardInput,
@@ -592,7 +595,7 @@ pub async fn move_card(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/archive",
+    path = "/api/v1/applications/kanban/cards/{card_id}/archive",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     responses(
@@ -617,7 +620,7 @@ pub async fn archive_card(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     responses(
@@ -646,7 +649,7 @@ pub async fn delete_card(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/attachments",
+    path = "/api/v1/applications/kanban/cards/{card_id}/attachments",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     responses(
@@ -704,7 +707,7 @@ pub async fn add_card_attachment(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}/attachments/{attachment_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/attachments/{attachment_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("attachment_id" = Uuid, Path, description = "Attachment Id")),
     responses(
@@ -748,7 +751,7 @@ pub struct ToggleChecklistItemInput {
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/checklists",
+    path = "/api/v1/applications/kanban/cards/{card_id}/checklists",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id")),
     request_body = AddChecklistInput,
@@ -775,7 +778,7 @@ pub async fn create_checklist(
 
 #[utoipa::path(
     post,
-    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items",
+    path = "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id")),
     request_body = AddChecklistItemInput,
@@ -808,7 +811,7 @@ pub async fn create_checklist_item(
 
 #[utoipa::path(
     patch,
-    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id"), ("item_id" = String, Path, description = "Item Id")),
     request_body = ToggleChecklistItemInput,
@@ -842,7 +845,7 @@ pub async fn toggle_checklist_item(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}/items/{item_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id"), ("item_id" = String, Path, description = "Item Id")),
     responses(
@@ -867,7 +870,7 @@ pub async fn delete_checklist_item(
 
 #[utoipa::path(
     delete,
-    path = "/api/v1/modules/kanban/cards/{card_id}/checklists/{checklist_id}",
+    path = "/api/v1/applications/kanban/cards/{card_id}/checklists/{checklist_id}",
     tag = "Kanban",
     params(("card_id" = Uuid, Path, description = "Card Id"), ("checklist_id" = String, Path, description = "Checklist Id")),
     responses(

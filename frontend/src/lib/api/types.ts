@@ -274,12 +274,62 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Module & Template Types
+// Application & Template Types
 // ---------------------------------------------------------------------------
 
-export interface ModuleConfig {
+export interface ApplicationContribution {
 	id: string;
-	module_key: string;
+	label?: string;
+	icon?: string;
+	route?: string;
+	renderer?: string;
+	action?: string;
+	template?: string;
+	order?: number;
+}
+
+export interface ApplicationManifest {
+	apiVersion: string;
+	kind: 'Application';
+	metadata: {
+		id: string;
+		name: string;
+		version: string;
+		description: string;
+	};
+	runtime: { kind: 'embedded' | 'service' | 'bridge' };
+	contracts: {
+		provides: Array<{ id: string; version: string }>;
+		requires: Array<{ id: string; version: string }>;
+	};
+	resources: Array<{ type: string; actions: string[] }>;
+	contributions: {
+		navigation: ApplicationContribution[];
+		routes: ApplicationContribution[];
+		commands: ApplicationContribution[];
+		dashboard: ApplicationContribution[];
+		settings: ApplicationContribution[];
+		searchProviders: ApplicationContribution[];
+		renderers: ApplicationContribution[];
+		admin: ApplicationContribution[];
+	};
+	integrationEvents: { publishes: string[]; subscribes: string[] };
+	memory?: { sourceTypes: string[]; publication: string };
+	configuration: { schema: string };
+	data: { owner: string; preserveOnDisable: boolean; exportSupported: boolean };
+	health?: { liveness: string; readiness: string };
+}
+
+export interface ApplicationShellEntry {
+	manifest: ApplicationManifest;
+	enabled: boolean;
+	configuration: Record<string, unknown>;
+	health: 'healthy' | 'degraded' | 'unavailable';
+}
+
+export interface ApplicationConfig {
+	id: string;
+	application_id: string;
 	display_name: string;
 	description: string;
 	enabled: boolean;
@@ -288,28 +338,28 @@ export interface ModuleConfig {
 	default_template: string | null;
 	icon: string;
 	schema_version: string;
-	permissions: ModulePermissions;
+	permissions: ApplicationPermissions;
 	ai_indexing: AiIndexingPolicy;
 	audit: AuditPolicy;
-	ui_config?: ModuleUiConfig;
+	ui_config?: ApplicationUiConfig;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface OkfModuleUiConfig {
+export interface OkfApplicationUiConfig {
 	enabled: boolean;
 	conceptType: string;
 	frontmatterRequired: boolean;
 	preserveUnknownFields?: boolean;
 }
 
-export interface ModuleUiConfig {
+export interface ApplicationUiConfig {
 	documentFormat?: string;
-	okf?: OkfModuleUiConfig;
+	okf?: OkfApplicationUiConfig;
 	sidebar?: SidebarConfig;
 	dashboard?: DashboardConfig;
-	modulePage?: ModulePageConfig;
-	page?: ModulePageDefinition;
+	page?: ApplicationPageDefinition;
+	settings?: ApplicationContribution[];
 }
 
 export interface SidebarConfig {
@@ -336,14 +386,7 @@ export interface PrimaryActionConfig {
 	template?: string;
 }
 
-export interface ModulePageConfig {
-	layout: string;
-	emptyStateTitle: string;
-	emptyStateDescription: string;
-	emptyStateAction: string;
-}
-
-export interface ModulePageDefinition {
+export interface ApplicationPageDefinition {
 	enabled: boolean;
 	route: string;
 	renderer: string;
@@ -404,7 +447,7 @@ export interface WorkspaceSurfaceDefinition {
 	sections: WorkspaceSurfaceSection[];
 }
 
-export interface ModulePermissions {
+export interface ApplicationPermissions {
 	admin_can_configure: boolean;
 	workspace_members_can_use: boolean;
 	allow_public_share: boolean;
@@ -425,7 +468,7 @@ export interface TemplateConfig {
 	id: string;
 	template_key: string;
 	name: string;
-	module_key: string;
+	application_id: string;
 	version: string;
 	description: string;
 	ui_config?: TemplateUiConfig;
@@ -434,7 +477,7 @@ export interface TemplateConfig {
 	metadata_schema: Record<string, unknown>;
 	renderer: string | null;
 	visibility_policy: string;
-	module_config?: Record<string, unknown>;
+	application_config?: Record<string, unknown>;
 	enabled: boolean;
 	system_template: boolean;
 	created_by: string | null;
@@ -473,8 +516,8 @@ export interface SummaryItem {
 	updated_at: string;
 }
 
-export interface ModuleSummary {
-	module_key: string;
+export interface ApplicationSummary {
+	application_id: string;
 	mode: string;
 	total_items: number;
 	recent_items: SummaryItem[];

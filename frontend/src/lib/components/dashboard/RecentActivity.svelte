@@ -6,7 +6,7 @@
 		getRelativeTime,
 		getActivityHref
 	} from '$lib/stores/activity';
-	import { getActivityVerb, getModuleColor } from '$lib/utils/dashboard';
+	import { getActivityVerb, getApplicationColor } from '$lib/utils/dashboard';
 	import DashboardSectionHeader from './DashboardSectionHeader.svelte';
 	import DashboardEmptyState from './DashboardEmptyState.svelte';
 
@@ -72,7 +72,7 @@
 			{#each $serverActivityStore.items as activity}
 				{@const href = getActivityHref(activity)}
 				{@const display = getActivityDisplay(activity)}
-				{@const moduleColor = getModuleColor(activity.moduleKey ?? '')}
+				{@const moduleColor = getApplicationColor(activity.applicationId ?? '')}
 				{@const activityName = getActivityName(activity)}
 				{#if href}
 					<li>

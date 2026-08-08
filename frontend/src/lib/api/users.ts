@@ -225,31 +225,33 @@ export async function revokeUserDevice(deviceId: string): Promise<void> {
 	return apiClient.delete(`/user/devices/${deviceId}`);
 }
 
-export interface UserModulePreference {
-	module_key: string;
+export interface UserApplicationPreference {
+	application_id: string;
 	enabled: boolean;
 }
 
 /**
- * List the current user's module preferences.
+ * List the current user's Application preferences.
  */
-export async function listUserModulePreferences(): Promise<UserModulePreference[]> {
-	return apiClient.get<UserModulePreference[]>('/users/me/modules');
+export async function listUserApplicationPreferences(): Promise<UserApplicationPreference[]> {
+	return apiClient.get<UserApplicationPreference[]>('/users/me/applications');
 }
 
 /**
- * Update a module preference for the current user.
+ * Update an Application visibility preference for the current user.
  */
-export async function updateUserModulePreference(
-	moduleKey: string,
+export async function updateUserApplicationPreference(
+	applicationId: string,
 	enabled: boolean
-): Promise<UserModulePreference> {
-	return apiClient.patch<UserModulePreference>(`/users/me/modules/${moduleKey}`, { enabled });
+): Promise<UserApplicationPreference> {
+	return apiClient.patch<UserApplicationPreference>(`/users/me/applications/${applicationId}`, {
+		enabled
+	});
 }
 
 export interface DashboardConfig {
-	enabled_modules: string[];
-	module_order: string[];
+	enabled_applications: string[];
+	application_order: string[];
 	sections: any[];
 }
 

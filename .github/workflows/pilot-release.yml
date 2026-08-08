@@ -54,6 +54,8 @@ jobs:
           echo "::add-mask::${CHAT_WEBHOOK_SECRET}"
           ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
           echo "::add-mask::${ADMIN_PASSWORD}"
+          DEMO_VIEWER_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+          echo "::add-mask::${DEMO_VIEWER_PASSWORD}"
           echo "jwt_secret=${JWT_SECRET}" >> "$GITHUB_OUTPUT"
           echo "encryption_key=${ENCRYPTION_KEY}" >> "$GITHUB_OUTPUT"
           echo "pg_password=${POSTGRES_PASSWORD}" >> "$GITHUB_OUTPUT"
@@ -61,6 +63,7 @@ jobs:
           echo "rustfs_root_password=${RUSTFS_ROOT_PASSWORD}" >> "$GITHUB_OUTPUT"
           echo "chat_webhook_secret=${CHAT_WEBHOOK_SECRET}" >> "$GITHUB_OUTPUT"
           echo "admin_password=${ADMIN_PASSWORD}" >> "$GITHUB_OUTPUT"
+          echo "demo_viewer_password=${DEMO_VIEWER_PASSWORD}" >> "$GITHUB_OUTPUT"
 
       - name: Validate pilot compose profile
         env:
@@ -85,6 +88,7 @@ jobs:
           RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
           RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
           RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
       - name: Wait for health endpoint

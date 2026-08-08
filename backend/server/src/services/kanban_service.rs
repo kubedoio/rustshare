@@ -2049,7 +2049,7 @@ impl KanbanService {
         board_folder_id: Uuid,
         user_id: UserId,
         tenant_id: Uuid,
-        module_config: Option<serde_json::Value>,
+        application_config: Option<serde_json::Value>,
     ) -> Result<(), KanbanError> {
         let board_folder = self
             .folder_service
@@ -2060,8 +2060,8 @@ impl KanbanService {
         let title = board_folder.name.replace('-', " ");
         let slug = slugify(&title);
 
-        // Try to extract kanban config from template module_config
-        let (columns, labels, settings) = if let Some(config) = module_config {
+        // Try to extract kanban config from template application_config
+        let (columns, labels, settings) = if let Some(config) = application_config {
             if let Some(kanban_config) = config.get("kanban") {
                 let columns: Vec<ColumnDef> = kanban_config
                     .get("columns")

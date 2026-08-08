@@ -1,13 +1,14 @@
-//! Template service for creating and managing module templates.
+//! Template service for creating and managing Application templates.
 
 use bytes::Bytes;
 use chrono::Utc;
 use rustshare_core::{
-    domain::{CreatedObject, Template, TemplateDefaultFile, UserId},
+    domain::{ApplicationRegistry, CreatedObject, Template, TemplateDefaultFile, UserId},
     services::{FileService, FolderService},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde_json::json;
+use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -27,8 +28,8 @@ pub enum TemplateError {
     NotFound(String),
     #[error("Template already exists: {0}")]
     AlreadyExists(String),
-    #[error("Module not found or disabled: {0}")]
-    ModuleNotFound(String),
+    #[error("ApplicationConfig not found or disabled: {0}")]
+    ApplicationNotFound(String),
     #[error("Permission denied")]
     PermissionDenied,
     #[error("Storage error: {0}")]
@@ -43,7 +44,7 @@ impl From<rustshare_core::services::FolderError> for TemplateError {
     fn from(e: rustshare_core::services::FolderError) -> Self {
         match e {
             rustshare_core::services::FolderError::NotFound(id) => {
-                TemplateError::ModuleNotFound(id.to_string())
+                TemplateError::ApplicationNotFound(id.to_string())
             }
             rustshare_core::services::FolderError::PermissionDenied { .. } => {
                 TemplateError::PermissionDenied
@@ -95,7 +96,7 @@ impl From<serde_json::Error> for TemplateError {
 pub struct CreateTemplateRequest {
     pub template_key: String,
     pub name: String,
-    pub module_key: String,
+    pub application_id: String,
     pub description: String,
     pub ui_config: Option<serde_json::Value>,
     pub folder_structure: Vec<String>,
@@ -103,7 +104,7 @@ pub struct CreateTemplateRequest {
     pub metadata_schema: serde_json::Value,
     pub renderer: Option<String>,
     pub visibility_policy: String,
-    pub module_config: Option<serde_json::Value>,
+    pub application_config: Option<serde_json::Value>,
 }
 
 /// Request to update a template.
@@ -118,7 +119,7 @@ pub struct UpdateTemplateRequest {
     pub renderer: Option<String>,
     pub visibility_policy: Option<String>,
     pub enabled: Option<bool>,
-    pub module_config: Option<serde_json::Value>,
+    pub application_config: Option<serde_json::Value>,
 }
 
 /// Service for managing templates and instantiating objects from them.
@@ -135,6 +136,7 @@ pub struct TemplateService {
         FolderService<rustshare_storage::EventStore, MetadataStore, PermissionResolverRepository>,
     >,
     metadata_store: Arc<MetadataStore>,
+    application_registry: Arc<ApplicationRegistry>,
 }
 
 impl TemplateService {
@@ -156,20 +158,48 @@ impl TemplateService {
         >,
         metadata_store: Arc<MetadataStore>,
     ) -> Self {
+        Self::with_registry(
+            file_service,
+            folder_service,
+            metadata_store,
+            Arc::new(ApplicationRegistry::first_party().expect("first-party manifests are valid")),
+        )
+    }
+
+    pub fn with_registry(
+        file_service: Arc<
+            FileService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                ObjectStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        folder_service: Arc<
+            FolderService<
+                rustshare_storage::EventStore,
+                MetadataStore,
+                PermissionResolverRepository,
+            >,
+        >,
+        metadata_store: Arc<MetadataStore>,
+        application_registry: Arc<ApplicationRegistry>,
+    ) -> Self {
         Self {
             file_service,
             folder_service,
             metadata_store,
+            application_registry,
         }
     }
 
-    /// Ensure default templates exist for predefined modules. Idempotent.
+    /// Ensure default templates exist for first-party Applications. Idempotent.
     pub async fn ensure_default_templates(&self, tenant_id: Uuid) -> Result<(), TemplateError> {
         let defaults = vec![
             (
                 "template_default_okf_note",
                 "Default OKF Note",
-                "notes",
+                "io.elembra.notes",
                 "1.0",
                 "Default OKF-native template for notes.",
                 vec![
@@ -228,7 +258,7 @@ rustshare:
             (
                 "template_default_meeting",
                 "Default Meeting Note",
-                "meetings",
+                "io.elembra.meetings",
                 "1.0",
                 "Default template for meeting notes with agenda, attendees, notes, decisions, and action items.",
                 vec!["attachments".to_string()],
@@ -267,7 +297,7 @@ rustshare:
             (
                 "template_default_standup",
                 "Default Standup Record",
-                "standups",
+                "io.elembra.standups",
                 "1.0",
                 "Default template for standup records.",
                 vec![],
@@ -299,7 +329,7 @@ rustshare:
             (
                 "template_default_kanban",
                 "Default Kanban Board",
-                "kanban",
+                "io.elembra.kanban",
                 "1.0",
                 "Creates a standard file-backed Kanban board folder structure.",
                 vec![
@@ -334,7 +364,7 @@ rustshare:
             (
                 "template_default_decision",
                 "Default Decision Record",
-                "decisions",
+                "io.elembra.decisions",
                 "1.0",
                 "Default template for decision records.",
                 vec![],
@@ -368,7 +398,7 @@ rustshare:
             (
                 "template_default_share",
                 "Default Share Package",
-                "shares",
+                "io.elembra.shares",
                 "1.0",
                 "Default template for share packages.",
                 vec!["files".to_string()],
@@ -380,7 +410,7 @@ rustshare:
                     },
                     TemplateDefaultFile {
                         path: ".rustshare-share.json".to_string(),
-                        content: Some(r#"{"type":"rustshare.share","module_key":"shares"}"#.to_string()),
+                        content: Some(r#"{"type":"rustshare.share","application_id":"io.elembra.shares"}"#.to_string()),
                         content_type: Some("application/json".to_string()),
                     },
                 ],
@@ -390,7 +420,7 @@ rustshare:
             (
                 "template_blank_brainstorm",
                 "Blank Board",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A blank visual brainstorming board.",
                 Vec::<String>::new(),
@@ -417,7 +447,7 @@ rustshare:
             (
                 "template_decision_making_brainstorm",
                 "Decision Making & Brainstorming",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A structured board for brainstorming, synthesis, decision making, actions, and learning.",
                 Vec::<String>::new(),
@@ -444,7 +474,7 @@ rustshare:
             (
                 "template_meeting_whiteboard",
                 "Meeting Whiteboard",
-                "brainstorming",
+                "io.elembra.brainstorming",
                 "1.0",
                 "A whiteboard template for meeting notes, decisions, and action items.",
                 Vec::<String>::new(),
@@ -473,7 +503,7 @@ rustshare:
         for (
             key,
             name,
-            module_key,
+            application_id,
             version,
             description,
             folder_structure,
@@ -509,8 +539,8 @@ rustshare:
             } else {
                 json!({})
             };
-            let module_config = if key == "template_default_kanban" {
-                default_kanban_module_config()
+            let application_config = if key == "template_default_kanban" {
+                default_kanban_application_config()
             } else {
                 json!({})
             };
@@ -529,7 +559,7 @@ rustshare:
                     id: Uuid::new_v4(),
                     template_key: key.to_string(),
                     name: name.to_string(),
-                    module_key: module_key.to_string(),
+                    application_id: application_id.to_string(),
                     version: version.to_string(),
                     description: description.to_string(),
                     ui_config,
@@ -540,7 +570,7 @@ rustshare:
                     visibility_policy: "workspace".to_string(),
                     ai_indexing_policy,
                     audit_logging_policy: json!({"enabled": true}),
-                    module_config,
+                    application_config,
                     created_by: None,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
@@ -549,37 +579,37 @@ rustshare:
                     tenant_id,
                 };
 
-                sqlx::query!(
+                sqlx::query(
                     r#"
                     INSERT INTO templates (
-                        id, template_key, name, module_key, version, description, ui_config,
+                        id, template_key, name, application_id, version, description, ui_config,
                         folder_structure, default_files, metadata_schema, renderer,
-                        visibility_policy, ai_indexing_policy, audit_logging_policy, module_config,
+                        visibility_policy, ai_indexing_policy, audit_logging_policy, application_config,
                         created_by, created_at, updated_at, enabled, system_template, tenant_id
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                     "#,
-                    template.id,
-                    &template.template_key,
-                    &template.name,
-                    &template.module_key,
-                    &template.version,
-                    &template.description,
-                    &template.ui_config,
-                    &template.folder_structure,
-                    &template.default_files,
-                    &template.metadata_schema,
-                    template.renderer.as_deref(),
-                    &template.visibility_policy,
-                    &template.ai_indexing_policy,
-                    &template.audit_logging_policy,
-                    &template.module_config,
-                    template.created_by,
-                    template.created_at,
-                    template.updated_at,
-                    template.enabled,
-                    template.system_template,
-                    template.tenant_id
                 )
+                .bind(template.id)
+                .bind(&template.template_key)
+                .bind(&template.name)
+                .bind(&template.application_id)
+                .bind(&template.version)
+                .bind(&template.description)
+                .bind(&template.ui_config)
+                .bind(&template.folder_structure)
+                .bind(&template.default_files)
+                .bind(&template.metadata_schema)
+                .bind(template.renderer.as_deref())
+                .bind(&template.visibility_policy)
+                .bind(&template.ai_indexing_policy)
+                .bind(&template.audit_logging_policy)
+                .bind(&template.application_config)
+                .bind(template.created_by)
+                .bind(template.created_at)
+                .bind(template.updated_at)
+                .bind(template.enabled)
+                .bind(template.system_template)
+                .bind(template.tenant_id)
                 .execute(self.metadata_store.pool())
                 .await?;
             } else {
@@ -617,24 +647,24 @@ rustshare:
                 .execute(self.metadata_store.pool())
                 .await?;
 
-                // Kanban also needs ui_config and module_config updates
+                // Kanban also needs ui_config and application_config updates
                 if key == "template_default_kanban" {
-                    sqlx::query!(
+                    sqlx::query(
                         r#"
                         UPDATE templates
                         SET ui_config = $1,
-                            module_config = $2,
+                            application_config = $2,
                             system_template = true,
                             updated_at = $3
                         WHERE template_key = $4
                           AND tenant_id = $5
                         "#,
-                        ui_config,
-                        module_config,
-                        Utc::now(),
-                        key,
-                        tenant_id
                     )
+                    .bind(ui_config)
+                    .bind(application_config)
+                    .bind(Utc::now())
+                    .bind(key)
+                    .bind(tenant_id)
                     .execute(self.metadata_store.pool())
                     .await?;
                 }
@@ -652,31 +682,26 @@ rustshare:
         tenant_id: Uuid,
     ) -> Result<Template, TemplateError> {
         // Validate uniqueness
-        let row = sqlx::query!(
+        let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM templates WHERE template_key = $1 AND tenant_id = $2) as exists",
-            &request.template_key,
-            tenant_id
         )
+        .bind(&request.template_key)
+        .bind(tenant_id)
         .fetch_one(self.metadata_store.pool())
         .await?;
-        let exists = row.exists.unwrap_or(false);
 
         if exists {
             return Err(TemplateError::AlreadyExists(request.template_key));
         }
 
-        // Validate module exists
-        let row = sqlx::query!(
-            "SELECT EXISTS(SELECT 1 FROM modules WHERE module_key = $1 AND tenant_id = $2) as exists",
-            &request.module_key,
-            tenant_id
-        )
-        .fetch_one(self.metadata_store.pool())
-        .await?;
-        let module_exists = row.exists.unwrap_or(false);
-
-        if !module_exists {
-            return Err(TemplateError::ModuleNotFound(request.module_key));
+        if self
+            .application_registry
+            .manifest(&rustshare_core::domain::ApplicationId::new(
+                &request.application_id,
+            ))
+            .is_none()
+        {
+            return Err(TemplateError::ApplicationNotFound(request.application_id));
         }
 
         // Validate folder structure
@@ -687,8 +712,8 @@ rustshare:
         if let Some(ui_config) = request.ui_config.as_ref() {
             validate_template_ui_config(ui_config)?;
         }
-        if let Some(module_config) = request.module_config.as_ref() {
-            validate_template_module_config(&request.module_key, module_config)?;
+        if let Some(application_config) = request.application_config.as_ref() {
+            validate_template_application_config(&request.application_id, application_config)?;
         }
 
         // Validate default files
@@ -700,7 +725,7 @@ rustshare:
             id: Uuid::new_v4(),
             template_key: request.template_key,
             name: request.name,
-            module_key: request.module_key,
+            application_id: request.application_id,
             version: "1.0".to_string(),
             description: request.description,
             ui_config: request.ui_config.unwrap_or_else(|| json!({})),
@@ -711,7 +736,7 @@ rustshare:
             visibility_policy: request.visibility_policy,
             ai_indexing_policy: json!({"enabled": true}),
             audit_logging_policy: json!({"enabled": true}),
-            module_config: request.module_config.unwrap_or_else(|| json!({})),
+            application_config: request.application_config.unwrap_or_else(|| json!({})),
             created_by: Some(created_by),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -720,37 +745,37 @@ rustshare:
             tenant_id,
         };
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO templates (
-                id, template_key, name, module_key, version, description, ui_config,
+                id, template_key, name, application_id, version, description, ui_config,
                 folder_structure, default_files, metadata_schema, renderer,
-                visibility_policy, ai_indexing_policy, audit_logging_policy, module_config,
+                visibility_policy, ai_indexing_policy, audit_logging_policy, application_config,
                 created_by, created_at, updated_at, enabled, system_template, tenant_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             "#,
-            template.id,
-            &template.template_key,
-            &template.name,
-            &template.module_key,
-            &template.version,
-            &template.description,
-            &template.ui_config,
-            &template.folder_structure,
-            &template.default_files,
-            &template.metadata_schema,
-            template.renderer.as_deref(),
-            &template.visibility_policy,
-            &template.ai_indexing_policy,
-            &template.audit_logging_policy,
-            &template.module_config,
-            template.created_by,
-            template.created_at,
-            template.updated_at,
-            template.enabled,
-            template.system_template,
-            template.tenant_id
         )
+        .bind(template.id)
+        .bind(&template.template_key)
+        .bind(&template.name)
+        .bind(&template.application_id)
+        .bind(&template.version)
+        .bind(&template.description)
+        .bind(&template.ui_config)
+        .bind(&template.folder_structure)
+        .bind(&template.default_files)
+        .bind(&template.metadata_schema)
+        .bind(template.renderer.as_deref())
+        .bind(&template.visibility_policy)
+        .bind(&template.ai_indexing_policy)
+        .bind(&template.audit_logging_policy)
+        .bind(&template.application_config)
+        .bind(template.created_by)
+        .bind(template.created_at)
+        .bind(template.updated_at)
+        .bind(template.enabled)
+        .bind(template.system_template)
+        .bind(template.tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -759,10 +784,10 @@ rustshare:
 
     /// List all templates.
     pub async fn list_templates(&self, tenant_id: Uuid) -> Result<Vec<Template>, TemplateError> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as::<_, Template>(
             "SELECT * FROM templates WHERE tenant_id = $1 ORDER BY name",
-            tenant_id
         )
+        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
@@ -772,18 +797,18 @@ rustshare:
                 id: row.id,
                 template_key: row.template_key,
                 name: row.name,
-                module_key: row.module_key,
-                version: row.version.unwrap_or_default(),
-                description: row.description.unwrap_or_default(),
+                application_id: row.application_id,
+                version: row.version,
+                description: row.description,
                 ui_config: row.ui_config,
                 folder_structure: row.folder_structure,
                 default_files: row.default_files,
                 metadata_schema: row.metadata_schema,
                 renderer: row.renderer,
-                visibility_policy: row.visibility_policy.unwrap_or_default(),
+                visibility_policy: row.visibility_policy,
                 ai_indexing_policy: row.ai_indexing_policy,
                 audit_logging_policy: row.audit_logging_policy,
-                module_config: row.module_config,
+                application_config: row.application_config,
                 created_by: row.created_by,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
@@ -796,17 +821,17 @@ rustshare:
         Ok(templates)
     }
 
-    /// List templates for a specific module.
-    pub async fn list_templates_by_module(
+    /// List templates for a specific Application.
+    pub async fn list_templates_by_application(
         &self,
-        module_key: &str,
+        application_id: &str,
         tenant_id: Uuid,
     ) -> Result<Vec<Template>, TemplateError> {
-        let rows = sqlx::query!(
-            "SELECT * FROM templates WHERE module_key = $1 AND tenant_id = $2 ORDER BY name",
-            module_key,
-            tenant_id
+        let rows = sqlx::query_as::<_, Template>(
+            "SELECT * FROM templates WHERE application_id = $1 AND tenant_id = $2 ORDER BY name",
         )
+        .bind(application_id)
+        .bind(tenant_id)
         .fetch_all(self.metadata_store.pool())
         .await?;
 
@@ -816,18 +841,18 @@ rustshare:
                 id: row.id,
                 template_key: row.template_key,
                 name: row.name,
-                module_key: row.module_key,
-                version: row.version.unwrap_or_default(),
-                description: row.description.unwrap_or_default(),
+                application_id: row.application_id,
+                version: row.version,
+                description: row.description,
                 ui_config: row.ui_config,
                 folder_structure: row.folder_structure,
                 default_files: row.default_files,
                 metadata_schema: row.metadata_schema,
                 renderer: row.renderer,
-                visibility_policy: row.visibility_policy.unwrap_or_default(),
+                visibility_policy: row.visibility_policy,
                 ai_indexing_policy: row.ai_indexing_policy,
                 audit_logging_policy: row.audit_logging_policy,
-                module_config: row.module_config,
+                application_config: row.application_config,
                 created_by: row.created_by,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
@@ -846,11 +871,11 @@ rustshare:
         key: &str,
         tenant_id: Uuid,
     ) -> Result<Template, TemplateError> {
-        let row = sqlx::query!(
+        let row = sqlx::query_as::<_, Template>(
             "SELECT * FROM templates WHERE template_key = $1 AND tenant_id = $2",
-            key,
-            tenant_id
         )
+        .bind(key)
+        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
@@ -858,18 +883,18 @@ rustshare:
             id: row.id,
             template_key: row.template_key,
             name: row.name,
-            module_key: row.module_key,
-            version: row.version.unwrap_or_default(),
-            description: row.description.unwrap_or_default(),
+            application_id: row.application_id,
+            version: row.version,
+            description: row.description,
             ui_config: row.ui_config,
             folder_structure: row.folder_structure,
             default_files: row.default_files,
             metadata_schema: row.metadata_schema,
             renderer: row.renderer,
-            visibility_policy: row.visibility_policy.unwrap_or_default(),
+            visibility_policy: row.visibility_policy,
             ai_indexing_policy: row.ai_indexing_policy,
             audit_logging_policy: row.audit_logging_policy,
-            module_config: row.module_config,
+            application_config: row.application_config,
             created_by: row.created_by,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -905,8 +930,8 @@ rustshare:
         if let Some(ui_config) = request.ui_config.as_ref() {
             validate_template_ui_config(ui_config)?;
         }
-        if let Some(module_config) = request.module_config.as_ref() {
-            validate_template_module_config(&template.module_key, module_config)?;
+        if let Some(application_config) = request.application_config.as_ref() {
+            validate_template_application_config(&template.application_id, application_config)?;
         }
 
         let modifies_structure = request.description.is_some()
@@ -916,7 +941,7 @@ rustshare:
             || request.renderer.is_some()
             || request.visibility_policy.is_some()
             || request.ui_config.is_some()
-            || request.module_config.is_some();
+            || request.application_config.is_some();
 
         let name = request.name.unwrap_or(template.name);
         let description = request.description.unwrap_or(template.description);
@@ -937,7 +962,9 @@ rustshare:
             .visibility_policy
             .unwrap_or(template.visibility_policy);
         let enabled = request.enabled.unwrap_or(template.enabled);
-        let module_config = request.module_config.unwrap_or(template.module_config);
+        let application_config = request
+            .application_config
+            .unwrap_or(template.application_config);
 
         let system_template = template.system_template;
         if system_template && modifies_structure {
@@ -946,27 +973,27 @@ rustshare:
             ));
         }
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE templates
             SET name = $1, description = $2, ui_config = $3, folder_structure = $4,
                 default_files = $5, metadata_schema = $6, renderer = $7,
-                visibility_policy = $8, enabled = $9, module_config = $10, updated_at = now()
+                visibility_policy = $8, enabled = $9, application_config = $10, updated_at = now()
             WHERE template_key = $11 AND tenant_id = $12
             "#,
-            name,
-            description,
-            ui_config,
-            folder_structure,
-            default_files,
-            metadata_schema,
-            renderer,
-            visibility_policy,
-            enabled,
-            module_config,
-            key,
-            tenant_id
         )
+        .bind(name)
+        .bind(description)
+        .bind(ui_config)
+        .bind(folder_structure)
+        .bind(default_files)
+        .bind(metadata_schema)
+        .bind(renderer)
+        .bind(visibility_policy)
+        .bind(enabled)
+        .bind(application_config)
+        .bind(key)
+        .bind(tenant_id)
         .execute(self.metadata_store.pool())
         .await?;
 
@@ -1010,27 +1037,36 @@ rustshare:
             return Err(TemplateError::NotFound(template_key.to_string()));
         }
 
-        let module_row = sqlx::query!(
-            "SELECT enabled, root_path, permissions FROM modules WHERE module_key = $1 AND tenant_id = $2",
-            &template.module_key,
-            tenant_id
+        let enablement_row = sqlx::query(
+            "SELECT enabled, configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2",
         )
+        .bind(&template.application_id)
+        .bind(tenant_id)
         .fetch_optional(self.metadata_store.pool())
         .await?;
 
-        let Some(module_row) = module_row else {
-            return Err(TemplateError::ModuleNotFound(template.module_key));
+        let Some(enablement_row) = enablement_row else {
+            return Err(TemplateError::ApplicationNotFound(template.application_id));
         };
-        let module_enabled = module_row.enabled;
-        let root_path = module_row.root_path;
-        let permissions = module_row.permissions;
+        let application_enabled: bool = enablement_row.try_get("enabled")?;
+        let configuration: serde_json::Value = enablement_row.try_get("configuration")?;
+        let root_path = configuration
+            .get("rootPath")
+            .and_then(|value| value.as_str())
+            .unwrap_or("/Workspace")
+            .to_string();
+        let permissions = configuration
+            .get("permissions")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
-        if !module_enabled {
-            return Err(TemplateError::ModuleNotFound(template.module_key));
+        if !application_enabled {
+            return Err(TemplateError::ApplicationNotFound(template.application_id));
         }
 
         let is_admin = self.is_admin_user(owner_id, tenant_id).await?;
-        if !user_can_access_template_module(&permissions, is_admin) {
+        if !user_can_access_template_application(&permissions, is_admin) {
             return Err(TemplateError::PermissionDenied);
         }
 
@@ -1039,7 +1075,7 @@ rustshare:
             Some(id)
         } else {
             // Resolve workspace-style paths like /Workspace/Notes:
-            // ensure Workspace exists at root, then find/create module folder under it
+            // ensure Workspace exists at root, then find/create the Application folder under it
             let segments: Vec<&str> = root_path.trim_start_matches('/').split('/').collect();
 
             let ws_folder = {
@@ -1058,10 +1094,10 @@ rustshare:
                 }
             };
 
-            let module_name = segments.last().copied().unwrap_or("");
-            if module_name.is_empty() {
+            let application_name = segments.last().copied().unwrap_or("");
+            if application_name.is_empty() {
                 return Err(TemplateError::InvalidData(
-                    "Invalid module root path".to_string(),
+                    "Invalid Application root path".to_string(),
                 ));
             }
 
@@ -1071,13 +1107,13 @@ rustshare:
                 .await
                 .map_err(|e| TemplateError::Database(e.to_string()))?;
 
-            if let Some(existing) = ws_children.into_iter().find(|f| f.name == module_name) {
+            if let Some(existing) = ws_children.into_iter().find(|f| f.name == application_name) {
                 Some(existing.id)
             } else {
                 let folder = self
                     .folder_service
                     .create_folder_or_get(
-                        module_name.to_string(),
+                        application_name.to_string(),
                         Some(ws_folder.id),
                         owner_id,
                         tenant_id,
@@ -1092,7 +1128,7 @@ rustshare:
 
         let default_files: Vec<TemplateDefaultFile> =
             serde_json::from_value(template.default_files.clone())?;
-        match resolve_creation_mode(&template.module_key) {
+        match resolve_creation_mode(&template.application_id) {
             TemplateCreationMode::SingleFile => {
                 self.create_single_file_object(
                     &template,
@@ -1200,7 +1236,7 @@ rustshare:
             let content =
                 render_template_string(file.content.as_deref().unwrap_or_default(), &name, &name);
             // Replace OKF note placeholders first so they don't collide with the
-            // generic {{id}} placeholder used by other module templates.
+            // generic {{id}} placeholder used by other Application templates.
             let content = content
                 .replace("{{okf_id}}", &object_okf_id.to_string())
                 .replace("{{workspace_id}}", &tenant_id.to_string())
@@ -1335,7 +1371,7 @@ rustshare:
     }
 }
 
-fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bool) -> bool {
+fn user_can_access_template_application(permissions: &serde_json::Value, is_admin: bool) -> bool {
     if is_admin {
         return true;
     }
@@ -1346,14 +1382,14 @@ fn user_can_access_template_module(permissions: &serde_json::Value, is_admin: bo
         .unwrap_or(true)
 }
 
-fn resolve_creation_mode(module_key: &str) -> TemplateCreationMode {
-    match module_key {
-        "decisions" => TemplateCreationMode::SingleFile,
+fn resolve_creation_mode(application_id: &str) -> TemplateCreationMode {
+    match application_id {
+        "io.elembra.decisions" => TemplateCreationMode::SingleFile,
         _ => TemplateCreationMode::Folder,
     }
 }
 
-fn default_kanban_module_config() -> serde_json::Value {
+fn default_kanban_application_config() -> serde_json::Value {
     json!({
         "kanban": {
             "columns": [
@@ -1464,15 +1500,15 @@ fn validate_template_ui_config(ui_config: &serde_json::Value) -> Result<(), Temp
     Ok(())
 }
 
-fn validate_template_module_config(
-    module_key: &str,
-    module_config: &serde_json::Value,
+fn validate_template_application_config(
+    application_id: &str,
+    application_config: &serde_json::Value,
 ) -> Result<(), TemplateError> {
-    if module_key != "kanban" {
+    if application_id != "io.elembra.kanban" {
         return Ok(());
     }
 
-    let Some(kanban) = module_config
+    let Some(kanban) = application_config
         .get("kanban")
         .and_then(|value| value.as_object())
     else {
@@ -1613,9 +1649,12 @@ mod tests {
     }
 
     #[test]
-    fn test_template_error_display_module_not_found() {
-        let err = TemplateError::ModuleNotFound("unknown".to_string());
-        assert_eq!(err.to_string(), "Module not found or disabled: unknown");
+    fn test_template_error_display_application_not_found() {
+        let err = TemplateError::ApplicationNotFound("unknown".to_string());
+        assert_eq!(
+            err.to_string(),
+            "ApplicationConfig not found or disabled: unknown"
+        );
     }
 
     #[test]
@@ -1656,13 +1695,16 @@ mod tests {
 
     #[test]
     fn notes_templates_use_folder_creation_mode() {
-        assert_eq!(resolve_creation_mode("notes"), TemplateCreationMode::Folder);
+        assert_eq!(
+            resolve_creation_mode("io.elembra.notes"),
+            TemplateCreationMode::Folder
+        );
     }
 
     #[test]
     fn standup_templates_use_folder_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("standups"),
+            resolve_creation_mode("io.elembra.standups"),
             TemplateCreationMode::Folder
         );
     }
@@ -1670,7 +1712,7 @@ mod tests {
     #[test]
     fn decision_templates_use_single_file_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("decisions"),
+            resolve_creation_mode("io.elembra.decisions"),
             TemplateCreationMode::SingleFile
         );
     }
@@ -1678,7 +1720,7 @@ mod tests {
     #[test]
     fn meeting_templates_use_folder_creation_mode() {
         assert_eq!(
-            resolve_creation_mode("meetings"),
+            resolve_creation_mode("io.elembra.meetings"),
             TemplateCreationMode::Folder
         );
     }
@@ -1687,7 +1729,7 @@ mod tests {
     fn rejects_template_paths_that_escape_or_target_reserved_locations() {
         assert!(validate_default_file_path("../escape.md").is_err());
         assert!(validate_default_file_path("/absolute.md").is_err());
-        assert!(validate_default_file_path(".rustshare/system/modules/modules.json").is_err());
+        assert!(validate_default_file_path(".rustshare/system/apps/applications.json").is_err());
     }
 
     #[test]
@@ -1715,7 +1757,7 @@ mod tests {
         // Mirror the default entry used by ensure_default_templates.
         let expected_key = "template_default_okf_note";
         let expected_name = "Default OKF Note";
-        let expected_module = "notes";
+        let expected_application = "notes";
         let expected_renderer = "okf-note";
         let expected_metadata_schema = json!({
             "type": "rustshare.note",
@@ -1732,7 +1774,7 @@ mod tests {
 
         assert_eq!(expected_key, "template_default_okf_note");
         assert_eq!(expected_name, "Default OKF Note");
-        assert_eq!(expected_module, "notes");
+        assert_eq!(expected_application, "notes");
         assert_eq!(expected_renderer, "okf-note");
         assert_eq!(
             expected_metadata_schema.get("type").unwrap(),
@@ -1799,7 +1841,7 @@ rustshare:
 
     #[test]
     fn non_notes_default_templates_keep_legacy_renderers() {
-        // The OKF-native change must not leak into other module templates.
+        // The OKF-native change must not leak into other Application templates.
         let non_notes_renderers = [
             "meetings",
             "standups",

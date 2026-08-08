@@ -7,7 +7,7 @@
 	const navItems = [
 		{ href: '/admin/users', label: 'Users', icon: 'users' },
 		{ href: '/admin/groups', label: 'Groups', icon: 'group' },
-		{ href: '/admin/modules', label: 'Modules', icon: 'grid' },
+		{ href: '/admin/applications', label: 'Applications', icon: 'grid' },
 		{ href: '/admin/templates', label: 'Templates', icon: 'template' },
 		{ href: '/admin/workflows', label: 'Workflows', icon: 'workflow' },
 		{ href: '/admin/oidc', label: 'OIDC / SSO', icon: 'shield' },

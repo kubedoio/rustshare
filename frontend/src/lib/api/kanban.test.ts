@@ -23,7 +23,7 @@ describe('kanban API', () => {
 
 		await expect(listKanbanBoards(50)).resolves.toHaveLength(50);
 		expect(apiClient.get).toHaveBeenCalledTimes(1);
-		expect(apiClient.get).toHaveBeenCalledWith('/modules/kanban/boards?per_page=50');
+		expect(apiClient.get).toHaveBeenCalledWith('/applications/kanban/boards?per_page=50');
 	});
 
 	it('fetches all board pages when no limit is provided', async () => {
@@ -36,7 +36,13 @@ describe('kanban API', () => {
 		vi.mocked(apiClient.get).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
 
 		await expect(listKanbanBoards()).resolves.toHaveLength(101);
-		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/modules/kanban/boards?page=1&per_page=100');
-		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/modules/kanban/boards?page=2&per_page=100');
+		expect(apiClient.get).toHaveBeenNthCalledWith(
+			1,
+			'/applications/kanban/boards?page=1&per_page=100'
+		);
+		expect(apiClient.get).toHaveBeenNthCalledWith(
+			2,
+			'/applications/kanban/boards?page=2&per_page=100'
+		);
 	});
 });

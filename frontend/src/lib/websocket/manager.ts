@@ -417,7 +417,7 @@ function handleBrainstormBoardModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['brainstorm-board-source', payload.board_id] });
 	queryClient.invalidateQueries({ queryKey: ['brainstorm-boards'] });
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Brainstorm board "${payload.title}" was updated`, 'info');
 	}
@@ -429,7 +429,7 @@ function handleMeetingNoteModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'meetings', payload.meeting_id] });
 	queryClient.invalidateQueries({ queryKey: ['meetings'] });
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Meeting note "${payload.title}" was updated`, 'info');
 	}
@@ -441,7 +441,7 @@ function handleDecisionModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'decisions', payload.decision_id] });
 	queryClient.invalidateQueries({ queryKey: ['decisions'] });
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Decision "${payload.title}" was updated`, 'info');
 	}
@@ -453,7 +453,7 @@ function handleStandupModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['module-item', 'standups', payload.standup_id] });
 	queryClient.invalidateQueries({ queryKey: ['standups'] });
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Standup "${payload.title}" was updated`, 'info');
 	}
@@ -472,7 +472,7 @@ function handleKanbanModified(event: WebSocketEvent): void {
 		queryClient.invalidateQueries({ queryKey: ['kanban-card-detail', payload.card_id] });
 	}
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show('Kanban board was updated', 'info');
 	}
@@ -484,7 +484,7 @@ function handleNoteModified(event: WebSocketEvent): void {
 	queryClient.invalidateQueries({ queryKey: ['note', payload.note_id] });
 	queryClient.invalidateQueries({ queryKey: ['notes'] });
 	queryClient.invalidateQueries({ queryKey: ['workspace-module-summaries'] });
-	queryClient.invalidateQueries({ queryKey: ['enabled-modules'] });
+	queryClient.invalidateQueries({ queryKey: ['enabled-applications'] });
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Note "${payload.title}" was updated`, 'info');
 	}

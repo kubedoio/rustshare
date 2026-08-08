@@ -2,13 +2,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A template configuration for creating module objects.
+/// A template configuration for creating Application-owned objects.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct Template {
     pub id: Uuid,
     pub template_key: String,
     pub name: String,
-    pub module_key: String,
+    pub application_id: String,
     pub version: String,
     pub description: String,
     pub ui_config: serde_json::Value,
@@ -19,7 +19,7 @@ pub struct Template {
     pub visibility_policy: String,
     pub ai_indexing_policy: serde_json::Value,
     pub audit_logging_policy: serde_json::Value,
-    pub module_config: serde_json::Value,
+    pub application_config: serde_json::Value,
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -86,7 +86,7 @@ mod tests {
             id: Uuid::nil(),
             template_key: "template_default_okf_note".to_string(),
             name: "Default OKF Note".to_string(),
-            module_key: "notes".to_string(),
+            application_id: "io.elembra.notes".to_string(),
             version: "1.0".to_string(),
             description: "Default OKF-native template for notes.".to_string(),
             ui_config: serde_json::json!({
@@ -117,7 +117,7 @@ mod tests {
                 "permission_aware": true
             }),
             audit_logging_policy: serde_json::json!({"enabled": true}),
-            module_config: serde_json::json!({}),
+            application_config: serde_json::json!({}),
             created_by: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -132,7 +132,7 @@ mod tests {
         // Canonical snake_case field names must be present
         assert!(obj.contains_key("id"), "missing id");
         assert!(obj.contains_key("template_key"), "missing template_key");
-        assert!(obj.contains_key("module_key"), "missing module_key");
+        assert!(obj.contains_key("application_id"), "missing application_id");
         assert!(
             obj.contains_key("folder_structure"),
             "missing folder_structure"
@@ -154,7 +154,10 @@ mod tests {
             obj.contains_key("audit_logging_policy"),
             "missing audit_logging_policy"
         );
-        assert!(obj.contains_key("module_config"), "missing module_config");
+        assert!(
+            obj.contains_key("application_config"),
+            "missing application_config"
+        );
         assert!(obj.contains_key("created_by"), "missing created_by");
         assert!(
             obj.contains_key("system_template"),

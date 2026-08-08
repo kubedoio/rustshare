@@ -1014,7 +1014,7 @@ impl NoteService {
     /// Find or create the target folder under workspace.
     ///
     /// Legacy module root policy: new writes are always directed to the
-    /// canonical /Workspace/<Module> path. Legacy roots are read-only.
+    /// canonical /Workspace/<ApplicationConfig> path. Legacy roots are read-only.
     async fn ensure_target_folder(
         &self,
         owner_id: UserId,

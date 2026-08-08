@@ -47,7 +47,7 @@ export async function listBrainstormBoards(): Promise<BrainstormBoard[]> {
 
 	while (true) {
 		const response = await apiClient.get<ListBoardsResponse>(
-			`/modules/brainstorming/boards?page=${page}&per_page=${MAX_PAGE_SIZE}`
+			`/applications/brainstorming/boards?page=${page}&per_page=${MAX_PAGE_SIZE}`
 		);
 		boards.push(...response.boards);
 
@@ -63,19 +63,19 @@ export async function createBrainstormBoard(
 	title: string,
 	templateKey: string
 ): Promise<CreateBoardResponse> {
-	return apiClient.post<CreateBoardResponse>('/modules/brainstorming/boards', {
+	return apiClient.post<CreateBoardResponse>('/applications/brainstorming/boards', {
 		title,
 		template_key: templateKey
 	});
 }
 
 export async function getBrainstormBoard(boardId: string): Promise<BrainstormBoard> {
-	return apiClient.get<BrainstormBoard>(`/modules/brainstorming/boards/${boardId}`);
+	return apiClient.get<BrainstormBoard>(`/applications/brainstorming/boards/${boardId}`);
 }
 
 export async function getBrainstormBoardSource(boardId: string): Promise<string> {
 	const response = await apiClient.get<GetBoardSourceResponse>(
-		`/modules/brainstorming/boards/${boardId}/source`
+		`/applications/brainstorming/boards/${boardId}/source`
 	);
 	return response.source;
 }
@@ -84,7 +84,7 @@ export async function saveBrainstormBoardSource(
 	boardId: string,
 	source: string
 ): Promise<BrainstormBoard> {
-	return apiClient.put<BrainstormBoard>(`/modules/brainstorming/boards/${boardId}/source`, {
+	return apiClient.put<BrainstormBoard>(`/applications/brainstorming/boards/${boardId}/source`, {
 		source
 	});
 }
@@ -93,13 +93,16 @@ export async function updateBrainstormBoardPreview(
 	boardId: string,
 	pngBlob: Blob
 ): Promise<BrainstormBoard> {
-	return apiClient.request<BrainstormBoard>(`/modules/brainstorming/boards/${boardId}/preview`, {
-		method: 'PUT',
-		body: pngBlob,
-		headers: { 'Content-Type': 'image/png' }
-	});
+	return apiClient.request<BrainstormBoard>(
+		`/applications/brainstorming/boards/${boardId}/preview`,
+		{
+			method: 'PUT',
+			body: pngBlob,
+			headers: { 'Content-Type': 'image/png' }
+		}
+	);
 }
 
 export async function deleteBrainstormBoard(boardId: string): Promise<void> {
-	return apiClient.delete(`/modules/brainstorming/boards/${boardId}`);
+	return apiClient.delete(`/applications/brainstorming/boards/${boardId}`);
 }

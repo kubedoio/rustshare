@@ -1,10 +1,12 @@
+mod application;
+mod application_config;
+mod application_user_preference;
 mod device_token;
 mod file;
 mod file_version;
 mod folder;
 mod mail_link;
 mod mail_message;
-mod module;
 mod notification;
 mod oidc_login_state;
 mod replication;
@@ -14,7 +16,6 @@ mod template;
 mod tenant_config;
 mod thumbnail;
 mod user;
-mod user_module_preference;
 mod user_session;
 mod vault;
 
@@ -23,6 +24,11 @@ pub use mail_account::*;
 
 pub use device_token::{DevicePairRequest, DeviceToken};
 
+pub use application::*;
+pub use application_config::{
+    AiIndexingPolicy, ApplicationConfig, ApplicationPermissions, AuditPolicy,
+};
+pub use application_user_preference::ApplicationUserPreference;
 pub use file::File;
 pub use file_version::{FileVersion, ReplicationState};
 pub use folder::Folder;
@@ -30,7 +36,6 @@ pub use mail_link::{LinkTargetType, MailLink, MailLinkId};
 pub use mail_message::{
     MailAttachment, MailMessage, MailMessagePart, MailSortOrder, MailSourceMode, MailVisibility,
 };
-pub use module::{AiIndexingPolicy, AuditPolicy, Module, ModulePermissions};
 pub use notification::{Notification, NotificationId, NotificationType, ResourceType};
 pub use oidc_login_state::OidcLoginState;
 pub use replication::{
@@ -47,7 +52,6 @@ pub use thumbnail::{
     SUPPORTED_VIDEO_TYPES,
 };
 pub use user::{DashboardConfig, Theme, User};
-pub use user_module_preference::UserModulePreference;
 pub use user_session::UserSession;
 pub use vault::{
     CreateVaultRequest, DeleteVaultFileRequest, RenameVaultFileRequest,

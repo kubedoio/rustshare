@@ -24,8 +24,8 @@
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { listAllFiles } from '$lib/api/files';
 	import type { File } from '$lib/api/types';
-	import { getAllModules } from '$lib/modules/registry';
-	import { userModulePreferences } from '$lib/stores/userModulePreferences';
+	import { applicationsStore } from '$lib/applications/registry';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 	import { createQuery } from '$lib/query-compat';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
 	import {
@@ -56,12 +56,26 @@
 		'appearance',
 		'sharing',
 		'activity',
-		'modules',
+		'applications',
 		'mail'
 	];
 
 	// State
 	let activeTab = $state<TabId>('general');
+	let applicationSettingLinks = $derived(
+		$applicationsStore
+			.filter((application) => application.enabled)
+			.filter((application) => $userApplicationPreferences.preferences[application.id] !== false)
+			.flatMap((application) =>
+				(application.settings ?? [])
+					.filter((setting) => Boolean(setting.route))
+					.map((setting) => ({
+						id: setting.id,
+						label: setting.label ?? `${application.displayName} settings`,
+						route: setting.route!
+					}))
+			)
+	);
 	let showToast = $state(false);
 	let toastMessage = $state('');
 	let toastType = $state<'success' | 'error' | 'info'>('info');
@@ -358,7 +372,11 @@
 	</div>
 
 	<!-- Tabs -->
-	<SettingsTabs {activeTab} onTabChange={(tab) => (activeTab = tab)} />
+	<SettingsTabs
+		{activeTab}
+		applicationSettings={applicationSettingLinks}
+		onTabChange={(tab) => (activeTab = tab)}
+	/>
 
 	<!-- Tab Content -->
 	<div class="mt-6">
@@ -913,15 +931,15 @@
 					</div>
 				</div>
 			</div>
-		{:else if activeTab === 'modules'}
+		{:else if activeTab === 'applications'}
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
 					<SettingsSection
-						title="Module Preferences"
-						description="Enable or disable modules you want to use in your workspace."
+						title="Application Preferences"
+						description="Enable or disable Applications you want to use in your workspace."
 					>
 						<div class="flex flex-col gap-4">
-							{#each getAllModules().filter((m) => m.enabled) as module}
+							{#each $applicationsStore.filter((m) => m.enabled) as application}
 								<div
 									class="flex items-center justify-between rounded-xl border border-base-300 bg-base-100 p-4"
 								>
@@ -932,17 +950,17 @@
 											<FileText size={18} />
 										</div>
 										<div>
-											<p class="text-sm font-medium text-base-content">{module.displayName}</p>
-											<p class="text-xs text-base-content/50">{module.description}</p>
+											<p class="text-sm font-medium text-base-content">{application.displayName}</p>
+											<p class="text-xs text-base-content/50">{application.description}</p>
 										</div>
 									</div>
 									<label class="relative inline-flex cursor-pointer items-center">
 										<input
 											type="checkbox"
 											class="peer sr-only"
-											checked={$userModulePreferences.preferences[module.key] !== false}
+											checked={$userApplicationPreferences.preferences[application.id] !== false}
 											onchange={(e) =>
-												userModulePreferences.toggle(module.key, e.currentTarget.checked)}
+												userApplicationPreferences.toggle(application.id, e.currentTarget.checked)}
 										/>
 										<div
 											class="peer h-6 w-11 rounded-full bg-base-300 peer-checked:bg-brand-500 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full"

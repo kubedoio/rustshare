@@ -18,49 +18,49 @@ export function formatBytes(bytes: number): string {
 	return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export function getArtifactTypeLabel(moduleKey: string, itemType: string): string {
+export function getArtifactTypeLabel(applicationId: string, itemType: string): string {
 	const map: Record<string, string> = {
-		notes: 'Note',
-		meetings: 'Meeting Note',
-		standups: 'Standup',
-		kanban: 'Kanban Board',
-		decisions: 'Decision',
-		brainstorming: 'Idea Board',
-		shares: 'Share'
+		'io.elembra.notes': 'Note',
+		'io.elembra.meetings': 'Meeting Note',
+		'io.elembra.standups': 'Standup',
+		'io.elembra.kanban': 'Kanban Board',
+		'io.elembra.decisions': 'Decision',
+		'io.elembra.brainstorming': 'Idea Board',
+		'io.elembra.shares': 'Share'
 	};
-	return map[moduleKey] ?? (itemType === 'folder' ? 'Folder' : 'File');
+	return map[applicationId] ?? (itemType === 'folder' ? 'Folder' : 'File');
 }
 
 export function getArtifactHref(item: {
-	moduleKey: string;
+	applicationId: string;
 	item_type: string;
 	id: string;
 	name?: string;
 }): string {
-	// Folders always route to the file browser regardless of module context
+	// Folders always route to the file browser regardless of Application context.
 	if (item.item_type === 'folder') {
 		return `/files?folder=${item.id}`;
 	}
-	if (item.moduleKey === 'notes' && item.item_type === 'file') {
-		return `/modules/notes/${item.id}`;
+	if (item.applicationId === 'io.elembra.notes' && item.item_type === 'file') {
+		return `/apps/notes/${item.id}`;
 	}
-	if (item.moduleKey === 'meetings') {
-		return `/modules/meetings/${item.id}`;
+	if (item.applicationId === 'io.elembra.meetings') {
+		return `/apps/meetings/${item.id}`;
 	}
-	if (item.moduleKey === 'standups') {
-		return `/modules/standups/${item.id}`;
+	if (item.applicationId === 'io.elembra.standups') {
+		return `/apps/standups/${item.id}`;
 	}
-	if (item.moduleKey === 'decisions') {
-		return `/modules/decisions/${item.id}`;
+	if (item.applicationId === 'io.elembra.decisions') {
+		return `/apps/decisions/${item.id}`;
 	}
-	if (item.moduleKey === 'brainstorming') {
-		return `/modules/brainstorming/${item.id}`;
+	if (item.applicationId === 'io.elembra.brainstorming') {
+		return `/apps/brainstorming/${item.id}`;
 	}
-	if (item.moduleKey === 'kanban') {
-		return '/modules/kanban';
+	if (item.applicationId === 'io.elembra.kanban') {
+		return '/apps/kanban';
 	}
-	if (item.moduleKey === 'shares') {
-		return `/modules/shares/${item.id}`;
+	if (item.applicationId === 'io.elembra.shares') {
+		return `/apps/shares/${item.id}`;
 	}
 	if (item.name?.match(/\.excalidraw$/i)) {
 		return `/files?preview=${item.id}`;
@@ -140,28 +140,28 @@ export function getActivityVerb(type: string): string {
 	}
 }
 
-export function getModuleColor(moduleKey: string): { color: string; bg: string } {
+export function getApplicationColor(applicationId: string): { color: string; bg: string } {
 	const colors: Record<string, { color: string; bg: string }> = {
-		notes: { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
-		meetings: { color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' },
-		standups: { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' },
-		kanban: { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
-		decisions: { color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' },
-		brainstorming: { color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.1)' },
-		shares: { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' }
+		'io.elembra.notes': { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
+		'io.elembra.meetings': { color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.1)' },
+		'io.elembra.standups': { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' },
+		'io.elembra.kanban': { color: '#ea580c', bg: 'rgba(234, 88, 12, 0.1)' },
+		'io.elembra.decisions': { color: '#16a34a', bg: 'rgba(22, 163, 74, 0.1)' },
+		'io.elembra.brainstorming': { color: '#ca8a04', bg: 'rgba(202, 138, 4, 0.1)' },
+		'io.elembra.shares': { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)' }
 	};
-	return colors[moduleKey] ?? { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' };
+	return colors[applicationId] ?? { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' };
 }
 
-export function getArtifactIcon(moduleKey: string): typeof FileText {
+export function getArtifactIcon(applicationId: string): typeof FileText {
 	const map: Record<string, any> = {
-		notes: FileText,
-		meetings: FileText,
-		standups: FileText,
-		kanban: Columns,
-		decisions: CheckCircle2,
-		brainstorming: Lightbulb,
-		shares: Share2
+		'io.elembra.notes': FileText,
+		'io.elembra.meetings': FileText,
+		'io.elembra.standups': FileText,
+		'io.elembra.kanban': Columns,
+		'io.elembra.decisions': CheckCircle2,
+		'io.elembra.brainstorming': Lightbulb,
+		'io.elembra.shares': Share2
 	};
-	return map[moduleKey] ?? FileText;
+	return map[applicationId] ?? FileText;
 }

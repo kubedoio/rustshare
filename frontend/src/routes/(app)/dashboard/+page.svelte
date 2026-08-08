@@ -2,15 +2,17 @@
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
-	import { listEnabledModules, createFromTemplate } from '$lib/api/modules';
+	import { listEnabledApplications, createFromTemplate } from '$lib/api/applications';
 	import { createNote } from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { createBrainstormBoard } from '$lib/api/brainstorming';
 	import { activityStore } from '$lib/stores/activity';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
-	import { resolveModuleFolderId } from '$lib/modules/modulePages';
-	import { runModulePrimaryAction } from '$lib/modules/moduleActions';
+	import { resolveApplicationFolderId } from '$lib/applications/applicationPages';
+	import { runApplicationPrimaryAction } from '$lib/applications/applicationActions';
+	import { applicationShellEntryToConfig } from '$lib/applications/registry';
 	import { todayDateString } from '$lib/utils/dashboard';
+	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 
 	import DashboardSkeleton from '$lib/components/common/DashboardSkeleton.svelte';
 	import MetricCards from '$lib/components/dashboard/MetricCards.svelte';
@@ -42,9 +44,9 @@
 		queryFn: () => listAllFiles()
 	});
 
-	const enabledModulesQuery = createQuery({
-		queryKey: ['enabled-modules'],
-		queryFn: () => listEnabledModules()
+	const enabledApplicationsQuery = createQuery({
+		queryKey: ['enabled-applications'],
+		queryFn: () => listEnabledApplications()
 	});
 
 	// ---------------------------------------------------------------------------
@@ -75,10 +77,10 @@
 		return map;
 	});
 
-	let isLoading = $derived($allFilesQuery.isLoading || $enabledModulesQuery.isLoading);
-	let isError = $derived($allFilesQuery.isError || $enabledModulesQuery.isError);
+	let isLoading = $derived($allFilesQuery.isLoading || $enabledApplicationsQuery.isLoading);
+	let isError = $derived($allFilesQuery.isError || $enabledApplicationsQuery.isError);
 	let errorMessage = $derived(
-		$allFilesQuery.error?.message || $enabledModulesQuery.error?.message || 'Unknown error'
+		$allFilesQuery.error?.message || $enabledApplicationsQuery.error?.message || 'Unknown error'
 	);
 
 	// ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@
 		creating = true;
 		createError = '';
 		try {
-			const parentFolderId = rootPath ? await resolveModuleFolderId(rootPath) : null;
+			const parentFolderId = rootPath ? await resolveApplicationFolderId(rootPath) : null;
 			const result = await createNote({
 				title: 'Untitled Note',
 				content: '# Untitled Note\n\n',
@@ -104,9 +106,9 @@
 			});
 			activityStore.addActivity('note_created', result.name || 'Untitled Note', {
 				artifactId: result.id,
-				moduleKey: 'notes'
+				applicationId: 'io.elembra.notes'
 			});
-			goto(`/modules/notes/${result.id}`);
+			goto(`/apps/notes/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create note';
 		} finally {
@@ -115,7 +117,7 @@
 	}
 
 	function handleNewMeeting() {
-		goto('/modules/meetings?action=new');
+		goto('/apps/meetings?action=new');
 	}
 
 	function handleNewDecision() {
@@ -139,10 +141,10 @@
 			const result = await decisionsApi.create({ title: trimmed, category: 'General', content });
 			activityStore.addActivity('decision_created', result.name || trimmed || 'Untitled Decision', {
 				artifactId: result.id,
-				moduleKey: 'decisions'
+				applicationId: 'io.elembra.decisions'
 			});
 			showDecisionModal = false;
-			goto(`/modules/decisions/${result.id}`);
+			goto(`/apps/decisions/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create decision';
 		} finally {
@@ -163,9 +165,9 @@
 			});
 			activityStore.addActivity('kanban_created', boardName, {
 				artifactId: result.object_id,
-				moduleKey: 'kanban'
+				applicationId: 'io.elembra.kanban'
 			});
-			goto('/modules/kanban');
+			goto('/apps/kanban');
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create board';
 		} finally {
@@ -184,9 +186,9 @@
 			);
 			activityStore.addActivity('brainstorm_created', result.title || 'Untitled Idea Board', {
 				artifactId: result.id,
-				moduleKey: 'brainstorming'
+				applicationId: 'io.elembra.brainstorming'
 			});
-			goto(`/modules/brainstorming/${result.id}`);
+			goto(`/apps/brainstorming/${result.id}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create idea board';
 		} finally {
@@ -194,17 +196,17 @@
 		}
 	}
 
-	function getQuickActionLabel(moduleKey: string, fallback: string): string {
-		switch (moduleKey) {
-			case 'brainstorming':
+	function getQuickActionLabel(applicationId: string, fallback: string): string {
+		switch (applicationId) {
+			case 'io.elembra.brainstorming':
 				return 'New idea board';
-			case 'kanban':
+			case 'io.elembra.kanban':
 				return 'New Kanban board';
-			case 'meetings':
+			case 'io.elembra.meetings':
 				return 'New meeting note';
-			case 'notes':
+			case 'io.elembra.notes':
 				return 'New note';
-			case 'shares':
+			case 'io.elembra.shares':
 				return 'New share';
 			default:
 				return fallback;
@@ -212,8 +214,10 @@
 	}
 
 	const quickActions = $derived(
-		($enabledModulesQuery.data ?? [])
+		($enabledApplicationsQuery.data ?? [])
+			.map(applicationShellEntryToConfig)
 			.filter((m) => m.enabled)
+			.filter((m) => $userApplicationPreferences.preferences[m.application_id] !== false)
 			.filter((m) => {
 				const dashboard = m.ui_config?.dashboard;
 				return dashboard?.enabled !== false && dashboard?.primaryAction;
@@ -222,30 +226,30 @@
 				const primaryAction = module.ui_config?.dashboard?.primaryAction;
 				let handler: () => Promise<void> | void;
 
-				switch (module.module_key) {
-					case 'notes':
+				switch (module.application_id) {
+					case 'io.elembra.notes':
 						handler = () => handleNewNote(module.root_path);
 						break;
-					case 'meetings':
+					case 'io.elembra.meetings':
 						handler = handleNewMeeting;
 						break;
-					case 'decisions':
+					case 'io.elembra.decisions':
 						handler = handleNewDecision;
 						break;
-					case 'kanban':
+					case 'io.elembra.kanban':
 						handler = handleNewKanban;
 						break;
-					case 'brainstorming':
+					case 'io.elembra.brainstorming':
 						handler = handleNewBrainstorm;
 						break;
 					default:
-						handler = () => runModulePrimaryAction(module, primaryAction);
+						handler = () => runApplicationPrimaryAction(module, primaryAction);
 						break;
 				}
 
 				return {
 					label: getQuickActionLabel(
-						module.module_key,
+						module.application_id,
 						primaryAction?.label ?? `New ${module.display_name.toLowerCase()}`
 					),
 					subtitle: module.description,

@@ -90,17 +90,17 @@ describe('Activity Store', () => {
 			expect(activities[0].details).toBe('old.txt');
 		});
 
-		it('should add activity with artifactId and moduleKey', () => {
+		it('should add activity with artifactId and applicationId', () => {
 			activityStore.addActivity('note_created', 'My Note', {
 				artifactId: 'abc',
-				moduleKey: 'notes'
+				applicationId: 'io.elembra.notes'
 			});
 
 			const activities = get(activityStore);
 			expect(activities[0].type).toBe('note_created');
 			expect(activities[0].fileName).toBe('My Note');
 			expect(activities[0].artifactId).toBe('abc');
-			expect(activities[0].moduleKey).toBe('notes');
+			expect(activities[0].applicationId).toBe('io.elembra.notes');
 		});
 
 		it('should maintain chronological order (newest first)', () => {
@@ -212,7 +212,7 @@ describe('Activity Store', () => {
 					{
 						id: 'evt-2',
 						action: 'note_modified',
-						resource_type: 'module',
+						resource_type: 'application',
 						resource_id: 'note-1',
 						resource_name: 'My Note',
 						actor_id: 'user-1',
@@ -233,7 +233,7 @@ describe('Activity Store', () => {
 			expect(state.items[0].artifactId).toBe('file-1');
 			expect(state.items[0].accessible).toBe(true);
 			expect(state.items[1].type).toBe('note_modified');
-			expect(state.items[1].moduleKey).toBe('notes');
+			expect(state.items[1].applicationId).toBe('io.elembra.notes');
 			expect(state.loading).toBe(false);
 			expect(state.error).toBeNull();
 			expect(state.hasMore).toBe(false);
@@ -319,13 +319,13 @@ describe('Activity Store', () => {
 			expect(get(serverActivityStore).items[0].type).toBe('file_uploaded');
 		});
 
-		it('should infer module keys correctly', async () => {
+		it('should infer canonical Application IDs correctly', async () => {
 			const mockResponse = {
 				items: [
 					{
 						id: 'evt-1',
 						action: 'brainstorm_board_modified',
-						resource_type: 'module',
+						resource_type: 'application',
 						resource_id: 'brd-1',
 						resource_name: 'Ideas',
 						actor_id: 'user-1',
@@ -348,8 +348,8 @@ describe('Activity Store', () => {
 
 			await serverActivityStore.fetch(10);
 			const items = get(serverActivityStore).items;
-			expect(items[0].moduleKey).toBe('brainstorming');
-			expect(items[1].moduleKey).toBe('shares');
+			expect(items[0].applicationId).toBe('io.elembra.brainstorming');
+			expect(items[1].applicationId).toBe('io.elembra.shares');
 		});
 
 		it('should not call loadMore when already loading', async () => {
@@ -516,7 +516,7 @@ describe('Activity Store', () => {
 			expect(display.description).toContain('new.txt');
 		});
 
-		it('should handle old-format activity without artifactId and moduleKey', () => {
+		it('should handle old-format activity without artifactId and applicationId', () => {
 			const oldActivity = {
 				id: 'old-1',
 				type: 'file_uploaded',
@@ -577,7 +577,7 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				moduleKey: 'notes',
+				applicationId: 'io.elembra.notes',
 				accessible: false
 			};
 			expect(getActivityHref(activity)).toBeNull();
@@ -590,9 +590,9 @@ describe('Activity Store', () => {
 				fileName: 'My Note',
 				timestamp: new Date().toISOString(),
 				artifactId: 'note-123',
-				moduleKey: 'notes'
+				applicationId: 'io.elembra.notes'
 			};
-			expect(getActivityHref(activity)).toBe('/modules/notes/note-123');
+			expect(getActivityHref(activity)).toBe('/apps/notes/note-123');
 		});
 
 		it('should return file preview fallback', () => {

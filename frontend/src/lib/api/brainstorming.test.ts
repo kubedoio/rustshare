@@ -58,11 +58,11 @@ describe('brainstorming API', () => {
 		expect(result).toHaveLength(101);
 		expect(apiClient.get).toHaveBeenNthCalledWith(
 			1,
-			'/modules/brainstorming/boards?page=1&per_page=100'
+			'/applications/brainstorming/boards?page=1&per_page=100'
 		);
 		expect(apiClient.get).toHaveBeenNthCalledWith(
 			2,
-			'/modules/brainstorming/boards?page=2&per_page=100'
+			'/applications/brainstorming/boards?page=2&per_page=100'
 		);
 	});
 
@@ -80,7 +80,7 @@ describe('brainstorming API', () => {
 
 		const result = await createBrainstormBoard('New Board', 'template_blank_brainstorm');
 		expect(result).toEqual(response);
-		expect(apiClient.post).toHaveBeenCalledWith('/modules/brainstorming/boards', {
+		expect(apiClient.post).toHaveBeenCalledWith('/applications/brainstorming/boards', {
 			title: 'New Board',
 			template_key: 'template_blank_brainstorm'
 		});
@@ -91,7 +91,7 @@ describe('brainstorming API', () => {
 
 		const result = await getBrainstormBoard('board-1');
 		expect(result).toEqual(mockBoard);
-		expect(apiClient.get).toHaveBeenCalledWith('/modules/brainstorming/boards/board-1');
+		expect(apiClient.get).toHaveBeenCalledWith('/applications/brainstorming/boards/board-1');
 	});
 
 	it('gets board source', async () => {
@@ -99,7 +99,7 @@ describe('brainstorming API', () => {
 
 		const result = await getBrainstormBoardSource('board-1');
 		expect(result).toEqual('{"type":"excalidraw"}');
-		expect(apiClient.get).toHaveBeenCalledWith('/modules/brainstorming/boards/board-1/source');
+		expect(apiClient.get).toHaveBeenCalledWith('/applications/brainstorming/boards/board-1/source');
 	});
 
 	it('saves board source', async () => {
@@ -107,9 +107,12 @@ describe('brainstorming API', () => {
 
 		const result = await saveBrainstormBoardSource('board-1', '{"type":"excalidraw"}');
 		expect(result).toEqual(mockBoard);
-		expect(apiClient.put).toHaveBeenCalledWith('/modules/brainstorming/boards/board-1/source', {
-			source: '{"type":"excalidraw"}'
-		});
+		expect(apiClient.put).toHaveBeenCalledWith(
+			'/applications/brainstorming/boards/board-1/source',
+			{
+				source: '{"type":"excalidraw"}'
+			}
+		);
 	});
 
 	it('updates board preview', async () => {
@@ -119,7 +122,7 @@ describe('brainstorming API', () => {
 		const result = await updateBrainstormBoardPreview('board-1', blob);
 		expect(result).toEqual(mockBoard);
 		expect(apiClient.request).toHaveBeenCalledWith(
-			'/modules/brainstorming/boards/board-1/preview',
+			'/applications/brainstorming/boards/board-1/preview',
 			{
 				method: 'PUT',
 				body: blob,
@@ -132,6 +135,6 @@ describe('brainstorming API', () => {
 		vi.mocked(apiClient.delete).mockResolvedValue(undefined);
 
 		await deleteBrainstormBoard('board-1');
-		expect(apiClient.delete).toHaveBeenCalledWith('/modules/brainstorming/boards/board-1');
+		expect(apiClient.delete).toHaveBeenCalledWith('/applications/brainstorming/boards/board-1');
 	});
 });

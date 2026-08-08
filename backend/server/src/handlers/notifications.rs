@@ -284,7 +284,7 @@ pub async fn delete_notification(
 ///
 /// GET /api/activity?limit=50&before_timestamp=...&before_id=...
 ///
-/// Queries the event store for recent file/module/share mutations,
+/// Queries the event store for recent file/application/share mutations,
 /// filters out resources the user cannot currently access, and returns
 /// a paginated activity feed.
 #[utoipa::path(
@@ -495,14 +495,14 @@ fn aggregate_type_to_resource_type(
     aggregate_type: &AggregateType,
     event_type: &EventType,
 ) -> &'static str {
-    // Module events are stored with AggregateType::File but represent modules.
+    // Application events are stored with AggregateType::File but represent Applications.
     match event_type {
         EventType::BrainstormBoardModified
         | EventType::MeetingNoteModified
         | EventType::DecisionModified
         | EventType::StandupModified
         | EventType::KanbanModified
-        | EventType::NoteModified => "module",
+        | EventType::NoteModified => "application",
         _ => match aggregate_type {
             AggregateType::File => "file",
             AggregateType::Folder => "folder",

@@ -3,11 +3,8 @@
 	import { createQuery } from '$lib/query-compat';
 	import { mailApi, type MailAccount, type MailFolder, type MailSmtpSettings } from '$lib/api/mail';
 	import CollapsibleSection from '$lib/settings/CollapsibleSection.svelte';
-	import MailArchivePanel from '$lib/components/modules/mail/MailArchivePanel.svelte';
-	import {
-		mailAccountStatus,
-		mailAccountStatusLabel
-	} from '$lib/components/modules/mail/mail-types';
+	import MailArchivePanel from '$lib/components/apps/mail/MailArchivePanel.svelte';
+	import { mailAccountStatus, mailAccountStatusLabel } from '$lib/components/apps/mail/mail-types';
 	import { toastStore } from '$lib/stores/toast';
 	import { KeyRound, Mail, Plus, Trash2 } from 'lucide-svelte';
 

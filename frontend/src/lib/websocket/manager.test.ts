@@ -30,7 +30,7 @@ import { toastStore } from '$lib/stores/toast';
 import { getWebSocketClient, disconnectWebSocket } from './client';
 import { initializeWebSocket, cleanupWebSocket } from './manager';
 
-describe('WebSocket Manager - Module Invalidations', () => {
+describe('WebSocket Manager - Application Invalidations', () => {
 	const handlers: Record<string, (event: unknown) => void> = {};
 
 	beforeEach(() => {
@@ -78,7 +78,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 
 	it('invalidates note queries on NoteModified', async () => {
@@ -94,7 +96,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 
 	it('invalidates dashboard summaries on BrainstormBoardModified', async () => {
@@ -112,7 +116,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 
 	it('invalidates dashboard summaries on MeetingNoteModified', async () => {
@@ -127,7 +133,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 
 	it('invalidates dashboard summaries on DecisionModified', async () => {
@@ -142,7 +150,9 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 
 	it('invalidates dashboard summaries on StandupModified', async () => {
@@ -157,6 +167,8 @@ describe('WebSocket Manager - Module Invalidations', () => {
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: ['workspace-module-summaries']
 		});
-		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['enabled-modules'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['enabled-applications']
+		});
 	});
 });

@@ -157,8 +157,8 @@ name = "file_operations"
 path = "../tests/file_operations.rs"
 
 [[test]]
-name = "module_service_test"
-path = "../tests/module_service_test.rs"
+name = "application_service_test"
+path = "../tests/application_service_test.rs"
 
 [[test]]
 name = "vault_sync_http_test"

@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import { currentUser, authStore } from '$lib/stores/auth';
-	import { getModuleByKey } from '$lib/modules/registry';
+	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import { searchQuery as globalSearchQuery } from '$lib/stores/search';
 	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
@@ -221,13 +221,13 @@
 	function computeNavLabel(pathname: string): string | null {
 		if (pathname === '/dashboard') return '/Workspace';
 		if (pathname === '/files' || pathname.startsWith('/files/')) return '/Files';
-		if (pathname.startsWith('/modules/')) {
-			const match = pathname.match(/^\/modules\/([^/]+)/);
+		if (pathname.startsWith('/apps/')) {
+			const match = pathname.match(/^\/apps\/([^/]+)/);
 			if (match) {
-				const mod = getModuleByKey(match[1]);
+				const mod = getApplicationByRouteSlug(match[1]);
 				if (mod) return mod.displayName;
 			}
-			return '/Modules';
+			return '/Applications';
 		}
 		if (pathname.startsWith('/notes/')) return '/Notes';
 		if (pathname === '/settings') return '/Settings';

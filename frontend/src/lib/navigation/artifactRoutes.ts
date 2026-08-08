@@ -2,39 +2,39 @@ import { goto } from '$app/navigation';
 
 export function navigateToNote(noteId: string, returnTo?: string) {
 	const url = returnTo
-		? `/modules/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`
-		: `/modules/notes/${noteId}`;
+		? `/apps/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`
+		: `/apps/notes/${noteId}`;
 	goto(url);
 }
 
 export function navigateToMeeting(meetingId: string) {
-	goto(`/modules/meetings/${meetingId}`);
+	goto(`/apps/meetings/${meetingId}`);
 }
 
 export function navigateToStandup(standupId: string) {
-	goto(`/modules/standups/${standupId}`);
+	goto(`/apps/standups/${standupId}`);
 }
 
 export function navigateToDecision(decisionId: string) {
-	goto(`/modules/decisions/${decisionId}`);
+	goto(`/apps/decisions/${decisionId}`);
 }
 
 export function navigateToKanbanBoard(boardId: string) {
-	goto(`/modules/kanban/${boardId}`);
+	goto(`/apps/kanban/${boardId}`);
 }
 
 export function navigateToBrainstormingBoard(boardId: string) {
-	goto(`/modules/brainstorming/${boardId}`);
+	goto(`/apps/brainstorming/${boardId}`);
 }
 
 export function navigateToSharePackage(shareId: string) {
-	goto(`/modules/shares/${shareId}`);
+	goto(`/apps/shares/${shareId}`);
 }
 
 /**
  * Generic module artifact navigator.
  */
-export function navigateToModuleArtifact(moduleKey: string, artifactId: string) {
+export function navigateToApplicationArtifact(applicationId: string, artifactId: string) {
 	const routeMap: Record<string, (id: string) => void> = {
 		notes: navigateToNote,
 		meetings: navigateToMeeting,
@@ -44,10 +44,10 @@ export function navigateToModuleArtifact(moduleKey: string, artifactId: string) 
 		brainstorming: navigateToBrainstormingBoard,
 		shares: navigateToSharePackage
 	};
-	const navigator = routeMap[moduleKey];
+	const navigator = routeMap[applicationId];
 	if (navigator) {
 		navigator(artifactId);
 	} else {
-		goto(`/modules/${moduleKey}/${artifactId}`);
+		goto(`/apps/${applicationId}/${artifactId}`);
 	}
 }

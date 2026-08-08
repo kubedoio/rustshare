@@ -162,8 +162,8 @@ async fn setup_test_env() -> AppState {
         ),
     );
 
-    let module_service = Arc::new(
-        rustshare_server::services::module_service::ModuleService::new(
+    let application_service = Arc::new(
+        rustshare_server::services::application_service::ApplicationService::new(
             folder_service.clone(),
             metadata_store.clone(),
         ),
@@ -247,7 +247,7 @@ async fn setup_test_env() -> AppState {
         decision_service,
         meeting_service,
         standup_service,
-        module_service,
+        application_service,
         template_service,
         kanban_service,
         brainstorming_service,
@@ -307,13 +307,13 @@ fn create_auth_token(state: &AppState, user_id: Uuid, tenant_id: Uuid) -> String
 
 async fn enable_mail_module(state: &AppState, tenant_id: Uuid, user_id: Uuid) {
     state
-        .module_service
-        .ensure_default_modules(tenant_id)
+        .application_service
+        .ensure_default_applications(tenant_id)
         .await
-        .expect("ensure_default_modules should succeed");
+        .expect("ensure_default_applications should succeed");
     state
-        .module_service
-        .enable_module("mail", user_id, tenant_id)
+        .application_service
+        .enable_application("io.elembra.mail", user_id, tenant_id)
         .await
         .expect("enable mail module should succeed");
 }
@@ -360,7 +360,7 @@ async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
 }
 
 async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM modules WHERE tenant_id = $1")
+    sqlx::query("DELETE FROM application_enablements WHERE tenant_id = $1")
         .bind(tenant_id)
         .execute(pool)
         .await
