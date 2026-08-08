@@ -5,6 +5,7 @@ import {
 	getApplicationByRouteSlug,
 	applicationsStore
 } from './registry';
+import { getEnabledSidebarApplications } from './workspaceSurface';
 
 const manifest = {
 	apiVersion: 'elembra.io/v1alpha1',
@@ -85,6 +86,7 @@ describe('Application registry', () => {
 		const futureManifest = {
 			...manifest,
 			metadata: { ...manifest.metadata, id: 'io.elembra.chat', name: 'Chat' },
+			runtime: { kind: 'bridge' as const },
 			contributions: {
 				...manifest.contributions,
 				navigation: [{ id: 'chat.navigation', label: 'Chat', route: '/apps/chat', order: 50 }],
@@ -98,8 +100,12 @@ describe('Application registry', () => {
 			health: 'healthy'
 		});
 
+		const navigation = getEnabledSidebarApplications([config]);
+
 		expect(config.application_id).toBe('io.elembra.chat');
-		expect(config.ui_config?.sidebar?.label).toBe('Chat');
-		expect(config.ui_config?.page?.route).toBe('/apps/chat');
+		expect(navigation).toHaveLength(1);
+		expect(navigation[0].application_id).toBe('io.elembra.chat');
+		expect(navigation[0].ui_config?.sidebar?.label).toBe('Chat');
+		expect(navigation[0].ui_config?.page?.route).toBe('/apps/chat');
 	});
 });

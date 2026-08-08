@@ -470,9 +470,6 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
         ("files", "Files", "folder", "files", 10),
         ("notes", "Notes", "sticky-note", "okf-note", 20),
         ("mail", "Mail", "mail", "mail", 30),
-        ("memory", "Memory", "brain", "memory", 40),
-        ("chat", "Chat", "message-circle", "chat", 50),
-        ("agents", "Agents", "bot", "agents", 60),
         ("meetings", "Meeting Notes", "calendar-days", "meetings", 70),
         ("standups", "Standups", "activity", "standups", 80),
         ("kanban", "Kanban", "columns", "kanban", 90),
@@ -728,12 +725,23 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
     }
 
     #[test]
-    fn first_party_registry_exposes_canonical_shell_identity() {
-        let registry = ApplicationRegistry::first_party().unwrap();
+    fn future_bridge_application_exposes_canonical_shell_identity() {
+        let mut chat = manifest("io.elembra.chat");
+        chat.runtime.kind = ApplicationRuntimeKind::Bridge;
+        chat.metadata.name = "Chat".to_string();
+        chat.resources[0].actions[0] = ActionCapability::from("chat.read");
+        chat.contributions.navigation[0] = ApplicationContribution {
+            id: "chat.navigation".to_string(),
+            label: Some("Chat".to_string()),
+            route: Some("/apps/chat".to_string()),
+            ..Default::default()
+        };
+
+        let registry = ApplicationRegistry::new([chat]).unwrap();
         let chat = registry
             .manifest(&ApplicationId::from("io.elembra.chat"))
             .unwrap();
-        assert_eq!(chat.runtime.kind, ApplicationRuntimeKind::Embedded);
+        assert_eq!(chat.runtime.kind, ApplicationRuntimeKind::Bridge);
         assert_eq!(chat.metadata.id.0, "io.elembra.chat");
         assert_eq!(
             chat.contributions.navigation[0].route.as_deref(),
