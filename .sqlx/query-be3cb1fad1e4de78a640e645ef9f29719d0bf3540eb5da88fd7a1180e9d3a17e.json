@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE files\n            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL\n            WHERE parent_folder_id = $1 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "be3cb1fad1e4de78a640e645ef9f29719d0bf3540eb5da88fd7a1180e9d3a17e"
+}

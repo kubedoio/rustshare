@@ -3644,6 +3644,42 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Delete a folder and the files directly under it inside a transaction,
+    /// without owner filtering.
+    ///
+    /// ⚠️ Only use when the caller has already verified access to the subtree
+    /// (e.g. Admin via share), so shared-admin deletions work on
+    /// mixed-ownership trees.
+    pub async fn delete_folder_in_tx_unchecked(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE folders
+            SET deleted_at = NOW(), starred_at = NULL
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE files
+            SET deleted_at = COALESCE(deleted_at, NOW()), starred_at = NULL
+            WHERE parent_folder_id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(())
+    }
+
     /// Delete a folder from the projection table
     pub async fn delete_folder(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await?;
@@ -6378,6 +6414,14 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
         owner_id: uuid::Uuid,
     ) -> anyhow::Result<()> {
         self.delete_folder_in_tx(tx, id, owner_id).await
+    }
+
+    async fn delete_folder_in_tx_unchecked(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<()> {
+        self.delete_folder_in_tx_unchecked(tx, id).await
     }
 
     async fn list_folders(
