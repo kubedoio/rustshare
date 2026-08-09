@@ -169,6 +169,10 @@ name = "shared_recipient_operations_test"
 path = "../tests/shared_recipient_operations_test.rs"
 
 [[test]]
+name = "shared_admin_delete_test"
+path = "../tests/shared_admin_delete_test.rs"
+
+[[test]]
 name = "vault_sync_http_test"
 path = "../tests/vault_sync_http_test.rs"
 

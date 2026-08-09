@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE folders\n            SET deleted_at = NOW(), starred_at = NULL\n            WHERE id = $1 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3abb54782feba65eb04c0b96c135e8e0d4963453fb2afbafa995a4787d224a80"
+}

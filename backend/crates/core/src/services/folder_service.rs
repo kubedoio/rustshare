@@ -80,6 +80,14 @@ pub trait MetadataStoreOps: Send + Sync {
         owner_id: UserId,
     ) -> Result<()>;
 
+    /// Delete a folder and the files directly under it inside a transaction,
+    /// without owner filtering.
+    ///
+    /// Only use when the caller has already verified access to the subtree root
+    /// (e.g. Admin via share), so shared-admin operations work on
+    /// mixed-ownership trees.
+    async fn delete_folder_in_tx_unchecked(&self, tx: &mut Self::Tx, id: FolderId) -> Result<()>;
+
     /// List folders with optional parent filter.
     async fn list_folders(
         &self,
@@ -738,10 +746,12 @@ where
             return Err(FolderError::CannotDeleteRoot(folder_id));
         }
 
-        // Get all descendant folders (including this folder)
+        // Get all descendant folders (including this folder).
+        // Unchecked: Admin on the subtree root (verified above) authorizes the
+        // whole tree, including mixed-ownership subtrees.
         let descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id, user_id)
+            .find_descendant_folders_unchecked(folder_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -763,7 +773,9 @@ where
                 user_id,
             );
 
-            // Delete from metadata store atomically with the event
+            // Delete from metadata store atomically with the event.
+            // Unchecked delete: the Admin check on the subtree root covers the
+            // whole tree, so mixed-ownership descendants are deleted too.
             let mut tx = self.event_store.begin_transaction().await.map_err(|e| {
                 FolderError::Database(format!("Failed to begin transaction: {}", e))
             })?;
@@ -772,7 +784,7 @@ where
                 .await
                 .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
             self.metadata_store
-                .delete_folder_in_tx(&mut tx, descendant.id, user_id)
+                .delete_folder_in_tx_unchecked(&mut tx, descendant.id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?;
             self.event_store.commit_transaction(tx).await.map_err(|e| {
@@ -994,6 +1006,15 @@ mod tests {
             _tx: &mut Self::Tx,
             id: FolderId,
             _owner_id: UserId,
+        ) -> Result<()> {
+            self.folders.lock().unwrap().remove(&id);
+            Ok(())
+        }
+
+        async fn delete_folder_in_tx_unchecked(
+            &self,
+            _tx: &mut Self::Tx,
+            id: FolderId,
         ) -> Result<()> {
             self.folders.lock().unwrap().remove(&id);
             Ok(())
