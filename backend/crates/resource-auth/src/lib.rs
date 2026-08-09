@@ -20,6 +20,8 @@
 //! * service/workload identity never silently substitutes for a Principal;
 //! * Agents act under an explicit delegation and never impersonate a user;
 //! * malformed/unknown/cross-tenant references fail closed;
+//! * contexts whose workspace does not correspond to their tenant fail closed
+//!   (RustShare maps one workspace per tenant today);
 //! * content is fetched only after current source authorization.
 //!
 //! The concrete Files owner adapter lives in `rustshare-server` (the
@@ -38,7 +40,7 @@ pub use actions::*;
 pub use authorizer::SourceAuthorizer;
 pub use contract::{
     Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation, ResolvedResource,
-    ResourceOwner, SourceError, MAX_BATCH_SIZE,
+    ResourceCapability, ResourceOwner, SourceError, MAX_BATCH_SIZE,
 };
 pub use decision::{BatchDecision, Decision};
 pub use principal::{

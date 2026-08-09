@@ -22,7 +22,8 @@
 use bytes::Bytes;
 use chrono::{Duration, Utc};
 use rustshare_core::domain::{
-    ActionCapability, ApplicationId, PrincipalId, Share, SharePermissions, TenantId, WorkspaceId,
+    ActionCapability, ApplicationId, ApplicationRegistry, PrincipalId, Share, SharePermissions,
+    TenantId, WorkspaceId,
 };
 use rustshare_core::services::PermissionResolver;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
@@ -44,20 +45,27 @@ fn files_application() -> ApplicationId {
 }
 
 /// Build a fresh TestContext and a `SourceAuthorizer` seeded with the Files
-/// owner adapter backed by that context's stores.
+/// owner adapter backed by that context's stores. The owner is registered
+/// against the canonical first-party ApplicationRegistry (registration
+/// validates that `io.elembra.files` exists and declares the served surface).
 async fn setup() -> (TestContext, SourceAuthorizer) {
     let ctx = setup_test_env().await;
     let repo = Arc::new(PermissionResolverRepository::new(ctx.pool.clone()));
     let resolver = Arc::new(PermissionResolver::new(Arc::clone(&repo)));
+    let application_registry =
+        ApplicationRegistry::first_party().expect("first-party manifests are valid");
     let mut registry = ResourceOwnerRegistry::new();
     registry
-        .register(Arc::new(FilesResourceOwner::new(
-            Arc::clone(&resolver),
-            repo,
-            ctx.metadata_store.clone(),
-            ctx.object_store.clone(),
-        )))
-        .expect("the io.elembra.files owner registers exactly once");
+        .register(
+            Arc::new(FilesResourceOwner::new(
+                Arc::clone(&resolver),
+                repo,
+                ctx.metadata_store.clone(),
+                ctx.object_store.clone(),
+            )),
+            &application_registry,
+        )
+        .expect("the io.elembra.files owner registers against the canonical registry");
     (ctx, SourceAuthorizer::new(registry))
 }
 

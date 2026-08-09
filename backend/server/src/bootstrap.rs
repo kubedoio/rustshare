@@ -63,6 +63,7 @@ struct Services {
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
     mail_service: Arc<crate::services::mail_service::MailService>,
     secret_key: Arc<SecretEncryptionKey>,
+    application_registry: Arc<ApplicationRegistry>,
 }
 
 fn init_tracing(log_format: &str) {
@@ -532,6 +533,7 @@ async fn init_services(
         chat_integration_service,
         mail_service,
         secret_key,
+        application_registry,
     })
 }
 
@@ -745,12 +747,16 @@ pub async fn init_app() -> Result<AppState> {
         }
     });
 
-    let source_authorizer = Arc::new(authz::build_source_authorizer(
-        Arc::clone(&permission_resolver),
-        Arc::clone(&permission_resolver_repository),
-        Arc::clone(&metadata_store),
-        Arc::clone(&object_store),
-    ));
+    let source_authorizer = Arc::new(
+        authz::build_source_authorizer(
+            Arc::clone(&services.application_registry),
+            Arc::clone(&permission_resolver),
+            Arc::clone(&permission_resolver_repository),
+            Arc::clone(&metadata_store),
+            Arc::clone(&object_store),
+        )
+        .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
+    );
 
     let state = AppState {
         db_pool,

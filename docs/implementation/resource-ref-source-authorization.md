@@ -24,7 +24,10 @@ and has no I/O. Modules:
 - `decision.rs` — `Decision`, `BatchDecision`.
 - `contract.rs` — `ResourceOwner` trait, `Purpose`, `Representation`,
   payload types, `SourceError`, `MAX_BATCH_SIZE`.
-- `registry.rs` — `ResourceOwnerRegistry` (typed, no `Any` service locator).
+- `registry.rs` — `ResourceOwnerRegistry` (typed, no `Any` service locator);
+  every registration is validated against the canonical `ApplicationRegistry`
+  (#210) and fails on unknown Applications or undeclared resource/action
+  surfaces.
 - `authorizer.rs` — `SourceAuthorizer` Platform-Core facade, batch routing,
   Search/RAG `materialize` proof contract.
 - `actions.rs` — canonical action capability names (`files.read`, ...).
@@ -61,6 +64,23 @@ PrincipalContext {
     correlation_id: Option<CorrelationId>,
 }
 ```
+
+### Workspace scope
+
+RustShare currently maps one workspace per tenant (`WorkspaceId == TenantId`).
+Until real workspace membership exists, `SourceAuthorizer` **fails closed**
+when a `PrincipalContext` carries a workspace that does not correspond to its
+tenant:
+
+- `authorize`/`authorize_batch` → `Invalid` (per-ref for batches; one bad
+  scope never authorizes anything);
+- `resolve`/`fetch`/`fetch_delivery_url` → `SourceError::WorkspaceMismatch`;
+- `materialize` → nothing is materialized (the batch reauthorization marks
+  every candidate invalid).
+
+The validation runs before any owner is consulted, so every owner receives a
+scope-valid context. A delegated Agent cannot bypass it: the facade rejects
+the malformed scope before delegation bounds are even evaluated.
 
 ### Where it is constructed
 
@@ -100,6 +120,17 @@ the delegation. Service identity alone never bypasses Principal
 authorization. Grant issuance/verification storage is deferred to the Agents
 Application; the trusted in-process boundary supplies the delegation.
 
+**Trusted-boundary contract.** `PrincipalContext`/`Delegation` are
+serializable for transport between trusted components only. A serialized or
+client-supplied context is **never** trusted authorization proof — only a
+trusted boundary that authenticated the workload/user and
+verified/reconstructed the context may call `SourceAuthorizer`. The future
+HTTP/service transports (#212/#213) MUST verify delegation grant and
+revocation state before constructing a trusted context. `grant_id` is an
+**audit identifier**; v1alpha1 does not check it against persistent
+revocation state. Tests lock both the serialization round-trip and the
+audit-only nature of `grant_id`.
+
 ## 4. Source authorization contract and the Files owner adapter
 
 `ResourceOwner` (owned by the Application that owns the resource):
@@ -136,10 +167,21 @@ now-tested Files semantics — no ACL/share rules are duplicated:
   `MetadataStore::list_file_versions`; unknown versions fail closed
   (`VersionUnavailable` / `available: false`).
 
-The ApplicationRegistry from #210 supplies the Application identity;
-`authz::build_source_authorizer` seeds the typed `ResourceOwnerRegistry` with
-the Files adapter. Core never queries Files private tables: it routes through
-the `ResourceOwner` contract.
+The `ApplicationRegistry` from #210 is the declarative source of Application
+ownership truth. `authz::build_source_authorizer` receives it and validates
+the Files owner **against it** before seeding the typed
+`ResourceOwnerRegistry`:
+
+- `io.elembra.files` must exist in the registry — an unknown Application is a
+  startup failure, never a silent owner;
+- the manifest must declare the `file`/`folder` resource types with the
+  `files.*` action capabilities the adapter serves (`declared_capabilities`).
+
+The runtime `ResourceOwnerRegistry` is therefore only a validated binding
+layer, never an independent source of Application ownership truth; a unit test
+locks that the adapter's declared surface exactly matches the manifest. Core
+never queries Files private tables: it routes through the `ResourceOwner`
+contract.
 
 ## 5. Batch authorization
 
@@ -193,12 +235,17 @@ and behavior-changing; they are flagged for the permission-resolver redesign.
   expiry, no self-delegation) and re-evaluates the issuer's current authority
   at the source, but the delegation's *issuance* (that the issuer actually
   granted it) is not yet verified against a grant store — grant
-  issuance/verification storage is deferred to the Agents Application. The
-  first consumer that wires `source_authorizer` into a request path MUST
-  construct `PrincipalContext` only at a trusted boundary fed by an
-  authoritative grant store; `Delegation` and `PrincipalContext` carry this
-  contract in their doc comments, and a regression test locks that a forged
-  delegation to a powerless issuer grants nothing.
+  issuance/verification storage is deferred to the Agents Application. A
+  serialized or client-supplied `PrincipalContext`/`Delegation` is never
+  trusted authorization proof; `grant_id` is an audit identifier and is not
+  checked against persistent revocation state. The first consumer that wires
+  `source_authorizer` into a request path MUST construct `PrincipalContext`
+  only at a trusted boundary fed by an authoritative grant store, and the
+  future HTTP/service transports (#212/#213) MUST verify delegation
+  grant/revocation before constructing a trusted context. Regression tests
+  lock that a forged delegation to a powerless issuer grants nothing, that a
+  serialized context round-trips without becoming trust, and that `grant_id`
+  is audit-only.
 - **Application-level grants/enablement gating** on the authorizer path:
   ADR-0032 assigns "whether an Application is enabled / Principal has an
   Application-level grant" to Core. The current model has tenant/workspace

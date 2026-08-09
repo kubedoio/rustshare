@@ -19,6 +19,32 @@ use serde::{Deserialize, Serialize};
 /// split larger candidate sets before calling the contract.
 pub const MAX_BATCH_SIZE: usize = 64;
 
+/// A resource type an owner serves and the action capabilities it supports on
+/// it.
+///
+/// Used at registration time to validate the runtime adapter against the
+/// owning Application's manifest in the canonical `ApplicationRegistry`: the
+/// manifest must declare the same resource type with the same actions. The
+/// `ApplicationRegistry` is the declarative source of Application ownership
+/// truth; an owner cannot claim resources its Application does not own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceCapability {
+    pub resource_type: String,
+    pub actions: Vec<ActionCapability>,
+}
+
+impl ResourceCapability {
+    pub fn new(resource_type: impl Into<String>, actions: &[&str]) -> Self {
+        Self {
+            resource_type: resource_type.into(),
+            actions: actions
+                .iter()
+                .map(|action| ActionCapability::new(*action))
+                .collect(),
+        }
+    }
+}
+
 /// Purpose of a sensitive source access. Purpose does not grant authority; it
 /// allows policy/audit/representation decisions (v1alpha1 spec).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +146,8 @@ pub enum SourceError {
     },
     #[error("delegation rejected: {0}")]
     Delegation(String),
+    #[error("principal context workspace does not correspond to its tenant (1:1 invariant)")]
+    WorkspaceMismatch,
     #[error("unauthorized")]
     Unauthorized,
     #[error("resource not found")]
@@ -145,6 +173,13 @@ pub enum SourceError {
 pub trait ResourceOwner: Send + Sync {
     /// The Application this owner serves.
     fn application_id(&self) -> &rustshare_core::domain::ApplicationId;
+
+    /// The resource types this owner serves and the action capabilities it
+    /// supports on each. Registration validates this surface against the
+    /// owning Application's manifest in the canonical `ApplicationRegistry`,
+    /// so the runtime registry can never bind an owner to resources its
+    /// Application does not own.
+    fn resource_capabilities(&self) -> Vec<ResourceCapability>;
 
     /// Authorize one action on one resource. The owner evaluates the effective
     /// principal (delegation bounds) and its authoritative resource rules.

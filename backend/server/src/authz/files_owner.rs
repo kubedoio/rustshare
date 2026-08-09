@@ -26,7 +26,8 @@ use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_resource_auth::contract::SourceError;
 use rustshare_resource_auth::{
     Decision, FetchedResource, PrincipalContext, Purpose, Representation, ResolvedResource,
-    ResourceOwner, ResourceRef, FILES_DELETE, FILES_READ, FILES_SHARE, FILES_WRITE,
+    ResourceCapability, ResourceOwner, ResourceRef, FILES_DELETE, FILES_READ, FILES_SHARE,
+    FILES_WRITE,
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use std::fmt::Display;
@@ -63,6 +64,24 @@ impl FilesResourceOwner {
             metadata,
             object_store,
         }
+    }
+
+    /// The resource surface this adapter serves. Registration
+    /// (`authz::build_source_authorizer`) validates it against the canonical
+    /// `ApplicationRegistry`: the `io.elembra.files` manifest must declare
+    /// the same resource types with the same action capabilities (see the
+    /// unit test at the bottom of this file).
+    pub fn declared_capabilities() -> Vec<ResourceCapability> {
+        vec![
+            ResourceCapability::new(
+                RESOURCE_TYPE_FILE,
+                &[FILES_READ, FILES_WRITE, FILES_DELETE, FILES_SHARE],
+            ),
+            ResourceCapability::new(
+                RESOURCE_TYPE_FOLDER,
+                &[FILES_READ, FILES_WRITE, FILES_DELETE, FILES_SHARE],
+            ),
+        ]
     }
 
     /// Map an action capability to the existing Files permission level.
@@ -329,6 +348,10 @@ impl ResourceOwner for FilesResourceOwner {
         &self.application_id
     }
 
+    fn resource_capabilities(&self) -> Vec<ResourceCapability> {
+        Self::declared_capabilities()
+    }
+
     async fn authorize(
         &self,
         ctx: &PrincipalContext,
@@ -499,4 +522,45 @@ impl ResourceOwner for FilesResourceOwner {
 
 fn internal(error: impl Display) -> SourceError {
     SourceError::Internal(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustshare_core::domain::ApplicationRegistry;
+
+    /// The adapter's declared resource/action surface must exactly match the
+    /// `io.elembra.files` manifest in the canonical ApplicationRegistry —
+    /// this is the invariant `ResourceOwnerRegistry::register` enforces at
+    /// bootstrap.
+    #[test]
+    fn declared_surface_matches_application_registry_manifest() {
+        let registry = ApplicationRegistry::first_party().expect("first-party manifests are valid");
+        let manifest = registry
+            .manifest(&ApplicationId::new("io.elembra.files"))
+            .expect("the io.elembra.files manifest is present");
+        let surface = FilesResourceOwner::declared_capabilities();
+        assert_eq!(
+            manifest.resources.len(),
+            surface.len(),
+            "manifest and adapter must declare the same number of resource types"
+        );
+        for capability in &surface {
+            let declared = manifest
+                .resources
+                .iter()
+                .find(|resource| resource.resource_type == capability.resource_type)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "manifest does not declare resource type `{}`",
+                        capability.resource_type
+                    )
+                });
+            assert_eq!(
+                declared.actions, capability.actions,
+                "action surface for `{}` must match the manifest",
+                capability.resource_type
+            );
+        }
+    }
 }

@@ -76,10 +76,21 @@ pub struct WorkloadIdentity {
 /// client-visible state. The issuer's *current* authority is re-evaluated at
 /// the source for every request, so a forged delegation to a powerless
 /// issuer grants nothing; but the delegation itself (who issued it) must be
-/// established by Platform Core, not supplied by the caller. Grant issuance
-/// and verification storage are deferred to the Agents Application; the
-/// first consumer that wires a request path must construct `PrincipalContext`
-/// only through that gated boundary.
+/// established by Platform Core, not supplied by the caller.
+///
+/// `PrincipalContext`/`Delegation` are serializable (see
+/// [`PrincipalContext`]) for transport **between trusted components only**. A
+/// serialized or client-supplied context is never trusted authorization proof:
+/// only a trusted boundary that authenticated the workload/user and
+/// verified/reconstructed the context may call the
+/// [`SourceAuthorizer`](crate::SourceAuthorizer). The future HTTP/service
+/// transports (#212/#213) MUST verify delegation grant and revocation state
+/// before constructing a trusted context. `grant_id` is an **audit
+/// identifier**: v1alpha1 does not check it against persistent revocation
+/// state (grant persistence is deferred to the Agents Application). Grant
+/// issuance and verification storage are deferred to the Agents Application;
+/// the first consumer that wires a request path must construct
+/// `PrincipalContext` only through that gated boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delegation {
     /// The Principal that issued the delegation (the ultimate initiator).
@@ -107,7 +118,10 @@ pub struct Delegation {
 /// The canonical authority context carried by cross-Application calls.
 ///
 /// Constructed at the trusted boundary (e.g. from an authenticated handler
-/// request). Never populated from untrusted client input.
+/// request). Never populated from untrusted client input. `Serialize` is for
+/// transport between trusted components only — deserializing a context is not
+/// verification; a client-supplied context is never trusted authorization
+/// proof (see [`Delegation`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrincipalContext {
     /// The business Principal exercising authority.
@@ -116,7 +130,10 @@ pub struct PrincipalContext {
     pub principal_kind: PrincipalKind,
     /// Tenant scope.
     pub tenant_id: TenantId,
-    /// Workspace scope. Today tenant maps 1:1 to workspace in RustShare.
+    /// Workspace scope. Today RustShare maps one workspace per tenant
+    /// (`WorkspaceId == TenantId`); the [`SourceAuthorizer`](crate::SourceAuthorizer)
+    /// fails closed when a context's workspace does not correspond to its
+    /// tenant (enforced before any owner is consulted).
     pub workspace_id: WorkspaceId,
     /// Group membership projection. Informational only; owners derive/verify
     /// membership from authoritative state before relying on it.
@@ -546,5 +563,57 @@ mod tests {
         let (issuer_id, grant) = initiator.unwrap();
         assert_eq!(issuer_id, issuer);
         assert_eq!(grant, Some("grant-1"));
+    }
+
+    /// A `PrincipalContext` (with its delegation) round-trips through
+    /// serialization. This documents that contexts are transportable values —
+    /// which is exactly why a *deserialized* context is not trusted
+    /// authorization proof: trust comes only from the boundary that
+    /// constructed it.
+    #[test]
+    fn serialized_context_round_trips_but_is_not_trust_proof() {
+        let issuer = PrincipalId(Uuid::new_v4());
+        let agent = PrincipalId(Uuid::new_v4());
+        let context = ctx(
+            agent,
+            PrincipalKind::Agent,
+            Some(delegation_for(issuer, agent, &[crate::FILES_READ], None)),
+        );
+        let json = serde_json::to_string(&context).expect("context serializes");
+        let restored: PrincipalContext = serde_json::from_str(&json).expect("context deserializes");
+        assert_eq!(restored, context);
+        // The deserialized value still carries the same delegated action set;
+        // verifying that the issuer really granted it is the trusted
+        // boundary's job, not the serialized payload's.
+        assert_eq!(restored.delegation, context.delegation);
+    }
+
+    /// `grant_id` is an audit identifier, not a revocation check: v1alpha1
+    /// evaluates two delegations that differ only in `grant_id` identically.
+    /// This pins that no hidden grant/revocation-state lookup exists yet —
+    /// future transports (#212/#213) MUST verify grant/revocation before
+    /// constructing a trusted context.
+    #[test]
+    fn grant_id_is_audit_only_not_revocation_state() {
+        let issuer = PrincipalId(Uuid::new_v4());
+        let agent = PrincipalId(Uuid::new_v4());
+        let mut with_grant = delegation_for(issuer, agent, &[crate::FILES_READ], None);
+        with_grant.grant_id = Some("grant-42".into());
+        let mut without_grant = delegation_for(issuer, agent, &[crate::FILES_READ], None);
+        without_grant.grant_id = None;
+
+        let action = ActionCapability::new(crate::FILES_READ);
+        let with_ctx = ctx(agent, PrincipalKind::Agent, Some(with_grant));
+        let without_ctx = ctx(agent, PrincipalKind::Agent, Some(without_grant));
+        assert_eq!(
+            with_ctx.effective_user_authority(&action, None).unwrap(),
+            without_ctx.effective_user_authority(&action, None).unwrap()
+        );
+        // The audit chain carries the grant id for traceability; it is not a
+        // live revocation/issuance check.
+        let (_, initiator) = with_ctx.audit_chain();
+        assert_eq!(initiator.unwrap().1, Some("grant-42"));
+        let (_, initiator) = without_ctx.audit_chain();
+        assert_eq!(initiator.unwrap().1, None);
     }
 }

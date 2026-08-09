@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract, bounded batch authorization, and a Search/RAG reauthorization
   proof contract. Elembra Files is the first owner adapter, delegating to the
   existing Files permission semantics; the `SourceAuthorizer` is wired into
-  `AppState` (#211).
+  `AppState` (#211). Owner registration is validated against the canonical
+  `ApplicationRegistry` (unknown Applications or undeclared resource/action
+  surfaces fail startup), and contexts whose workspace does not correspond to
+  their tenant fail closed before any owner is consulted (1:1
+  tenant/workspace invariant).
 
 ### Changed
 

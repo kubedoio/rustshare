@@ -4,6 +4,10 @@
 //! Core responsibilities kept here:
 //!
 //! * syntactic validation of [`ResourceRef`]s (fail closed on malformed refs);
+//! * **workspace/tenant scope validation** — RustShare maps one workspace per
+//!   tenant (`WorkspaceId == TenantId`) today; a [`PrincipalContext`] whose
+//!   workspace does not correspond to its tenant is a malformed/forged scope
+//!   and is rejected before any owner is consulted;
 //! * routing a ref to the adapter registered for its owning Application;
 //! * bounded batch authorization with explicit ref/decision association;
 //! * the Search/RAG proof contract: materialize candidates only after source
@@ -12,6 +16,18 @@
 //! Delegation validity and resource-level authorization are enforced by each
 //! owner adapter through the shared [`PrincipalContext::effective_user_authority`]
 //! helper — the owner remains the final authority.
+//!
+//! # Trusted-boundary contract
+//!
+//! [`PrincipalContext`] (and the [`Delegation`](crate::Delegation) it may
+//! carry) is a serializable value. Serialization is for transport between
+//! trusted components only: a serialized or client-supplied `PrincipalContext`
+//! is **never** trusted authorization proof. Only a trusted boundary that
+//! authenticated the workload/user and verified/reconstructed the context may
+//! call this facade. In-process tests may construct contexts directly; future
+//! HTTP/service transports MUST verify delegation grant/revocation before
+//! constructing a trusted context (#212/#213). `grant_id` is an audit
+//! identifier, not a check against persistent revocation state.
 
 use crate::contract::{
     Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation, ResolvedResource,
@@ -40,6 +56,27 @@ impl SourceAuthorizer {
         Self::new(ResourceOwnerRegistry::new())
     }
 
+    /// Fail closed on a context whose workspace does not correspond to its
+    /// tenant.
+    ///
+    /// RustShare currently maps one workspace per tenant
+    /// (`WorkspaceId == TenantId`). Until real workspace membership exists, a
+    /// mismatched workspace is a malformed/forged scope and is rejected
+    /// **before** any owner is consulted, so every owner receives a
+    /// scope-valid context for authorize/batch/resolve/fetch/materialize.
+    fn ensure_workspace_scope(ctx: &PrincipalContext) -> Result<(), SourceError> {
+        if ctx.workspace_id.0 != ctx.tenant_id.0 {
+            tracing::warn!(
+                tenant = %ctx.tenant_id,
+                workspace = %ctx.workspace_id,
+                principal = %ctx.principal_id,
+                "rejected principal context: workspace does not match tenant (1:1 invariant)"
+            );
+            return Err(SourceError::WorkspaceMismatch);
+        }
+        Ok(())
+    }
+
     /// Authorize one action on one resource.
     ///
     /// Malformed refs and unknown Applications yield [`Decision::Invalid`];
@@ -50,6 +87,10 @@ impl SourceAuthorizer {
         action: &ActionCapability,
         resource: &ResourceRef,
     ) -> Decision {
+        if let Err(error) = Self::ensure_workspace_scope(ctx) {
+            tracing::warn!(%error, "rejected authorization: invalid workspace/tenant scope");
+            return Decision::Invalid;
+        }
         if let Err(error) = resource.validate() {
             tracing::warn!(%resource, %error, "rejected malformed resource ref");
             return Decision::Invalid;
@@ -65,13 +106,22 @@ impl SourceAuthorizer {
     ///
     /// Results are explicitly associated with their refs and returned in input
     /// order. One denied/missing/invalid ref never authorizes another. A batch
-    /// exceeding [`MAX_BATCH_SIZE`] is rejected outright (fail closed).
+    /// exceeding [`MAX_BATCH_SIZE`] is rejected outright (fail closed). A
+    /// context whose workspace does not correspond to its tenant poisons the
+    /// whole batch: every ref is marked `Invalid` (fail closed per ref).
     pub async fn authorize_batch(
         &self,
         ctx: &PrincipalContext,
         action: &ActionCapability,
         resources: &[ResourceRef],
     ) -> Result<Vec<BatchDecision>, SourceError> {
+        if let Err(error) = Self::ensure_workspace_scope(ctx) {
+            tracing::warn!(%error, "rejected batch: invalid workspace/tenant scope");
+            return Ok(resources
+                .iter()
+                .map(|resource| BatchDecision::new(resource.clone(), Decision::Invalid))
+                .collect());
+        }
         if resources.len() > MAX_BATCH_SIZE {
             return Err(SourceError::BatchTooLarge {
                 actual: resources.len(),
@@ -146,6 +196,7 @@ impl SourceAuthorizer {
         resource: &ResourceRef,
         purpose: Purpose,
     ) -> Result<ResolvedResource, SourceError> {
+        Self::ensure_workspace_scope(ctx)?;
         resource.validate().map_err(SourceError::InvalidRef)?;
         let owner = self
             .registry
@@ -162,6 +213,7 @@ impl SourceAuthorizer {
         resource: &ResourceRef,
         representation: Representation,
     ) -> Result<FetchedResource, SourceError> {
+        Self::ensure_workspace_scope(ctx)?;
         resource.validate().map_err(SourceError::InvalidRef)?;
         let owner = self
             .registry
@@ -179,6 +231,7 @@ impl SourceAuthorizer {
         purpose: Purpose,
         ttl_secs: u64,
     ) -> Result<String, SourceError> {
+        Self::ensure_workspace_scope(ctx)?;
         resource.validate().map_err(SourceError::InvalidRef)?;
         let owner = self
             .registry
@@ -255,12 +308,14 @@ impl SourceAuthorizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::ResourceOwner;
+    use crate::contract::{ResourceCapability, ResourceOwner};
     use crate::principal::{Delegation, PrincipalKind};
     use async_trait::async_trait;
     use bytes::Bytes;
     use chrono::{Duration, Utc};
-    use rustshare_core::domain::{ApplicationId, PrincipalId};
+    use rustshare_core::domain::{
+        ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
+    };
     use uuid::Uuid;
 
     struct FakeOwner {
@@ -271,6 +326,10 @@ mod tests {
     impl ResourceOwner for FakeOwner {
         fn application_id(&self) -> &ApplicationId {
             &self.application_id
+        }
+
+        fn resource_capabilities(&self) -> Vec<ResourceCapability> {
+            files_capabilities()
         }
 
         async fn authorize(
@@ -355,24 +414,43 @@ mod tests {
         ApplicationId::new("io.elembra.files")
     }
 
+    /// The canonical Files resource surface; registration validates it against
+    /// the first-party ApplicationRegistry.
+    fn files_capabilities() -> Vec<ResourceCapability> {
+        vec![
+            ResourceCapability::new(
+                "file",
+                &["files.read", "files.write", "files.delete", "files.share"],
+            ),
+            ResourceCapability::new(
+                "folder",
+                &["files.read", "files.write", "files.delete", "files.share"],
+            ),
+        ]
+    }
+
     fn ref_for(id: &str) -> ResourceRef {
         ResourceRef::new(files_app(), "file", id)
     }
 
     fn user_ctx() -> PrincipalContext {
+        let tenant = Uuid::new_v4();
         PrincipalContext::user(
             PrincipalId(Uuid::new_v4()),
-            rustshare_core::domain::TenantId(Uuid::new_v4()),
-            rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+            TenantId(tenant),
+            WorkspaceId(tenant),
         )
     }
 
     fn authorizer() -> SourceAuthorizer {
         let mut registry = ResourceOwnerRegistry::new();
         registry
-            .register(std::sync::Arc::new(FakeOwner {
-                application_id: files_app(),
-            }))
+            .register(
+                std::sync::Arc::new(FakeOwner {
+                    application_id: files_app(),
+                }),
+                &ApplicationRegistry::first_party().expect("first-party manifests are valid"),
+            )
             .unwrap();
         SourceAuthorizer::new(registry)
     }
@@ -483,11 +561,12 @@ mod tests {
     #[tokio::test]
     async fn service_identity_alone_cannot_bypass_principal() {
         let authorizer = authorizer();
+        let tenant = Uuid::new_v4();
         let service = PrincipalContext {
             principal_id: PrincipalId(Uuid::new_v4()),
             principal_kind: PrincipalKind::Service,
-            tenant_id: rustshare_core::domain::TenantId(Uuid::new_v4()),
-            workspace_id: rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+            tenant_id: rustshare_core::domain::TenantId(tenant),
+            workspace_id: rustshare_core::domain::WorkspaceId(tenant),
             group_ids: vec![],
             grants: vec![],
             authentication: None,
@@ -516,11 +595,12 @@ mod tests {
         let authorizer = authorizer();
         let issuer = PrincipalId(Uuid::new_v4());
         let agent = PrincipalId(Uuid::new_v4());
+        let tenant = Uuid::new_v4();
         let context = PrincipalContext {
             principal_id: agent,
             principal_kind: PrincipalKind::Agent,
-            tenant_id: rustshare_core::domain::TenantId(Uuid::new_v4()),
-            workspace_id: rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+            tenant_id: rustshare_core::domain::TenantId(tenant),
+            workspace_id: rustshare_core::domain::WorkspaceId(tenant),
             group_ids: vec![],
             grants: vec![],
             authentication: None,
@@ -571,6 +651,10 @@ mod tests {
     impl ResourceOwner for MismatchedOwner {
         fn application_id(&self) -> &ApplicationId {
             &self.application_id
+        }
+
+        fn resource_capabilities(&self) -> Vec<ResourceCapability> {
+            files_capabilities()
         }
 
         async fn authorize(
@@ -643,9 +727,12 @@ mod tests {
     async fn batch_does_not_trust_owner_decisions_for_other_refs() {
         let mut registry = ResourceOwnerRegistry::new();
         registry
-            .register(std::sync::Arc::new(MismatchedOwner {
-                application_id: files_app(),
-            }))
+            .register(
+                std::sync::Arc::new(MismatchedOwner {
+                    application_id: files_app(),
+                }),
+                &ApplicationRegistry::first_party().expect("first-party manifests are valid"),
+            )
             .unwrap();
         let authorizer = SourceAuthorizer::new(registry);
         let ctx = user_ctx();
@@ -701,5 +788,164 @@ mod tests {
         let output = String::from_utf8_lossy(&materialized[0].data);
         assert!(!output.contains("ATTACKER SECRET"));
         assert!(!output.contains("allowed cached hint"));
+    }
+
+    /// A context whose workspace matches its tenant is accepted (the 1:1
+    /// invariant), while a mismatched workspace fails closed on every entry
+    /// point before any owner is consulted.
+    #[tokio::test]
+    async fn workspace_scope_mismatch_fails_closed_everywhere() {
+        let authorizer = authorizer();
+        let tenant = Uuid::new_v4();
+        let principal = PrincipalId(Uuid::new_v4());
+
+        // Correct tenant + workspace (1:1) succeeds.
+        let valid = PrincipalContext::user(
+            principal,
+            rustshare_core::domain::TenantId(tenant),
+            rustshare_core::domain::WorkspaceId(tenant),
+        );
+        assert!(authorizer
+            .authorize(&valid, &read_action(), &ref_for("allow-1"))
+            .await
+            .is_allow());
+
+        // Correct tenant + WRONG workspace fails closed everywhere.
+        let invalid = PrincipalContext::user(
+            principal,
+            rustshare_core::domain::TenantId(tenant),
+            rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+        );
+        assert_eq!(
+            authorizer
+                .authorize(&invalid, &read_action(), &ref_for("allow-1"))
+                .await,
+            Decision::Invalid
+        );
+        assert_eq!(
+            authorizer
+                .authorize_batch(&invalid, &read_action(), &[ref_for("allow-1")])
+                .await
+                .unwrap()[0]
+                .decision,
+            Decision::Invalid
+        );
+        assert!(
+            matches!(
+                authorizer
+                    .resolve(&invalid, &ref_for("allow-1"), Purpose::UserOpen)
+                    .await,
+                Err(SourceError::WorkspaceMismatch)
+            ),
+            "resolve must fail closed on a wrong workspace"
+        );
+        assert!(
+            matches!(
+                authorizer
+                    .fetch(&invalid, &ref_for("allow-1"), Representation::Text)
+                    .await,
+                Err(SourceError::WorkspaceMismatch)
+            ),
+            "fetch must fail closed on a wrong workspace"
+        );
+        assert!(
+            matches!(
+                authorizer
+                    .fetch_delivery_url(&invalid, &ref_for("allow-1"), Purpose::UserOpen, 60)
+                    .await,
+                Err(SourceError::WorkspaceMismatch)
+            ),
+            "delivery URL must fail closed on a wrong workspace"
+        );
+    }
+
+    /// A wrong workspace poisons the whole batch: every ref is marked Invalid
+    /// and stays associated with its own ref.
+    #[tokio::test]
+    async fn batch_fails_closed_per_ref_on_bad_workspace_scope() {
+        let authorizer = authorizer();
+        let tenant = Uuid::new_v4();
+        let invalid = PrincipalContext::user(
+            PrincipalId(Uuid::new_v4()),
+            rustshare_core::domain::TenantId(tenant),
+            rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+        );
+        let refs = vec![ref_for("allow-1"), ref_for("deny-1"), ref_for("allow-2")];
+        let decisions = authorizer
+            .authorize_batch(&invalid, &read_action(), &refs)
+            .await
+            .unwrap();
+        assert_eq!(decisions.len(), 3);
+        for (decision, reference) in decisions.iter().zip(refs.iter()) {
+            assert_eq!(&decision.resource, reference);
+            assert_eq!(decision.decision, Decision::Invalid);
+        }
+    }
+
+    /// Agent delegation cannot bypass workspace validation: a delegated Agent
+    /// with a workspace that does not match its tenant is rejected before the
+    /// delegation is even evaluated.
+    #[tokio::test]
+    async fn agent_delegation_cannot_bypass_workspace_validation() {
+        let authorizer = authorizer();
+        let issuer = PrincipalId(Uuid::new_v4());
+        let agent = PrincipalId(Uuid::new_v4());
+        let tenant = Uuid::new_v4();
+        let context = PrincipalContext {
+            principal_id: agent,
+            principal_kind: PrincipalKind::Agent,
+            tenant_id: rustshare_core::domain::TenantId(tenant),
+            workspace_id: rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+            group_ids: vec![],
+            grants: vec![],
+            authentication: None,
+            delegation: Some(Delegation {
+                issuer_principal_id: issuer,
+                delegate_principal_id: agent,
+                actions: vec![read_action()],
+                workspace_id: None,
+                resource_scope: None,
+                expires_at: None,
+                grant_id: Some("grant-1".into()),
+            }),
+            workload_identity: None,
+            correlation_id: None,
+        };
+        assert_eq!(
+            authorizer
+                .authorize(&context, &read_action(), &ref_for("allow-1"))
+                .await,
+            Decision::Invalid,
+            "a forged workspace must fail closed even for a delegated Agent"
+        );
+    }
+
+    /// A malformed workspace scope also prevents materialization: the batch
+    /// reauthorization marks every candidate invalid, so nothing is
+    /// materialized and no stale cached text can leak.
+    #[tokio::test]
+    async fn materialize_drops_everything_on_bad_workspace_scope() {
+        let authorizer = authorizer();
+        let tenant = Uuid::new_v4();
+        let invalid = PrincipalContext::user(
+            PrincipalId(Uuid::new_v4()),
+            rustshare_core::domain::TenantId(tenant),
+            rustshare_core::domain::WorkspaceId(Uuid::new_v4()),
+        );
+        let materialized = authorizer
+            .materialize(
+                &invalid,
+                &read_action(),
+                vec![Candidate {
+                    resource: ref_for("allow-1"),
+                    cached_text: Some("STALE SECRET".into()),
+                }],
+            )
+            .await
+            .expect("materialize must not abort on a bad scope");
+        assert!(
+            materialized.is_empty(),
+            "no candidate may materialize from an invalid scope"
+        );
     }
 }
