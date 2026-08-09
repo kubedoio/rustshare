@@ -5029,6 +5029,70 @@
         }
       }
     },
+    "/api/v1/files/{id}/rename": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Rename a file.",
+        "description": "POST /api/files/{id}/rename\n\nRequest body: { \"new_name\": \"document.pdf\" }",
+        "operationId": "rename_file",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "File Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameFileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{id}/restore": {
       "post": {
         "tags": [
@@ -13095,16 +13159,16 @@
     "/api/vault-sync/v1/vaults/{vault_id}/rename": {
       "post": {
         "tags": [
-          "Files"
+          "Vault Sync"
         ],
-        "summary": "Rename a file.",
-        "description": "POST /api/files/{id}/rename\n\nRequest body: { \"new_name\": \"document.pdf\" }",
+        "summary": "Rename a file within a vault.",
+        "description": "POST /api/vault-sync/v1/vaults/:vault_id/rename",
         "operationId": "rename_file",
         "parameters": [
           {
-            "name": "file_id",
+            "name": "vault_id",
             "in": "path",
-            "description": "File Id",
+            "description": "Vault Id",
             "required": true,
             "schema": {
               "type": "string",
@@ -13112,23 +13176,13 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RenameFileRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/File"
+                  "$ref": "#/components/schemas/VaultFileUploadResponse"
                 }
               }
             }
