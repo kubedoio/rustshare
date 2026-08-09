@@ -247,6 +247,10 @@ name = "object_gc_test"
 path = "../tests/object_gc_test.rs"
 
 [[test]]
+name = "outbox_integration_test"
+path = "../tests/outbox_integration_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 
