@@ -440,6 +440,7 @@ async fn exhausted_candidate_moves_to_operator_hold() {
 /// Re-enqueueing a candidate that previously exhausted retries (and was
 /// operator-held) must reset its attempt history so it starts a fresh grace
 /// period instead of being re-held after a single transient failure.
+#[allow(clippy::type_complexity)]
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn reenqueue_resets_failed_candidate_attempt_history() {
