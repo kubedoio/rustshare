@@ -3,13 +3,16 @@ import {
 	getDeletedContents,
 	getFileContent,
 	getStarredContents,
-	listAllFiles
+	listAllFiles,
+	downloadFile,
+	previewFile
 } from '$lib/api/files';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
 		get: vi.fn(),
-		requestText: vi.fn()
+		requestText: vi.fn(),
+		getBaseURL: vi.fn().mockReturnValue('https://api.example.com/api/v1')
 	}
 }));
 
@@ -85,5 +88,19 @@ describe('files API', () => {
 		});
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/files/deleted?page=1&per_page=100');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/files/deleted?page=2&per_page=100');
+	});
+});
+
+describe('file URL construction', () => {
+	it('builds download URLs from the configured API base URL', async () => {
+		await expect(downloadFile('file-123')).resolves.toEqual({
+			url: 'https://api.example.com/api/v1/files/file-123/content'
+		});
+	});
+
+	it('builds preview URLs from the configured API base URL', async () => {
+		await expect(previewFile('file-123')).resolves.toEqual({
+			url: 'https://api.example.com/api/v1/files/file-123/preview'
+		});
 	});
 });

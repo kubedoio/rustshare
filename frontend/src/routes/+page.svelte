@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { currentUser } from '$lib/stores/auth';
-	import { get } from 'svelte/store';
+	import { authStore } from '$lib/stores/auth';
 
-	onMount(() => {
-		const user = get(currentUser);
-		if (user) {
-			goto('/dashboard');
-		} else {
-			goto('/login');
-		}
+	// Wait for the auth session bootstrap to finish before redirecting, otherwise
+	// an authenticated user can be bounced to /login while the session is still
+	// loading (or an OIDC callback can be interrupted by a premature redirect).
+	let redirected = $state(false);
+
+	$effect(() => {
+		if (redirected || $authStore.isLoading) return;
+		redirected = true;
+		goto($authStore.isAuthenticated ? '/dashboard' : '/login');
 	});
 </script>
 

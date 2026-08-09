@@ -96,7 +96,7 @@ export async function setFolderStarred(folderId: string, starred: boolean): Prom
 }
 
 export async function downloadFolder(folderId: string): Promise<Blob> {
-	const response = await fetch(`/api/v1/folders/${folderId}/download`, {
+	const response = await fetch(`${apiClient.getBaseURL()}/folders/${folderId}/download`, {
 		credentials: 'include'
 	});
 	if (!response.ok) {

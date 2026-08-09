@@ -42,7 +42,9 @@ export function beginOidcLogin(redirectTo = '/files'): void {
 		return;
 	}
 
-	const target = new URL('/api/v1/auth/oidc/login', window.location.origin);
+	// Use the configured API base URL so OIDC starts on the correct origin even
+	// when the frontend is served from a different origin than the API.
+	const target = new URL(`${apiClient.getBaseURL()}/auth/oidc/login`, window.location.origin);
 	target.searchParams.set('redirect_to', redirectTo);
 	window.location.href = target.toString();
 }

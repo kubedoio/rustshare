@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sanitizeHtml, sanitizeEmailHtml, isSafeFilename, isSafeUrl } from './security';
+import { markdownToHtml } from './markdown';
 
 describe('Sanitization', () => {
 	it('removes script tags', () => {
@@ -242,5 +243,47 @@ describe('URL Safety', () => {
 		expect(isSafeUrl('javascript:alert(1)')).toBe(false);
 		expect(isSafeUrl('data:text/html,<html>')).toBe(false);
 		expect(isSafeUrl('file:///etc/passwd')).toBe(false);
+	});
+});
+
+describe('Markdown file-preview pipeline (stored-XSS)', () => {
+	// Regression: FilePreviewModal renders `sanitizeHtml(markdownToHtml(content).html)`
+	// for .md files whose content is attacker-controlled. A malicious Markdown
+	// payload must never reach the DOM as executable HTML.
+
+	it('strips <script> embedded in Markdown', () => {
+		const md = '# Title\n\n<script>alert(document.cookie)</script>';
+		const html = sanitizeHtml(markdownToHtml(md).html);
+		expect(html).not.toContain('<script');
+		expect(html).not.toContain('alert(');
+	});
+
+	it('strips event-handler attributes on raw HTML in Markdown', () => {
+		const md = 'Text\n\n<img src="x" onerror="alert(1)">';
+		const html = sanitizeHtml(markdownToHtml(md).html);
+		expect(html).not.toContain('onerror');
+		expect(html).not.toContain('alert(1)');
+	});
+
+	it('neutralizes javascript: links written as Markdown links', () => {
+		const md = '[click me](javascript:alert(1))';
+		const html = sanitizeHtml(markdownToHtml(md).html);
+		// The Markdown renderer refuses to turn javascript: into a link at all,
+		// so the payload must never surface as an anchor with a dangerous href.
+		expect(html).not.toContain('href="javascript:');
+		expect(html).not.toContain('<a');
+	});
+
+	it('neutralizes javascript: links written as raw HTML', () => {
+		const md = '<a href="javascript:alert(1)">click me</a>';
+		const html = sanitizeHtml(markdownToHtml(md).html);
+		expect(html).not.toContain('javascript:');
+	});
+
+	it('keeps legitimate Markdown links intact', () => {
+		const md = '[docs](https://example.com/docs)';
+		const html = sanitizeHtml(markdownToHtml(md).html);
+		expect(html).toContain('href="https://example.com/docs"');
+		expect(html).toContain('>docs</a>');
 	});
 });
