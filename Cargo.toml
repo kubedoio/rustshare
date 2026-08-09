@@ -6,6 +6,7 @@ members = [
     "backend/crates/crypto",
     "backend/crates/infrastructure",
     "backend/crates/resource-auth",
+    "backend/crates/integration-events",
     "backend/server",
     "apps/desktop",
     "crates/*",
