@@ -161,6 +161,10 @@ name = "application_service_test"
 path = "../tests/application_service_test.rs"
 
 [[test]]
+name = "fresh_bootstrap_test"
+path = "../tests/fresh_bootstrap_test.rs"
+
+[[test]]
 name = "vault_sync_http_test"
 path = "../tests/vault_sync_http_test.rs"
 
