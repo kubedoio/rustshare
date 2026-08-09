@@ -102,6 +102,13 @@ pub trait MetadataStoreOps: Send + Sync {
         owner_id: UserId,
     ) -> Result<Vec<Folder>>;
 
+    /// Find all descendant folders of a given folder without owner filtering.
+    ///
+    /// Only use when the caller has already verified access to the subtree root
+    /// (e.g. Admin via share), so shared-admin operations work on
+    /// mixed-ownership trees.
+    async fn find_descendant_folders_unchecked(&self, folder_id: FolderId) -> Result<Vec<Folder>>;
+
     /// List files with optional parent filter.
     async fn list_files(
         &self,
@@ -188,7 +195,9 @@ where
             // Verify parent folder exists and user has access
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, owner_id)
+                // Unchecked lookup: shared Edit recipients may create under a
+                // shared folder; permission is enforced below.
+                .find_folder_by_id_unchecked(parent_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -497,9 +506,11 @@ where
 
         // Calculate new path
         let new_path = if let Some(parent_id) = folder.parent_folder_id {
+            // Unchecked lookup: the user already has Edit on the folder itself;
+            // the parent is only needed to compute the new path.
             let parent = self
                 .metadata_store
-                .find_folder_by_id(parent_id, user_id)
+                .find_folder_by_id_unchecked(parent_id)
                 .await
                 .map_err(|e| FolderError::Database(e.to_string()))?
                 .ok_or(FolderError::ParentFolderNotFound(parent_id))?;
@@ -593,18 +604,30 @@ where
 
         // Verify new parent exists and check for circular reference
         let (new_path, new_parent_ancestors) = if let Some(parent_id) = new_parent_id {
-            // Check if new parent exists and user owns it
+            // Check if new parent exists and user has access
             let parent = self.get_folder(parent_id, user_id).await?;
+
+            // Moving into a folder restructures it: require Edit on the target
+            // parent, matching create_folder / upload_file semantics.
+            self.require_folder_permission(
+                user_id,
+                parent.tenant_id,
+                parent_id,
+                SharePermissions::Edit,
+            )
+            .await?;
 
             // Check for circular reference using ancestor_ids if available
             let would_create_cycle = if let Some(ref parent_ancestors) = parent.ancestor_ids {
                 // Fast path: check if folder_id is in parent's ancestors
                 parent_ancestors.contains(&folder_id)
             } else {
-                // Slow path: check descendants
+                // Slow path: check descendants (unchecked — Edit on the moved
+                // folder already verified, and the cycle check must see the
+                // whole tree, not just the caller's own folders)
                 let descendants = self
                     .metadata_store
-                    .find_descendant_folders(folder_id, user_id)
+                    .find_descendant_folders_unchecked(folder_id)
                     .await
                     .map_err(|e| FolderError::Database(e.to_string()))?;
                 descendants.iter().any(|d| d.id == parent_id)
@@ -773,10 +796,12 @@ where
         new_ancestor_ids: Option<Vec<Uuid>>,
         _user_id: UserId,
     ) -> Result<(), FolderError> {
-        // Get all descendants (excluding the folder itself)
+        // Get all descendants (excluding the folder itself).
+        // Unchecked: the caller already holds Edit on the subtree root, which
+        // authorizes path rewrites of the whole (possibly mixed-ownership) tree.
         let all_descendants = self
             .metadata_store
-            .find_descendant_folders(folder_id, _user_id)
+            .find_descendant_folders_unchecked(folder_id)
             .await
             .map_err(|e| FolderError::Database(e.to_string()))?;
 
@@ -993,6 +1018,29 @@ mod tests {
             &self,
             folder_id: FolderId,
             _owner_id: UserId,
+        ) -> Result<Vec<Folder>> {
+            let folders = self.folders.lock().unwrap();
+            let mut result = Vec::new();
+            let mut to_process = vec![folder_id];
+
+            while let Some(current_id) = to_process.pop() {
+                if let Some(folder) = folders.get(&current_id) {
+                    result.push(folder.clone());
+                    // Find children
+                    for f in folders.values() {
+                        if f.parent_folder_id == Some(current_id) {
+                            to_process.push(f.id);
+                        }
+                    }
+                }
+            }
+
+            Ok(result)
+        }
+
+        async fn find_descendant_folders_unchecked(
+            &self,
+            folder_id: FolderId,
         ) -> Result<Vec<Folder>> {
             let folders = self.folders.lock().unwrap();
             let mut result = Vec::new();

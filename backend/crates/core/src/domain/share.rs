@@ -163,9 +163,12 @@ impl Share {
         }
     }
 
-    /// Checks if this is a public share (anonymous access)
+    /// Checks if this is a public share (anonymous access via share link).
+    ///
+    /// A public share is characterized by a share token. Group shares are
+    /// not public: they grant access to authenticated group members.
     pub fn is_public_share(&self) -> bool {
-        self.recipient_user_id.is_none()
+        self.share_token.is_some()
     }
 
     /// Checks if this is a user share (authenticated user-to-user)

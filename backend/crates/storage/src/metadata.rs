@@ -6405,6 +6405,13 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
         self.find_descendant_folders(folder_id, owner_id).await
     }
 
+    async fn find_descendant_folders_unchecked(
+        &self,
+        folder_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_unchecked(folder_id).await
+    }
+
     async fn list_files(
         &self,
         parent_id: Option<uuid::Uuid>,
