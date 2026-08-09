@@ -123,7 +123,7 @@ impl FromStr for ActorRef {
                     .map_err(|e| ActorRefError::InvalidPrincipal(e.to_string()))?,
             ))),
             "service" => {
-                if !valid_namespace_rule(value) {
+                if !rustshare_core::domain::valid_namespace(value) {
                     return Err(ActorRefError::InvalidApplication(value.to_string()));
                 }
                 Ok(ActorRef::Service(ApplicationId::new(value)))
@@ -512,10 +512,11 @@ impl IntegrationEventBuilder {
 ///
 /// Segments are ASCII lowercase letters, digits, `-` and `_`; there must be
 /// at least one domain segment between `io.elembra.` and the trailing
-/// `.v<N>` with `N >= 1`. The same rule applies to Application manifest
-/// declarations in `rustshare-core`.
+/// `.v<N>` with `N >= 1`. The rule lives in
+/// `rustshare-core::domain::valid_event_type`, which also validates
+/// Application manifest declarations, so envelope and manifest cannot drift.
 pub fn validate_event_type(event_type: &str) -> Result<(), EventValidationError> {
-    if !valid_event_type_rule(event_type) {
+    if !rustshare_core::domain::valid_event_type(event_type) {
         return Err(EventValidationError::InvalidEventType(
             event_type.to_string(),
         ));
@@ -529,45 +530,15 @@ pub fn validate_source_uri(source: &str) -> Result<String, EventValidationError>
     let namespace = source.strip_prefix("elembra://").ok_or_else(|| {
         EventValidationError::InvalidSource("missing `elembra://` scheme prefix".to_string())
     })?;
-    if namespace.is_empty() || namespace.contains('/') || !valid_namespace_rule(namespace) {
+    if namespace.is_empty()
+        || namespace.contains('/')
+        || !rustshare_core::domain::valid_namespace(namespace)
+    {
         return Err(EventValidationError::InvalidSource(format!(
             "`{source}` is not a valid `elembra://<application-id>` source URI"
         )));
     }
     Ok(namespace.to_string())
-}
-
-/// Namespace syntax shared with `rustshare-core::domain::valid_namespace`:
-/// one or more dot-separated segments of ASCII lowercase letters, digits,
-/// `-` and `_`.
-fn valid_namespace_rule(value: &str) -> bool {
-    !value.is_empty()
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-        })
-}
-
-/// The event-type rule: `io.elembra.` + one or more namespace segments + a
-/// trailing `.v<N>` with `N >= 1` (the version part must not be zero).
-fn valid_event_type_rule(event_type: &str) -> bool {
-    let Some(rest) = event_type.strip_prefix("io.elembra.") else {
-        return false;
-    };
-    let Some(version_at) = rest.rfind(".v") else {
-        return false;
-    };
-    let version = &rest[version_at + 2..];
-    if version.is_empty() || !version.bytes().all(|b| b.is_ascii_digit()) {
-        return false;
-    }
-    if version.trim_start_matches('0').is_empty() {
-        return false; // `.v0` / `.v00` — major version must be >= 1
-    }
-    let domain = &rest[..version_at];
-    !domain.is_empty() && valid_namespace_rule(domain)
 }
 
 #[cfg(test)]

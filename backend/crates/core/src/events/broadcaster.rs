@@ -2,6 +2,13 @@
 //!
 //! This module provides an in-memory pub/sub mechanism using tokio's broadcast
 //! channel to distribute events from the EventStore to all connected WebSocket clients.
+//!
+//! IMPORTANT (ADR-0031): this broadcaster is a process-local, ephemeral
+//! realtime/UI fan-out mechanism. Events may be lost (lagged subscribers,
+//! no subscribers, process restart) and delivery is NOT durable. It is NOT
+//! suitable as a cross-Application integration bus — durable integration
+//! events flow through the transactional PostgreSQL outbox
+//! (`rustshare-integration-events` + the storage outbox store).
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -13,6 +20,12 @@ use super::Event;
 /// Uses tokio's broadcast channel to implement a pub/sub pattern where
 /// each subscriber receives an independent copy of all published events.
 /// Events are wrapped in Arc to avoid cloning for each subscriber.
+///
+/// This is an ephemeral, process-local realtime/UI fan-out channel
+/// (ADR-0031): subscribers can lag or be absent and events are silently
+/// dropped then. It is NOT durable and must not be used as a
+/// cross-Application integration bus — durable integration events go
+/// through the transactional outbox.
 #[derive(Clone)]
 pub struct EventBroadcaster {
     tx: broadcast::Sender<Arc<Event>>,
