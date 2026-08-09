@@ -1,0 +1,14 @@
+-- Fix fresh-install bootstrap after the #210/#217 Application cutover.
+--
+-- The code (template_service.rs) reads and writes templates.application_config,
+-- but no migration ever renamed the column from its legacy name (module_config,
+-- added in 20260511000001). As a result, a brand-new database crashed at boot
+-- while seeding default templates:
+--
+--   Failed to seed default templates: ... column "application_config" of
+--   relation "templates" does not exist
+--
+-- The rename applies identically to fresh and upgraded databases: module_config
+-- exists in both once 20260511000001 has run, and a direct column rename
+-- preserves the existing JSON configuration in place.
+ALTER TABLE templates RENAME COLUMN module_config TO application_config;
