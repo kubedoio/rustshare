@@ -13,9 +13,7 @@
 //! of anything serialized inside its `data`) grants no Files access. This
 //! consumer never consults the authorizer and never fetches content.
 
-use rustshare_integration_events::event_types::event_types::{
-    FILES_FILE_CREATED_V1, FILES_FILE_UPDATED_V1,
-};
+use rustshare_integration_events::event_types::{FILES_FILE_CREATED_V1, FILES_FILE_UPDATED_V1};
 use rustshare_integration_events::{event_matches_subscription, OutboxConsumer};
 use rustshare_integration_events::{redact::redact_error, ConsumerOutcome, IntegrationEvent};
 use sqlx::PgPool;

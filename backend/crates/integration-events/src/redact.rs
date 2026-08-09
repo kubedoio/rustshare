@@ -67,10 +67,10 @@ fn match_secret(message: &str, i: usize) -> Option<(usize, usize)> {
     let rest = &message[i..];
     jwt_len(rest)
         .map(|consumed| (consumed, 0))
-        .or_else(|| bearer_len(rest).map(|(consumed, keep)| (consumed, keep)))
-        .or_else(|| authorization_len(rest).map(|(consumed, keep)| (consumed, keep)))
+        .or_else(|| bearer_len(rest))
+        .or_else(|| authorization_len(rest))
         .or_else(|| access_key_len(rest).map(|consumed| (consumed, 0)))
-        .or_else(|| key_value_len(rest).map(|(consumed, keep)| (consumed, keep)))
+        .or_else(|| key_value_len(rest))
 }
 
 fn is_base64url(byte: u8) -> bool {

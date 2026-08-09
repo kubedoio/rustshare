@@ -6,9 +6,7 @@
 //! (`rustshare-core::domain::application`) declares the same strings in the
 //! Files manifest's `integrationEvents.publishes`.
 
-pub mod event_types {
-    /// A file (and its first content version) was created.
-    pub const FILES_FILE_CREATED_V1: &str = "io.elembra.files.file.created.v1";
-    /// An existing file gained a new content version.
-    pub const FILES_FILE_UPDATED_V1: &str = "io.elembra.files.file.updated.v1";
-}
+/// A file (and its first content version) was created.
+pub const FILES_FILE_CREATED_V1: &str = "io.elembra.files.file.created.v1";
+/// An existing file gained a new content version.
+pub const FILES_FILE_UPDATED_V1: &str = "io.elembra.files.file.updated.v1";

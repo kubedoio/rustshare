@@ -33,9 +33,7 @@ use rustshare_core::services::{
     IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError, PermissionResolver,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use rustshare_integration_events::event_types::event_types::{
-    FILES_FILE_CREATED_V1, FILES_FILE_UPDATED_V1,
-};
+use rustshare_integration_events::event_types::{FILES_FILE_CREATED_V1, FILES_FILE_UPDATED_V1};
 use rustshare_integration_events::{ActorRef, ConsumerOutcome, IntegrationEvent, OutboxConsumer};
 use rustshare_resource_auth::{
     Decision, PrincipalContext, ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, FILES_READ,

@@ -580,13 +580,10 @@ mod tests {
         assert_eq!(value["datacontenttype"], "application/json");
         assert!(value.get("elembraTenant").is_some());
         assert!(value.get("elembraWorkspace").is_some());
-        assert_eq!(
-            value["elembraActor"]
-                .as_str()
-                .unwrap()
-                .starts_with("principal:"),
-            true
-        );
+        assert!(value["elembraActor"]
+            .as_str()
+            .unwrap()
+            .starts_with("principal:"));
         assert_eq!(value["elembraResource"]["resourceType"], "file");
         assert_eq!(value["elembraResource"]["version"], "sha256:0123abcdef");
         assert!(value.get("elembraCorrelation").is_none());
@@ -813,7 +810,7 @@ mod tests {
         assert_eq!(ActorRef::from_str(&agent.to_string()).unwrap(), agent);
 
         let json = serde_json::to_string(&principal).unwrap();
-        assert_eq!(json, format!("\"{}\"", principal.to_string()));
+        assert_eq!(json, format!("\"{principal}\""));
         let parsed: ActorRef = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, principal);
 
