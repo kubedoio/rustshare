@@ -9,6 +9,7 @@ pub mod chat_integration_impl;
 pub mod event_store;
 pub mod metadata;
 pub mod object_store;
+pub mod outbox_store;
 pub mod repos;
 pub mod upload_doc_store;
 pub mod upload_impl;
@@ -20,6 +21,9 @@ pub use metadata::{
     UserSecurityEventRecord,
 };
 pub use object_store::{is_missing_object_error, ObjectStore, ObjectStoreOptions};
+pub use outbox_store::{
+    ClaimedEvent, ConsumerCount, DeadLetterEntry, OutboxConfig, OutboxStore, OutboxStoreError,
+};
 
 // Service-layer trait bridges for EventStore, MetadataStore, ObjectStore and
 // ShareNotificationRepoImpl now live next to their concrete types (see

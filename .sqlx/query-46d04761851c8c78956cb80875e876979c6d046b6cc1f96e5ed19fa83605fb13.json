@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT attempt_count FROM integration_deliveries\n            WHERE consumer_id = $1 AND source = $2 AND event_id = $3 AND claim_token = $4\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "attempt_count",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "46d04761851c8c78956cb80875e876979c6d046b6cc1f96e5ed19fa83605fb13"
+}
