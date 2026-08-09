@@ -251,6 +251,7 @@ async fn setup_test_env() -> AppState {
         share_service,
         thumbnail_service,
         permission_resolver,
+        source_authorizer: Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
         notification_service,
         user_share_service,
         ai_service: None,
