@@ -147,9 +147,10 @@ impl UploadObjectStore for MockUploadObjectStore {
         _session_id: Uuid,
         _total_chunks: u32,
         _final_key_prefix: &str,
-    ) -> Result<(String, Box<dyn Send>), UploadError> {
+    ) -> Result<(String, u64, Box<dyn Send>), UploadError> {
         Ok((
             rustshare_core::validation::calculate_sha256(&Bytes::new()),
+            0,
             Box::new(()),
         ))
     }

@@ -368,6 +368,78 @@ async fn aborted_resumable_upload_cleans_up_chunks() {
 
 static TMPDIR_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// The assembled size must match the client-declared total size. Regression:
+/// chunk size is only bounded above, so a client could declare a bogus size
+/// that was previously recorded into file metadata, quotas, and the
+/// completion response.
+#[tokio::test]
+#[ignore = "requires database and S3"]
+async fn resumable_upload_rejects_declared_size_mismatch() {
+    let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
+    let tenant_id = Uuid::new_v4();
+    let user = create_test_user(
+        &metadata_store,
+        &format!("size_mismatch_{}", Uuid::new_v4().simple()),
+        tenant_id,
+    )
+    .await;
+
+    let (upload_service, _upload_store_dir) = create_upload_service(
+        event_store.clone(),
+        metadata_store.clone(),
+        object_store.clone(),
+    );
+
+    let chunk_size = 1024 * 1024u64; // clamped to >= 1 MiB by create_session
+    let declared_total = 2 * 1024 * 1024u64; // client declares 2 MiB
+
+    let session = upload_service
+        .create_session(
+            user.id,
+            tenant_id,
+            CreateSessionRequest {
+                folder_id: None,
+                file_name: "mismatch.bin".to_string(),
+                mime_type: "application/octet-stream".to_string(),
+                total_size: declared_total,
+                chunk_size,
+                file_hash: None,
+            },
+        )
+        .await
+        .expect("create upload session");
+
+    // Upload a full first chunk and a SHORT last chunk: the assembled data is
+    // only 1.5 MiB while the client declared 2 MiB.
+    let (full_chunk, _) = create_large_temp_file(chunk_size as usize).await;
+    upload_service
+        .upload_chunk_from_path(session.session_id, 0, full_chunk.path(), None, user.id)
+        .await
+        .expect("upload full chunk 0");
+
+    let (short_chunk, _) = create_large_temp_file(512 * 1024usize).await;
+    upload_service
+        .upload_chunk_from_path(session.session_id, 1, short_chunk.path(), None, user.id)
+        .await
+        .expect("upload short chunk 1");
+
+    let result = upload_service
+        .complete_upload(session.session_id, user.id)
+        .await;
+    let message = match result {
+        Err(rustshare_core::services::UploadError::Storage(message)) => message,
+        other => {
+            panic!("declared-size mismatch must be rejected with Storage error, got: {other:?}")
+        }
+    };
+    assert!(
+        message.contains("does not match declared size"),
+        "unexpected error message: {message}"
+    );
+
+    cleanup_user(&pool, user.id).await;
+}
+
 #[tokio::test]
 async fn temp_file_is_cleaned_up_after_failed_stream() {
     // This test verifies the contract used by the HTTP handlers: when the

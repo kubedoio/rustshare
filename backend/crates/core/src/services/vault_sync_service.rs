@@ -304,7 +304,9 @@ impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
                             tenant_id,
                             vault_id: req.vault_id,
                             relative_path: req.relative_path.clone(),
-                            content_type: req.content_type.clone(),
+                            // Preserve the stored content type when the client
+                            // omits it on a revision update (mirrors the WebUI path).
+                            content_type: file.content_type.clone().or(req.content_type.clone()),
                             sha256: Some(sha256.clone()),
                             size: Some(req.size),
                             server_rev: 0, // ignored — set inside transaction
