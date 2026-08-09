@@ -1,0 +1,24 @@
+[package]
+name = "rustshare-resource-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Elembra cross-Application identity/resource contracts: PrincipalContext, ResourceRef and source authorization"
+
+[dependencies]
+rustshare-core = { path = "../core" }
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+bytes = { workspace = true }
+url = "2.5"
+percent-encoding = "2.3"
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }

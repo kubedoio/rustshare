@@ -1,0 +1,62 @@
+//! Canonical action capability names (ADR-0032, `docs/specs/resource-ref-authorization-v1alpha1.md`).
+//!
+//! Action capabilities are stable dotted strings owned by Applications:
+//! `<application-namespace>.<verb>`. The owning Application defines the
+//! semantics of each action on its resource types.
+//!
+//! Only `files.*` actions are implemented in this phase; the other namespaces
+//! are reserved so consumers and delegation records use stable identifiers
+//! from day one.
+
+/// Read a Files resource (file metadata, content, versions).
+pub const FILES_READ: &str = "files.read";
+/// Write/mutate a Files resource (create, update, rename, move, restore).
+pub const FILES_WRITE: &str = "files.write";
+/// Delete a Files resource (soft delete; folder delete covers the subtree).
+pub const FILES_DELETE: &str = "files.delete";
+/// Manage sharing of a Files resource (create, update, revoke shares).
+pub const FILES_SHARE: &str = "files.share";
+
+/// Reserved for Elembra Notes.
+pub const NOTES_READ: &str = "notes.read";
+/// Reserved for Elembra Notes.
+pub const NOTES_WRITE: &str = "notes.write";
+/// Reserved for Elembra Mail.
+pub const MAIL_READ: &str = "mail.read";
+/// Reserved for Elembra Mail.
+pub const MAIL_SEND: &str = "mail.send";
+/// Reserved for Elembra Chat.
+pub const CHAT_READ: &str = "chat.read";
+/// Reserved for Elembra Chat.
+pub const CHAT_POST: &str = "chat.post";
+/// Reserved for Elembra Memory.
+pub const MEMORY_QUERY: &str = "memory.query";
+/// Reserved for Elembra Agents.
+pub const AGENTS_RUN: &str = "agents.run";
+
+/// The `files.*` action set implemented by the Elembra Files owner adapter.
+pub const FILES_ACTIONS: [&str; 4] = [FILES_READ, FILES_WRITE, FILES_DELETE, FILES_SHARE];
+
+/// Return the namespace segment of an action capability (`files.read` -> `files`).
+pub fn action_namespace(action: &str) -> Option<&str> {
+    let (namespace, verb) = action.split_once('.')?;
+    if namespace.is_empty() || verb.is_empty() || verb.contains('.') {
+        return None;
+    }
+    Some(namespace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespaces_parse() {
+        assert_eq!(action_namespace(FILES_READ), Some("files"));
+        assert_eq!(action_namespace("mail.send"), Some("mail"));
+        assert_eq!(action_namespace("chat.post"), Some("chat"));
+        assert_eq!(action_namespace("files.read.extra"), None);
+        assert_eq!(action_namespace("read"), None);
+        assert_eq!(action_namespace("files."), None);
+    }
+}
