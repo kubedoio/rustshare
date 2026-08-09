@@ -19,6 +19,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including declarative manifests, tenant/workspace enablement persistence,
   `/apps/...` UI routes, and `/api/v1/applications/...` registry APIs (#210).
 
+### Fixed
+
+- **Fresh installs** — a new migration renames `templates.module_config` to
+  `templates.application_config` (the cutover renamed the code but never the
+  column), restoring first-boot default template seeding; the pilot release
+  job now verifies real backend readiness via the proxied `/health/ready`
+  endpoint instead of nginx's static `/health` (#220).
+- **Authorization** — creating a group share now requires the caller to hold at
+  least the permission being granted on the resource (previously any group
+  member could grant a group, including themselves, arbitrary access to any
+  resource); moving a folder now requires Edit on the target parent; shared
+  recipients can create/rename/move folders and move files inside shared
+  folders, and shared Admin recipients can delete mixed-ownership trees
+  (#218, #221, #222).
+- **Invites** — the emailed invite link is now built from the server's
+  configured public URL instead of client-supplied input; invitees are placed
+  in the inviter's tenant (not a hardcoded nil tenant); concurrent accepts no
+  longer surface as 500s; passwords are length-bounded (#218).
+- **Realtime** — WebSocket connections now reject disabled/deleted accounts,
+  matching the HTTP layer; the OIDC post-login redirect rejects backslash and
+  control-character bypasses; client IP extraction trusts the proxy-appended
+  `X-Forwarded-For` entry (nginx now overwrites the header with the real
+  remote address), so per-IP rate limits can no longer be evaded by spoofing
+  (#218).
+- **Uploads** — the resumable-upload completion now verifies the assembled
+  blob size against the declared size, and replication jobs reference the
+  persisted file-version row (previously a dangling id could fail replication
+  on overwrite edits) (#223).
+- **Sync** — a failed remote fetch or an unreadable local subtree now aborts
+  the sync cycle instead of deleting local/server content; delete planning
+  preserves edited files (re-upload/download) instead of destroying them;
+  unparseable server timestamps no longer cause infinite resync loops; an
+  unknown event cursor returns an explicit error instead of a silent
+  "caught up" page (#219, #224).
+- **Object GC** — re-enqueuing a released blob resets its attempt history so a
+  previously-retried candidate is not re-held after a single transient failure
+  (#225).
+- **Frontend security** — markdown file previews are sanitized (stored-XSS via
+  malicious file contents); external links open with `noopener,noreferrer`;
+  OIDC, file download/preview, folder download, and avatar URLs honor the
+  configured API base URL; the root page waits for the session bootstrap
+  before redirecting (#226).
+- **Ops** — the sqlx offline query cache is regenerated to match the current
+  schema, removing orphaned Module-era metadata entries.
+
 ## [0.7.0] - 2026-08-08
 
 ### Added
