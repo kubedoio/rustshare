@@ -501,6 +501,37 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
             "brainstorming" => Some("template_blank_brainstorm"),
             _ => None,
         };
+        // The Files Application owns the `file` and `folder` resource types
+        // and declares its full action capability set (ADR-0032). Other
+        // Applications keep the generic `{slug}.resource` read declaration
+        // until their own resource types are introduced.
+        let resources = if slug == "files" {
+            vec![
+                ApplicationResource {
+                    resource_type: "file".into(),
+                    actions: vec![
+                        ActionCapability::new("files.read"),
+                        ActionCapability::new("files.write"),
+                        ActionCapability::new("files.delete"),
+                        ActionCapability::new("files.share"),
+                    ],
+                },
+                ApplicationResource {
+                    resource_type: "folder".into(),
+                    actions: vec![
+                        ActionCapability::new("files.read"),
+                        ActionCapability::new("files.write"),
+                        ActionCapability::new("files.delete"),
+                        ActionCapability::new("files.share"),
+                    ],
+                },
+            ]
+        } else {
+            vec![ApplicationResource {
+                resource_type: format!("{slug}.resource"),
+                actions: vec![ActionCapability::new(format!("{slug}.read"))],
+            }]
+        };
         ApplicationManifest {
             api_version: "elembra.io/v1alpha1".into(),
             kind: "Application".into(),
@@ -520,10 +551,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 }],
                 requires: Vec::new(),
             },
-            resources: vec![ApplicationResource {
-                resource_type: format!("{slug}.resource"),
-                actions: vec![ActionCapability::new(format!("{slug}.read"))],
-            }],
+            resources,
             contributions: ApplicationContributions {
                 navigation: vec![ApplicationContribution {
                     id: format!("{slug}.navigation"),

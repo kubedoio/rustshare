@@ -15,6 +15,7 @@ rustshare-storage = { path = "../crates/storage" }
 rustshare-auth = { path = "../crates/auth" }
 rustshare-infrastructure = { path = "../crates/infrastructure" }
 rustshare-crypto = { path = "../crates/crypto" }
+rustshare-resource-auth = { path = "../crates/resource-auth" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
@@ -171,6 +172,10 @@ path = "../tests/shared_recipient_operations_test.rs"
 [[test]]
 name = "shared_admin_delete_test"
 path = "../tests/shared_admin_delete_test.rs"
+
+[[test]]
+name = "source_authorization_test"
+path = "../tests/source_authorization_test.rs"
 
 [[test]]
 name = "event_cursor_test"

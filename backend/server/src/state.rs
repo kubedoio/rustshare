@@ -178,6 +178,10 @@ pub struct AppState {
             rustshare_infrastructure::repositories::PermissionResolverRepository,
         >,
     >,
+    /// Platform-Core source authorizer (PrincipalContext/ResourceRef contract)
+    /// seeded with the Elembra Files owner adapter. See `authz` module.
+    pub source_authorizer: Arc<rustshare_resource_auth::SourceAuthorizer>,
+
     pub notification_service: Arc<
         rustshare_core::services::NotificationService<
             rustshare_infrastructure::repositories::NotificationRepository,
