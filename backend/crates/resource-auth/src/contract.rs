@@ -5,7 +5,7 @@
 //! queries an owner's private tables; it routes through this contract.
 
 use crate::decision::Decision;
-use crate::principal::{EffectivePrincipal, PrincipalContext};
+use crate::principal::PrincipalContext;
 use crate::resource_ref::ResourceRef;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -124,8 +124,6 @@ pub enum SourceError {
     Unauthorized,
     #[error("resource not found")]
     NotFound,
-    #[error("cross-tenant resource reference")]
-    CrossTenant,
     #[error("resource owner unavailable")]
     OwnerUnavailable,
     #[error("batch of {actual} refs exceeds the limit of {limit}")]
@@ -202,27 +200,6 @@ pub trait ResourceOwner: Send + Sync {
     ) -> Result<String, SourceError>;
 }
 
-/// Shared mapping of a fail-closed policy decision into a contract error.
-pub fn decision_to_source_error(decision: Decision) -> SourceError {
-    match decision {
-        Decision::Allow => unreachable!("Allow is not an error"),
-        Decision::Deny => SourceError::Unauthorized,
-        Decision::NotFound => SourceError::NotFound,
-        Decision::Invalid => SourceError::InvalidRef("invalid resource reference".into()),
-    }
-}
-
-/// Verify the delegation bounds of a context for an action/ref. This is the
-/// Platform-Core-side delegation gate; owners apply the same check internally.
-pub fn check_delegation(
-    ctx: &PrincipalContext,
-    action: &ActionCapability,
-    resource: Option<&ResourceRef>,
-) -> Result<EffectivePrincipal, SourceError> {
-    ctx.effective_user_authority(action, resource)
-        .map_err(|error| SourceError::Delegation(error.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,21 +214,5 @@ mod tests {
             serde_json::to_string(&Representation::Raw).unwrap(),
             "\"raw\""
         );
-    }
-
-    #[test]
-    fn fail_closed_decisions_map_to_errors() {
-        assert!(matches!(
-            decision_to_source_error(Decision::Deny),
-            SourceError::Unauthorized
-        ));
-        assert!(matches!(
-            decision_to_source_error(Decision::NotFound),
-            SourceError::NotFound
-        ));
-        assert!(matches!(
-            decision_to_source_error(Decision::Invalid),
-            SourceError::InvalidRef(_)
-        ));
     }
 }

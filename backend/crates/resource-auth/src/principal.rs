@@ -68,6 +68,18 @@ pub struct WorkloadIdentity {
 /// become the issuer. The delegated action set is an upper bound, never an
 /// automatic resource allow — the source Application still evaluates
 /// resource-level authorization for the issuer's authority.
+///
+/// # Trusted-boundary contract
+///
+/// A `Delegation` must only ever be constructed at the trusted boundary from
+/// an authoritative grant store or verified signature — never from
+/// client-visible state. The issuer's *current* authority is re-evaluated at
+/// the source for every request, so a forged delegation to a powerless
+/// issuer grants nothing; but the delegation itself (who issued it) must be
+/// established by Platform Core, not supplied by the caller. Grant issuance
+/// and verification storage are deferred to the Agents Application; the
+/// first consumer that wires a request path must construct `PrincipalContext`
+/// only through that gated boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delegation {
     /// The Principal that issued the delegation (the ultimate initiator).

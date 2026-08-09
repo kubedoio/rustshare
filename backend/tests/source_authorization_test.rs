@@ -29,7 +29,7 @@ use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_resource_auth::{
     Candidate, Decision, Delegation, PrincipalContext, PrincipalKind, Purpose, Representation,
     ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError, WorkloadIdentity,
-    FILES_DELETE, FILES_READ, FILES_WRITE, MAX_BATCH_SIZE,
+    FILES_DELETE, FILES_READ, FILES_SHARE, FILES_WRITE, MAX_BATCH_SIZE,
 };
 use rustshare_server::authz::FilesResourceOwner;
 use std::sync::Arc;
@@ -1068,6 +1068,419 @@ async fn public_share_does_not_grant_through_plain_principal() {
             .await,
         Decision::Deny,
         "public shares must not grant access to arbitrary principals"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+/// A forged delegation grants no more than its issuer's current authority: an
+/// agent delegated by a user with no access to the file stays denied. This
+/// locks the invariant that delegations cannot amplify authority and that the
+/// delegation's issuer is always re-evaluated at the source.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn forged_delegation_grants_no_more_than_issuer_holds() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let powerless = ctx
+        .create_test_user(&format!("powerless_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx
+        .create_test_file(owner.id, None, "owned.txt", b"owned")
+        .await;
+
+    let agent_id = PrincipalId(Uuid::new_v4());
+    let agent = PrincipalContext {
+        principal_id: agent_id,
+        principal_kind: PrincipalKind::Agent,
+        tenant_id: TenantId(ctx.tenant_id),
+        workspace_id: WorkspaceId(ctx.tenant_id),
+        group_ids: Vec::new(),
+        grants: Vec::new(),
+        authentication: None,
+        delegation: Some(Delegation {
+            issuer_principal_id: PrincipalId(powerless.id),
+            delegate_principal_id: agent_id,
+            actions: vec![read_action()],
+            workspace_id: None,
+            resource_scope: None,
+            expires_at: None,
+            grant_id: Some("forged-grant".into()),
+        }),
+        workload_identity: None,
+        correlation_id: None,
+    };
+
+    assert_eq!(
+        authorizer
+            .authorize(&agent, &read_action(), &file_ref(file.id))
+            .await,
+        Decision::Deny,
+        "a delegation from a powerless issuer must not grant access"
+    );
+    assert!(
+        matches!(
+            authorizer
+                .fetch(&agent, &file_ref(file.id), Representation::Text)
+                .await,
+            Err(SourceError::Unauthorized)
+        ),
+        "content must not be fetched through a forged delegation"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+
+/// `group_ids`/`grants` carried in a PrincipalContext are informational and
+/// must never be trusted as grants: a non-member whose context lists the
+/// group id (spoofed at the boundary) stays denied because the source derives
+/// membership from authoritative state.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn context_group_ids_are_never_trusted() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let outsider = ctx
+        .create_test_user(&format!("outsider_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx
+        .create_test_file(owner.id, None, "guarded.txt", b"guarded")
+        .await;
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("g_{}", Uuid::new_v4()))
+    .bind(ctx.tenant_id)
+    .bind(owner.id)
+    .execute(&ctx.pool)
+    .await
+    .expect("create user group");
+
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: Some(file.id),
+        folder_id: None,
+        share_token: None,
+        permissions: SharePermissions::View,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: None,
+        recipient_group_id: Some(group_id),
+        created_by: owner.id,
+        created_at: Utc::now(),
+        revoked_at: None,
+        tenant_id: ctx.tenant_id,
+    };
+    ctx.metadata_store
+        .create_share(&share)
+        .await
+        .expect("create group share");
+
+    // The outsider is NOT a member, but their context claims membership.
+    let spoofed = PrincipalContext {
+        principal_id: PrincipalId(outsider.id),
+        principal_kind: PrincipalKind::User,
+        tenant_id: TenantId(ctx.tenant_id),
+        workspace_id: WorkspaceId(ctx.tenant_id),
+        group_ids: vec![group_id],
+        grants: vec![read_action()],
+        authentication: None,
+        delegation: None,
+        workload_identity: None,
+        correlation_id: None,
+    };
+
+    assert_eq!(
+        authorizer
+            .authorize(&spoofed, &read_action(), &file_ref(file.id))
+            .await,
+        Decision::Deny,
+        "client-supplied group_ids/grants must never grant access"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+
+/// `files.share` requires Admin and, like the legacy `resolve_permission`
+/// based recipient share management, inherits Admin from folder ancestry: an
+/// Admin recipient of a shared folder authorizes share management on files
+/// inside it, while an Edit recipient does not.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn files_share_requires_admin_and_inherits_from_folder() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let admin = ctx
+        .create_test_user(&format!("admin_{}", Uuid::new_v4()))
+        .await;
+    let editor = ctx
+        .create_test_user(&format!("editor_{}", Uuid::new_v4()))
+        .await;
+    let root = ctx.create_test_folder(owner.id, "root", None).await;
+    let file = ctx
+        .create_test_file(owner.id, Some(root.id), "in-shared.txt", b"inside")
+        .await;
+
+    let share = |recipient: Uuid, permissions: SharePermissions| Share {
+        id: Uuid::new_v4(),
+        file_id: None,
+        folder_id: Some(root.id),
+        share_token: None,
+        permissions,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: Some(recipient),
+        recipient_group_id: None,
+        created_by: owner.id,
+        created_at: Utc::now(),
+        revoked_at: None,
+        tenant_id: ctx.tenant_id,
+    };
+    ctx.metadata_store
+        .create_share(&share(admin.id, SharePermissions::Admin))
+        .await
+        .expect("create admin folder share");
+    ctx.metadata_store
+        .create_share(&share(editor.id, SharePermissions::Edit))
+        .await
+        .expect("create edit folder share");
+
+    let reference = file_ref(file.id);
+    assert_eq!(
+        authorizer
+            .authorize(
+                &user_ctx(admin.id, ctx.tenant_id),
+                &ActionCapability::new(FILES_SHARE),
+                &reference
+            )
+            .await,
+        Decision::Allow,
+        "folder-inherited Admin authorizes files.share on files inside the folder"
+    );
+    assert_eq!(
+        authorizer
+            .authorize(
+                &user_ctx(editor.id, ctx.tenant_id),
+                &ActionCapability::new(FILES_SHARE),
+                &reference
+            )
+            .await,
+        Decision::Deny,
+        "Edit does not authorize share management"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+
+/// Revoking a group share takes immediate effect through the contract
+/// (no index or cache refresh involved).
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn group_share_revocation_takes_immediate_effect() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let member = ctx
+        .create_test_user(&format!("member_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx.create_test_file(owner.id, None, "g.txt", b"g").await;
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("g_{}", Uuid::new_v4()))
+    .bind(ctx.tenant_id)
+    .bind(owner.id)
+    .execute(&ctx.pool)
+    .await
+    .expect("create user group");
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+        .bind(group_id)
+        .bind(member.id)
+        .execute(&ctx.pool)
+        .await
+        .expect("add member to group");
+
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: Some(file.id),
+        folder_id: None,
+        share_token: None,
+        permissions: SharePermissions::View,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: None,
+        recipient_group_id: Some(group_id),
+        created_by: owner.id,
+        created_at: Utc::now(),
+        revoked_at: None,
+        tenant_id: ctx.tenant_id,
+    };
+    ctx.metadata_store
+        .create_share(&share)
+        .await
+        .expect("create group share");
+
+    let reference = file_ref(file.id);
+    let principal = user_ctx(member.id, ctx.tenant_id);
+    assert_eq!(
+        authorizer
+            .authorize(&principal, &read_action(), &reference)
+            .await,
+        Decision::Allow,
+        "group member is allowed while the group share is active"
+    );
+
+    ctx.metadata_store
+        .revoke_share(share.id, owner.id)
+        .await
+        .expect("revoke group share");
+    assert_eq!(
+        authorizer
+            .authorize(&principal, &read_action(), &reference)
+            .await,
+        Decision::Deny,
+        "revoked group share must deny immediately"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+
+/// A shared recipient (non-owner) can fetch an immutable version of a shared
+/// file: the version lookup is owner-scoped by the file's real owner, so
+/// recipient access keeps working for historical versions.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn shared_recipient_can_fetch_immutable_version() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let recipient = ctx
+        .create_test_user(&format!("recipient_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx.create_test_file(owner.id, None, "sv.txt", b"sv1").await;
+    let v1_hash = file.content_hash.clone();
+    let updated = ctx
+        .file_service()
+        .update_file(file.id, owner.id, file.current_version, Bytes::from("sv2"))
+        .await
+        .expect("owner updates the file to v2");
+    assert_eq!(updated.current_version, 2);
+
+    share_file_to_user(
+        &ctx,
+        file.id,
+        owner.id,
+        recipient.id,
+        SharePermissions::View,
+    )
+    .await;
+
+    let recipient_principal = user_ctx(recipient.id, ctx.tenant_id);
+    let v1_ref = file_ref(file.id).with_version(format!("sha256:{v1_hash}"));
+    let fetched = authorizer
+        .fetch(&recipient_principal, &v1_ref, Representation::Text)
+        .await
+        .expect("shared recipient fetches the immutable version");
+    assert_eq!(
+        fetched.data,
+        Bytes::from("sv1"),
+        "shared recipient must get the historical bytes"
+    );
+
+    let _ = ctx.cleanup().await;
+}
+
+/// Non-`sha256:` version selectors fail closed: resolution reports the
+/// version as unavailable and fetch refuses it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn non_sha256_version_selector_fails_closed() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx.create_test_file(owner.id, None, "nv.txt", b"nv").await;
+
+    let principal = user_ctx(owner.id, ctx.tenant_id);
+    // Syntax-valid selectors the owner cannot interpret: an unsupported
+    // prefix and a non-hex sha256 value both fail closed.
+    for bad_version in ["drive-revision:abc", "sha256:zzzzzzzz"] {
+        let bad_ref = file_ref(file.id).with_version(bad_version);
+        let resolved = authorizer
+            .resolve(&principal, &bad_ref, Purpose::UserOpen)
+            .await
+            .expect("resolve still works for an unknown version selector");
+        assert!(
+            !resolved.available,
+            "unknown version selector `{bad_version}` must resolve as unavailable"
+        );
+        assert!(
+            matches!(
+                authorizer
+                    .fetch(&principal, &bad_ref, Representation::Text)
+                    .await,
+                Err(SourceError::VersionUnavailable)
+            ),
+            "unknown version selector `{bad_version}` must refuse fetch"
+        );
+    }
+
+    let _ = ctx.cleanup().await;
+}
+
+/// `materialize` omits (never aborts and never substitutes stale content) an
+/// allowed candidate whose source content cannot be fetched — e.g. the blob
+/// vanished from object storage.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn materialize_omits_allowed_candidate_when_fetch_fails() {
+    let (ctx, authorizer) = setup().await;
+    let owner = ctx
+        .create_test_user(&format!("owner_{}", Uuid::new_v4()))
+        .await;
+    let file = ctx
+        .create_test_file(owner.id, None, "gone.txt", b"will disappear")
+        .await;
+
+    // Simulate a source-unavailable condition: the blob no longer exists.
+    ctx.object_store
+        .delete(&file.storage_key())
+        .await
+        .expect("delete blob to simulate source unavailability");
+
+    let materialized = authorizer
+        .materialize(
+            &user_ctx(owner.id, ctx.tenant_id),
+            &read_action(),
+            vec![Candidate {
+                resource: file_ref(file.id),
+                cached_text: Some("STALE INDEX HINT".into()),
+            }],
+        )
+        .await
+        .expect("materialize must not abort on an unfetchable candidate");
+    assert!(
+        materialized.is_empty(),
+        "the unfetchable candidate must be omitted, and stale hints never materialize"
     );
 
     let _ = ctx.cleanup().await;

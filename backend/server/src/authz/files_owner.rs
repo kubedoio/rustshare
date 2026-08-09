@@ -70,10 +70,16 @@ impl FilesResourceOwner {
     /// `files.read -> View`, `files.write -> Edit`,
     /// `files.delete -> Admin`, `files.share -> Admin`.
     ///
-    /// `files.delete`/`files.share` map to Admin, matching the Files
-    /// semantics where Admin is required to delete a file/folder (including
-    /// shared-Admin subtree deletion) and to manage shares. Unsupported
-    /// actions for the resource type return `None` (fail closed).
+    /// `files.delete`/`files.share` map to Admin, matching Files semantics
+    /// where Admin is required to delete (incl. shared-Admin subtree
+    /// deletion) and to manage shares. Like the legacy
+    /// `resolve_permission`-based recipient share management, the resolver
+    /// check includes folder-ancestry inheritance: a Principal with Admin on
+    /// a parent folder authorizes `files.share` on files inside it. The
+    /// legacy operation-level endpoints remain the final gate (e.g. the
+    /// public-link `create_share` additionally requires file ownership);
+    /// the contract decision is a pre-check and never bypasses them.
+    /// Unsupported actions for the resource type return `None` (fail closed).
     fn required_permission(
         action: &ActionCapability,
         resource_type: &str,
@@ -203,6 +209,12 @@ impl FilesResourceOwner {
         let Ok(file_id) = Uuid::parse_str(&resource.resource_id) else {
             return Err(SourceError::NotFound);
         };
+        // Tenant scoping below is the authoritative resource boundary.
+        // RustShare maps workspace 1:1 to tenant today, so a delegation's
+        // `workspace_id` bound (checked by `effective_user_authority`)
+        // coincides with the tenant scope; if they ever diverge, the
+        // delegation workspace bound must be re-checked against the
+        // resource's actual workspace here.
         let tenant_id = ctx.tenant_id.0;
         let file = self
             .repo
@@ -253,11 +265,15 @@ impl FilesResourceOwner {
         Ok(folder)
     }
 
-    /// Extract the content hash from a `sha256:<hex>` version selector.
+    /// Extract the content hash from a `sha256:<64-hex>` version selector.
+    /// Strict: non-hex or wrong-length selectors are rejected (fail closed)
+    /// instead of silently never matching.
     fn version_hash(version: &str) -> Option<String> {
-        version
-            .strip_prefix("sha256:")
-            .map(|hex| hex.to_lowercase())
+        let hex = version.strip_prefix("sha256:")?;
+        if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        Some(hex.to_lowercase())
     }
 
     /// Whether the requested immutable version exists for a file.
@@ -389,13 +405,16 @@ impl ResourceOwner for FilesResourceOwner {
             }
             RESOURCE_TYPE_FOLDER => {
                 let folder = self.require_read_folder(ctx, resource).await?;
+                // Folders have no content versions; a version selector on a
+                // folder ref fails closed as unavailable.
+                let available = resource.version.is_none();
                 Ok(ResolvedResource {
                     resource: resource.clone(),
                     display_name: folder.name.clone(),
                     media_type: None,
                     size: None,
                     updated_at: Some(folder.updated_at),
-                    available: true,
+                    available,
                 })
             }
             other => Err(SourceError::UnknownResourceType {

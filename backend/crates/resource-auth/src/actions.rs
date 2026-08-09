@@ -33,30 +33,3 @@ pub const CHAT_POST: &str = "chat.post";
 pub const MEMORY_QUERY: &str = "memory.query";
 /// Reserved for Elembra Agents.
 pub const AGENTS_RUN: &str = "agents.run";
-
-/// The `files.*` action set implemented by the Elembra Files owner adapter.
-pub const FILES_ACTIONS: [&str; 4] = [FILES_READ, FILES_WRITE, FILES_DELETE, FILES_SHARE];
-
-/// Return the namespace segment of an action capability (`files.read` -> `files`).
-pub fn action_namespace(action: &str) -> Option<&str> {
-    let (namespace, verb) = action.split_once('.')?;
-    if namespace.is_empty() || verb.is_empty() || verb.contains('.') {
-        return None;
-    }
-    Some(namespace)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn namespaces_parse() {
-        assert_eq!(action_namespace(FILES_READ), Some("files"));
-        assert_eq!(action_namespace("mail.send"), Some("mail"));
-        assert_eq!(action_namespace("chat.post"), Some("chat"));
-        assert_eq!(action_namespace("files.read.extra"), None);
-        assert_eq!(action_namespace("read"), None);
-        assert_eq!(action_namespace("files."), None);
-    }
-}

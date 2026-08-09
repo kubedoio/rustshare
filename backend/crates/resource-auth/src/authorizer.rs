@@ -14,15 +14,14 @@
 //! helper — the owner remains the final authority.
 
 use crate::contract::{
-    check_delegation, Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation,
-    ResolvedResource, ResourceOwner, SourceError, MAX_BATCH_SIZE,
+    Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation, ResolvedResource,
+    SourceError, MAX_BATCH_SIZE,
 };
 use crate::decision::{BatchDecision, Decision};
 use crate::principal::PrincipalContext;
 use crate::registry::ResourceOwnerRegistry;
 use crate::resource_ref::ResourceRef;
 use rustshare_core::domain::ActionCapability;
-use tracing::warn;
 
 /// Platform-Core facade over the source-authorization contract.
 pub struct SourceAuthorizer {
@@ -41,14 +40,6 @@ impl SourceAuthorizer {
         Self::new(ResourceOwnerRegistry::new())
     }
 
-    /// Direct access to a registered owner adapter (diagnostics/tests).
-    pub fn owner(
-        &self,
-        application: &rustshare_core::domain::ApplicationId,
-    ) -> Option<std::sync::Arc<dyn ResourceOwner>> {
-        self.registry.owner(application)
-    }
-
     /// Authorize one action on one resource.
     ///
     /// Malformed refs and unknown Applications yield [`Decision::Invalid`];
@@ -60,11 +51,11 @@ impl SourceAuthorizer {
         resource: &ResourceRef,
     ) -> Decision {
         if let Err(error) = resource.validate() {
-            warn!(%resource, %error, "rejected malformed resource ref");
+            tracing::warn!(%resource, %error, "rejected malformed resource ref");
             return Decision::Invalid;
         }
         let Some(owner) = self.registry.owner(&resource.application) else {
-            warn!(%resource, "no owner adapter for application {}", resource.application);
+            tracing::warn!(%resource, "no owner adapter for application {}", resource.application);
             return Decision::Invalid;
         };
         owner.authorize(ctx, action, resource).await
@@ -95,7 +86,7 @@ impl SourceAuthorizer {
         let mut groups: Vec<(rustshare_core::domain::ApplicationId, Vec<usize>)> = Vec::new();
         for (index, resource) in resources.iter().enumerate() {
             if let Err(error) = resource.validate() {
-                warn!(%resource, %error, "rejected malformed resource ref in batch");
+                tracing::warn!(%resource, %error, "rejected malformed resource ref in batch");
                 results[index] = Some(BatchDecision::new(resource.clone(), Decision::Invalid));
                 continue;
             }
@@ -110,7 +101,7 @@ impl SourceAuthorizer {
 
         for (application, indices) in groups {
             let Some(owner) = self.registry.owner(&application) else {
-                warn!(%application, "no owner adapter for application in batch");
+                tracing::warn!(%application, "no owner adapter for application in batch");
                 for index in &indices {
                     results[*index] = Some(BatchDecision::new(
                         resources[*index].clone(),
@@ -247,34 +238,24 @@ impl SourceAuthorizer {
                         data: fetched.data,
                     }),
                     Err(error) => {
-                        warn!(resource = %candidate.resource, %error,
+                        tracing::warn!(resource = %candidate.resource, %error,
                               "authorized candidate could not be fetched; omitting source");
                     }
                 },
                 Err(error) => {
-                    warn!(resource = %candidate.resource, %error,
+                    tracing::warn!(resource = %candidate.resource, %error,
                           "authorized candidate could not be resolved; omitting source");
                 }
             }
         }
         Ok(materialized)
     }
-
-    /// Delegation gate exposed for callers that want the Core-side check
-    /// explicitly before dispatching (e.g. audit logging).
-    pub fn verify_delegation(
-        &self,
-        ctx: &PrincipalContext,
-        action: &ActionCapability,
-        resource: &ResourceRef,
-    ) -> Result<crate::principal::EffectivePrincipal, SourceError> {
-        check_delegation(ctx, action, Some(resource))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::ResourceOwner;
     use crate::principal::{Delegation, PrincipalKind};
     use async_trait::async_trait;
     use bytes::Bytes;
@@ -582,6 +563,106 @@ mod tests {
         );
     }
 
+    struct MismatchedOwner {
+        application_id: ApplicationId,
+    }
+
+    #[async_trait]
+    impl ResourceOwner for MismatchedOwner {
+        fn application_id(&self) -> &ApplicationId {
+            &self.application_id
+        }
+
+        async fn authorize(
+            &self,
+            _ctx: &PrincipalContext,
+            _action: &ActionCapability,
+            _resource: &ResourceRef,
+        ) -> Decision {
+            Decision::Allow
+        }
+
+        async fn authorize_batch(
+            &self,
+            _ctx: &PrincipalContext,
+            _action: &ActionCapability,
+            resources: &[ResourceRef],
+        ) -> Vec<BatchDecision> {
+            // Deliberately return decisions for a DIFFERENT ref: the facade
+            // must refuse to trust them (fail closed to Deny).
+            let wrong = ResourceRef::new(ApplicationId::new("io.elembra.files"), "file", "wrong");
+            resources
+                .iter()
+                .map(|_| BatchDecision::new(wrong.clone(), Decision::Allow))
+                .collect()
+        }
+
+        async fn resolve(
+            &self,
+            _ctx: &PrincipalContext,
+            resource: &ResourceRef,
+            _purpose: Purpose,
+        ) -> Result<ResolvedResource, SourceError> {
+            Ok(ResolvedResource {
+                resource: resource.clone(),
+                display_name: "x".into(),
+                media_type: None,
+                size: None,
+                updated_at: None,
+                available: true,
+            })
+        }
+
+        async fn fetch(
+            &self,
+            _ctx: &PrincipalContext,
+            resource: &ResourceRef,
+            _representation: Representation,
+        ) -> Result<FetchedResource, SourceError> {
+            Ok(FetchedResource {
+                resource: resource.clone(),
+                representation: Representation::Text,
+                media_type: None,
+                size: Some(0),
+                data: Bytes::new(),
+            })
+        }
+
+        async fn fetch_delivery_url(
+            &self,
+            _ctx: &PrincipalContext,
+            _resource: &ResourceRef,
+            _purpose: Purpose,
+            _ttl_secs: u64,
+        ) -> Result<String, SourceError> {
+            Ok("https://delivery.example.invalid/blob".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_does_not_trust_owner_decisions_for_other_refs() {
+        let mut registry = ResourceOwnerRegistry::new();
+        registry
+            .register(std::sync::Arc::new(MismatchedOwner {
+                application_id: files_app(),
+            }))
+            .unwrap();
+        let authorizer = SourceAuthorizer::new(registry);
+        let ctx = user_ctx();
+        let refs = vec![ref_for("a"), ref_for("b")];
+        let decisions = authorizer
+            .authorize_batch(&ctx, &read_action(), &refs)
+            .await
+            .unwrap();
+        assert_eq!(decisions.len(), 2);
+        // The owner claimed Allow for a different ref; every decision must
+        // fail closed to Deny and stay associated with the original ref.
+        for (decision, reference) in decisions.iter().zip(refs.iter()) {
+            assert_eq!(&decision.resource, reference);
+            assert_eq!(decision.decision, Decision::Deny);
+        }
+    }
+
     #[tokio::test]
     async fn materialize_never_leaks_denied_candidate_text() {
         let authorizer = authorizer();
@@ -621,5 +702,4 @@ mod tests {
         assert!(!output.contains("ATTACKER SECRET"));
         assert!(!output.contains("allowed cached hint"));
     }
-    // Temporary probe: appended into authorizer.rs tests
 }

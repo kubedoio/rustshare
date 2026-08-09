@@ -81,6 +81,11 @@ pub struct ResourceRef {
     #[serde(rename = "resourceType")]
     pub resource_type: String,
     /// Opaque resource identifier interpreted only by the owner.
+    ///
+    /// Owners MUST treat this as an opaque, untrusted value and never
+    /// interpret it structurally (no path, URL, storage-key or SQL meaning).
+    /// It is percent-encoded in the canonical URI, so a decoded value may
+    /// legitimately contain reserved characters such as `/`, `?` or `#`.
     #[serde(rename = "resourceId")]
     pub resource_id: String,
     /// Optional immutable/version selector for provenance or historical access.
@@ -172,6 +177,9 @@ impl ResourceRef {
                 "path must be exactly `/<application>/<resource_type>/<resource_id>`".into(),
             ));
         }
+        for segment in &segments {
+            validate_percent_escapes(segment)?;
+        }
         let application = ApplicationId::new(decode_segment(segments[0])?);
         let resource_type = decode_segment(segments[1])?;
         let resource_id = decode_segment(segments[2])?;
@@ -195,6 +203,7 @@ impl ResourceRef {
                         "duplicate `version` query parameter".into(),
                     ));
                 }
+                validate_percent_escapes(value)?;
                 version = Some(decode_segment(value)?);
             }
         }
@@ -289,6 +298,29 @@ fn decode_segment(value: &str) -> Result<String, RefParseError> {
         .decode_utf8()
         .map(|cow| cow.into_owned())
         .map_err(|_| RefParseError::Malformed(format!("segment `{value}` is not valid UTF-8")))
+}
+
+/// Reject malformed percent-escapes: every `%` must be followed by exactly
+/// two hexadecimal digits, otherwise the canonical form is ambiguous.
+fn validate_percent_escapes(value: &str) -> Result<(), RefParseError> {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = bytes.get(index + 1..index + 3).ok_or_else(|| {
+                RefParseError::Malformed(format!("truncated percent-escape in `{value}`"))
+            })?;
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return Err(RefParseError::Malformed(format!(
+                    "malformed percent-escape `{value}`"
+                )));
+            }
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -402,6 +434,8 @@ mod tests {
             "elembra://io.elembra.files/file/abc?version=a&version=b", // duplicate
             "elembra://user@io.elembra.files/file/abc",  // userinfo
             "elembra://io.elembra.files/file/abc#frag",  // fragment rejected as path
+            "elembra://io.elembra.files/file/%ZZ",       // malformed percent-escape
+            "elembra://io.elembra.files/file/abc?version=%2", // truncated escape
         ];
         for case in cases {
             assert!(

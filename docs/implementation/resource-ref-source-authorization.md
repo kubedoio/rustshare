@@ -66,11 +66,13 @@ PrincipalContext {
 
 Today the per-request authority is `AuthenticatedUser { user_id, tenant_id }`
 (`backend/server/src/handlers/extractors.rs`), with workspace == tenant (1:1).
-The construction point for `PrincipalContext` is the **trusted handler
-boundary**: a helper converts an authenticated request into a `User`-kind
-context, optionally carrying the request correlation id. The integration
-tests construct contexts directly; the first consumer (Chat/Memory) will build
-them at its own trusted boundary.
+The intended construction point for `PrincipalContext` is the **trusted
+handler/service boundary**: a gated helper (not yet added — the first
+consumer, Chat/Memory, adds it) converts an authenticated request into a
+`User`-kind context, optionally carrying the request correlation id. Until
+then, only the integration tests construct contexts directly, and no
+production request path can build a `PrincipalContext` at all — the authorizer
+is exercised exclusively through the test suites.
 
 The tenant/workspace scope is always derived from the authenticated
 Principal, never from client input. `group_ids`/`grants` in a context are
@@ -122,7 +124,12 @@ now-tested Files semantics — no ACL/share rules are duplicated:
   (deleted/cross-tenant resources → not-found, no existence leak);
 - action→level mapping preserves Files behavior: `files.read`→View,
   `files.write`→Edit, `files.delete`→Admin (incl. shared-Admin subtree-delete
-  gate), `files.share`→Admin;
+  gate), `files.share`→Admin. Note: the legacy operation-level gates remain
+  the final authority — folder/group/recipient share management requires
+  Admin (which the mapping matches), while the legacy public-link
+  `create_share` endpoint additionally requires file ownership (owner-only);
+  the contract decision is a pre-check and never bypasses those operation
+  gates.
 - content via `ObjectStore::get` and short-lived presigned URLs generated
   **only after** authorization (TTL clamped to ≤ 900 s);
 - version selectors `sha256:<content_hash>` resolve through
@@ -181,6 +188,17 @@ and behavior-changing; they are flagged for the permission-resolver redesign.
 
 ## 9. Deferred authorization items discovered
 
+- **Delegation authenticity (hard gate on the first consumer).** The contract
+  enforces delegation *bounds* (action set, workspace, resource scope,
+  expiry, no self-delegation) and re-evaluates the issuer's current authority
+  at the source, but the delegation's *issuance* (that the issuer actually
+  granted it) is not yet verified against a grant store — grant
+  issuance/verification storage is deferred to the Agents Application. The
+  first consumer that wires `source_authorizer` into a request path MUST
+  construct `PrincipalContext` only at a trusted boundary fed by an
+  authoritative grant store; `Delegation` and `PrincipalContext` carry this
+  contract in their doc comments, and a regression test locks that a forged
+  delegation to a powerless issuer grants nothing.
 - **Application-level grants/enablement gating** on the authorizer path:
   ADR-0032 assigns "whether an Application is enabled / Principal has an
   Application-level grant" to Core. The current model has tenant/workspace
@@ -196,7 +214,13 @@ and behavior-changing; they are flagged for the permission-resolver redesign.
   `UnsupportedRepresentation` for `Preview`/`Thumbnail` in v1alpha1.
 - **403/404 coalescing**: the typed contract keeps `Deny`/`NotFound` distinct
   (matching current Files 403-vs-404 semantics). Any future external HTTP
-  adapter must coalesce per policy to avoid existence leakage.
+  adapter must coalesce per policy to avoid existence leakage, and must map
+  `SourceError::Internal` to a generic error without leaking DB/object-store
+  detail to untrusted clients.
+- **Sensitive-access audit**: the adapter emits `tracing::warn`/`error` on
+  denials and failures only; success-path audit emission for sensitive source
+  access (spec "Purpose and audit") is deferred until a consumer defines the
+  audit sink.
 - **Deep delegation chains**: one active delegation per context (the ultimate
   issuer) is modeled; multi-hop chains are deferred to the Agents Application.
 - **RLS activation, permission-resolver redesign, dual-ShareService
