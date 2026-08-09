@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Cross-Application identity/resource contracts (ADR-0032, v1alpha1) in the
+  new `rustshare-resource-auth` crate: `PrincipalContext` (user/service/agent
+  principals with explicit bounded delegation), opaque `ResourceRef` with
+  canonical `elembra://` URIs, the `ResourceOwner` source-authorization
+  contract, bounded batch authorization, and a Search/RAG reauthorization
+  proof contract. Elembra Files is the first owner adapter, delegating to the
+  existing Files permission semantics; the `SourceAuthorizer` is wired into
+  `AppState` (#211).
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,
