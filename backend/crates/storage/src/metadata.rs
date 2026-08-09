@@ -4280,6 +4280,12 @@ impl MetadataStore {
                 locked_at = NULL,
                 locked_by = NULL,
                 completed_at = NULL,
+                -- A re-referenced and released blob starts a fresh grace period,
+                -- so its attempt history must reset too; otherwise a blob that
+                -- was retried near max_attempts would be operator-held after a
+                -- single transient failure on its next cycle.
+                attempt_count = 0,
+                last_attempt_at = NULL,
                 updated_at = NOW()
             "#,
         )
