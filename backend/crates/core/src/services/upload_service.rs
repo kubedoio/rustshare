@@ -176,13 +176,14 @@ pub trait UploadObjectStore: Send + Sync {
     /// Check if a chunk exists
     async fn chunk_exists(&self, session_id: Uuid, chunk_index: u32) -> Result<bool, UploadError>;
 
-    /// Assemble chunks into a content-addressed final file and return the final SHA-256 hash.
+    /// Assemble chunks into a content-addressed final file and return the
+    /// final SHA-256 hash and the assembled size in bytes.
     async fn assemble_chunks_to_prefix(
         &self,
         session_id: Uuid,
         total_chunks: u32,
         final_key_prefix: &str,
-    ) -> Result<(String, Box<dyn Send>), UploadError>;
+    ) -> Result<(String, u64, Box<dyn Send>), UploadError>;
 }
 
 /// Metadata store operations for upload service
@@ -640,9 +641,9 @@ where
         }
 
         // Assemble chunks into the final object without materializing the full
-        // file in memory. The object store computes the final SHA-256 while
-        // streaming the chunks.
-        let (final_hash, _blob_write_lock) = self
+        // file in memory. The object store computes the final SHA-256 and the
+        // assembled size while streaming the chunks.
+        let (final_hash, assembled_size, _blob_write_lock) = self
             .object_store
             .assemble_chunks_to_prefix(session_id, session.total_chunks(), "blobs/")
             .await?;
@@ -678,6 +679,16 @@ where
             }
         }
 
+        // The client-declared total_size must match the assembled data. Chunk
+        // size is only bounded above, so a client could otherwise record a
+        // bogus size in file metadata, quotas, and the completion response.
+        if assembled_size != session.total_size {
+            return Err(UploadError::Storage(format!(
+                "Uploaded size {} does not match declared size {}",
+                assembled_size, session.total_size
+            )));
+        }
+
         // Get parent folder path and determine file owner
         let (parent_path, file_owner_id) = if let Some(folder_id) = session.folder_id {
             let folder = self
@@ -706,7 +717,7 @@ where
             .find_file_by_path(&path, file_owner_id)
             .await?
         {
-            if existing.content_hash == final_hash && existing.size == session.total_size as i64 {
+            if existing.content_hash == final_hash && existing.size == assembled_size as i64 {
                 existing
             } else {
                 let old_version = existing.current_version;
@@ -714,7 +725,7 @@ where
                 let old_size = existing.size;
 
                 existing.content_hash = final_hash.clone();
-                existing.size = session.total_size as i64;
+                existing.size = assembled_size as i64;
                 existing.mime_type = session.mime_type.clone();
                 existing.parent_folder_id = session.folder_id;
                 existing.current_version += 1;
@@ -726,7 +737,7 @@ where
                     existing.id,
                     existing.current_version,
                     final_hash.clone(),
-                    session.total_size as i64,
+                    assembled_size as i64,
                     user_id,
                     Some("Uploaded via resumable session".to_string()),
                     session.tenant_id,
@@ -742,7 +753,7 @@ where
                     old_content_hash,
                     new_content_hash: final_hash.clone(),
                     old_size,
-                    new_size: session.total_size as i64,
+                    new_size: assembled_size as i64,
                     storage_key: storage_key.clone(),
                     modified_by: user_id,
                 };
@@ -770,7 +781,7 @@ where
                 session.file_name.clone(),
                 path.clone(),
                 final_hash.clone(),
-                session.total_size as i64,
+                assembled_size as i64,
                 session.mime_type.clone(),
                 session.folder_id,
                 file_owner_id,
@@ -785,7 +796,7 @@ where
                 file.id,
                 1,
                 final_hash.clone(),
-                session.total_size as i64,
+                assembled_size as i64,
                 user_id,
                 Some("Uploaded via resumable session".to_string()),
                 session.tenant_id,
@@ -799,7 +810,7 @@ where
                 file_id: file.id,
                 name: session.file_name.clone(),
                 path: path.clone(),
-                size: session.total_size as i64,
+                size: assembled_size as i64,
                 content_hash: final_hash.clone(),
                 storage_key: storage_key.clone(),
                 mime_type: session.mime_type.clone(),
@@ -849,7 +860,7 @@ where
             session_id,
             file_id: file.id,
             file_name: session.file_name,
-            file_size: session.total_size,
+            file_size: assembled_size,
             content_hash: final_hash,
         })
     }
@@ -1113,7 +1124,7 @@ mod tests {
             session_id: Uuid,
             total_chunks: u32,
             final_key_prefix: &str,
-        ) -> Result<(String, Box<dyn Send>), UploadError> {
+        ) -> Result<(String, u64, Box<dyn Send>), UploadError> {
             self.assembled.lock().unwrap().push((
                 session_id,
                 total_chunks,
@@ -1121,6 +1132,7 @@ mod tests {
             ));
             Ok((
                 crate::validation::calculate_sha256(&Bytes::new()),
+                0,
                 Box::new(()),
             ))
         }

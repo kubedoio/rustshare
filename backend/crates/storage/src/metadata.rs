@@ -3013,12 +3013,16 @@ impl MetadataStore {
     }
 
     /// Create a new file version in the projection table inside a transaction.
+    ///
+    /// Returns the persisted version id. Callers must use this id (not the
+    /// version struct's id) for anything referencing the row afterwards,
+    /// because the upsert may have kept an existing row's id.
     pub async fn create_file_version_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         version: &FileVersion,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<Uuid> {
+        let row = sqlx::query!(
             r#"
             INSERT INTO file_versions (
                 id,
@@ -3041,6 +3045,7 @@ impl MetadataStore {
                 replication_state = EXCLUDED.replication_state,
                 created_at = EXCLUDED.created_at,
                 change_description = EXCLUDED.change_description
+            RETURNING id
             "#,
             version.id,
             version.file_id,
@@ -3054,10 +3059,10 @@ impl MetadataStore {
             version.change_description.as_deref(),
             version.tenant_id,
         )
-        .execute(&mut **tx)
+        .fetch_one(&mut **tx)
         .await?;
 
-        Ok(())
+        Ok(row.id)
     }
 
     /// Create a new file version in the projection table
@@ -6263,7 +6268,7 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         &self,
         tx: &mut Self::Tx,
         version: &rustshare_core::domain::FileVersion,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<uuid::Uuid> {
         self.create_file_version_in_tx(tx, version).await
     }
 
