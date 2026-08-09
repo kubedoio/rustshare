@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Durable Integration Events (ADR-0031, v1alpha1) in the new
+  `rustshare-integration-events` crate with a transactional PostgreSQL outbox
+  (`rustshare-storage::OutboxStore`), a CloudEvents-compatible `IntegrationEvent`
+  envelope, and a durable consumer contract. File uploads/updates now publish
+  `io.elembra.files.file.created.v1` / `file.updated.v1` events atomically
+  with their metadata transaction; an asynchronous outbox dispatcher delivers
+  them at-least-once with lease fencing, retry backoff, dead-lettering, and an
+  idempotent reference "memory projection" consumer. Operators get
+  `RUSTSHARE_OUTBOX_*` configuration, an `outbox` readiness component, and
+  `outbox_*` metrics (#212).
+
 - Cross-Application identity/resource contracts (ADR-0032, v1alpha1) in the
   new `rustshare-resource-auth` crate: `PrincipalContext` (user/service/agent
   principals with explicit bounded delegation), opaque `ResourceRef` with

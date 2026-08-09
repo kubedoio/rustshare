@@ -263,6 +263,9 @@ async fn setup_test_env() -> AppState {
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),
+        outbox_status: Arc::new(rustshare_server::outbox_dispatcher::OutboxStatus::default()),
+        outbox_worker_enabled: false,
+        outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     }

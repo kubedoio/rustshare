@@ -1,9 +1,11 @@
 use crate::authz;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
+use crate::outbox_consumers::ReferenceMemoryProjectionConsumer;
+use crate::outbox_dispatcher::OutboxDispatcher;
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
 use crate::state::{AppAiService, AppState, AppUploadService, AppUserShareService};
@@ -17,9 +19,9 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         AiService, ChatIntegrationService, ContentIndexer, FileService, FolderService,
-        HttpWebhookDispatcher, NotificationService, PermissionResolver, ShareService,
-        SimpleEmbeddingGenerator, ThumbnailService, UserShareService, UserShareServiceDeps,
-        VaultSyncService,
+        HttpWebhookDispatcher, IntegrationEventPublisher, NotificationService, PermissionResolver,
+        ShareService, SimpleEmbeddingGenerator, ThumbnailService, UserShareService,
+        UserShareServiceDeps, VaultSyncService,
     },
 };
 use rustshare_crypto::SecretEncryptionKey;
@@ -30,7 +32,10 @@ use rustshare_infrastructure::{
     },
     PgVectorStore,
 };
-use rustshare_storage::{repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore};
+use rustshare_integration_events::OutboxConsumer;
+use rustshare_storage::{
+    repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore, OutboxStore,
+};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -64,6 +69,7 @@ struct Services {
     mail_service: Arc<crate::services::mail_service::MailService>,
     secret_key: Arc<SecretEncryptionKey>,
     application_registry: Arc<ApplicationRegistry>,
+    outbox_store: Arc<OutboxStore>,
 }
 
 fn init_tracing(log_format: &str) {
@@ -272,6 +278,14 @@ async fn init_services(
         Arc::new(ApplicationRegistry::first_party().map_err(|error| {
             anyhow::anyhow!("invalid first-party Application manifest: {error}")
         })?);
+    // Durable integration outbox (ADR-0031). The publisher is attached to
+    // the FileService below so file mutations publish atomically with their
+    // metadata transaction; the dispatcher loop (spawned later, gated on
+    // RUSTSHARE_OUTBOX_WORKER_ENABLED) drains it asynchronously.
+    let outbox_store = Arc::new(OutboxStore::new(
+        db_pool.clone(),
+        Arc::clone(&application_registry),
+    ));
     let vault_sync_service = Arc::new(VaultSyncService::new(
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
@@ -285,13 +299,19 @@ async fn init_services(
         notification_service,
     ) = tokio::join!(
         async {
-            Arc::new(FileService::new(
-                Arc::clone(&event_store),
-                Arc::clone(&metadata_store),
-                Arc::clone(&object_store),
-                Arc::clone(&broadcaster),
-                Arc::clone(&permission_resolver),
-            ))
+            let publisher: Arc<
+                dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>,
+            > = outbox_store.clone();
+            Arc::new(
+                FileService::new(
+                    Arc::clone(&event_store),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&object_store),
+                    Arc::clone(&broadcaster),
+                    Arc::clone(&permission_resolver),
+                )
+                .with_integration_publisher(publisher),
+            )
         },
         async {
             Arc::new(FolderService::new(
@@ -534,6 +554,7 @@ async fn init_services(
         mail_service,
         secret_key,
         application_registry,
+        outbox_store,
     })
 }
 
@@ -653,6 +674,28 @@ pub async fn init_app() -> Result<AppState> {
         retention_config,
         shutdown_tx.subscribe(),
     );
+
+    // Durable integration-event outbox dispatcher (ADR-0031). Publishing
+    // into the outbox is always active (attached to FileService above); only
+    // the drain loop is gated on RUSTSHARE_OUTBOX_WORKER_ENABLED — a
+    // disabled worker just accumulates events until re-enabled.
+    let outbox_worker_config = OutboxWorkerConfig::from_env();
+    let outbox_consumer = Arc::new(ReferenceMemoryProjectionConsumer::new(
+        db_pool.clone(),
+        true,
+    ));
+    let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
+        Arc::clone(&services.outbox_store),
+        vec![outbox_consumer as Arc<dyn OutboxConsumer>],
+        outbox_worker_config.clone(),
+        format!("outbox-{}", uuid::Uuid::new_v4()),
+    ));
+    let outbox_status = outbox_dispatcher.status().clone();
+    if outbox_worker_config.enabled {
+        outbox_dispatcher.spawn(shutdown_tx.subscribe());
+    } else {
+        info!("Outbox worker disabled; integration events still publish into the outbox");
+    }
 
     if config.mail_import_worker_enabled {
         crate::mail_import_worker::spawn_mail_import_worker(
@@ -794,6 +837,9 @@ pub async fn init_app() -> Result<AppState> {
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
         mail_service: services.mail_service,
+        outbox_status,
+        outbox_worker_enabled: outbox_worker_config.enabled,
+        outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,
         shutdown_tx,
         prometheus_handle,
     };

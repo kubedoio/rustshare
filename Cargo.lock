@@ -4380,6 +4380,7 @@ dependencies = [
  "rustshare-core",
  "rustshare-crypto",
  "rustshare-infrastructure",
+ "rustshare-integration-events",
  "rustshare-resource-auth",
  "rustshare-storage",
  "serde",
