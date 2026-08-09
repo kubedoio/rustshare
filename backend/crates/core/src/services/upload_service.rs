@@ -2,6 +2,21 @@
 //!
 //! This service provides business logic for managing upload sessions,
 //! handling chunked uploads, and assembling files on completion.
+//!
+//! # Durable integration events (ADR-0031): deferred for this path
+//!
+//! The streaming/resumable upload path (`UploadService`) is deliberately NOT
+//! instrumented for durable integration events. Only the buffered
+//! `FileService` upload paths publish `file.created.v1` / `file.updated.v1`
+//! events atomically with their metadata transaction; a session assembled
+//! here emits the ordinary domain events (and broadcaster fan-out) exactly as
+//! before, but no outbox row and therefore no integration event.
+//!
+//! This is a documented deferral (issue #212, v1alpha1): it is not
+//! half-wired — nothing in this service references the integration-event
+//! publisher seam, so there is no path that silently assumes an event was
+//! published. Follow-up work must either route completion through
+//! `FileService` or publish from the session-finalize transaction.
 
 use bytes::Bytes;
 use sha2::{Digest, Sha256};

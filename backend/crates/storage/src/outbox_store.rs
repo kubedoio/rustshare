@@ -14,6 +14,17 @@
 //! * [`OutboxStore::maintenance`] compacts fully-delivered outbox rows after
 //!   the retention window.
 //!
+//! # Global (non-tenant-scoped) claims
+//!
+//! `claim_batch` deliberately has NO tenant filter: the delivery ledger and
+//! outbox are platform-global, so a consumer with a stable identity (e.g. a
+//! Memory projection serving all tenants) processes events across tenants.
+//! This is intentional — the envelope still enforces tenant/workspace
+//! equality on every published event, and a consumer that must not mix
+//! tenants applies its own scope rule in `process` (the reference consumer
+//! merely records each event's tenant id with its effect). Per-tenant claim
+//! scoping is a future consumer contract, not a transport concern.
+//!
 //! See `docs/adr/0031-durable-integration-events.md` and
 //! `docs/specs/integration-event-v1alpha1.md`.
 
