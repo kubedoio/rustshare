@@ -3126,7 +3126,7 @@ mod integration_publish_tests {
         }
 
         async fn begin_transaction(&self) -> Result<Self::Tx> {
-            Ok(TestTx::default())
+            Ok(TestTx)
         }
 
         async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
