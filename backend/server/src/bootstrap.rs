@@ -1,3 +1,4 @@
+use crate::authz;
 use crate::config::AppConfig;
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
@@ -220,6 +221,7 @@ async fn init_broadcaster(config: &AppConfig) -> Result<Arc<EventBroadcaster>> {
 async fn init_repositories(
     db_pool: PgPool,
 ) -> Result<(
+    Arc<PermissionResolverRepository>,
     NotificationRepository,
     Arc<ShareRepository>,
     Arc<UserRepository>,
@@ -232,10 +234,13 @@ async fn init_repositories(
     let user_repository = Arc::new(UserRepository::new(db_pool.clone()));
     let file_repository = Arc::new(FileRepository::new(db_pool.clone()));
     let folder_repository = Arc::new(FolderRepository::new(db_pool.clone()));
-    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
-        PermissionResolverRepository::new(db_pool.clone()),
+    let permission_resolver_repository =
+        Arc::new(PermissionResolverRepository::new(db_pool.clone()));
+    let permission_resolver = Arc::new(PermissionResolver::new(Arc::clone(
+        &permission_resolver_repository,
     )));
     Ok((
+        permission_resolver_repository,
         notification_repository,
         share_repository,
         user_repository,
@@ -560,6 +565,7 @@ pub async fn init_app() -> Result<AppState> {
     let broadcaster = init_broadcaster(&config).await?;
 
     let (
+        permission_resolver_repository,
         notification_repository,
         share_repository,
         user_repository,
@@ -739,6 +745,13 @@ pub async fn init_app() -> Result<AppState> {
         }
     });
 
+    let source_authorizer = Arc::new(authz::build_source_authorizer(
+        Arc::clone(&permission_resolver),
+        Arc::clone(&permission_resolver_repository),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+    ));
+
     let state = AppState {
         db_pool,
         metadata_store,
@@ -751,6 +764,7 @@ pub async fn init_app() -> Result<AppState> {
         share_service: services.share_service,
         thumbnail_service: services.thumbnail_service,
         permission_resolver,
+        source_authorizer,
         notification_service: services.notification_service,
         user_share_service: services.user_share_service,
         ai_service: services.ai_service,

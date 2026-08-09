@@ -15,6 +15,7 @@ rustshare-storage = { path = "../crates/storage" }
 rustshare-auth = { path = "../crates/auth" }
 rustshare-infrastructure = { path = "../crates/infrastructure" }
 rustshare-crypto = { path = "../crates/crypto" }
+rustshare-resource-auth = { path = "../crates/resource-auth" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
