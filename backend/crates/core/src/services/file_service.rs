@@ -906,13 +906,14 @@ where
         file_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<Vec<FileVersion>, FileError> {
-        // 1. Get file and verify ownership
-        let _file = self.get_file(file_id, user_id).await?;
+        // 1. Get file and verify access
+        let file = self.get_file(file_id, user_id).await?;
 
-        // 2. Get all versions from metadata store (already ordered DESC)
+        // 2. Get all versions from metadata store (already ordered DESC).
+        //    Query by the file owner: shared View/Edit recipients may see versions too.
         let versions = self
             .metadata_store
-            .list_file_versions(file_id, user_id)
+            .list_file_versions(file_id, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
@@ -952,10 +953,11 @@ where
         self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
-        // 2. Find the old version
+        // 2. Find the old version (by the file owner: shared Edit recipients
+        //    may restore versions too)
         let old_file_version = self
             .metadata_store
-            .find_file_version(file_id, version_number, user_id)
+            .find_file_version(file_id, version_number, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
             .ok_or(FileError::VersionNotFound(version_number))?;
@@ -1067,14 +1069,32 @@ where
         self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
-        // 2. If target folder is specified, verify it exists
+        // 2. If target folder is specified, verify it exists and the user may
+        //    write to it (unchecked lookup + Edit check, so shared recipients
+        //    can move files into shared folders)
         let new_path = if let Some(folder_id) = target_folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, user_id)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?
                 .ok_or(FileError::FolderNotFound(folder_id))?;
+            let has_edit = self
+                .permission_resolver
+                .check_folder_permission(
+                    user_id,
+                    folder.tenant_id,
+                    folder_id,
+                    SharePermissions::Edit,
+                )
+                .await
+                .map_err(|e| FileError::Database(e.to_string()))?;
+            if !has_edit {
+                return Err(FileError::PermissionDenied {
+                    file_id: folder_id,
+                    user_id,
+                });
+            }
             format!("{}/{}", folder.path, file.name)
         } else {
             format!("/{}", file.name)
