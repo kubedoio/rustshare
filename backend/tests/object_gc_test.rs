@@ -436,3 +436,56 @@ async fn exhausted_candidate_moves_to_operator_hold() {
     assert!(operator_hold);
     assert_eq!(error.as_deref(), Some("permanent test failure"));
 }
+
+/// Re-enqueueing a candidate that previously exhausted retries (and was
+/// operator-held) must reset its attempt history so it starts a fresh grace
+/// period instead of being re-held after a single transient failure.
+#[allow(clippy::type_complexity)]
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn reenqueue_resets_failed_candidate_attempt_history() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+
+    // Simulate a candidate that failed repeatedly and was operator-held.
+    sqlx::query(
+        r#"
+        INSERT INTO object_gc_queue
+            (object_key, reason, state, attempt_count, last_attempt_at, operator_hold,
+             locked_at, locked_by, completed_at, not_before, created_at, updated_at)
+        VALUES ($1, 'object_gc_test:reenqueue', 'operator_hold', 5, NOW(), true,
+                NOW(), 'exhausting-worker', NOW(), NOW(), NOW(), NOW())
+        "#,
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("insert held candidate");
+
+    metadata
+        .enqueue_object_gc_candidate(&key, "object_gc_test:reenqueue", 1)
+        .await
+        .expect("re-enqueue candidate");
+
+    let (state, attempt_count, operator_hold, last_attempt_at, locked_at, completed_at): (
+        String,
+        i32,
+        bool,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT state, attempt_count, operator_hold, last_attempt_at, locked_at, completed_at FROM object_gc_queue WHERE object_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .expect("candidate row");
+
+    assert_eq!(state, "pending");
+    assert_eq!(attempt_count, 0, "attempt history must reset on re-enqueue");
+    assert!(!operator_hold, "operator hold must clear on re-enqueue");
+    assert!(last_attempt_at.is_none());
+    assert!(locked_at.is_none());
+    assert!(completed_at.is_none());
+}
