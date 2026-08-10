@@ -24,9 +24,10 @@
 //! contracts are immutable in v1alpha1: re-registration is an idempotent
 //! no-op when the normalized subscription set is identical (preserving
 //! `enabled` and `registered_at`), and a changed set is rejected with a
-//! `ConsumerRegistrationConflict` — the consumer is logged and skipped, and
-//! its durable contract stays as-is. A consumer whose subscription set
-//! changes must use a new (versioned) consumer identity. An empty
+//! `ConsumerRegistrationConflict` — only the registration update is refused;
+//! the consumer keeps claiming and processing under its unchanged durable
+//! contract. A consumer whose subscription set changes must use a new
+//! (versioned) consumer identity. An empty
 //! subscription list is rejected outright; every consumer must declare at
 //! least one explicit pattern. An operator-disabled consumer
 //! (`enabled = false`) keeps its pending obligations but is skipped by
@@ -43,7 +44,9 @@
 //! * `outbox_retry_total{consumer,event_type}` — events failed retryably
 //!   (backoff).
 //! * `outbox_dead_lettered_total{consumer,event_type}` — poison events or
-//!   exhausted retries.
+//!   exhausted retries (claim-time poison dead-letters, whose event type
+//!   cannot be recovered, are counted under the fixed `event_type` label
+//!   `unknown`).
 //! * `outbox_duplicate_receipt_total{consumer}` — duplicate deliveries
 //!   skipped by the consumer's idempotency receipt (emitted by the
 //!   consumer).
@@ -170,12 +173,18 @@ impl OutboxDispatcher {
     ///
     /// The tick tolerates transient DB errors (logged, never panicking);
     /// `last_tick_ok` is set to `true` only when the whole pass completes.
+    /// The caller (the worker loop) additionally contains the whole tick in a
+    /// spawned task, so even an unexpected panic cannot kill the loop.
     pub async fn tick(&self) {
-        *self
-            .status
-            .last_tick_at
-            .lock()
-            .expect("outbox status mutex poisoned") = Some(Instant::now());
+        match self.status.last_tick_at.lock() {
+            Ok(mut last_tick_at) => *last_tick_at = Some(Instant::now()),
+            Err(_poisoned) => {
+                // A poisoned mutex only means some holder panicked earlier;
+                // readiness staleness will age out on its own, so log and
+                // keep the tick going rather than panic again.
+                warn!("outbox status mutex poisoned; skipping last-tick timestamp update");
+            }
+        }
         self.status.last_tick_ok.store(false, Ordering::Relaxed);
 
         match self.store.maintenance(self.config.retention_hours).await {
@@ -191,18 +200,30 @@ impl OutboxDispatcher {
         // durable registration. v1alpha1 subscription contracts are
         // immutable, so re-registration is an idempotent no-op when the
         // consumer's subscription set is unchanged (preserving `enabled` /
-        // `registered_at`); a consumer whose set changed is rejected with a
-        // conflict and claims nothing this tick (its durable contract and
-        // past obligations are untouched). The durable registration is
+        // `registered_at`); a changed set is rejected with a conflict — only
+        // the registration update is refused, the consumer keeps claiming
+        // and processing under its unchanged durable contract (past
+        // obligations are untouched; a changed contract requires a new
+        // versioned consumer identity). The durable registration is
         // authoritative for claiming, so a consumer that fails to register
-        // simply claims nothing this tick; a persistent failure only loses
-        // it its claim rights (obligations from past publishes are
-        // untouched).
+        // for any other reason simply keeps its existing contract.
         for consumer in &self.consumers {
-            let consumer_id = consumer.consumer_id().to_string();
+            // Consumer-provided identity/subscriptions run unprotected
+            // otherwise: a panic here must skip the consumer, not kill the
+            // tick.
+            let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (consumer.consumer_id().to_string(), consumer.subscriptions())
+            }));
+            let (consumer_id, subscriptions) = match registration {
+                Ok(registration) => registration,
+                Err(_) => {
+                    warn!("outbox consumer identity query panicked; skipping consumer");
+                    continue;
+                }
+            };
             match self
                 .store
-                .register_consumer(&consumer_id, &consumer.subscriptions())
+                .register_consumer(&consumer_id, &subscriptions)
                 .await
             {
                 Ok(()) => {
@@ -243,11 +264,26 @@ impl OutboxDispatcher {
             loop {
                 tokio::select! {
                     _ = shutdown.recv() => {
+                        // In-flight spawned consumer tasks are bounded (per-event
+                        // abort on timeout, abort-on-drop handles), so nothing
+                        // outlives the loop by more than the current tick; rows
+                        // claimed by an interrupted tick stay `claimed` until
+                        // lease expiry, when another worker reclaims them
+                        // (at-least-once).
                         info!("Outbox dispatcher worker shutting down");
                         break;
                     }
                     _ = ticker.tick() => {
-                        self.tick().await;
+                        // Contain the whole tick in a spawned task: `catch_unwind`
+                        // cannot reliably catch a panic across await points, but a
+                        // spawned task turns any panic escaping the tick into a
+                        // `JoinError` here — log and keep polling instead of dying.
+                        let worker = self.clone();
+                        let tick_task =
+                            tokio::task::spawn(async move { worker.tick().await });
+                        if let Err(_panic) = tick_task.await {
+                            warn!("outbox dispatcher tick panicked; continuing");
+                        }
                     }
                 }
             }
@@ -552,7 +588,11 @@ impl OutboxDispatcher {
     /// the last value of a (consumer, state) group once it exists; groups
     /// that drained are therefore reset to 0 over the expected label set
     /// (registered consumers × delivery states) so queue depth never shows a
-    /// stale count.
+    /// stale count. The reset set is the union of the runtime consumers and
+    /// the durable registrations: a durably-registered consumer absent from
+    /// this process (operator-registered, or a second instance) must not
+    /// keep a stale group. Cardinality stays bounded (registered consumers ×
+    /// 4 states).
     async fn record_queue_depth(&self) {
         match self.store.pending_counts().await {
             Ok(counts) => {
@@ -566,8 +606,32 @@ impl OutboxDispatcher {
                     )
                     .set(count.count as f64);
                 }
-                for consumer in &self.consumers {
-                    let consumer_id = consumer.consumer_id().to_string();
+                let mut consumer_ids: HashSet<String> = self
+                    .consumers
+                    .iter()
+                    .filter_map(|consumer| {
+                        // A panicking consumer identity must not kill the
+                        // tick; its group is skipped this tick.
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            consumer.consumer_id().to_string()
+                        }))
+                        .ok()
+                    })
+                    .collect();
+                match self.store.list_consumers().await {
+                    Ok(registered) => {
+                        for registration in registered {
+                            consumer_ids.insert(registration.consumer_id);
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            "outbox consumer-list gauge reset failed; resetting only runtime consumers"
+                        );
+                    }
+                }
+                for consumer_id in consumer_ids {
                     for state in DELIVERY_STATES {
                         if !present.contains(&(consumer_id.clone(), state.to_string())) {
                             metrics::gauge!(
