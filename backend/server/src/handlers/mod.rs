@@ -23,6 +23,7 @@ pub mod invites;
 pub mod kanban;
 pub mod mail;
 pub mod meetings;
+pub mod memory_reconcile;
 pub mod notes;
 pub mod notifications;
 pub mod profile;

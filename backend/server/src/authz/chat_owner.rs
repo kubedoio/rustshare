@@ -39,6 +39,14 @@
 //! already-verified state (`signature_verified` is set by the observation
 //! pipeline); this adapter trusts that boundary and never re-derives Buzz
 //! signatures.
+//!
+//! # Delegated principals
+//!
+//! Delegation (`PrincipalContext::effective_user_authority`) is intentionally
+//! NOT applied here: chat bindings exist only for user principals, so a
+//! Service/Agent principal or a delegated request always fails closed to Deny
+//! today. Wire `effective_user_authority` when the first delegated consumer
+//! (Memory/RAG `materialize` or a transport adapter) lands.
 
 use bytes::Bytes;
 use rustshare_core::domain::{ActionCapability, ApplicationId};

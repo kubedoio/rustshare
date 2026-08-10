@@ -6,10 +6,14 @@
 //! [`ProjectionPolicy`]) and what content copy to store; these functions only
 //! apply the rules.
 
-use rustshare_core::domain::{TenantId, WorkspaceId};
+use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
+use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::event::{ObservedChatEventData, ObservedEventType};
+use crate::event::{
+    BuzzEventMeta, ChatContext, ObservedChatEventData, ObservedEventType, PrincipalMeta,
+};
+use crate::observed::ChatObservedEvent;
 use crate::policy::ProjectionDecision;
 use crate::policy::ProjectionPolicy;
 use crate::record::{
@@ -198,6 +202,139 @@ pub fn apply_tombstone(
         observed_at: event.observed_at,
     });
     updated
+}
+
+/// Deterministically rebuild Memory catalog records from a tenant's observation
+/// history (reconciliation repair path). `rows` must be ordered by
+/// event_created_at then event_id (as `ChatObservationStore::list_for_reconcile`
+/// returns). Per message (grouped by message_id, preserving order):
+/// - created row → `project_record` (skipped when the policy skips or content-gated);
+/// - edited row → `apply_event` onto the current record (out-of-order guard applies);
+/// - deleted row → `apply_tombstone` (or skipped when no record exists yet — a
+///   tombstone for a never-projected message is a no-op, mirroring the consumer);
+/// - `content` for each row is the row's own `body` — passed only when
+///   `policy.content_indexing` is on.
+///
+/// Returns one record per message (tombstoned records included — provenance
+/// must survive). Deterministic: same input rows + policy ⇒ same records. The
+/// only non-determinism is `record_id` (`Uuid::new_v4()`, one per message).
+pub fn rebuild_records(
+    rows: &[ChatObservedEvent],
+    policy: &ProjectionPolicy,
+) -> Vec<MemoryCatalogRecord> {
+    // Group every row by message_id; rows of one message can be non-adjacent
+    // in the created_at ordering. First-appearance order of messages is kept;
+    // within a group the fold follows input order.
+    let mut groups: Vec<Vec<&ChatObservedEvent>> = Vec::new();
+    let mut group_index: HashMap<&str, usize> = HashMap::new();
+    for row in rows {
+        match group_index.get(row.message_id.as_str()) {
+            Some(&index) => groups[index].push(row),
+            None => {
+                group_index.insert(row.message_id.as_str(), groups.len());
+                groups.push(vec![row]);
+            }
+        }
+    }
+
+    let mut records = Vec::with_capacity(groups.len());
+    for group in groups {
+        // One policy gate per message group: `project_record` gates a seed and
+        // `apply_event` does not, so a group in a never-eligible channel is
+        // dropped wholesale (no record).
+        if matches!(
+            policy.decision(group[0].channel_kind),
+            ProjectionDecision::Skip(_)
+        ) {
+            continue;
+        }
+        let mut record: Option<MemoryCatalogRecord> = None;
+        // Rows of one message share its author; the first row's principal is
+        // authoritative. `author_principal_id` is nullable in the observation
+        // index (and the catalog column is nullable too), so it is carried
+        // through as-is instead of being invented.
+        let mut author_principal_id = None;
+        for row in group {
+            if author_principal_id.is_none() {
+                author_principal_id = row.author_principal_id;
+            }
+            let data = to_event_data(row);
+            let content = if policy.content_indexing {
+                row.body.clone()
+            } else {
+                None
+            };
+            match row.event_type {
+                ObservedEventType::Deleted => {
+                    // Tombstone with no record yet: no-op — the durable fact
+                    // of the deletion already lives in the observation index.
+                    if let Some(existing) = record.as_ref() {
+                        record = Some(apply_tombstone(existing, &data));
+                    }
+                }
+                _ => {
+                    record = Some(match record {
+                        Some(existing) => apply_event(&existing, &data, content),
+                        None => {
+                            // Seed from the first non-deleted event — the
+                            // consumer projects any non-deleted event into a
+                            // fresh record. The group gate already decided
+                            // Project, so a Skip here is unreachable; stay
+                            // defensive rather than persist a record the
+                            // policy would refuse.
+                            match project_record(
+                                row.tenant_id,
+                                row.workspace_id,
+                                &data,
+                                policy,
+                                content,
+                            ) {
+                                Some(seeded) => seeded,
+                                None => continue,
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        if let Some(mut record) = record {
+            record.author_principal_id = author_principal_id;
+            records.push(record);
+        }
+    }
+    records
+}
+
+/// Convert an observation row back to the validated-event shape the projection
+/// functions consume. The author principal is carried separately by
+/// [`rebuild_records`] (it is nullable on the row and on the record); the
+/// placeholder principal never surfaces.
+fn to_event_data(row: &ChatObservedEvent) -> ObservedChatEventData {
+    ObservedChatEventData {
+        buzz: BuzzEventMeta {
+            event_id: row.event_id.clone(),
+            message_id: row.message_id.clone(),
+            event_type: row.event_type,
+            supersedes_event_id: row.supersedes_event_id.clone(),
+            created_at: row.event_created_at,
+            pubkey: row.author_pubkey.clone(),
+            signature: row.signature.clone(),
+            checksum: row.checksum.clone(),
+            signature_verified: row.signature_verified,
+        },
+        context: ChatContext {
+            community_id: row.community_id.clone(),
+            channel_id: row.channel_id.clone(),
+            channel_kind: row.channel_kind,
+            thread_root_id: row.thread_root_id.clone(),
+        },
+        principal: PrincipalMeta {
+            // Never surfaces: `rebuild_records` overwrites the record's
+            // `author_principal_id` with the row's own value after the fold.
+            principal_id: PrincipalId::from(Uuid::nil()),
+        },
+        observed_at: row.observed_at,
+    }
 }
 
 #[cfg(test)]
@@ -720,6 +857,341 @@ mod tests {
             let record =
                 project_record(tenant(), workspace(), &event, &policy(false), None).unwrap();
             assert!(ids.insert(record.record_id), "record_id must be unique");
+        }
+    }
+
+    // -- rebuild_records (reconciliation repair path) -------------------------
+
+    /// An observed-event payload with an explicit message id (the existing
+    /// `event_data` helper fixes the message id to `hex64(0xaa)`).
+    fn observed_event(
+        event_type: ObservedEventType,
+        event_id: &str,
+        message_id: &str,
+        created_at_ts: i64,
+        channel_kind: ChatChannelKind,
+    ) -> ObservedChatEventData {
+        ObservedChatEventData {
+            buzz: BuzzEventMeta {
+                event_id: event_id.to_string(),
+                message_id: message_id.to_string(),
+                event_type,
+                supersedes_event_id: None,
+                created_at: DateTime::<Utc>::from_timestamp(created_at_ts, 0).unwrap(),
+                pubkey: hex64(0xbb),
+                signature: "c".repeat(128),
+                checksum: format!("sha256:{}", "d".repeat(64)),
+                signature_verified: true,
+            },
+            context: ChatContext {
+                community_id: "community-1".into(),
+                channel_id: "channel-1".into(),
+                channel_kind,
+                thread_root_id: None,
+            },
+            principal: PrincipalMeta {
+                principal_id: PrincipalId::from(Uuid::new_v4()),
+            },
+            observed_at: DateTime::<Utc>::from_timestamp(created_at_ts + 100, 0).unwrap(),
+        }
+    }
+
+    /// A durable observation row built through the real row constructor.
+    fn observed_row(
+        event_type: ObservedEventType,
+        event_id: &str,
+        message_id: &str,
+        created_at_ts: i64,
+        channel_kind: ChatChannelKind,
+        body: Option<&str>,
+    ) -> ChatObservedEvent {
+        ChatObservedEvent::from_observed_data(
+            tenant(),
+            workspace(),
+            &observed_event(
+                event_type,
+                event_id,
+                message_id,
+                created_at_ts,
+                channel_kind,
+            ),
+            body.map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn rebuild_groups_by_message_preserving_order() {
+        // Message A starts earliest, message B interleaves between A's events:
+        // both of A's rows must fold into ONE record, and groups keep
+        // first-appearance order (A before B).
+        let rows = [
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xbb),
+                &hex64(0xbb),
+                T0 + 10,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Edited,
+                &hex64(0xa2),
+                &hex64(0xaa),
+                T0 + 20,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+        ];
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(records.len(), 2, "one record per message");
+        assert_eq!(records[0].message_id, hex64(0xaa));
+        assert_eq!(
+            records[0].provenance.len(),
+            2,
+            "A's created + edited fold into one record"
+        );
+        assert_eq!(records[0].latest_event_id, hex64(0xa2));
+        assert_eq!(records[1].message_id, hex64(0xbb));
+        assert_eq!(records[1].provenance.len(), 1);
+    }
+
+    #[test]
+    fn rebuild_edit_then_create_does_not_regress() {
+        // Rows given edit-first (violating the documented ordering). The
+        // out-of-order guard must keep the newer edit and never regress to the
+        // older created event.
+        let rows = [
+            observed_row(
+                ObservedEventType::Edited,
+                &hex64(0xee),
+                &hex64(0xaa),
+                T0 + 50,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+        ];
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].event_type, ObservedEventType::Edited);
+        assert_eq!(records[0].latest_event_id, hex64(0xee));
+        assert_eq!(
+            records[0].occurred_at,
+            DateTime::<Utc>::from_timestamp(T0 + 50, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn rebuild_tombstone_only_group_yields_no_record() {
+        let rows = [observed_row(
+            ObservedEventType::Deleted,
+            &hex64(0xdd),
+            &hex64(0xaa),
+            T0 + 10,
+            ChatChannelKind::Workspace,
+            None,
+        )];
+        assert!(
+            rebuild_records(&rows, &policy(true)).is_empty(),
+            "a tombstone for a never-projected message is a no-op"
+        );
+    }
+
+    #[test]
+    fn rebuild_tombstone_after_create_marks_record() {
+        let rows = [
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Deleted,
+                &hex64(0xdd),
+                &hex64(0xaa),
+                T0 + 10,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+        ];
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(records.len(), 1, "tombstoned records are returned too");
+        assert_eq!(records[0].indexing_status, IndexingStatus::Tombstoned);
+        assert_eq!(records[0].event_type, ObservedEventType::Deleted);
+        assert_eq!(records[0].latest_event_id, hex64(0xdd));
+        assert_eq!(
+            records[0].provenance.len(),
+            2,
+            "created + deleted are both recorded"
+        );
+    }
+
+    #[test]
+    fn rebuild_edit_after_tombstone_does_not_resurrect() {
+        let rows = [
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Deleted,
+                &hex64(0xdd),
+                &hex64(0xaa),
+                T0 + 10,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Edited,
+                &hex64(0xee),
+                &hex64(0xaa),
+                T0 + 20,
+                ChatChannelKind::Workspace,
+                Some("v3"),
+            ),
+        ];
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].indexing_status, IndexingStatus::Tombstoned);
+        assert_eq!(records[0].event_type, ObservedEventType::Deleted);
+        assert_eq!(
+            records[0].latest_event_id,
+            hex64(0xdd),
+            "a later edit must not resurrect a tombstoned record"
+        );
+        assert_eq!(records[0].provenance.len(), 2);
+    }
+
+    #[test]
+    fn rebuild_skips_dm_group() {
+        let rows = [
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Dm,
+                None,
+            ),
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xbb),
+                &hex64(0xbb),
+                T0 + 10,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+        ];
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(
+            records.len(),
+            1,
+            "the dm group is dropped wholesale, the workspace group is kept"
+        );
+        assert_eq!(records[0].message_id, hex64(0xbb));
+    }
+
+    #[test]
+    fn rebuild_empty_rows_yield_no_records() {
+        assert!(rebuild_records(&[], &policy(true)).is_empty());
+    }
+
+    #[test]
+    fn rebuild_projection_disabled_yields_no_records() {
+        let rows = [observed_row(
+            ObservedEventType::Created,
+            &hex64(0xaa),
+            &hex64(0xaa),
+            T0,
+            ChatChannelKind::Workspace,
+            None,
+        )];
+        assert!(
+            rebuild_records(&rows, &ProjectionPolicy::default()).is_empty(),
+            "memory_projection off ⇒ no records"
+        );
+    }
+
+    #[test]
+    fn rebuild_passes_body_only_when_content_indexing() {
+        let rows = [observed_row(
+            ObservedEventType::Created,
+            &hex64(0xaa),
+            &hex64(0xaa),
+            T0,
+            ChatChannelKind::Workspace,
+            Some("hello"),
+        )];
+        let reference_only = rebuild_records(&rows, &policy(false));
+        assert_eq!(reference_only[0].content, None);
+        assert!(!reference_only[0].content_indexing);
+        let indexed = rebuild_records(&rows, &policy(true));
+        assert_eq!(indexed[0].content.as_deref(), Some("hello"));
+        assert!(indexed[0].content_indexing);
+        assert_eq!(indexed[0].indexing_status, IndexingStatus::ContentStored);
+    }
+
+    #[test]
+    fn rebuild_is_deterministic_modulo_record_id() {
+        let rows = [
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xaa),
+                &hex64(0xaa),
+                T0,
+                ChatChannelKind::Workspace,
+                Some("v1"),
+            ),
+            observed_row(
+                ObservedEventType::Edited,
+                &hex64(0xa2),
+                &hex64(0xaa),
+                T0 + 10,
+                ChatChannelKind::Workspace,
+                Some("v2"),
+            ),
+            observed_row(
+                ObservedEventType::Created,
+                &hex64(0xbb),
+                &hex64(0xbb),
+                T0 + 5,
+                ChatChannelKind::Workspace,
+                None,
+            ),
+        ];
+        let a = rebuild_records(&rows, &policy(true));
+        let b = rebuild_records(&rows, &policy(true));
+        assert_eq!(a.len(), b.len());
+        for (left, right) in a.iter().zip(&b) {
+            assert_ne!(
+                left.record_id, right.record_id,
+                "record_id is fresh per run"
+            );
+            let mut normalized = left.clone();
+            normalized.record_id = right.record_id;
+            assert_eq!(normalized, *right);
         }
     }
 }

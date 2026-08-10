@@ -713,6 +713,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::chat_identity::configure_mapping),
         )
         .route(
+            "/api/v1/admin/applications/memory/chat/reconcile",
+            post(crate::handlers::memory_reconcile::reconcile_chat_memory),
+        )
+        .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
         )

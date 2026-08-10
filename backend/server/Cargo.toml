@@ -266,6 +266,10 @@ name = "memory_projection_test"
 path = "../tests/memory_projection_test.rs"
 
 [[test]]
+name = "memory_reconcile_test"
+path = "../tests/memory_reconcile_test.rs"
+
+[[test]]
 name = "chat_owner_authorization_test"
 path = "../tests/chat_owner_authorization_test.rs"
 
