@@ -49,12 +49,15 @@
 //!   consumer).
 //! * `outbox_process_seconds{consumer,event_type}` — per-event processing
 //!   latency histogram.
+//! * `outbox_claim_seconds{consumer}` — claim → hand-off latency histogram
+//!   for one batch.
 //! * `outbox_pending_count{consumer,state}` — queue depth gauge, once per
-//!   tick.
+//!   tick (drained groups are reset to 0).
 //! * `outbox_dlq_count` — global dead-letter gauge, once per tick.
 //! * `outbox_oldest_pending_age_seconds` — age of the oldest pending
 //!   delivery, once per tick.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -66,6 +69,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::config::OutboxWorkerConfig;
+
+/// Delivery states surfaced by the `outbox_pending_count` gauge (mirrors the
+/// `integration_deliveries.state` CHECK constraint).
+const DELIVERY_STATES: [&str; 4] = ["pending", "claimed", "processed", "dead_lettered"];
 
 /// Dispatcher liveness shared with the readiness probe.
 #[derive(Debug, Default)]
@@ -218,11 +225,15 @@ impl OutboxDispatcher {
     /// consumer.
     async fn dispatch_consumer(&self, consumer: &Arc<dyn OutboxConsumer>) {
         let consumer_id = consumer.consumer_id().to_string();
-        let claimed = match self
+        let claim_started = Instant::now();
+        let claimed = self
             .store
             .claim_batch(&consumer_id, &self.store_config(), &self.worker_id)
-            .await
-        {
+            .await;
+        // Claim → hand-off latency (DB + lease time), regardless of outcome.
+        metrics::histogram!("outbox_claim_seconds", "consumer" => consumer_id.clone())
+            .record(claim_started.elapsed().as_secs_f64());
+        let claimed = match claimed {
             Ok(claimed) => claimed,
             Err(error) => {
                 warn!(
@@ -422,16 +433,37 @@ impl OutboxDispatcher {
 
     /// Record queue-depth gauges once per tick. Failures are logged and
     /// ignored — a gauge must never fail a tick.
+    ///
+    /// `outbox_pending_count` is a gauge, so Prometheus keeps re-rendering
+    /// the last value of a (consumer, state) group once it exists; groups
+    /// that drained are therefore reset to 0 over the expected label set
+    /// (registered consumers × delivery states) so queue depth never shows a
+    /// stale count.
     async fn record_queue_depth(&self) {
         match self.store.pending_counts().await {
             Ok(counts) => {
+                let mut present = HashSet::with_capacity(counts.len());
                 for count in counts {
+                    present.insert((count.consumer_id.clone(), count.state.clone()));
                     metrics::gauge!(
                         "outbox_pending_count",
                         "consumer" => count.consumer_id,
                         "state" => count.state
                     )
                     .set(count.count as f64);
+                }
+                for consumer in &self.consumers {
+                    let consumer_id = consumer.consumer_id().to_string();
+                    for state in DELIVERY_STATES {
+                        if !present.contains(&(consumer_id.clone(), state.to_string())) {
+                            metrics::gauge!(
+                                "outbox_pending_count",
+                                "consumer" => consumer_id.clone(),
+                                "state" => state.to_string()
+                            )
+                            .set(0.0);
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -450,7 +482,10 @@ impl OutboxDispatcher {
             Ok(Some(age)) => {
                 metrics::gauge!("outbox_oldest_pending_age_seconds").set(age);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                // Nothing pending: the gauge must not re-render a stale age.
+                metrics::gauge!("outbox_oldest_pending_age_seconds").set(0.0);
+            }
             Err(error) => {
                 warn!(error = %error, "outbox oldest-pending gauge failed");
             }
