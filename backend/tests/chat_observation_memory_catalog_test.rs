@@ -691,6 +691,76 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
     cleanup(&pool, tenant, &consumer_id).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_deleted_without_prior_record_is_no_op() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::new(pool.clone());
+    let consumer_id = format!("io.elembra.test.memory-catalog-{}", Uuid::new_v4());
+    let message_id = hex64(0xaa);
+    let deleted_id = hex64(0xdd);
+
+    // A Deleted event for a message that was never projected: consumed, but
+    // must not materialize a catalog record (no row, no effect).
+    let deleted_data = event_data(
+        ObservedEventType::Deleted,
+        &deleted_id,
+        &message_id,
+        1_752_000_020,
+        ChatChannelKind::Workspace,
+    );
+    let deleted_event = integration_event(tenant, &deleted_data);
+    let result = {
+        let mut tx = pool.begin().await.unwrap();
+        let result = store
+            .upsert_from_event_in_tx(&mut tx, &consumer_id, &deleted_event, &deleted_data, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        result
+    };
+    assert!(
+        result.is_none(),
+        "a tombstone for an unprojected message must be a no-op"
+    );
+    assert_eq!(
+        store.count_for_tenant(tenant).await.unwrap(),
+        0,
+        "no catalog row may be created"
+    );
+    assert!(
+        store.get(tenant, &message_id).await.unwrap().is_none(),
+        "no record exists for the message"
+    );
+
+    // The receipt was still written (the event was processed; its effect is
+    // "nothing"), so a redelivery is a duplicate — still None, still no row.
+    let redelivery = {
+        let mut tx = pool.begin().await.unwrap();
+        let result = store
+            .upsert_from_event_in_tx(&mut tx, &consumer_id, &deleted_event, &deleted_data, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        result
+    };
+    assert!(redelivery.is_none(), "redelivery is a duplicate no-op");
+    assert_eq!(store.count_for_tenant(tenant).await.unwrap(), 0);
+
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 1, "exactly one receipt for the tombstone");
+
+    cleanup(&pool, tenant, &consumer_id).await;
+}
+
 // ---------------------------------------------------------------------------
 // 7. MemoryCatalogStore::upsert_records: reconciliation insert/update
 // ---------------------------------------------------------------------------

@@ -103,7 +103,9 @@ pub fn project_record(
 ///   [`apply_tombstone`] — `apply_event` returns the existing record
 ///   unchanged;
 /// * a tombstoned record is never edited (`apply_event` returns it unchanged;
-///   only [`apply_tombstone`] transitions to tombstoned);
+///   only [`apply_tombstone`] transitions to tombstoned) — likewise a record
+///   whose `event_type` is already `Deleted`, regardless of
+///   `indexing_status` (defense in depth against resurrecting a deletion);
 /// * an edit applies only when the new event's `created_at` is `>=` the
 ///   record's `occurred_at` — never regress to an older event after a newer
 ///   one (out-of-order delivery guard); otherwise the record is returned
@@ -126,7 +128,13 @@ pub fn apply_event(
     if event.buzz.event_type == ObservedEventType::Deleted {
         return existing.clone();
     }
-    if existing.indexing_status == IndexingStatus::Tombstoned {
+    if existing.event_type == ObservedEventType::Deleted
+        || existing.indexing_status == IndexingStatus::Tombstoned
+    {
+        // A deleted/tombstoned record is never edited; only `apply_tombstone`
+        // transitions to tombstoned. The `event_type` check is defense in
+        // depth: a record whose event_type is Deleted must not be resurrected
+        // even if its indexing_status is not (yet) Tombstoned.
         return existing.clone();
     }
     if event.buzz.created_at < existing.occurred_at {
@@ -548,6 +556,35 @@ mod tests {
         assert_eq!(
             apply_event(&tombstones, &newer_edit, Some("resurrected".into())),
             tombstones
+        );
+    }
+
+    #[test]
+    fn apply_event_never_resurrects_deleted_record_without_tombstone_status() {
+        let created = event_data(
+            ObservedEventType::Created,
+            &hex64(0xaa),
+            T0,
+            ChatChannelKind::Workspace,
+        );
+        let mut deleted =
+            project_record(tenant(), workspace(), &created, &policy(false), None).unwrap();
+        // The inconsistent state the tombstone fix prevents: event_type is
+        // Deleted but indexing_status is not Tombstoned. An edit must still
+        // never resurrect it (defense in depth).
+        deleted.event_type = ObservedEventType::Deleted;
+        assert_eq!(deleted.indexing_status, IndexingStatus::ReferenceOnly);
+
+        let newer_edit = event_data(
+            ObservedEventType::Edited,
+            &hex64(0xee),
+            T0 + 30,
+            ChatChannelKind::Workspace,
+        );
+        assert_eq!(
+            apply_event(&deleted, &newer_edit, Some("resurrected".into())),
+            deleted,
+            "a Deleted record must never be resurrected, even without Tombstoned status"
         );
     }
 

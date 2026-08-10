@@ -57,10 +57,13 @@ impl MemoryCatalogStore {
     /// `(tenant_id, message_id)`, (3) insert via `project_record` if none,
     /// else `apply_tombstone` for Deleted events or `apply_event` otherwise
     /// (pure fns from `rustshare-memory`), (4) persist. Returns the persisted
-    /// record, or `None` when the event was a duplicate delivery (receipt
-    /// already present) or was not projected (never-eligible channel).
-    /// `content` must already be gated by policy by the caller (None unless
-    /// `content_indexing` on and body exists).
+    /// record, or `None` when the event was (a) a duplicate delivery (receipt
+    /// already present), (b) not projected (never-eligible channel), or
+    /// (c) a Deleted event with no existing catalog record — a tombstone for
+    /// a message that was never projected is a no-op; the deletion already
+    /// lives in the observation index. `content` must already be gated by
+    /// policy by the caller (None unless `content_indexing` on and body
+    /// exists).
     pub async fn upsert_from_event_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
@@ -113,6 +116,13 @@ impl MemoryCatalogStore {
                 updated
             }
             None => {
+                if data.buzz.event_type == ObservedEventType::Deleted {
+                    // A tombstone for a message that was never projected is a
+                    // no-op: the durable fact of the deletion already lives in
+                    // the observation index. The receipt above records that
+                    // the event was processed; its effect is "nothing".
+                    return Ok(None);
+                }
                 let Some(record) = project_record(
                     event.tenant_id,
                     event.workspace_id,
