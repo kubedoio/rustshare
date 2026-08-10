@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential-free `elembra-ref` Buzz tag, with authenticated prepare/preview/
   open APIs that reauthorize through Files at access time.
 
+- Elembra Memory: Buzz chat activity can now be projected into the Memory
+  catalog as durable references (reference-first; per-workspace
+  `memory_projection` / `content_indexing` policy, default OFF with only
+  `workspace` channels eligible; current Chat authorization always required for
+  content exposure; admin reconciliation endpoint at
+  `POST /api/v1/admin/applications/memory/chat/reconcile`).
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,

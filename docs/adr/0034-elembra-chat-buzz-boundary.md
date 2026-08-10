@@ -525,7 +525,7 @@ command signing.
 - [x] OIDC design explicitly preserves Buzz signing authentication.
 - [x] Offboarding revokes Chat admission independently of key validity.
 - [x] Files attachments use ResourceRefs and read-time reauthorization.
-- [ ] Memory projection preserves Buzz provenance/source ownership.
+- [x] Memory projection preserves Buzz provenance/source ownership (implemented via chat_observed_events + memory_catalog + io.elembra.chat.buzz.event.observed.v1, commit range `63e952f3..9d5e3060`).
 - [x] No shared Buzz/Elembra private database access exists.
 - [ ] Agent Chat identity and delegated Elembra authority remain separate.
 - [ ] Buzz upstream/delta compatibility tests are defined before large fork changes.

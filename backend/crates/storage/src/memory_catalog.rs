@@ -15,7 +15,9 @@ use uuid::Uuid;
 /// Results of an [`MemoryCatalogStore::upsert_records`] reconciliation run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ReconcileCounts {
-    /// Records examined.
+    /// Records upserted by `upsert_records`; the reconcile orchestrator
+    /// (`reconcile_chat_memory_for_tenant`) overrides it to observation rows
+    /// examined.
     pub processed: u64,
     /// Rows newly inserted.
     pub created: u64,
