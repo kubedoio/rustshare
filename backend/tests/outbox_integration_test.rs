@@ -2430,3 +2430,438 @@ async fn re_registration_with_different_subscriptions_conflicts() {
     cleanup_events(&ctx.pool, &[&event]).await;
     ctx.cleanup().await;
 }
+
+// ---------------------------------------------------------------------------
+// 26. A panicking consumer cannot kill the dispatch loop
+// ---------------------------------------------------------------------------
+
+/// A consumer whose `process()` panics on every call — proves the dispatch
+/// loop survives consumer panics by dead-lettering the delivery.
+struct PanicConsumer {
+    consumer_id: String,
+}
+
+impl PanicConsumer {
+    fn new(consumer_id: &str) -> Self {
+        Self {
+            consumer_id: consumer_id.to_string(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl OutboxConsumer for PanicConsumer {
+    fn consumer_id(&self) -> &str {
+        &self.consumer_id
+    }
+    fn subscriptions(&self) -> Vec<String> {
+        vec![FILES_FILE_CREATED_V1.to_string()]
+    }
+    async fn process(&self, _event: &IntegrationEvent) -> ConsumerOutcome {
+        panic!("consumer bug: cannot process this event");
+    }
+}
+
+/// Always succeeds — the control consumer for the isolation tests.
+struct OkConsumer {
+    consumer_id: String,
+    event_type: &'static str,
+}
+
+impl OkConsumer {
+    fn new(consumer_id: &str, event_type: &'static str) -> Self {
+        Self {
+            consumer_id: consumer_id.to_string(),
+            event_type,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl OutboxConsumer for OkConsumer {
+    fn consumer_id(&self) -> &str {
+        &self.consumer_id
+    }
+    fn subscriptions(&self) -> Vec<String> {
+        vec![self.event_type.to_string()]
+    }
+    async fn process(&self, _event: &IntegrationEvent) -> ConsumerOutcome {
+        ConsumerOutcome::Processed
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn panicking_consumer_does_not_kill_dispatch_loop() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let panic_id = "io.elembra.test.panics";
+    let healthy_id = "io.elembra.test.healthy";
+    store
+        .register_consumer(panic_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
+    store
+        .register_consumer(healthy_id, &[FILES_FILE_UPDATED_V1.to_string()])
+        .await
+        .unwrap();
+    let panicked_event = files_created_event(ctx.tenant_id);
+    let healthy_event = files_updated_event(ctx.tenant_id);
+    publish(&store, &panicked_event).await;
+    publish(&store, &healthy_event).await;
+
+    let dispatcher = Arc::new(OutboxDispatcher::new(
+        store.clone(),
+        vec![
+            Arc::new(PanicConsumer::new(panic_id)) as Arc<dyn OutboxConsumer>,
+            Arc::new(OkConsumer::new(healthy_id, FILES_FILE_UPDATED_V1)) as Arc<dyn OutboxConsumer>,
+        ],
+        OutboxWorkerConfig::default(),
+        "panic-worker".to_string(),
+    ));
+
+    // Tick 1: the panicking consumer's delivery is dead-lettered with a
+    // redacted reason, the other consumer's event still processes, and the
+    // tick completes.
+    dispatcher.tick().await;
+    assert!(
+        dispatcher
+            .status()
+            .last_tick_ok
+            .load(std::sync::atomic::Ordering::Relaxed),
+        "a panicking consumer must not kill the tick"
+    );
+    let row = sqlx::query(
+        "SELECT state, last_error FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
+    )
+    .bind(panic_id)
+    .bind(panicked_event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(row.try_get::<String, _>("state").unwrap(), "dead_lettered");
+    assert_eq!(
+        row.try_get::<Option<String>, _>("last_error")
+            .unwrap()
+            .as_deref(),
+        Some("consumer panicked")
+    );
+    assert_eq!(
+        delivery_state(&ctx.pool, healthy_id, &healthy_event).await,
+        "processed",
+        "other consumers must keep processing after a panic"
+    );
+
+    // Tick 2 after a further publish: the loop is still alive and processes
+    // new events (the panicking consumer dead-letters again).
+    let second = files_created_event(ctx.tenant_id);
+    publish(&store, &second).await;
+    dispatcher.tick().await;
+    assert!(
+        dispatcher
+            .status()
+            .last_tick_ok
+            .load(std::sync::atomic::Ordering::Relaxed),
+        "the dispatch loop must survive across ticks"
+    );
+    assert_eq!(
+        delivery_state(&ctx.pool, panic_id, &second).await,
+        "dead_lettered"
+    );
+
+    cleanup_events(&ctx.pool, &[&panicked_event, &healthy_event, &second]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 27. A wedged consumer times out and recovers
+// ---------------------------------------------------------------------------
+
+/// A consumer whose `process()` never resolves while `wedged` is set.
+struct WedgedConsumer {
+    wedged: AtomicBool,
+    release: tokio::sync::Notify,
+    consumer_id: String,
+}
+
+impl WedgedConsumer {
+    fn new(consumer_id: &str) -> Self {
+        Self {
+            wedged: AtomicBool::new(true),
+            release: tokio::sync::Notify::new(),
+            consumer_id: consumer_id.to_string(),
+        }
+    }
+
+    fn unwedge(&self) {
+        self.wedged.store(false, Ordering::Relaxed);
+        self.release.notify_waiters();
+    }
+}
+
+#[async_trait::async_trait]
+impl OutboxConsumer for WedgedConsumer {
+    fn consumer_id(&self) -> &str {
+        &self.consumer_id
+    }
+    fn subscriptions(&self) -> Vec<String> {
+        vec![FILES_FILE_CREATED_V1.to_string()]
+    }
+    async fn process(&self, _event: &IntegrationEvent) -> ConsumerOutcome {
+        while self.wedged.load(Ordering::Relaxed) {
+            self.release.notified().await;
+        }
+        ConsumerOutcome::Processed
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn wedged_consumer_times_out_and_recovers() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let wedged_id = "io.elembra.test.wedged";
+    let healthy_id = "io.elembra.test.healthy";
+    store
+        .register_consumer(wedged_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
+    store
+        .register_consumer(healthy_id, &[FILES_FILE_UPDATED_V1.to_string()])
+        .await
+        .unwrap();
+    let wedged_event = files_created_event(ctx.tenant_id);
+    let healthy_event = files_updated_event(ctx.tenant_id);
+    publish(&store, &wedged_event).await;
+    publish(&store, &healthy_event).await;
+
+    let wedged = Arc::new(WedgedConsumer::new(wedged_id));
+    let dispatcher = Arc::new(OutboxDispatcher::new(
+        store.clone(),
+        vec![
+            wedged.clone() as Arc<dyn OutboxConsumer>,
+            Arc::new(OkConsumer::new(healthy_id, FILES_FILE_UPDATED_V1)) as Arc<dyn OutboxConsumer>,
+        ],
+        OutboxWorkerConfig {
+            process_timeout: std::time::Duration::from_millis(100),
+            backoff_initial_ms: 1,
+            backoff_max_ms: 10,
+            ..OutboxWorkerConfig::default()
+        },
+        "wedge-worker".to_string(),
+    ));
+
+    // Tick 1: the wedged consumer's delivery is failed retryable (not lost),
+    // while the healthy consumer's event still processes in the same tick.
+    dispatcher.tick().await;
+    assert!(
+        dispatcher
+            .status()
+            .last_tick_ok
+            .load(std::sync::atomic::Ordering::Relaxed),
+        "a wedged consumer must not kill the tick"
+    );
+    let row = sqlx::query(
+        "SELECT state, attempt_count, last_error FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
+    )
+    .bind(wedged_id)
+    .bind(wedged_event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row.try_get::<String, _>("state").unwrap(),
+        "pending",
+        "a timed-out delivery must be requeued, not lost"
+    );
+    assert_eq!(row.try_get::<i32, _>("attempt_count").unwrap(), 1);
+    assert!(row
+        .try_get::<Option<String>, _>("last_error")
+        .unwrap()
+        .unwrap()
+        .contains("timed out"));
+    assert_eq!(
+        delivery_state(&ctx.pool, healthy_id, &healthy_event).await,
+        "processed",
+        "other consumers must keep processing while one is wedged"
+    );
+
+    // Once the wedge is removed the delivery processes on the next claim.
+    sqlx::query(
+        "UPDATE integration_deliveries SET available_at = now() - interval '1 second' WHERE consumer_id = $1 AND event_id = $2",
+    )
+    .bind(wedged_id)
+    .bind(wedged_event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    wedged.unwedge();
+    dispatcher.tick().await;
+    assert_eq!(
+        delivery_state(&ctx.pool, wedged_id, &wedged_event).await,
+        "processed",
+        "the timed-out delivery must eventually process after the wedge is removed"
+    );
+
+    cleanup_events(&ctx.pool, &[&wedged_event, &healthy_event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 28. update_file / restore_version / edit_file publish file.updated.v1
+// ---------------------------------------------------------------------------
+
+/// A valid Files file-updated envelope for `tenant_id` (the `data` shape
+/// mirrors `files_created_event`).
+fn files_updated_event(tenant_id: Uuid) -> IntegrationEvent {
+    IntegrationEvent::builder()
+        .source("elembra://io.elembra.files")
+        .r#type(FILES_FILE_UPDATED_V1)
+        .tenant_id(TenantId(tenant_id))
+        .workspace_id(WorkspaceId(tenant_id))
+        .actor(ActorRef::Principal(PrincipalId(Uuid::new_v4())))
+        .data(serde_json::json!({
+            "name": "updated.txt",
+            "mime_type": "text/plain",
+            "size": 7,
+            "version": "sha256:4567abcdef",
+        }))
+        .build()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn file_update_restore_edit_publish_updated_events() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let owner = ctx.create_test_user("update_restore_edit_owner").await;
+    let publisher: Arc<dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>> =
+        store.clone();
+    let file_service = ctx.file_service().with_integration_publisher(publisher);
+
+    // Seed the file with v1 content; the create publishes file.created.v1.
+    let created = file_service
+        .upload_file(
+            owner.id,
+            "notes.txt".to_string(),
+            None,
+            Bytes::from_static(b"first content"),
+            "text/plain".to_string(),
+            ctx.tenant_id,
+        )
+        .await
+        .unwrap();
+
+    // update_file → file.updated.v1 carrying the new content hash.
+    let updated = file_service
+        .update_file(
+            created.id,
+            owner.id,
+            created.current_version,
+            Bytes::from_static(b"second content updated"),
+        )
+        .await
+        .unwrap();
+    // restore_version → file.updated.v1 carrying the restored (v1) hash.
+    let restored = file_service
+        .restore_version(created.id, 1, owner.id)
+        .await
+        .unwrap();
+    // edit_file (new_version mode) → file.updated.v1 carrying the edited hash.
+    let edited = file_service
+        .edit_file(
+            created.id,
+            owner.id,
+            Bytes::from_static(b"edited!"),
+            "new_version",
+            None,
+        )
+        .await
+        .unwrap();
+
+    let rows = sqlx::query(
+        "SELECT event_json FROM integration_outbox WHERE application_id = 'io.elembra.files' AND tenant_id = $1 AND event_type = $2",
+    )
+    .bind(ctx.tenant_id)
+    .bind(FILES_FILE_UPDATED_V1)
+    .fetch_all(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.len(),
+        3,
+        "update_file, restore_version and edit_file must each publish one updated event"
+    );
+
+    let events: Vec<IntegrationEvent> = rows
+        .iter()
+        .map(|row| {
+            serde_json::from_value::<IntegrationEvent>(
+                row.try_get::<serde_json::Value, _>("event_json").unwrap(),
+            )
+            .unwrap()
+        })
+        .collect();
+
+    // Every mutation is attributed to the acting principal.
+    let expected_actor = Some(ActorRef::Principal(PrincipalId(owner.id)));
+    for event in &events {
+        assert_eq!(
+            event.actor, expected_actor,
+            "an authenticated mutation must be attributed to the acting principal"
+        );
+        assert_eq!(event.tenant_id.0, ctx.tenant_id);
+        assert_eq!(event.data["name"], "notes.txt");
+        assert_eq!(event.data["mime_type"], "text/plain");
+    }
+
+    // The versioned resource selector matches the mutated content: the
+    // update carries the new hash, the restore carries the restored v1 hash,
+    // the edit carries the edited hash (content hashes are stable for fixed
+    // content, so the comparison is deterministic).
+    let selectors: HashSet<String> = events
+        .iter()
+        .map(|event| event.data["version"].as_str().unwrap().to_string())
+        .collect();
+    let expected_selectors: HashSet<String> = [
+        format!("sha256:{}", updated.content_hash),
+        format!("sha256:{}", restored.content_hash),
+        format!("sha256:{}", edited.content_hash),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(selectors, expected_selectors);
+
+    // Sizes mirror the mutated content lengths.
+    let sizes: HashSet<i64> = events
+        .iter()
+        .map(|event| event.data["size"].as_i64().unwrap())
+        .collect();
+    let expected_sizes: HashSet<i64> = [
+        b"second content updated".len() as i64,
+        b"first content".len() as i64,
+        b"edited!".len() as i64,
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(sizes, expected_sizes);
+
+    // Clean the test tenant's Files outbox rows (the seed upload's
+    // `file.created.v1` row has no `IntegrationEvent` handle here, so this
+    // removes all four rows at once).
+    sqlx::query(
+        "DELETE FROM integration_outbox WHERE tenant_id = $1 AND application_id = 'io.elembra.files'",
+    )
+    .bind(ctx.tenant_id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    ctx.cleanup().await;
+}
