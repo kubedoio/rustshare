@@ -32,8 +32,8 @@ Example:
   "elembraCausation": "01K...",
   "elembraResource": {
     "application": "io.elembra.files",
-    "resource_type": "file",
-    "resource_id": "01K1...",
+    "resourceType": "file",
+    "resourceId": "01K1...",
     "version": "sha256:..."
   },
 
