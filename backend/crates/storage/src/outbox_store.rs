@@ -368,23 +368,10 @@ impl OutboxStore {
         let event_json = serde_json::to_value(event).map_err(|error| {
             OutboxStoreError::InvalidEvent(format!("event serialization failed: {error}"))
         })?;
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO integration_outbox (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json, created_at, available_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
-            ON CONFLICT (source, event_id) DO NOTHING
-            "#,
-            &event.source,
-            event.id,
-            &event.r#type,
-            &application.0,
-            event.tenant_id.0,
-            event.workspace_id.0,
-            &event_json,
-        )
-        .execute(&mut **tx)
-        .await?;
-        if result.rows_affected() == 0 {
+        let inserted = self
+            .insert_outbox_row(tx, event, &application, &event_json)
+            .await?;
+        if inserted == 0 {
             // Event-id idempotency hardening: a duplicate (source, event_id)
             // must carry the identical payload. Anything else is a call-site
             // bug and fails the caller's transaction (no partial rollback
@@ -417,8 +404,57 @@ impl OutboxStore {
                 );
             }
         }
-        self.fan_out_obligations(tx, event).await?;
+        self.fan_out_obligations(tx, event, &event_json).await?;
         Ok(())
+    }
+
+    /// INSERT the outbox row idempotently (`ON CONFLICT DO NOTHING`).
+    /// Returns the number of rows actually inserted — `0` means a row with
+    /// this `(source, event_id)` identity already exists.
+    async fn insert_outbox_row(
+        &self,
+        tx: &mut Transaction<'static, Postgres>,
+        event: &IntegrationEvent,
+        application: &ApplicationId,
+        event_json: &serde_json::Value,
+    ) -> Result<u64, OutboxStoreError> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO integration_outbox (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json, created_at, available_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+            ON CONFLICT (source, event_id) DO NOTHING
+            "#,
+            &event.source,
+            event.id,
+            &event.r#type,
+            &application.0,
+            event.tenant_id.0,
+            event.workspace_id.0,
+            event_json,
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Read the outbox row's `created_at` inside the caller's transaction,
+    /// `None` when the row is absent (e.g. compacted concurrently).
+    async fn outbox_created_at(
+        &self,
+        tx: &mut Transaction<'static, Postgres>,
+        source: &str,
+        event_id: Uuid,
+    ) -> Result<Option<DateTime<Utc>>, OutboxStoreError> {
+        let created_at = sqlx::query_scalar!(
+            r#"
+            SELECT created_at FROM integration_outbox WHERE source = $1 AND event_id = $2
+            "#,
+            source,
+            event_id,
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+        Ok(created_at)
     }
 
     /// Eager fan-out: insert a `pending` delivery obligation for every
@@ -441,19 +477,32 @@ impl OutboxStore {
         &self,
         tx: &mut Transaction<'static, Postgres>,
         event: &IntegrationEvent,
+        event_json: &serde_json::Value,
     ) -> Result<(), OutboxStoreError> {
         // The outbox row was inserted by the caller in this same transaction;
         // on the duplicate path `created_at` is preserved from the original
         // insert, which is exactly the event's authoritative creation time.
-        let event_created_at: DateTime<Utc> = sqlx::query_scalar!(
-            r#"
-            SELECT created_at FROM integration_outbox WHERE source = $1 AND event_id = $2
-            "#,
-            &event.source,
-            event.id,
-        )
-        .fetch_one(&mut **tx)
-        .await?;
+        //
+        // The duplicate no-op INSERT holds no row lock, so a concurrent
+        // `maintenance()` may compact the aged row between that INSERT and
+        // this read. Missing rows are therefore republished here (fresh
+        // `created_at`, same identity) — an idempotent republish after
+        // compaction is legitimate — and re-read; if a concurrent republish
+        // won the race, the re-INSERT is a no-op and the next read returns
+        // that row. The loop always terminates: our own re-INSERT makes the
+        // row fresh (not compactable for the retention window), and a
+        // committed concurrent row is visible to the next read under READ
+        // COMMITTED (callers must not raise the isolation level, see
+        // [`Self::insert_in_tx`]).
+        let event_created_at = loop {
+            let Some(created_at) = self.outbox_created_at(tx, &event.source, event.id).await?
+            else {
+                self.insert_outbox_row(tx, event, &event.source_application()?, event_json)
+                    .await?;
+                continue;
+            };
+            break created_at;
+        };
         let subscriptions = sqlx::query!(
             r#"
             SELECT s.consumer_id, s.pattern
