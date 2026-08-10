@@ -395,17 +395,42 @@ impl OutboxStore {
     ///
     /// `enabled` is deliberately NOT consulted: obligations must exist so a
     /// disabled or offline consumer can catch up after re-enablement.
+    ///
+    /// Only consumers registered at or before the event row's `created_at`
+    /// gain obligations — registration establishes entitlement going
+    /// forward, never retroactively (ADR-0031). The gate closes two leaks:
+    /// the duplicate-identical-publish path (a consumer registered after the
+    /// original event must not gain an obligation when the identical event is
+    /// republished later) and a narrow publish/registration race (a
+    /// registration committing mid-publish must not backfill an event that
+    /// already existed). The normal publish path is unaffected: every
+    /// pre-existing matching consumer has `registered_at <= created_at`.
     async fn fan_out_obligations(
         &self,
         tx: &mut Transaction<'static, Postgres>,
         event: &IntegrationEvent,
     ) -> Result<(), OutboxStoreError> {
+        // The outbox row was inserted by the caller in this same transaction;
+        // on the duplicate path `created_at` is preserved from the original
+        // insert, which is exactly the event's authoritative creation time.
+        let event_created_at: DateTime<Utc> = sqlx::query_scalar!(
+            r#"
+            SELECT created_at FROM integration_outbox WHERE source = $1 AND event_id = $2
+            "#,
+            &event.source,
+            event.id,
+        )
+        .fetch_one(&mut **tx)
+        .await?;
         let subscriptions = sqlx::query!(
             r#"
-            SELECT consumer_id, pattern
-            FROM integration_consumer_subscriptions
-            ORDER BY consumer_id, pattern
+            SELECT s.consumer_id, s.pattern
+            FROM integration_consumer_subscriptions s
+            JOIN integration_consumers c ON c.consumer_id = s.consumer_id
+            WHERE c.registered_at <= $1
+            ORDER BY s.consumer_id, s.pattern
             "#,
+            event_created_at,
         )
         .fetch_all(&mut **tx)
         .await?;
@@ -2540,6 +2565,70 @@ mod tests {
         .unwrap();
         assert_eq!(delivery_count, 0, "no delivery row was created");
 
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn fan_out_skips_consumers_registered_after_event_creation() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.fanoutgate-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+
+        let event = test_event("io.elembra.files.file.created.v1");
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Consumer registers AFTER the event was created: registration
+        // establishes entitlement going forward, never retroactively.
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+
+        // Idempotent republish of the identical event (same id + payload):
+        // the fan-out gate must NOT backfill an obligation for a consumer
+        // registered after the event's original creation.
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+        let outbox_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+        )
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 1, "duplicate publish stays a single row");
+        let delivery_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_count, 0,
+            "no obligation for a consumer registered after the event"
+        );
+
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
+            .await
+            .unwrap();
+        assert!(
+            claimed.is_empty(),
+            "claim_batch must return nothing for a post-event registration"
+        );
+
+        sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
         cleanup(&pool, &[&event]).await;
     }
 
