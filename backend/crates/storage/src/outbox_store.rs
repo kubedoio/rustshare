@@ -64,6 +64,16 @@ pub enum OutboxStoreError {
     /// A consumer subscription pattern is not valid event-type syntax
     /// (exact type or `prefix.*`).
     InvalidSubscription(String),
+    /// A durable consumer must declare at least one subscription pattern.
+    /// An empty pattern list cannot be discovered at eager fan-out, so no
+    /// durable obligation would ever be created — registration is rejected
+    /// and no consumer row is written.
+    EmptySubscriptionList(String),
+    /// Re-registering an existing consumer with a different subscription
+    /// set. v1alpha1 subscription contracts are immutable: a changed
+    /// contract requires a new (versioned) consumer identity or a future
+    /// migration API. No consumer or subscription row is changed.
+    ConsumerRegistrationConflict { consumer_id: String },
     /// A duplicate publish reused a `(source, event_id)` that already exists
     /// with a different payload — the caller's transaction must be rolled
     /// back (this store does not partially roll back the caller's tx).
@@ -93,6 +103,18 @@ impl fmt::Display for OutboxStoreError {
             }
             OutboxStoreError::InvalidSubscription(pattern) => {
                 write!(f, "invalid consumer subscription pattern: {pattern}")
+            }
+            OutboxStoreError::EmptySubscriptionList(consumer_id) => {
+                write!(
+                    f,
+                    "consumer {consumer_id} must declare at least one subscription pattern (empty subscriptions are rejected)"
+                )
+            }
+            OutboxStoreError::ConsumerRegistrationConflict { consumer_id } => {
+                write!(
+                    f,
+                    "consumer {consumer_id} is already registered with a different subscription set (v1alpha1 subscription contracts are immutable)"
+                )
             }
             OutboxStoreError::EventIdentityConflict { source, event_id } => {
                 write!(f, "event identity conflict for {source}/{event_id}: a publish reused the event id with a different payload")
@@ -140,6 +162,19 @@ impl From<OutboxStoreError> for IntegrationPublishError {
             OutboxStoreError::InvalidSubscription(message) => {
                 IntegrationPublishError::InvalidEvent(message)
             }
+            // Registration-only errors: never produced on the publish path
+            // (the conversion exists solely for `insert_in_tx`); mapped to
+            // `Persistence` for exhaustiveness.
+            OutboxStoreError::EmptySubscriptionList(consumer_id) => {
+                IntegrationPublishError::Persistence(format!(
+                    "consumer {consumer_id} must declare at least one subscription pattern"
+                ))
+            }
+            OutboxStoreError::ConsumerRegistrationConflict { consumer_id } => {
+                IntegrationPublishError::Persistence(format!(
+                    "consumer {consumer_id} registration conflict: v1alpha1 subscription contracts are immutable"
+                ))
+            }
             OutboxStoreError::EventIdentityConflict { source, event_id } => {
                 IntegrationPublishError::Persistence(format!(
                     "event identity conflict for {source}/{event_id}: event id reused with a different payload"
@@ -180,6 +215,8 @@ pub struct ConsumerRegistration {
     /// Claim gating only — obligations are created regardless of `enabled`.
     pub enabled: bool,
     /// Subscription patterns (exact event types or `prefix.*`), sorted.
+    /// Never empty: durable registration requires at least one explicit
+    /// pattern (see [`Self::register_consumer`]).
     pub subscriptions: Vec<String>,
     /// When the consumer was first registered; never updated by re-registration.
     pub registered_at: DateTime<Utc>,
@@ -405,14 +442,34 @@ impl OutboxStore {
         Ok(())
     }
 
-    /// Register (or re-register) a consumer and replace its subscription
-    /// patterns atomically.
+    /// Register a consumer, or re-register it with the identical
+    /// subscription set. The whole operation runs on one transaction (one
+    /// connection), so it is atomic with respect to concurrent publishes
+    /// and registrations.
     ///
-    /// Re-registration preserves `enabled` and `registered_at` (both are
-    /// only ever set on first registration); the subscription list is
-    /// replaced wholesale. Patterns are exact event types or `.*`-terminated
-    /// prefixes; an empty list subscribes to everything (discouraged, but
-    /// consistent with [`event_matches_subscription`]).
+    /// Every durable consumer MUST declare at least one explicit
+    /// subscription pattern (an exact event type or a `.*`-terminated
+    /// prefix); an empty list is rejected with
+    /// [`OutboxStoreError::EmptySubscriptionList`] and no consumer row is
+    /// created. An empty pattern set cannot be discovered at eager fan-out,
+    /// so no durable obligation would ever be created — broad consumers use
+    /// an explicit prefix such as `io.elembra.*`.
+    ///
+    /// v1alpha1 subscription contracts are immutable:
+    /// * an unknown consumer is created with `enabled = true` and the given
+    ///   subscription set;
+    /// * re-registering an existing consumer with the identical normalized
+    ///   subscription set (sorted + deduplicated) is an idempotent success
+    ///   — `registered_at` and `enabled` are preserved unchanged (nothing
+    ///   is written);
+    /// * re-registering with a different subscription set fails with
+    ///   [`OutboxStoreError::ConsumerRegistrationConflict`] and changes
+    ///   neither the consumer row nor the subscription rows. A changed
+    ///   contract requires a new (versioned) consumer identity or a future
+    ///   migration API.
+    ///
+    /// Patterns are exact event types or `.*`-terminated prefixes (see
+    /// [`valid_subscription_pattern`]).
     pub async fn register_consumer(
         &self,
         consumer_id: &str,
@@ -423,39 +480,68 @@ impl OutboxStore {
                 return Err(OutboxStoreError::InvalidSubscription(pattern.clone()));
             }
         }
+        if subscriptions.is_empty() {
+            return Err(OutboxStoreError::EmptySubscriptionList(
+                consumer_id.to_string(),
+            ));
+        }
         let mut subscriptions: Vec<String> = subscriptions.to_vec();
         subscriptions.sort();
         subscriptions.dedup();
 
         let mut tx = self.pool.begin().await?;
-        sqlx::query!(
+        let inserted = sqlx::query!(
             r#"
             INSERT INTO integration_consumers (consumer_id, enabled, registered_at, updated_at)
             VALUES ($1, true, now(), now())
-            ON CONFLICT (consumer_id) DO UPDATE SET updated_at = now()
+            ON CONFLICT (consumer_id) DO NOTHING
             "#,
             consumer_id
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query!(
-            "DELETE FROM integration_consumer_subscriptions WHERE consumer_id = $1",
+
+        if inserted.rows_affected() == 1 {
+            // First registration: create the consumer and its subscription
+            // rows atomically.
+            for pattern in &subscriptions {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO integration_consumer_subscriptions (consumer_id, pattern)
+                    VALUES ($1, $2)
+                    ON CONFLICT (consumer_id, pattern) DO NOTHING
+                    "#,
+                    consumer_id,
+                    pattern
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
+
+        // Existing consumer (or a concurrent creation won the race and
+        // committed before us): v1alpha1 subscription contracts are
+        // immutable. An identical normalized set is an idempotent no-op —
+        // `enabled` and `registered_at` are preserved because nothing is
+        // written. A different set is a typed conflict; the tx rolls back
+        // on drop and no row is changed.
+        let existing_patterns = sqlx::query_scalar!(
+            r#"
+            SELECT pattern
+            FROM integration_consumer_subscriptions
+            WHERE consumer_id = $1
+            ORDER BY pattern
+            "#,
             consumer_id
         )
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
-        for pattern in &subscriptions {
-            sqlx::query!(
-                r#"
-                INSERT INTO integration_consumer_subscriptions (consumer_id, pattern)
-                VALUES ($1, $2)
-                ON CONFLICT (consumer_id, pattern) DO NOTHING
-                "#,
-                consumer_id,
-                pattern
-            )
-            .execute(&mut *tx)
-            .await?;
+        if existing_patterns != subscriptions {
+            return Err(OutboxStoreError::ConsumerRegistrationConflict {
+                consumer_id: consumer_id.to_string(),
+            });
         }
         tx.commit().await?;
         Ok(())
@@ -620,7 +706,9 @@ impl OutboxStore {
     /// complete; see [`expanded_subscription_filter`]. A claimed batch
     /// therefore never contains an event whose type does not match the
     /// durable patterns (additionally enforced on the deserialized envelope
-    /// below). An empty subscription list subscribes to everything.
+    /// below). Durable registrations always declare at least one explicit
+    /// pattern (see [`Self::register_consumer`]); if a registration were
+    /// ever empty, the filter fails closed and nothing is claimed.
     ///
     /// The total returned rows never exceed `config.claim_batch_size`: step 1
     /// is bounded by `claim_batch_size` and step 2 by the remainder.
@@ -1163,14 +1251,18 @@ impl OutboxStore {
 /// present in the source table so the claim SQL's `event_type = ANY($2)`
 /// filter is complete: a prefix can only match types that actually exist in
 /// the source. Exact patterns pass through unchanged; the result is
-/// deduplicated and sorted. Returns `None` when the consumer subscribes to
-/// everything (empty pattern list), which disables the SQL filter.
+/// deduplicated and sorted.
+///
+/// An empty pattern list yields `Some(empty)`, which matches nothing in the
+/// SQL filter — claim paths fail closed. Durable registrations are
+/// non-empty by contract ([`OutboxStore::register_consumer`] rejects empty
+/// lists), so this guard is defensive only.
 fn expanded_subscription_filter(
     subscriptions: &[String],
     distinct_types: &[String],
 ) -> Option<Vec<String>> {
     if subscriptions.is_empty() {
-        return None;
+        return Some(Vec::new());
     }
     let mut expanded = Vec::new();
     for pattern in subscriptions {
@@ -1266,8 +1358,10 @@ mod tests {
     const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
 
     /// The DB tests share one dev database (its outbox tables are only used
-    /// by these tests), so they must run serially: a claim with an empty
-    /// subscription picks up every pending event, including another test's.
+    /// by these tests), so they must run serially: claims are
+    /// subscription-filtered and every test cleans up exactly its own rows,
+    /// but a leaked row from an aborted run would still break the next
+    /// test's counts.
     static DB_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
@@ -1305,9 +1399,11 @@ mod tests {
 
     /// Empty the outbox tables. Safe because the DB tests are serialized by
     /// `DB_TEST_LOCK`; rows left behind by an aborted previous run would
-    /// otherwise leak into another test's empty-subscription claim. Consumer
-    /// registrations are cleared too so a leaked registration cannot fan out
-    /// obligations into another test's fixtures.
+    /// otherwise leak into another test's fixtures (claims are
+    /// subscription-filtered, so a leak must not be claimed, but counts
+    /// would still break). Consumer registrations are cleared too so a
+    /// leaked registration cannot fan out obligations into another test's
+    /// fixtures.
     async fn clean_slate(pool: &PgPool) {
         sqlx::query("DELETE FROM integration_consumer_subscriptions")
             .execute(pool)
@@ -1510,33 +1606,49 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires database
-    async fn empty_subscriptions_claim_everything() {
+    async fn empty_subscription_registration_is_rejected() {
         let _db_guard = DB_TEST_LOCK.lock().await;
         let (store, pool) = setup().await;
-        let created = test_event("io.elembra.files.file.created.v1");
-        let updated = test_event("io.elembra.files.file.updated.v1");
-        let consumer_id = format!("io.elembra.test.claim-all-{}", Uuid::new_v4());
+        let consumer_id = format!("io.elembra.test.empty-{}", Uuid::new_v4());
         clean_slate(&pool).await;
 
-        // Empty subscription list subscribes to everything.
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
-        let mut tx = store.pool().begin().await.unwrap();
-        store.insert_in_tx(&mut tx, &created).await.unwrap();
-        store.insert_in_tx(&mut tx, &updated).await.unwrap();
-        tx.commit().await.unwrap();
+        // An empty subscription list cannot be discovered at eager fan-out,
+        // so it is rejected outright and no consumer row is created.
+        let result = store.register_consumer(&consumer_id, &[]).await;
+        assert!(
+            matches!(result, Err(OutboxStoreError::EmptySubscriptionList(_))),
+            "empty registration must fail with a typed error: {result:?}"
+        );
+        let consumers = store.list_consumers().await.unwrap();
+        assert!(
+            !consumers.iter().any(|c| c.consumer_id == consumer_id),
+            "a rejected registration must not create a consumer row"
+        );
+        assert!(
+            store
+                .consumer_subscriptions(&consumer_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a rejected registration must not create subscription rows"
+        );
+        assert!(!store.is_consumer_enabled(&consumer_id).await.unwrap());
 
-        let claimed = store
-            .claim_batch(&consumer_id, &OutboxConfig::default(), "test-worker")
+        // Nothing was written: a later valid registration still works.
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
             .await
             .unwrap();
-        assert_eq!(claimed.len(), 2);
+        assert_eq!(
+            store.consumer_subscriptions(&consumer_id).await.unwrap(),
+            vec!["io.elembra.files.*".to_string()]
+        );
 
-        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+        sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
             .bind(&consumer_id)
             .execute(&pool)
             .await
             .unwrap();
-        cleanup(&pool, &[&created, &updated]).await;
     }
 
     #[tokio::test]
@@ -1547,7 +1659,10 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.fencing-{}", Uuid::new_v4());
         clean_slate(&pool).await;
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -1614,7 +1729,10 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.lease-{}", Uuid::new_v4());
         clean_slate(&pool).await;
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -1670,7 +1788,10 @@ mod tests {
         clean_slate(&pool).await;
         let config = OutboxConfig::default();
         let secret = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWNyZXQifQ.signature";
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -2008,7 +2129,10 @@ mod tests {
         let updated = test_event("io.elembra.files.file.updated.v1");
         let consumer_id = format!("io.elembra.test.observability-{}", Uuid::new_v4());
         clean_slate(&pool).await;
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &created).await.unwrap();
@@ -2111,7 +2235,10 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.poison-{}", Uuid::new_v4());
         clean_slate(&pool).await;
-        store.register_consumer(&consumer_id, &[]).await.unwrap();
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -2186,7 +2313,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires database
-    async fn register_consumer_upserts_and_replaces_subscriptions() {
+    async fn register_consumer_idempotent_until_contract_changes() {
         let _db_guard = DB_TEST_LOCK.lock().await;
         let (store, pool) = setup().await;
         let consumer_id = format!("io.elembra.test.register-{}", Uuid::new_v4());
@@ -2212,8 +2339,9 @@ mod tests {
             vec!["io.elembra.files.file.created.v1".to_string()]
         );
 
-        // Re-register with different patterns: replaced, while `enabled` and
-        // `registered_at` are preserved.
+        // Re-register with the identical subscription set (unsorted input
+        // with a duplicate — compared as a sorted, deduplicated set):
+        // idempotent success, `enabled` and `registered_at` preserved.
         assert!(store
             .set_consumer_enabled(&consumer_id, false)
             .await
@@ -2222,8 +2350,8 @@ mod tests {
             .register_consumer(
                 &consumer_id,
                 &[
-                    "io.elembra.files.*".to_string(),
-                    "io.elembra.files.file.updated.v1".to_string(),
+                    "io.elembra.files.file.created.v1".to_string(),
+                    "io.elembra.files.file.created.v1".to_string(),
                 ],
             )
             .await
@@ -2234,11 +2362,8 @@ mod tests {
         );
         assert_eq!(
             store.consumer_subscriptions(&consumer_id).await.unwrap(),
-            vec![
-                "io.elembra.files.*".to_string(),
-                "io.elembra.files.file.updated.v1".to_string(),
-            ],
-            "subscriptions replaced and sorted"
+            vec!["io.elembra.files.file.created.v1".to_string()],
+            "identical re-registration must not change the subscription rows"
         );
         let registered_at_after = sqlx::query_scalar::<_, DateTime<Utc>>(
             "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
@@ -2250,6 +2375,45 @@ mod tests {
         assert_eq!(
             registered_at_after, registered_at,
             "registered_at is only ever set on first registration"
+        );
+
+        // Re-register with a DIFFERENT subscription set: typed conflict,
+        // and neither the consumer row nor the subscription rows change.
+        let result = store
+            .register_consumer(
+                &consumer_id,
+                &[
+                    "io.elembra.files.*".to_string(),
+                    "io.elembra.files.file.updated.v1".to_string(),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(OutboxStoreError::ConsumerRegistrationConflict { .. })
+            ),
+            "a changed subscription contract must conflict: {result:?}"
+        );
+        assert_eq!(
+            store.consumer_subscriptions(&consumer_id).await.unwrap(),
+            vec!["io.elembra.files.file.created.v1".to_string()],
+            "a conflicted re-registration must leave subscription rows unchanged"
+        );
+        assert!(
+            !store.is_consumer_enabled(&consumer_id).await.unwrap(),
+            "a conflicted re-registration must leave enabled unchanged"
+        );
+        let registered_at_after_conflict = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            registered_at_after_conflict, registered_at,
+            "a conflicted re-registration must leave registered_at unchanged"
         );
 
         // Invalid patterns are rejected.

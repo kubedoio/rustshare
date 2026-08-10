@@ -16,9 +16,15 @@
 //! The store's durable registration (`integration_consumers` /
 //! `integration_consumer_subscriptions`) is authoritative for claiming. At
 //! the start of every tick the dispatcher re-registers each runtime consumer
-//! with its current subscription list (`register_consumer`, an idempotent
-//! upsert that preserves `enabled` and `registered_at`) — a self-healing
-//! mirror of the runtime consumer set. An operator-disabled consumer
+//! with its current subscription list (`register_consumer`). Subscription
+//! contracts are immutable in v1alpha1: re-registration is an idempotent
+//! no-op when the normalized subscription set is identical (preserving
+//! `enabled` and `registered_at`), and a changed set is rejected with a
+//! `ConsumerRegistrationConflict` — the consumer is logged and skipped, and
+//! its durable contract stays as-is. A consumer whose subscription set
+//! changes must use a new (versioned) consumer identity. An empty
+//! subscription list is rejected outright; every consumer must declare at
+//! least one explicit pattern. An operator-disabled consumer
 //! (`enabled = false`) keeps its pending obligations but is skipped by
 //! `claim_batch` (store-side), so no events are lost while it is turned off.
 //!
@@ -134,11 +140,16 @@ impl OutboxDispatcher {
         }
 
         // Registration sync: mirror the runtime consumer set into the store's
-        // durable registration (idempotent upsert preserving `enabled` /
-        // `registered_at`). The durable registration is authoritative for
-        // claiming, so a consumer that fails to re-register simply claims
-        // nothing this tick; a persistent failure only loses it its claim
-        // rights (obligations from past publishes are untouched).
+        // durable registration. v1alpha1 subscription contracts are
+        // immutable, so re-registration is an idempotent no-op when the
+        // consumer's subscription set is unchanged (preserving `enabled` /
+        // `registered_at`); a consumer whose set changed is rejected with a
+        // conflict and claims nothing this tick (its durable contract and
+        // past obligations are untouched). The durable registration is
+        // authoritative for claiming, so a consumer that fails to register
+        // simply claims nothing this tick; a persistent failure only loses
+        // it its claim rights (obligations from past publishes are
+        // untouched).
         for consumer in &self.consumers {
             let consumer_id = consumer.consumer_id().to_string();
             match self
