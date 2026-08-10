@@ -333,9 +333,10 @@ where
 
     /// Attach an integration-event publisher (transactional outbox).
     ///
-    /// When set, file creation/update uploads publish durable integration
-    /// events atomically with the metadata transaction (ADR-0031). A failed
-    /// publish aborts the upload.
+    /// When set, file creation and every content mutation (upload, re-upload,
+    /// `update_file`/`update_file_from_path`, `restore_version`, `edit_file`)
+    /// publish durable integration events atomically with the metadata
+    /// transaction (ADR-0031). A failed publish aborts the mutation.
     pub fn with_integration_publisher(
         mut self,
         publisher: Arc<dyn IntegrationEventPublisher<E::Tx>>,
@@ -1047,6 +1048,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -1207,6 +1216,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -1638,6 +1655,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
