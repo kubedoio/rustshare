@@ -523,9 +523,11 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
             _ => None,
         };
         // The Files Application owns the `file` and `folder` resource types
-        // and declares its full action capability set (ADR-0032). Other
-        // Applications keep the generic `{slug}.resource` read declaration
-        // until their own resource types are introduced.
+        // and declares its full action capability set (ADR-0032). The Chat
+        // Application owns the `message` resource type — the same surface its
+        // source-authorization owner adapter serves (ADR-0033/ADR-0034).
+        // Other Applications keep the generic `{slug}.resource` read
+        // declaration until their own resource types are introduced.
         let resources = if slug == "files" {
             vec![
                 ApplicationResource {
@@ -547,6 +549,11 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                     ],
                 },
             ]
+        } else if slug == "chat" {
+            vec![ApplicationResource {
+                resource_type: "message".into(),
+                actions: vec![ActionCapability::new("chat.read")],
+            }]
         } else {
             vec![ApplicationResource {
                 resource_type: format!("{slug}.resource"),

@@ -845,6 +845,8 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&permission_resolver_repository),
             Arc::clone(&metadata_store),
             Arc::clone(&object_store),
+            (*chat_identity_store).clone(),
+            (*chat_observation_store).clone(),
         )
         .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
     );
