@@ -4,7 +4,7 @@
 //! durable outbox event out, all fail-closed rejections.
 //!
 //! DB-backed and `#[ignore]`d; run against the dev database (migrations
-//! applied, including `20260810000004`) with `--test-threads=1`:
+//! applied, including `20260810000005`) with `--test-threads=1`:
 //!
 //!   set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
 //!     cargo test --test buzz_push_test -- --ignored --test-threads=1
@@ -585,6 +585,226 @@ async fn push_rejects_bad_hmac() {
         .await
         .unwrap_err();
     assert!(matches!(err, BuzzPushError::Unauthorized));
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 7. One ACTIVE mapping per community_id globally (migration 20260810000005):
+//    the partial unique index `chat_workspace_communities_active_community` is
+//    the PRIMARY defense against the cross-tenant ambiguity that
+//    `mapping_by_community` would otherwise ingest into an arbitrary tenant.
+//    `mapping_by_community`'s multi-row check (which returns a distinct
+//    `CommunityMappingError::Ambiguous`) is defense-in-depth: it is
+//    unreachable through this schema because the index refuses the second
+//    active mapping, but it is retained in case the index is ever dropped or
+//    rows are imported from outside the schema.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn second_active_mapping_for_community_is_refused_and_no_cross_tenant_write() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant_a = TenantId::from(Uuid::new_v4());
+    let tenant_b = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant_a,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    // (a) The unique active-community index blocks a second ACTIVE mapping
+    // for the same community_id, so the ambiguous state is unrepresentable.
+    let err = sqlx::query(
+        "INSERT INTO chat_workspace_communities
+            (mapping_id, tenant_id, workspace_id, community_id, relay_url, active)
+         VALUES ($1, $2, $3, $4, $5, true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_b.0)
+    .bind(tenant_b.0)
+    .bind(COMMUNITY_ID)
+    .bind("wss://relay.example.test")
+    .execute(&pool)
+    .await
+    .expect_err("a second active mapping must violate the unique index");
+    assert_eq!(
+        err.as_database_error()
+            .expect("unique violation is a database error")
+            .constraint(),
+        Some("chat_workspace_communities_active_community"),
+        "unexpected error: {err}"
+    );
+
+    // A deactivated mapping frees the community for another tenant, so tenant B
+    // may hold the same community_id while INACTIVE.
+    sqlx::query(
+        "INSERT INTO chat_workspace_communities
+            (mapping_id, tenant_id, workspace_id, community_id, relay_url, active)
+         VALUES ($1, $2, $3, $4, $5, false)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_b.0)
+    .bind(tenant_b.0)
+    .bind(COMMUNITY_ID)
+    .bind("wss://relay.example.test")
+    .execute(&pool)
+    .await
+    .expect("an inactive mapping for the same community_id must be allowed");
+
+    // Re-activating tenant B's mapping would recreate the ambiguity, so the
+    // index must refuse the flip too.
+    let err = sqlx::query(
+        "UPDATE chat_workspace_communities SET active = true
+         WHERE tenant_id = $1 AND community_id = $2",
+    )
+    .bind(tenant_b.0)
+    .bind(COMMUNITY_ID)
+    .execute(&pool)
+    .await
+    .expect_err("re-activating the second mapping must violate the unique index");
+    assert_eq!(
+        err.as_database_error()
+            .expect("unique violation is a database error")
+            .constraint(),
+        Some("chat_workspace_communities_active_community"),
+        "unexpected error: {err}"
+    );
+
+    // (b) The store lookup still resolves the unambiguous single-row case and
+    // never surfaces the inactive tenant-B mapping.
+    let store = ChatIdentityStore::new(pool.clone());
+    let found = store
+        .mapping_by_community(COMMUNITY_ID)
+        .await
+        .expect("single-row lookup must succeed")
+        .expect("tenant A's active mapping must be found");
+    assert_eq!(found.tenant_id, tenant_a);
+    assert!(found.active);
+
+    // Push under tenant A succeeds and lands ONLY in tenant A: no observation
+    // row and no outbox row ever exist for tenant B.
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+    let (push, event) = signed_push(&keys, "hello buzz");
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    assert_eq!(
+        service
+            .verify_and_ingest(&payload, &signature)
+            .await
+            .expect("push under tenant A must succeed"),
+        IngestOutcome::FirstObservation
+    );
+    assert!(
+        observation_row(&pool, tenant_a, &event.id.to_hex())
+            .await
+            .get::<Option<Uuid>, _>("author_principal_id")
+            .is_some(),
+        "observation row written under tenant A"
+    );
+    let tenant_b_observations: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM chat_observed_events WHERE tenant_id = $1",
+    )
+    .bind(tenant_b.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tenant_b_observations, 0,
+        "no observation row may be written for tenant B"
+    );
+    let tenant_b_outbox: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM integration_outbox WHERE tenant_id = $1")
+            .bind(tenant_b.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tenant_b_outbox, 0,
+        "no outbox row may be written for tenant B"
+    );
+
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Mapping violating the workspace == tenant invariant ⇒ Persistence
+//    (server-side integrity failure, fail closed)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn push_rejects_mapping_violating_workspace_tenant_invariant() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+
+    // Active mapping whose workspace_id differs from tenant_id: a server-side
+    // integrity violation, not a malformed client payload.
+    sqlx::query(
+        "INSERT INTO chat_workspace_communities
+            (mapping_id, tenant_id, workspace_id, community_id, relay_url, active)
+         VALUES ($1, $2, $3, $4, $5, true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant.0)
+    .bind(Uuid::new_v4())
+    .bind(COMMUNITY_ID)
+    .bind("wss://relay.example.test")
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_binding(&pool, tenant, &keys.public_key().to_hex(), "active").await;
+    enable_chat_application(
+        &pool,
+        tenant,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+    let (push, _) = signed_push(&keys, "hello buzz");
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+
+    let err = service
+        .verify_and_ingest(&payload, &signature)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, BuzzPushError::Persistence(_)),
+        "a mapping violating the workspace == tenant invariant is a server-side failure, got {err:?}"
+    );
+    let details = err.to_string();
+    assert!(
+        details.contains("workspace == tenant"),
+        "error should name the invariant, got: {details}"
+    );
+
+    // Fail closed: nothing was written.
+    let observation_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM chat_observed_events WHERE tenant_id = $1",
+    )
+    .bind(tenant.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(observation_count, 0, "no observation row may be written");
+    let outbox_count: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM integration_outbox WHERE tenant_id = $1")
+            .bind(tenant.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(outbox_count, 0, "no outbox row may be written");
 
     cleanup(&pool, tenant).await;
 }

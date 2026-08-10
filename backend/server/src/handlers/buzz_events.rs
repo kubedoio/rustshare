@@ -76,12 +76,25 @@ pub async fn receive_buzz_event(
             "Unbound author",
             "The event author pubkey has no active binding in the mapped tenant",
         ),
+        Err(BuzzPushError::AmbiguousCommunity {
+            community_id,
+            row_count,
+        }) => {
+            error!(
+                "Ambiguous active community mapping for community_id {community_id}: {row_count} tenants"
+            );
+            error_response(
+                StatusCode::CONFLICT,
+                "Ambiguous community mapping",
+                "community_id has multiple active workspace mappings; reconcile them before retrying",
+            )
+        }
         Err(BuzzPushError::Persistence(reason)) => {
             error!("Buzz event persistence failure: {reason}");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error",
-                &reason,
+                "internal error processing buzz event",
             )
         }
     }

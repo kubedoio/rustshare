@@ -17,7 +17,7 @@ pub mod repos;
 pub mod upload_doc_store;
 pub mod upload_impl;
 
-pub use chat_identity::ChatIdentityStore;
+pub use chat_identity::{ChatIdentityStore, CommunityMappingError};
 pub use chat_observation::ChatObservationStore;
 pub use event_store::EventStore;
 pub use memory_catalog::{MemoryCatalogStore, ReconcileCounts};

@@ -11,6 +11,20 @@ use rustshare_resource_auth::{
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+/// Errors from [`ChatIdentityStore::mapping_by_community`].
+#[derive(Debug, thiserror::Error)]
+pub enum CommunityMappingError {
+    /// Multiple active mappings for one `community_id` is a data-integrity
+    /// violation; the caller must fail closed.
+    #[error("ambiguous active mapping for community_id {community_id}: {row_count} tenants")]
+    Ambiguous {
+        community_id: String,
+        row_count: usize,
+    },
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
 #[derive(Clone)]
 pub struct ChatIdentityStore {
     pool: PgPool,
@@ -49,30 +63,42 @@ impl ChatIdentityStore {
     }
 
     /// The workspace↔community mapping for `community_id` regardless of tenant,
-    /// if active. `community_id` is unique per tenant.
+    /// if active. At most one ACTIVE mapping per `community_id` is guaranteed
+    /// globally by the partial unique index
+    /// `chat_workspace_communities_active_community`; a deactivated mapping
+    /// frees the community for another tenant.
+    ///
+    /// Multiple active mappings for one `community_id` is a data-integrity
+    /// violation; the caller must fail closed.
     pub async fn mapping_by_community(
         &self,
         community_id: &str,
-    ) -> Result<Option<WorkspaceCommunityMapping>> {
-        let row = sqlx::query(
+    ) -> Result<Option<WorkspaceCommunityMapping>, CommunityMappingError> {
+        let rows = sqlx::query(
             "SELECT tenant_id, workspace_id, community_id, relay_url, active
              FROM chat_workspace_communities
              WHERE community_id = $1 AND active",
         )
         .bind(community_id)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
+        if rows.len() > 1 {
+            return Err(CommunityMappingError::Ambiguous {
+                community_id: community_id.to_string(),
+                row_count: rows.len(),
+            });
+        }
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
 
-        row.map(|row| {
-            Ok(WorkspaceCommunityMapping {
-                tenant_id: TenantId(row.try_get("tenant_id")?),
-                workspace_id: WorkspaceId(row.try_get("workspace_id")?),
-                community_id: row.try_get("community_id")?,
-                relay_url: row.try_get("relay_url")?,
-                active: row.try_get("active")?,
-            })
-        })
-        .transpose()
+        Ok(Some(WorkspaceCommunityMapping {
+            tenant_id: TenantId(row.try_get("tenant_id")?),
+            workspace_id: WorkspaceId(row.try_get("workspace_id")?),
+            community_id: row.try_get("community_id")?,
+            relay_url: row.try_get("relay_url")?,
+            active: row.try_get("active")?,
+        }))
     }
 
     /// Current projection policy for the chat Application in this tenant/workspace,

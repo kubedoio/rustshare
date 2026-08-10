@@ -39,7 +39,9 @@ use rustshare_memory::event::{
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::resource_ref::ResourceRef;
 use rustshare_resource_auth::BindingStatus;
-use rustshare_storage::{ChatIdentityStore, ChatObservationStore, OutboxStore};
+use rustshare_storage::{
+    ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -80,6 +82,14 @@ pub enum BuzzPushError {
     UnknownCommunity,
     /// Author pubkey has no live (active) binding in the mapped tenant.
     UnboundAuthor,
+    /// More than one active workspace↔community mapping exists for the
+    /// `community_id` (data-integrity violation). The caller must fail closed;
+    /// this is distinct from [`BuzzPushError::Persistence`] so the API can
+    /// return a conflict rather than an opaque internal error.
+    AmbiguousCommunity {
+        community_id: String,
+        row_count: usize,
+    },
     /// DB/outbox failure (server-side).
     Persistence(String),
 }
@@ -99,6 +109,13 @@ impl fmt::Display for BuzzPushError {
             }
             BuzzPushError::UnknownCommunity => write!(f, "unknown community"),
             BuzzPushError::UnboundAuthor => write!(f, "unbound author"),
+            BuzzPushError::AmbiguousCommunity {
+                community_id,
+                row_count,
+            } => write!(
+                f,
+                "ambiguous community mapping: {community_id} is active in {row_count} tenants"
+            ),
             BuzzPushError::Persistence(reason) => write!(f, "persistence failure: {reason}"),
         }
     }
@@ -189,18 +206,33 @@ impl BuzzObservationService {
             .map_err(|_| BuzzPushError::VerificationFailed)?;
 
         // 5. Community → Workspace mapping (workspace == tenant invariant).
-        let mapping = self
+        let mapping = match self
             .chat_identity
             .mapping_by_community(&push.context.community_id)
             .await
-            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?
-            .ok_or(BuzzPushError::UnknownCommunity)?;
+        {
+            Ok(mapping) => mapping.ok_or(BuzzPushError::UnknownCommunity)?,
+            Err(CommunityMappingError::Ambiguous {
+                community_id,
+                row_count,
+            }) => {
+                return Err(BuzzPushError::AmbiguousCommunity {
+                    community_id,
+                    row_count,
+                })
+            }
+            Err(CommunityMappingError::Database(e)) => {
+                return Err(BuzzPushError::Persistence(e.to_string()))
+            }
+        };
         let tenant = mapping.tenant_id;
         let workspace = WorkspaceId(mapping.workspace_id.0);
         if workspace != WorkspaceId(mapping.tenant_id.0) {
-            // Platform invariant: one workspace per tenant. Fail closed rather
-            // than derive a scope the envelope validation would reject later.
-            return Err(BuzzPushError::Malformed(
+            // Platform invariant: one workspace per tenant. A mapping that
+            // violates it is a server-side integrity failure — fail closed
+            // rather than derive a scope the envelope validation would reject
+            // later.
+            return Err(BuzzPushError::Persistence(
                 "community mapping violates the workspace == tenant invariant".to_string(),
             ));
         }
