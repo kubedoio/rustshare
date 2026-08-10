@@ -427,23 +427,48 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
                 "context.supersedes_event_id must be 64 lowercase hex characters".to_string(),
             ));
         }
-        if supersedes == &context.message_id {
-            return Err(BuzzPushError::Malformed(
-                "context.supersedes_event_id must differ from context.message_id".to_string(),
-            ));
-        }
     }
-    if context.event_type == ObservedEventType::Created {
-        // A created event IS the message root: its id must equal the message id.
-        let raw_event_id = push
-            .event
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
-        if raw_event_id != context.message_id {
-            return Err(BuzzPushError::Malformed(
-                "created event message_id must equal the Nostr event id".to_string(),
-            ));
+    // The raw `id` field is only ever a comparison input here; the parsed,
+    // cryptographically verified event id is authoritative (step 4).
+    let raw_event_id = push
+        .event
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
+    match context.event_type {
+        // A created event IS the message root: its id must equal the message
+        // id, and there is nothing it can supersede.
+        ObservedEventType::Created => {
+            if raw_event_id != context.message_id {
+                return Err(BuzzPushError::Malformed(
+                    "created event message_id must equal the Nostr event id".to_string(),
+                ));
+            }
+            if context.supersedes_event_id.is_some() {
+                return Err(BuzzPushError::Malformed(
+                    "created events must not supersede an earlier event".to_string(),
+                ));
+            }
+        }
+        // An edit/delete is a different event from the root message. It may
+        // supersede the root — whose event id IS the message id — so
+        // `supersedes == message_id` is the correct first-edit/delete
+        // contract; only self-supersede (`supersedes == this event's id`) is
+        // invalid.
+        ObservedEventType::Edited | ObservedEventType::Deleted => {
+            if raw_event_id == context.message_id {
+                return Err(BuzzPushError::Malformed(
+                    "edited/deleted event message_id must differ from the Nostr event id"
+                        .to_string(),
+                ));
+            }
+            if let Some(supersedes) = &context.supersedes_event_id {
+                if supersedes == raw_event_id {
+                    return Err(BuzzPushError::Malformed(
+                        "context.supersedes_event_id must not equal the Nostr event id".to_string(),
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -528,25 +553,57 @@ mod tests {
             Err(BuzzPushError::Malformed(_))
         ));
 
-        // supersedes == message_id.
-        let mut p = push(&event, &event_id, ObservedEventType::Edited);
+        // Valid created passes.
+        let p = push(&event, &event_id, ObservedEventType::Created);
+        assert!(validate_context(&p).is_ok());
+    }
+
+    #[test]
+    fn context_validation_enforces_event_identity_rules() {
+        let (_, event) = signed_text_note("hello buzz");
+        let event_id = event.id.to_hex();
+        // A deterministic 64-hex message id that differs from the event id.
+        let mut other = event_id.clone();
+        let last = other.pop().unwrap();
+        other.push(if last == 'a' { 'b' } else { 'a' });
+
+        // Created with supersedes present → Malformed.
+        let mut p = push(&event, &event_id, ObservedEventType::Created);
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
+
+        // Created with message_id != event id → Malformed.
+        let mut p = push(&event, &event_id, ObservedEventType::Created);
+        p.context.message_id = other.clone();
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
+
+        // Edited with supersedes == message_id (first edit superseding the
+        // root, whose event id IS the message id) → VALID. This is the key
+        // regression test for the push-context contract.
+        let mut p = push(&event, &other, ObservedEventType::Edited);
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(validate_context(&p).is_ok());
+
+        // Edited with supersedes == event id (self-supersede) → Malformed.
+        let mut p = push(&event, &other, ObservedEventType::Edited);
         p.context.supersedes_event_id = Some(event_id.clone());
         assert!(matches!(
             validate_context(&p),
             Err(BuzzPushError::Malformed(_))
         ));
 
-        // Created with message_id != event id.
-        let mut p = push(&event, &event_id, ObservedEventType::Created);
-        p.context.message_id = "a".repeat(63) + "b";
+        // Edited with message_id == event id → Malformed.
+        let p = push(&event, &event_id, ObservedEventType::Edited);
         assert!(matches!(
             validate_context(&p),
             Err(BuzzPushError::Malformed(_))
         ));
-
-        // Valid created passes.
-        let p = push(&event, &event_id, ObservedEventType::Created);
-        assert!(validate_context(&p).is_ok());
     }
 
     #[test]

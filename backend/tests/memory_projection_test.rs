@@ -180,9 +180,12 @@ async fn setup_tenant(
 }
 
 /// Build a valid signed text-note push for `keys` with the given message
-/// context. For a created event `message_id` must equal the event id (the
-/// first event of a message IS the message id); for later events `message_id`
-/// is the stable message id.
+/// context. `message_id` is the stable message id: for a created event it
+/// must equal the event id (the first event of a message IS the message id,
+/// see [`signed_created_push`]); for later events it stays stable while the
+/// event is a new signed event. An edit/delete supersedes the message root,
+/// so `supersedes_event_id == message_id` for the first edit/delete — the
+/// real contract the bridge validates.
 fn signed_push(
     keys: &Keys,
     content: &str,
@@ -202,13 +205,10 @@ fn signed_push(
             thread_root_id: None,
             message_id: message_id.to_string(),
             event_type,
-            // Note: `supersedes_event_id` is intentionally None here. The
-            // bridge's push-context validation rejects
-            // `supersedes == message_id`, and the created event id IS the
-            // message id, so a first edit/delete superseding the created event
-            // cannot pass through the real service. The catalog record never
-            // stores `supersedes`, so omitting it changes no assertion.
-            supersedes_event_id: None,
+            // A first edit/delete supersedes the message root, whose event id
+            // IS the message id — never the event itself.
+            supersedes_event_id: (event_type != ObservedEventType::Created)
+                .then(|| message_id.to_string()),
         },
     };
     (push, event)

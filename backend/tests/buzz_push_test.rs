@@ -190,8 +190,9 @@ async fn observation_row(
     event_id: &str,
 ) -> sqlx::postgres::PgRow {
     sqlx::query(
-        "SELECT event_id, message_id, event_type, checksum, signature, signature_verified,
-                body, author_pubkey, author_principal_id, event_created_at, active
+        "SELECT event_id, message_id, event_type, supersedes_event_id, checksum, signature,
+                signature_verified, body, author_pubkey, author_principal_id, event_created_at,
+                active
          FROM chat_observed_events WHERE tenant_id = $1 AND event_id = $2",
     )
     .bind(tenant_id.0)
@@ -333,6 +334,109 @@ async fn push_creates_observation_and_durable_event() {
     assert_eq!(
         outbox_count, 1,
         "durable event must be published exactly once"
+    );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Edited event superseding the message root (`supersedes == message_id`)
+//     is accepted: the root event's id IS the message id, so a first edit
+//     legitimately supersedes it. Regression test for the push-context
+//     identity rules.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn push_accepts_edited_event_superseding_message_root() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+
+    // First push: the created event IS the message root.
+    let (created_push, created_event) = signed_push(&keys, "v1");
+    let message_id = created_event.id.to_hex();
+    let payload = serde_json::to_vec(&created_push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    assert_eq!(
+        service
+            .verify_and_ingest(&payload, &signature)
+            .await
+            .expect("created push must succeed"),
+        IngestOutcome::FirstObservation
+    );
+
+    // Second push: an edited event superseding the message root. The created
+    // event's id IS the message id, so `supersedes_event_id == message_id` is
+    // the correct first-edit contract and must be accepted.
+    let edit_event = EventBuilder::text_note("v2")
+        .sign_with_keys(&keys)
+        .expect("sign edit event");
+    let edit_push = BuzzEventPush {
+        event: serde_json::to_value(&edit_event).unwrap(),
+        context: BuzzPushContext {
+            community_id: COMMUNITY_ID.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: ChatChannelKind::Workspace,
+            thread_root_id: None,
+            message_id: message_id.clone(),
+            event_type: ObservedEventType::Edited,
+            supersedes_event_id: Some(message_id.clone()),
+        },
+    };
+    let payload = serde_json::to_vec(&edit_push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    let edit_id = edit_event.id.to_hex();
+    assert_eq!(
+        service
+            .verify_and_ingest(&payload, &signature)
+            .await
+            .expect("an edit superseding the message root must be accepted"),
+        IngestOutcome::FirstObservation
+    );
+
+    // The edited observation row: stable message_id, its own event id, and the
+    // superseded root recorded.
+    let row = observation_row(&pool, tenant, &edit_id).await;
+    assert_eq!(row.get::<String, _>("message_id"), message_id);
+    assert_eq!(row.get::<String, _>("event_type"), "edited");
+    let supersedes: Option<String> = row.get("supersedes_event_id");
+    assert_eq!(
+        supersedes.as_deref(),
+        Some(message_id.as_str()),
+        "the edit must record the superseded message root"
+    );
+
+    // Its durable outbox event: one per observation, deterministically keyed.
+    let expected_id = Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("elembra://io.elembra.chat/event/{edit_id}").as_bytes(),
+    );
+    let outbox_rows = sqlx::query(
+        "SELECT event_id FROM integration_outbox
+         WHERE tenant_id = $1 AND event_type = $2",
+    )
+    .bind(tenant.0)
+    .bind(CHAT_BUZZ_EVENT_OBSERVED_V1)
+    .fetch_all(&pool)
+    .await
+    .expect("outbox rows must exist");
+    assert_eq!(outbox_rows.len(), 2, "one durable event per observation");
+    let ids: Vec<Uuid> = outbox_rows.iter().map(|r| r.get("event_id")).collect();
+    assert!(
+        ids.contains(&expected_id),
+        "the edit envelope must be published"
     );
 
     cleanup(&pool, tenant).await;
