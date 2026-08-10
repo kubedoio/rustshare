@@ -25,6 +25,9 @@ use crate::record::{
 /// `data`). `content` is the indexing copy — `Some` only when
 /// `policy.content_indexing` and the caller has a body (from the observation
 /// index); pass `None` otherwise.
+///
+/// `content_indexing` on the record reflects whether an indexing copy is
+/// stored (`content.is_some()`), not the tenant policy at projection time.
 pub fn project_record(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
@@ -84,7 +87,7 @@ pub fn project_record(
             &event.context.community_id,
             &event.buzz.pubkey,
         ),
-        content_indexing: policy.content_indexing,
+        content_indexing: content.is_some(),
         content,
         indexing_status,
         tombstoned_at: None,
@@ -96,6 +99,9 @@ pub fn project_record(
 /// Apply an edited/replaced event to an existing record (same message).
 ///
 /// Guards:
+/// * a Deleted event is never applied here — it must route through
+///   [`apply_tombstone`] — `apply_event` returns the existing record
+///   unchanged;
 /// * a tombstoned record is never edited (`apply_event` returns it unchanged;
 ///   only [`apply_tombstone`] transitions to tombstoned);
 /// * an edit applies only when the new event's `created_at` is `>=` the
@@ -109,11 +115,17 @@ pub fn project_record(
 /// Identity fields (record_id, tenant, workspace, source_ref, message_id,
 /// community/channel, author, classification, retention/legal-hold,
 /// authorization, created_at, tombstoned_at) are preserved.
+///
+/// `content_indexing` on the record reflects whether an indexing copy is
+/// stored (`content.is_some()`), not the tenant policy at projection time.
 pub fn apply_event(
     existing: &MemoryCatalogRecord,
     event: &ObservedChatEventData,
     content: Option<String>,
 ) -> MemoryCatalogRecord {
+    if event.buzz.event_type == ObservedEventType::Deleted {
+        return existing.clone();
+    }
     if existing.indexing_status == IndexingStatus::Tombstoned {
         return existing.clone();
     }
@@ -121,7 +133,7 @@ pub fn apply_event(
         return existing.clone();
     }
 
-    let content_indexing = existing.content_indexing || content.is_some();
+    let content_indexing = content.is_some();
     let indexing_status = if content.is_some() {
         IndexingStatus::ContentStored
     } else {
@@ -346,9 +358,10 @@ mod tests {
         assert_eq!(indexed.content.as_deref(), Some("body"));
         assert_eq!(indexed.indexing_status, IndexingStatus::ContentStored);
 
-        // Indexing enabled but no body available: reference-only record.
+        // Indexing enabled but no body available: reference-only record. The
+        // record's `content_indexing` reflects the stored copy, so it is off.
         let no_body = project_record(tenant(), workspace(), &event, &policy(true), None).unwrap();
-        assert!(no_body.content_indexing);
+        assert!(!no_body.content_indexing);
         assert_eq!(no_body.content, None);
         assert_eq!(no_body.indexing_status, IndexingStatus::ReferenceOnly);
 
@@ -480,6 +493,33 @@ mod tests {
     }
 
     #[test]
+    fn apply_event_ignores_deleted_events() {
+        let created = event_data(
+            ObservedEventType::Created,
+            &hex64(0xaa),
+            T0,
+            ChatChannelKind::Workspace,
+        );
+        let original = project_record(
+            tenant(),
+            workspace(),
+            &created,
+            &policy(true),
+            Some("v1".into()),
+        )
+        .unwrap();
+        let deleted = event_data(
+            ObservedEventType::Deleted,
+            &hex64(0xdd),
+            T0 + 20,
+            ChatChannelKind::Workspace,
+        );
+        // Deletions must route through `apply_tombstone`; `apply_event`
+        // returns the record unchanged (no state change, no provenance entry).
+        assert_eq!(apply_event(&original, &deleted, None), original);
+    }
+
+    #[test]
     fn apply_event_never_un_tombstones() {
         let created = event_data(
             ObservedEventType::Created,
@@ -538,8 +578,9 @@ mod tests {
         let updated = apply_event(&original, &edit, None);
         assert_eq!(updated.content, None);
         assert_eq!(updated.indexing_status, IndexingStatus::ReferenceOnly);
-        // content_indexing is a policy fact and is preserved, not erased.
-        assert!(updated.content_indexing);
+        // content_indexing reflects the stored copy; an edit without a body
+        // copy downgrades it to false.
+        assert!(!updated.content_indexing);
 
         // Reference-only record gaining a body on edit.
         let reference_only =

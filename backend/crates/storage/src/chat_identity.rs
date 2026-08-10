@@ -372,6 +372,72 @@ impl ChatIdentityStore {
         .transpose()
     }
 
+    /// Reverse mapping: live binding for a Buzz pubkey in this tenant, if any.
+    /// The unique live index `chat_identity_bindings_live_key` guarantees at most one.
+    pub async fn binding_by_pubkey(
+        &self,
+        tenant_id: TenantId,
+        buzz_pubkey: &str,
+    ) -> Result<Option<ChatIdentityBinding>> {
+        let row = sqlx::query(
+            "SELECT binding_id, tenant_id, principal_id, buzz_pubkey, status,
+                    created_at, verified_at, revoked_at, rotation_of, audit_metadata
+             FROM chat_identity_bindings
+             WHERE tenant_id = $1 AND buzz_pubkey = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant_id.0)
+        .bind(buzz_pubkey)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|row| {
+            let status = match row.try_get::<String, _>("status")?.as_str() {
+                "active" => BindingStatus::Active,
+                "pending" => BindingStatus::Pending,
+                _ => BindingStatus::Revoked,
+            };
+            Ok(ChatIdentityBinding {
+                binding_id: row.try_get("binding_id")?,
+                tenant_id: TenantId(row.try_get("tenant_id")?),
+                principal_id: PrincipalId(row.try_get("principal_id")?),
+                buzz_pubkey: row.try_get("buzz_pubkey")?,
+                status,
+                created_at: row.try_get("created_at")?,
+                verified_at: row.try_get("verified_at")?,
+                revoked_at: row.try_get("revoked_at")?,
+                rotation_of: row.try_get("rotation_of")?,
+                audit_metadata: row.try_get("audit_metadata")?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Whether `buzz_pubkey` currently has an active admission in
+    /// `community_id` (both the admission and the community mapping must be
+    /// active).
+    pub async fn active_admission(
+        &self,
+        tenant_id: TenantId,
+        community_id: &str,
+        buzz_pubkey: &str,
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM chat_buzz_admissions a
+                JOIN chat_workspace_communities m
+                  ON a.tenant_id = m.tenant_id AND a.mapping_id = m.mapping_id
+                WHERE a.tenant_id = $1 AND a.active AND m.active
+                  AND m.community_id = $2 AND a.buzz_pubkey = $3
+            )",
+        )
+        .bind(tenant_id.0)
+        .bind(community_id)
+        .bind(buzz_pubkey)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     pub async fn revoke_principal(
         &self,
         tenant_id: TenantId,

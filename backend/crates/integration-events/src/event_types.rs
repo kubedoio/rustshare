@@ -2,9 +2,10 @@
 //!
 //! Event types are namespaced, versioned strings owned by the publishing
 //! Application (ADR-0031). These constants are the canonical spellings for
-//! first-party Files events; the Application registry
+//! first-party events: the Files events, and the Chat observed-event constant
+//! declared in the Chat manifest; the Application registry
 //! (`rustshare-core::domain::application`) declares the same strings in the
-//! Files manifest's `integrationEvents.publishes`.
+//! respective manifests' `integrationEvents.publishes`.
 
 /// A file (and its first content version) was created.
 pub const FILES_FILE_CREATED_V1: &str = "io.elembra.files.file.created.v1";

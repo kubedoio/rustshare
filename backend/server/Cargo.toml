@@ -18,6 +18,7 @@ rustshare-crypto = { path = "../crates/crypto" }
 rustshare-resource-auth = { path = "../crates/resource-auth" }
 nostr = { workspace = true }
 rustshare-integration-events = { path = "../crates/integration-events" }
+rustshare-memory = { path = "../crates/memory" }
 
 tokio.workspace = true
 axum = { workspace = true, features = ["multipart", "ws"] }
@@ -251,6 +252,10 @@ path = "../tests/object_gc_test.rs"
 [[test]]
 name = "outbox_integration_test"
 path = "../tests/outbox_integration_test.rs"
+
+[[test]]
+name = "chat_observation_memory_catalog_test"
+path = "../tests/chat_observation_memory_catalog_test.rs"
 
 [[test]]
 name = "vault_webui_content_test"

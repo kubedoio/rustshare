@@ -7,7 +7,9 @@
 
 pub mod chat_identity;
 pub mod chat_integration_impl;
+pub mod chat_observation;
 pub mod event_store;
+pub mod memory_catalog;
 pub mod metadata;
 pub mod object_store;
 pub mod outbox_store;
@@ -16,7 +18,9 @@ pub mod upload_doc_store;
 pub mod upload_impl;
 
 pub use chat_identity::ChatIdentityStore;
+pub use chat_observation::ChatObservationStore;
 pub use event_store::EventStore;
+pub use memory_catalog::{MemoryCatalogStore, ReconcileCounts};
 pub use metadata::{
     BlobReferenceSummary, MetadataStore, ObjectGcCandidate, PublicShareAccessLogEntry,
     ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,

@@ -7,6 +7,9 @@
 //!
 //! * [`event`] — the parsed payload of an observed-event integration event,
 //!   with fail-closed validation (`[event::ObservedChatEventData::validate]`).
+//! * [`observed`] — the bridge-owned observation row shape
+//!   (`[observed::ChatObservedEvent]`), the durable record of a signed Buzz
+//!   event as observed.
 //! * [`record`] — the Memory catalog record: exactly one per Buzz message per
 //!   tenant (`memory_catalog`), mirroring the latest signed event.
 //! * [`policy`] — per-tenant projection policy read from the Chat
@@ -20,6 +23,7 @@
 //! un-tombstones an existing record.
 
 pub mod event;
+pub mod observed;
 pub mod policy;
 pub mod project;
 pub mod record;
@@ -28,6 +32,7 @@ pub use event::{
     BuzzEventMeta, ChatChannelKind, ChatContext, MemoryValidationError, ObservedChatEventData,
     ObservedEventType, PrincipalMeta,
 };
+pub use observed::ChatObservedEvent;
 pub use policy::{ProjectionDecision, ProjectionPolicy, SkipReason};
 pub use project::{apply_event, apply_tombstone, project_record};
 pub use record::{IndexingStatus, MemoryCatalogRecord, ProvenanceEntry};
