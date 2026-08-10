@@ -48,6 +48,8 @@ pub enum EventValidationError {
     InvalidSubject(String),
     #[error("invalid dataschema: {0}")]
     InvalidDataschema(String),
+    #[error("invalid datacontenttype `{0}`; only `application/json` (at most 100 bytes) is supported in v1alpha1")]
+    InvalidDataContentType(String),
     /// The current platform invariant is `WorkspaceId == TenantId` (one
     /// workspace per tenant). We fail closed until real workspace membership
     /// exists — the same policy as #211 for resource references.
@@ -232,6 +234,8 @@ impl IntegrationEvent {
     ///   is also present;
     /// * `dataschema`, when present, is non-empty, within
     ///   [`MAX_DATASCHEMA_LEN`] and starts with `https://` or `elembra:`;
+    /// * `datacontenttype` equals `application/json` (the builder default)
+    ///   and is at most 100 bytes;
     /// * `tenant_id == workspace_id` (platform invariant, fail closed);
     /// * `actor`, when present, parses via [`ActorRef::from_str`];
     /// * `elembraCorrelation`/`elembraCausation`, when present, are non-empty
@@ -298,6 +302,15 @@ impl IntegrationEvent {
                     "dataschema `{dataschema}` must start with `https://` or `elembra:`"
                 )));
             }
+        }
+
+        // `datacontenttype` is fail-closed and bounded: v1alpha1 events carry
+        // JSON data only, so the media type must be exactly the builder
+        // default (`application/json`), with a 100-byte cap (a truncated
+        // prefix is reported, never the full unbounded value).
+        if self.datacontenttype.len() > 100 || self.datacontenttype != "application/json" {
+            let reported: String = self.datacontenttype.chars().take(100).collect();
+            return Err(EventValidationError::InvalidDataContentType(reported));
         }
 
         if self.tenant_id.0 != self.workspace_id.0 {
@@ -682,6 +695,31 @@ mod tests {
     }
 
     #[test]
+    fn datacontenttype_must_be_application_json_and_bounded() {
+        // The builder default (`application/json`) passes.
+        assert!(sample_event().validate().is_ok());
+        // A bogus media type is rejected.
+        let mut event = sample_event();
+        event.datacontenttype = "application/x-msgpack".into();
+        assert!(matches!(
+            event.validate(),
+            Err(EventValidationError::InvalidDataContentType(_))
+        ));
+        // An oversized value is rejected (and the reported prefix is bounded).
+        let mut event = sample_event();
+        event.datacontenttype = "x".repeat(101);
+        let error = event.validate().unwrap_err();
+        assert!(matches!(
+            error,
+            EventValidationError::InvalidDataContentType(_)
+        ));
+        assert!(
+            error.to_string().len() < 250,
+            "error must not echo the full oversized value"
+        );
+    }
+
+    #[test]
     fn rejects_empty_and_oversized_correlation() {
         let mut event = sample_event();
         event.correlation_id = Some(CorrelationId::new(""));
@@ -766,6 +804,8 @@ mod tests {
             "io.elembra.files.file.created.v1x",
             "io.elembra..file.created.v1",
             "io.elembra.files.file.created.v1.extra",
+            "io.elembra.files.v1.v2",
+            "io.elembra.files.file.v1.created.v1",
             "com.example.foo.bar.v1",
             "io.elembra.files.file.created.v1!",
         ] {
