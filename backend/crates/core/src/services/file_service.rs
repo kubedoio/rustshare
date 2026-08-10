@@ -216,6 +216,19 @@ use crate::domain::SharePermissions;
 use crate::services::errors::FileError;
 use crate::services::{PermissionResolver, PermissionResolverOps};
 
+/// Who is attributable for an integration event. Never falls back to the
+/// resource owner: an action with no authenticated Elembra Principal
+/// (e.g. a public-share session upload) publishes with
+/// [`IntegrationEventActor::External`], which omits `elembraActor` entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationEventActor {
+    /// An authenticated Elembra Principal, attributed by user id.
+    Principal(Uuid),
+    /// No authenticated Principal (e.g. public-share session); the event is
+    /// published without an `elembraActor`.
+    External,
+}
+
 /// Neutral facts a service hands to the integration-event publisher adapter.
 ///
 /// The adapter (storage/server layer) is responsible for building and
@@ -240,8 +253,12 @@ pub struct IntegrationEventFacts<'a> {
     /// tenant); use the tenant id until real workspace membership exists
     /// (same policy as #211).
     pub workspace_id: Uuid,
-    /// The Principal whose action caused the event.
-    pub actor_user_id: Uuid,
+    /// Who to attribute the event to. Mapping rule: an authenticated actor
+    /// (`FileUploadActor::actor_user_id` set) maps to
+    /// [`IntegrationEventActor::Principal`]; a missing actor (public-share
+    /// session etc.) maps to [`IntegrationEventActor::External`]. The file
+    /// owner is NEVER used as a fallback actor.
+    pub actor: IntegrationEventActor,
 }
 
 /// Errors raised by [`IntegrationEventPublisher::publish_in_tx`].
@@ -330,14 +347,18 @@ where
     /// Publish integration-event facts for a file mutation inside the open
     /// transaction, if a publisher is attached. Errors propagate so the
     /// whole transaction rolls back (required outbox atomicity).
+    ///
+    /// `actor` attribution rule: an authenticated actor maps to
+    /// [`IntegrationEventActor::Principal`]; a missing actor (public-share
+    /// session etc.) maps to [`IntegrationEventActor::External`]. The file
+    /// owner is never used as a fallback actor.
     async fn publish_file_integration_event(
         &self,
         tx: &mut E::Tx,
         event_type: &'static str,
         file: &File,
         version: &FileVersion,
-        actor_user_id: Option<UserId>,
-        fallback_user_id: UserId,
+        actor: IntegrationEventActor,
     ) -> Result<(), FileError> {
         let Some(publisher) = &self.integration_publisher else {
             return Ok(());
@@ -361,7 +382,7 @@ where
             // WorkspaceId == TenantId today (see File::workspace_id); the
             // adapter's envelope validation enforces the same invariant.
             workspace_id: file.workspace_id(),
-            actor_user_id: actor_user_id.unwrap_or(fallback_user_id),
+            actor,
         };
         publisher
             .publish_in_tx(tx, &facts)
@@ -686,8 +707,10 @@ where
                 "io.elembra.files.file.updated.v1",
                 &existing,
                 &version,
-                actor.actor_user_id,
-                owner_id,
+                match actor.actor_user_id {
+                    Some(user_id) => IntegrationEventActor::Principal(user_id),
+                    None => IntegrationEventActor::External,
+                },
             )
             .await?;
             self.event_store
@@ -789,8 +812,10 @@ where
             "io.elembra.files.file.created.v1",
             &file,
             &version,
-            actor.actor_user_id,
-            owner_id,
+            match actor.actor_user_id {
+                Some(user_id) => IntegrationEventActor::Principal(user_id),
+                None => IntegrationEventActor::External,
+            },
         )
         .await?;
         self.event_store
@@ -3441,7 +3466,7 @@ mod integration_publish_tests {
         data: serde_json::Value,
         tenant_id: Uuid,
         workspace_id: Uuid,
-        actor_user_id: Uuid,
+        actor: IntegrationEventActor,
     }
 
     impl From<&IntegrationEventFacts<'_>> for RecordedFacts {
@@ -3454,7 +3479,7 @@ mod integration_publish_tests {
                 data: facts.data.clone(),
                 tenant_id: facts.tenant_id,
                 workspace_id: facts.workspace_id,
-                actor_user_id: facts.actor_user_id,
+                actor: facts.actor,
             }
         }
     }
@@ -3574,7 +3599,90 @@ mod integration_publish_tests {
             facts.workspace_id, tenant_id,
             "WorkspaceId == TenantId today"
         );
-        assert_eq!(facts.actor_user_id, owner_id);
+        assert_eq!(
+            facts.actor,
+            IntegrationEventActor::Principal(owner_id),
+            "an authenticated actor maps to a Principal"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_without_authenticated_actor_publishes_external_facts() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let actor = FileUploadActor {
+            actor_type: "public_share_session".to_string(),
+            actor_user_id: None,
+            actor_share_id: Some(Uuid::new_v4()),
+            actor_share_session_id: Some(Uuid::new_v4()),
+            actor_display_name: Some("Guest".to_string()),
+        };
+
+        let file = service
+            .upload_file_with_actor(
+                owner_id,
+                actor,
+                "shared.txt".into(),
+                None,
+                Bytes::from("public data"),
+                "text/plain".into(),
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        assert_eq!(
+            calls[0].actor,
+            IntegrationEventActor::External,
+            "a missing actor must never fall back to the file owner"
+        );
+        assert_eq!(calls[0].resource_id, file.id.to_string());
+    }
+
+    #[tokio::test]
+    async fn publish_file_integration_event_external_actor_yields_external_facts() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file = File::new(
+            "public.txt".to_string(),
+            "/public.txt".to_string(),
+            "contenthash".to_string(),
+            7,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let version = FileVersion::new(
+            file.id,
+            1,
+            "contenthash".to_string(),
+            7,
+            owner_id,
+            Some("Uploaded via public share".to_string()),
+            tenant_id,
+        );
+
+        service
+            .publish_file_integration_event(
+                &mut TestTx,
+                "io.elembra.files.file.created.v1",
+                &file,
+                &version,
+                IntegrationEventActor::External,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        assert_eq!(calls[0].actor, IntegrationEventActor::External);
+        assert_eq!(calls[0].event_type, "io.elembra.files.file.created.v1");
+        assert_eq!(calls[0].data["name"], "public.txt");
     }
 
     #[tokio::test]
