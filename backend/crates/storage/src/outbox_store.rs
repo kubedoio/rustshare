@@ -817,12 +817,16 @@ impl OutboxStore {
             }
             // Invariant guard: the SQL filter above is complete, but never
             // hand a consumer an event outside its durable subscriptions.
+            // Such a row is not retryable — re-claiming it would re-skip it
+            // forever, burning batch capacity — so dead-letter it (redacted
+            // reason) and let operators inspect/requeue it.
             if !event_matches_subscription(&event.r#type, &registration.subscriptions) {
-                tracing::warn!(
-                    %consumer_id,
-                    event_type = %event.r#type,
-                    "skipping claimed delivery outside durable subscriptions"
-                );
+                self.poison_delivery(
+                    consumer_id,
+                    &row,
+                    "claimed event outside durable subscriptions",
+                )
+                .await?;
                 continue;
             }
             claimed.push(ClaimedEvent {
@@ -2786,15 +2790,17 @@ mod tests {
         store.insert_in_tx(&mut tx, &created).await.unwrap();
         store.insert_in_tx(&mut tx, &updated).await.unwrap();
         tx.commit().await.unwrap();
-        // Fan-out only created an obligation for `created`; plant a pending
-        // delivery for the non-subscribed type directly.
+        // Fan-out only created an obligation for `created`. Plant a delivery
+        // whose event_type COLUMN matches the subscription filter (so the
+        // SQL claim filter cannot exclude it) but whose outbox envelope is
+        // the non-subscribed type — the post-claim envelope guard fires.
         sqlx::query(
             "INSERT INTO integration_deliveries (consumer_id, source, event_id, event_type, tenant_id, workspace_id, state, available_at) VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())",
         )
         .bind(&consumer_id)
         .bind(&updated.source)
         .bind(updated.id)
-        .bind(&updated.r#type)
+        .bind("io.elembra.files.file.created.v1")
         .bind(updated.tenant_id.0)
         .bind(updated.workspace_id.0)
         .execute(&pool)
@@ -2807,10 +2813,23 @@ mod tests {
             .unwrap();
         assert_eq!(claimed.len(), 1, "only the subscribed event is claimed");
         assert_eq!(claimed[0].event, created);
+        // The guard is not retryable: the row must be dead-lettered (not left
+        // claimed to be re-claimed and re-skipped forever), with a redacted
+        // operator-visible reason.
         assert_eq!(
             delivery_state(&pool, &consumer_id, &updated).await,
-            "pending",
-            "non-subscribed delivery is never claimed"
+            "dead_lettered",
+            "a claimed delivery outside durable subscriptions must be dead-lettered, not skipped"
+        );
+        let dlq = store
+            .list_dead_letters(Some(&consumer_id), 10)
+            .await
+            .unwrap();
+        assert_eq!(dlq.len(), 1);
+        let last_error = dlq[0].last_error.as_deref().unwrap_or_default();
+        assert!(
+            last_error.contains("outside durable subscriptions"),
+            "expected a redacted guard reason, got: {last_error}"
         );
 
         sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
