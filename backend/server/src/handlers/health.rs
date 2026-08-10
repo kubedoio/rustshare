@@ -62,6 +62,8 @@ pub struct ReadinessResponse {
 /// - `event_delivery`  – event store DB + in-memory broadcaster health
 /// - `auth_session`    – JWT signing/verification + session table accessibility
 /// - `ai`              – AI service presence (optional; does not fail readiness)
+/// - `outbox`          – durable integration-event outbox dispatcher tick
+///                       freshness (informational; does not fail readiness)
 #[utoipa::path(
     get,
     path = "/health/ready",
