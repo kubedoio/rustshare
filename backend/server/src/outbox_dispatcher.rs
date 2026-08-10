@@ -58,14 +58,17 @@
 //!   delivery, once per tick.
 
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use rustshare_integration_events::redact::redact_error;
 use rustshare_integration_events::{ConsumerOutcome, OutboxConsumer};
 use rustshare_storage::{ClaimedEvent, OutboxConfig, OutboxStore};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, info, warn};
 
 use crate::config::OutboxWorkerConfig;
@@ -73,6 +76,40 @@ use crate::config::OutboxWorkerConfig;
 /// Delivery states surfaced by the `outbox_pending_count` gauge (mirrors the
 /// `integration_deliveries.state` CHECK constraint).
 const DELIVERY_STATES: [&str; 4] = ["pending", "claimed", "processed", "dead_lettered"];
+
+/// A spawned task handle that aborts the task when dropped without the task
+/// having completed.
+///
+/// Used for the consumer `process()` tasks: when the worker loop is torn down
+/// (shutdown or runtime drop) the in-flight `process_claimed` future is
+/// dropped and the spawned consumer task must not survive that cancellation —
+/// a wedged `process()` that keeps running could overlap the delivery's next
+/// redelivery, and a zombie per redelivery would grow unboundedly. `abort()`
+/// on an already-completed task is a no-op, so the normal paths are
+/// unaffected.
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> AbortOnDrop<T> {
+    fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // `JoinHandle` is `Unpin` (a pointer wrapper), so re-pinning the
+        // field is sound.
+        Pin::new(&mut self.0).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 /// Dispatcher liveness shared with the readiness probe.
 #[derive(Debug, Default)]
@@ -223,8 +260,29 @@ impl OutboxDispatcher {
     /// tick) is authoritative: `claim_batch` filters by the durable
     /// subscriptions and returns nothing for an unregistered or disabled
     /// consumer.
+    ///
+    /// The whole batch is bounded by `process_timeout * batch_len`: with a
+    /// per-event timeout only, a wedged batch of `claim_batch_size` ×
+    /// `process_timeout` could stall the tick for ~50 minutes, starving every
+    /// other consumer and flipping the outbox readiness component unhealthy.
+    /// The budget is enforced between events (never mid-event), so a started
+    /// event always completes its full per-event cycle — timeout, abort+await,
+    /// persist — deterministically, and the batch can exceed the budget by at
+    /// most one per-event tail. Events that never started stay `claimed` and
+    /// are reclaimed after lease expiry (at-least-once; the attempt count
+    /// increments on re-claim, bounded by `max_attempts`).
     async fn dispatch_consumer(&self, consumer: &Arc<dyn OutboxConsumer>) {
-        let consumer_id = consumer.consumer_id().to_string();
+        // Consumer-provided identity runs unprotected otherwise: a panic here
+        // must skip the consumer, not kill the tick.
+        let consumer_id = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            consumer.consumer_id().to_string()
+        })) {
+            Ok(consumer_id) => consumer_id,
+            Err(_) => {
+                warn!("outbox consumer identity query panicked; skipping consumer");
+                return;
+            }
+        };
         let claim_started = Instant::now();
         let claimed = self
             .store
@@ -258,22 +316,60 @@ impl OutboxDispatcher {
         }
         metrics::counter!("outbox_dispatched_total", "consumer" => consumer_id.clone())
             .increment(batch.len() as u64);
+        let batch_len = batch.deliveries.len();
+        // Saturating budget: `Duration::saturating_mul` cannot panic on
+        // overflow, and an absurd batch length saturates to `Duration::MAX`.
+        // A zero budget (empty batch) is harmless: the loop body never runs.
+        let batch_budget = self
+            .config
+            .process_timeout
+            .saturating_mul(u32::try_from(batch_len).unwrap_or(u32::MAX));
+        let batch_deadline = Instant::now()
+            .checked_add(batch_budget)
+            .unwrap_or(Instant::now());
         for claimed_event in batch.deliveries {
-            self.process_claimed(consumer, &consumer_id, &claimed_event)
-                .await;
+            // Enforce the budget at the event boundary, never mid-event: the
+            // in-flight per-event cycle must not be cancelled before its
+            // persist lands.
+            let remaining = batch_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                warn!(
+                    %consumer_id,
+                    batch_len,
+                    process_timeout_secs = self.config.process_timeout.as_secs(),
+                    "outbox consumer batch budget exhausted; unprocessed claimed rows remain claimed until lease expiry"
+                );
+                break;
+            }
+            self.process_claimed(
+                consumer,
+                &consumer_id,
+                &claimed_event,
+                remaining.min(self.config.process_timeout),
+            )
+            .await;
         }
     }
 
     /// Run one claimed event through the consumer and persist the outcome.
     ///
-    /// The consumer runs in a spawned task bounded by `process_timeout`, so
-    /// consumer code can never kill or stall the dispatch loop:
+    /// The consumer runs in a spawned task bounded by `timeout` (the
+    /// configured per-event `process_timeout`, or the remaining batch budget
+    /// in [`Self::dispatch_consumer`] when it is smaller), so consumer code
+    /// can never kill or stall the dispatch loop:
     ///
     /// * a panicking consumer surfaces as a `JoinError` — the delivery is
     ///   dead-lettered (reason `consumer panicked`);
-    /// * a wedged consumer trips the timeout — the delivery is failed
-    ///   retryable (reason `processing timed out`) and re-enters the bounded
+    /// * a wedged consumer trips the timeout — the task is aborted and joined
+    ///   BEFORE the delivery is failed retryable, so the redelivery can never
+    ///   overlap the previous invocation (the contract requires idempotency,
+    ///   not concurrency safety), and a wedged task cannot linger as a zombie
+    ///   holding a 128 KiB event clone; the delivery re-enters the bounded
     ///   backoff, dead-lettering only when attempts are exhausted.
+    ///
+    /// The handle is additionally wrapped in [`AbortOnDrop`], so if a
+    /// higher-level deadline drops this future mid-flight (the worker loop
+    /// being torn down), the spawned task is aborted rather than detached.
     ///
     /// Both reasons are fixed strings (the store redacts them anyway); the
     /// panic payload is deliberately not persisted.
@@ -282,12 +378,16 @@ impl OutboxDispatcher {
         consumer: &Arc<dyn OutboxConsumer>,
         consumer_id: &str,
         claimed: &ClaimedEvent,
+        timeout: Duration,
     ) {
         let started = Instant::now();
         let event = claimed.event.clone();
         let consumer = consumer.clone();
-        let task = tokio::task::spawn(async move { consumer.process(&event).await });
-        let outcome = match tokio::time::timeout(self.config.process_timeout, task).await {
+        let task = AbortOnDrop(tokio::task::spawn(
+            async move { consumer.process(&event).await },
+        ));
+        tokio::pin!(task);
+        let outcome = match tokio::time::timeout(timeout, task.as_mut()).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_join_error)) => {
                 warn!(
@@ -306,8 +406,10 @@ impl OutboxDispatcher {
                     source = %claimed.source,
                     event_id = %claimed.event_id,
                     process_timeout_secs = self.config.process_timeout.as_secs(),
-                    "outbox consumer timed out; failing the delivery retryable"
+                    "outbox consumer timed out; aborting the task and failing the delivery retryable"
                 );
+                task.abort();
+                let _ = task.await;
                 ConsumerOutcome::Retryable {
                     reason: "processing timed out".to_string(),
                 }
