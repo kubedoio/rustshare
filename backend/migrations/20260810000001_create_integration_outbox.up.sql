@@ -42,6 +42,9 @@ CREATE TABLE integration_deliveries (
 );
 CREATE INDEX idx_deliveries_claimable ON integration_deliveries (state, available_at, consumer_id);
 CREATE INDEX idx_deliveries_consumer_state ON integration_deliveries (consumer_id, state);
+-- Supports the maintenance anti-join (`NOT EXISTS` over deliveries by
+-- source/event_id) and the FK cascade deletes; the PK is consumer_id-leading.
+CREATE INDEX idx_integration_deliveries_event ON integration_deliveries (source, event_id);
 
 -- Durable idempotency receipts written by consumers atomically with their
 -- business effect. Deliberately NOT foreign-keyed to the outbox: receipts

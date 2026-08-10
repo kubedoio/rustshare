@@ -167,7 +167,7 @@ v1alpha1 ships zero production consumers. The integration suite exercises the pi
 
 ## Outbox persistence
 
-v1alpha1 tables (see `backend/migrations/20260810000001_create_integration_outbox.sql`):
+v1alpha1 tables (see `backend/migrations/20260810000001_create_integration_outbox.up.sql`):
 
 ```text
 integration_outbox                    -- events
