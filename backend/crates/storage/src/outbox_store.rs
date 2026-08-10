@@ -1394,7 +1394,7 @@ impl IntegrationEventPublisher<Transaction<'static, Postgres>> for OutboxStore {
 mod tests {
     use super::*;
     use rustshare_core::domain::{ApplicationRegistry, PrincipalId, TenantId, WorkspaceId};
-    use rustshare_integration_events::event::{ActorRef, IntegrationEvent};
+    use rustshare_integration_events::event::{ActorRef, IntegrationEvent, MAX_EVENT_DATA_BYTES};
     use serde_json::json;
     use sqlx::Row;
 
@@ -1847,6 +1847,12 @@ mod tests {
         assert_eq!(claimed.len(), 1);
         let claimed = &claimed[0];
 
+        // DB clock baseline for backoff assertions (no client/DB skew).
+        let t0 = sqlx::query_scalar::<_, DateTime<Utc>>("SELECT now()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
         // First failure: retryable with backoff; reason redacted.
         assert!(store
             .fail_retryable(
@@ -1868,10 +1874,19 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.try_get::<String, _>("state").unwrap(), "pending");
+        let available_at = row
+            .try_get::<chrono::DateTime<Utc>, _>("available_at")
+            .unwrap();
+        // Backoff is floored at 1 second: the first failure must defer by at
+        // least 1s (and only a few seconds with the default config), so a
+        // regression to zero backoff cannot pass.
         assert!(
-            row.try_get::<chrono::DateTime<Utc>, _>("available_at")
-                .unwrap()
-                > chrono::Utc::now() - chrono::Duration::seconds(2)
+            available_at >= t0 + chrono::Duration::seconds(1),
+            "first failure must defer at least 1s (floor), available_at {available_at} vs baseline {t0}"
+        );
+        assert!(
+            available_at <= t0 + chrono::Duration::seconds(10),
+            "first failure deferral unexpectedly large: {available_at} vs baseline {t0}"
         );
         assert_eq!(row.try_get::<i32, _>("attempt_count").unwrap(), 1);
         let last_error = row
@@ -1883,6 +1898,50 @@ mod tests {
             "secret leaked into last_error: {last_error}"
         );
         assert!(last_error.contains("[REDACTED]"));
+
+        // Second failure: backoff must grow monotonically across attempts
+        // (1s -> 2s with the default config, `backoff_initial_ms * 2^(n-1)`).
+        sqlx::query(
+            "UPDATE integration_deliveries SET available_at = now() WHERE consumer_id = $1 AND event_id = $2",
+        )
+        .bind(&consumer_id)
+        .bind(event.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let claimed = store
+            .claim_batch(&consumer_id, &config, "worker")
+            .await
+            .unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert!(store
+            .fail_retryable(
+                &consumer_id,
+                &claimed[0].source,
+                claimed[0].event_id,
+                claimed[0].claim_token,
+                "transient again",
+                &config
+            )
+            .await
+            .unwrap());
+        let row = sqlx::query(
+            "SELECT state, available_at, attempt_count FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
+        )
+        .bind(&consumer_id)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.try_get::<String, _>("state").unwrap(), "pending");
+        assert_eq!(row.try_get::<i32, _>("attempt_count").unwrap(), 2);
+        let available_at_second = row
+            .try_get::<chrono::DateTime<Utc>, _>("available_at")
+            .unwrap();
+        assert!(
+            available_at_second - available_at >= chrono::Duration::seconds(1),
+            "backoff must grow monotonically (1s -> 2s), first {available_at}, second {available_at_second}"
+        );
 
         // Exhaust attempts: force the count to max and fail again.
         sqlx::query(
@@ -2061,6 +2120,79 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outbox_count, 1, "committed first publish survives");
+
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn insert_in_tx_rejects_oversized_data() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        clean_slate(&pool).await;
+
+        // A payload above the 64 KiB data cap fails validation before any
+        // write; a marker row proves the caller's transaction rolls back
+        // wholesale (no partial rollback attempted here — the caller owns the
+        // tx, and the outbox insert itself never happened).
+        let mut event = test_event("io.elembra.files.file.created.v1");
+        event.data = json!({"blob": "x".repeat(MAX_EVENT_DATA_BYTES + 1)});
+        let mut tx = store.pool().begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO integration_consumer_receipts (consumer_id, source, event_id, event_type, tenant_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind("io.elembra.test.scratch")
+        .bind(&event.source)
+        .bind(event.id)
+        .bind(&event.r#type)
+        .bind(event.tenant_id.0)
+        .bind(event.workspace_id.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let result = store.insert_in_tx(&mut tx, &event).await;
+        assert!(
+            matches!(result, Err(OutboxStoreError::InvalidEvent(_))),
+            "oversized data must fail with InvalidEvent"
+        );
+        drop(tx); // caller rolls back
+        let outbox_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+        )
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 0, "no outbox row was persisted");
+        let marker_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = 'io.elembra.test.scratch'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(marker_count, 0, "caller tx rolled back wholesale");
+
+        // Store-level malformed-envelope rejection: a wrong `specversion`
+        // cannot be published either (same fail-closed validation).
+        let mut event = test_event("io.elembra.files.file.created.v1");
+        event.specversion = "0.3".into();
+        let mut tx = store.pool().begin().await.unwrap();
+        let result = store.insert_in_tx(&mut tx, &event).await;
+        assert!(
+            matches!(result, Err(OutboxStoreError::InvalidEvent(_))),
+            "wrong specversion must fail with InvalidEvent"
+        );
+        drop(tx);
+        let outbox_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+        )
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 0, "malformed envelope must not be persisted");
 
         cleanup(&pool, &[&event]).await;
     }
