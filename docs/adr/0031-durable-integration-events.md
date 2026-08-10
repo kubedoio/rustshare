@@ -161,6 +161,11 @@ Rejected. Applications must not require atomic transactions across independent s
 
 Rejected. It adds infrastructure before throughput/retention requirements justify it and does not replace the need for transactional publication from the source database.
 
+## Deferred
+
+- **Second publisher Application.** The v1alpha1 publisher adapter in the storage crate (`OutboxStore::publish_in_tx`) hardcodes the `io.elembra.files` source application. A second Application publisher (e.g. Memory or Mail) is deferred until those Applications publish integration events.
+- **DLQ operator surface.** `list_dead_letters` / `requeue` are programmatic in v1alpha1 (store API + tests); operators observe DLQ counts and age via metrics. There is no admin UI for the DLQ by design.
+
 ## Acceptance criteria
 
 - [ ] Integration-event schema exists and is transport-neutral.
