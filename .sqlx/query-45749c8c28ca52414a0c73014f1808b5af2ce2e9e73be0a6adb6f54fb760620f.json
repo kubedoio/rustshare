@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT s.consumer_id, s.pattern\n            FROM integration_consumer_subscriptions s\n            JOIN integration_consumers c ON c.consumer_id = s.consumer_id\n            WHERE c.registered_at <= $1\n            ORDER BY s.consumer_id, s.pattern\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "consumer_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "pattern",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "45749c8c28ca52414a0c73014f1808b5af2ce2e9e73be0a6adb6f54fb760620f"
+}
