@@ -770,8 +770,9 @@ pub fn valid_namespace(value: &str) -> bool {
 /// trailing major version `N >= 1`.
 ///
 /// The version segment is the LAST dot-segment and must be `v` + ASCII
-/// digits; no other segment may look like a version (`v` + digits), so a
-/// version-like segment mid-string (e.g. `io.elembra.files.v1.v2`) cannot
+/// digits; no other segment may look like a version (a bare `v`, or `v` +
+/// digits), so a version-like segment mid-string (e.g.
+/// `io.elembra.files.v1.v2` or `io.elembra.files.v.file.created.v1`) cannot
 /// pass envelope syntax.
 ///
 /// This is the same rule the envelope validator
@@ -797,11 +798,12 @@ pub fn valid_event_type(t: &str) -> bool {
         return false;
     }
     // The version is the last dot-segment and the only one: reject any other
-    // version-like segment in the domain.
+    // version-like segment in the domain. A bare `v` counts as version-like
+    // too, so `io.elembra.v.file.created.v1` cannot pass envelope syntax.
     domain.split('.').all(|segment| {
         segment
             .strip_prefix('v')
-            .is_none_or(|d| d.is_empty() || !d.bytes().all(|b| b.is_ascii_digit()))
+            .is_none_or(|d| !d.is_empty() && !d.bytes().all(|b| b.is_ascii_digit()))
     })
 }
 
@@ -962,6 +964,9 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         // A version-like segment mid-string must not pass envelope syntax.
         assert!(!valid_event_type("io.elembra.files.v1.v2"));
         assert!(!valid_event_type("io.elembra.files.file.v1.created.v1"));
+        // A bare `v` segment counts as version-like too.
+        assert!(!valid_event_type("io.elembra.v.file.created.v1"));
+        assert!(!valid_event_type("io.elembra.files.v.file.created.v1"));
     }
 
     #[test]
