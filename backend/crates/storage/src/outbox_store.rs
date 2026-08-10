@@ -1193,24 +1193,29 @@ impl OutboxStore {
     /// The FK cascade removes the processed delivery rows; `integration_consumer_receipts`
     /// rows are deliberately not FK-linked and remain as harmless durable
     /// idempotency records. Pass `retention_hours <= 0` to disable.
+    ///
+    /// The `NOT EXISTS` anti-join lives in the DELETE's outer WHERE — NOT in a
+    /// materialized CTE — on purpose. Under READ COMMITTED, when this DELETE
+    /// blocks on a delivery row updated concurrently (e.g. a claim racing the
+    /// compaction), EvalPlanQual re-evaluates the outer WHERE against the new
+    /// row version, so a delivery that became `claimed`/`pending` mid-statement
+    /// re-blocks compaction. A CTE is materialized once from the statement's
+    /// first snapshot: after a lock wait the outer DELETE would re-check only
+    /// the `source`/`event_id` equality, and a delivery that was claimed or
+    /// inserted after that snapshot could be cascade-deleted with the outbox
+    /// row.
     pub async fn maintenance(&self, retention_hours: i64) -> Result<u64, OutboxStoreError> {
         if retention_hours <= 0 {
             return Ok(0);
         }
         let result = sqlx::query!(
             r#"
-            WITH expired AS (
-                SELECT o.source, o.event_id
-                FROM integration_outbox o
-                WHERE o.created_at < now() - ($1::int8 * interval '1 hour')
-                  AND NOT EXISTS (
-                      SELECT 1 FROM integration_deliveries d
-                      WHERE d.source = o.source AND d.event_id = o.event_id AND d.state <> 'processed'
-                  )
-            )
             DELETE FROM integration_outbox o
-            USING expired e
-            WHERE o.source = e.source AND o.event_id = e.event_id
+            WHERE o.created_at < now() - ($1::int8 * interval '1 hour')
+              AND NOT EXISTS (
+                  SELECT 1 FROM integration_deliveries d
+                  WHERE d.source = o.source AND d.event_id = o.event_id AND d.state <> 'processed'
+              )
             "#,
             retention_hours
         )
