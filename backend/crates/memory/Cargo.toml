@@ -1,0 +1,17 @@
+[package]
+name = "rustshare-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Elembra Memory catalog: pure-domain projection of observed Buzz chat events into per-message catalog records"
+
+[dependencies]
+rustshare-core = { path = "../core" }
+rustshare-resource-auth = { path = "../resource-auth" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

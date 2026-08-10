@@ -4540,6 +4540,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustshare-memory"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "rustshare-core",
+ "rustshare-resource-auth",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "uuid",
+]
+
+[[package]]
 name = "rustshare-resource-auth"
 version = "0.7.0"
 dependencies = [
