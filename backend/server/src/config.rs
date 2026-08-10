@@ -152,7 +152,11 @@ fn default_mail_import_worker_stale_secs() -> i64 {
 /// Maps onto `rustshare_storage::OutboxConfig` (claim/lease/backoff/retention)
 /// plus the dispatcher's own poll interval, enabled flag and readiness
 /// staleness window. Values are sanity-clamped (never rejected) so a bogus
-/// leftover env var cannot prevent the server from starting.
+/// leftover env var cannot prevent the server from starting. Two special
+/// values are intentional: `retention_hours <= 0` disables retention cleanup
+/// entirely, and `readiness_staleness_secs = 0` makes the `outbox` readiness
+/// component permanently stale (it is informational only and never fails
+/// overall readiness).
 #[derive(Debug, Clone)]
 pub struct OutboxWorkerConfig {
     /// Whether the dispatcher loop is spawned. Publishing into the outbox
@@ -172,7 +176,7 @@ pub struct OutboxWorkerConfig {
     /// Maximum retry backoff in milliseconds.
     pub backoff_max_ms: u64,
     /// Outbox retention in hours before fully-delivered rows are compacted;
-    /// `0` disables retention cleanup.
+    /// `<= 0` disables retention cleanup.
     pub retention_hours: i64,
     /// Per-event processing deadline: a consumer that does not return within
     /// this window has its delivery failed retryable (bounded backoff, then
@@ -180,7 +184,8 @@ pub struct OutboxWorkerConfig {
     pub process_timeout: Duration,
     /// Readiness staleness window: the `outbox` readiness component is only
     /// healthy while the last dispatcher tick is at most this many seconds
-    /// old.
+    /// old. `0` makes the component permanently stale; the component is
+    /// informational and never fails overall readiness.
     pub readiness_staleness_secs: u64,
 }
 
@@ -222,12 +227,17 @@ impl OutboxWorkerConfig {
             readiness_staleness_secs: env_parse("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", 60u64),
         };
         // Sanity clamps: a zero/negative value would make the store misbehave
-        // (e.g. lease that expires instantly or a batch that claims nothing).
+        // (e.g. lease that expires instantly or a batch that claims nothing),
+        // and an unbounded backoff would overflow the database's
+        // `timestamptz` on `now() + interval` and wedge deliveries claimed
+        // forever.
         config.claim_batch_size = config.claim_batch_size.max(1);
         config.lease_secs = config.lease_secs.max(1);
         config.max_attempts = config.max_attempts.max(1);
         config.poll_interval = config.poll_interval.max(Duration::from_millis(1));
         config.process_timeout = config.process_timeout.max(Duration::from_secs(1));
+        config.backoff_initial_ms = config.backoff_initial_ms.min(86_400_000); // 1 day
+        config.backoff_max_ms = config.backoff_max_ms.min(86_400_000); // 1 day
         config
     }
 }
@@ -345,7 +355,6 @@ mod tests {
         std::env::set_var("RUSTSHARE_OUTBOX_RETENTION_HOURS", "24");
         std::env::set_var("RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS", "0");
         std::env::set_var("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", "120");
-        std::env::set_var("RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE", "0");
 
         let config = OutboxWorkerConfig::from_env();
         assert!(!config.enabled);
@@ -362,6 +371,29 @@ mod tests {
             "process timeout clamped to >= 1 second"
         );
         assert_eq!(config.readiness_staleness_secs, 120);
+    }
+
+    #[test]
+    fn from_env_clamps_backoff_to_one_day() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_outbox_env();
+        // u64::MAX would overflow `timestamptz` on `now() + interval` and
+        // wedge deliveries claimed forever; both backoffs must be clamped.
+        std::env::set_var(
+            "RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS",
+            "18446744073709551615",
+        );
+        std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", "18446744073709551615");
+
+        let config = OutboxWorkerConfig::from_env();
+        assert_eq!(
+            config.backoff_initial_ms, 86_400_000,
+            "initial backoff clamped to 1 day"
+        );
+        assert_eq!(
+            config.backoff_max_ms, 86_400_000,
+            "max backoff clamped to 1 day"
+        );
     }
 
     #[test]
