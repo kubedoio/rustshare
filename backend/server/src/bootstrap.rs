@@ -4,7 +4,6 @@ use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
 use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
-use crate::outbox_consumers::ReferenceMemoryProjectionConsumer;
 use crate::outbox_dispatcher::OutboxDispatcher;
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
@@ -32,7 +31,6 @@ use rustshare_infrastructure::{
     },
     PgVectorStore,
 };
-use rustshare_integration_events::OutboxConsumer;
 use rustshare_storage::{
     repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore, OutboxStore,
 };
@@ -679,14 +677,16 @@ pub async fn init_app() -> Result<AppState> {
     // into the outbox is always active (attached to FileService above); only
     // the drain loop is gated on RUSTSHARE_OUTBOX_WORKER_ENABLED — a
     // disabled worker just accumulates events until re-enabled.
+    //
+    // Production ships a zero-consumer dispatcher: real consumers register
+    // themselves (durable consumer registration, `integration_consumers` /
+    // `integration_consumer_subscriptions`) when their features land
+    // (#213/#119/#214). The reference "memory projection" consumer used by
+    // the integration tests lives in `backend/tests/contracts` only.
     let outbox_worker_config = OutboxWorkerConfig::from_env();
-    let outbox_consumer = Arc::new(ReferenceMemoryProjectionConsumer::new(
-        db_pool.clone(),
-        true,
-    ));
     let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
         Arc::clone(&services.outbox_store),
-        vec![outbox_consumer as Arc<dyn OutboxConsumer>],
+        vec![],
         outbox_worker_config.clone(),
         format!("outbox-{}", uuid::Uuid::new_v4()),
     ));

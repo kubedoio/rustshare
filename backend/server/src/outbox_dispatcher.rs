@@ -11,6 +11,17 @@
 //! receipt atomically with its effect). The dispatcher itself is stateless
 //! between ticks; `OutboxStatus` exposes last-tick health to readiness.
 //!
+//! # Durable consumer registration (v1alpha1)
+//!
+//! The store's durable registration (`integration_consumers` /
+//! `integration_consumer_subscriptions`) is authoritative for claiming. At
+//! the start of every tick the dispatcher re-registers each runtime consumer
+//! with its current subscription list (`register_consumer`, an idempotent
+//! upsert that preserves `enabled` and `registered_at`) — a self-healing
+//! mirror of the runtime consumer set. An operator-disabled consumer
+//! (`enabled = false`) keeps its pending obligations but is skipped by
+//! `claim_batch` (store-side), so no events are lost while it is turned off.
+//!
 //! # Metrics (operator contract)
 //!
 //! All names are prefixed `outbox_` and labels are bounded (consumer id,
@@ -39,8 +50,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rustshare_integration_events::redact::redact_error;
-use rustshare_integration_events::{event_matches_subscription, ConsumerOutcome, OutboxConsumer};
-use rustshare_storage::{ClaimedEvent, OutboxConfig, OutboxStore, OutboxStoreError};
+use rustshare_integration_events::{ConsumerOutcome, OutboxConsumer};
+use rustshare_storage::{ClaimedEvent, OutboxConfig, OutboxStore};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
@@ -122,6 +133,28 @@ impl OutboxDispatcher {
             }
         }
 
+        // Registration sync: mirror the runtime consumer set into the store's
+        // durable registration (idempotent upsert preserving `enabled` /
+        // `registered_at`). The durable registration is authoritative for
+        // claiming, so a consumer that fails to re-register simply claims
+        // nothing this tick; a persistent failure only loses it its claim
+        // rights (obligations from past publishes are untouched).
+        for consumer in &self.consumers {
+            let consumer_id = consumer.consumer_id().to_string();
+            match self
+                .store
+                .register_consumer(&consumer_id, &consumer.subscriptions())
+                .await
+            {
+                Ok(()) => {
+                    debug!(%consumer_id, "outbox consumer registered");
+                }
+                Err(error) => {
+                    warn!(%consumer_id, error = %error, "outbox consumer registration failed");
+                }
+            }
+        }
+
         for consumer in &self.consumers {
             self.dispatch_consumer(consumer).await;
         }
@@ -163,28 +196,16 @@ impl OutboxDispatcher {
     }
 
     /// One claim + process cycle for one consumer.
+    ///
+    /// The durable store registration (kept in sync at the start of each
+    /// tick) is authoritative: `claim_batch` filters by the durable
+    /// subscriptions and returns nothing for an unregistered or disabled
+    /// consumer.
     async fn dispatch_consumer(&self, consumer: &Arc<dyn OutboxConsumer>) {
         let consumer_id = consumer.consumer_id().to_string();
-        let subscriptions = match expand_subscriptions(&self.store, &consumer.subscriptions()).await
-        {
-            Ok(subscriptions) => subscriptions,
-            Err(error) => {
-                warn!(
-                    %consumer_id,
-                    error = %error,
-                    "outbox subscription expansion failed; skipping consumer"
-                );
-                return;
-            }
-        };
         let claimed = match self
             .store
-            .claim_batch(
-                &consumer_id,
-                &subscriptions,
-                &self.store_config(),
-                &self.worker_id,
-            )
+            .claim_batch(&consumer_id, &self.store_config(), &self.worker_id)
             .await
         {
             Ok(claimed) => claimed,
@@ -379,114 +400,5 @@ impl OutboxDispatcher {
                 warn!(error = %error, "outbox oldest-pending gauge failed");
             }
         }
-    }
-}
-
-/// Expand a consumer's subscription list into a concrete event-type list for
-/// `claim_batch`.
-///
-/// Exact entries pass through unchanged; entries ending in `.*` are expanded
-/// against the distinct event types currently present in the outbox (so
-/// prefix expansion is bounded by the outbox's own distinct-type set). An
-/// empty list stays empty, which the claim layer interprets as "subscribe to
-/// everything".
-pub async fn expand_subscriptions(
-    store: &OutboxStore,
-    subscriptions: &[String],
-) -> Result<Vec<String>, OutboxStoreError> {
-    if !subscriptions.iter().any(|s| s.ends_with(".*")) {
-        return Ok(subscriptions.to_vec());
-    }
-    let distinct =
-        sqlx::query_scalar::<_, String>("SELECT DISTINCT event_type FROM integration_outbox")
-            .fetch_all(store.pool())
-            .await?;
-    Ok(expand_subscription_patterns(subscriptions, &distinct))
-}
-
-/// Pure expansion of subscription patterns against a known event-type set
-/// (split out for DB-free unit testing).
-fn expand_subscription_patterns(subscriptions: &[String], distinct: &[String]) -> Vec<String> {
-    let mut expanded: Vec<String> = Vec::new();
-    for subscription in subscriptions {
-        if subscription.ends_with(".*") {
-            for event_type in distinct {
-                if event_matches_subscription(event_type, std::slice::from_ref(subscription))
-                    && !expanded.contains(event_type)
-                {
-                    expanded.push(event_type.clone());
-                }
-            }
-        } else if !expanded.contains(subscription) {
-            expanded.push(subscription.clone());
-        }
-    }
-    expanded
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn subs(values: &[&str]) -> Vec<String> {
-        values.iter().map(|v| v.to_string()).collect()
-    }
-
-    #[test]
-    fn expand_exact_subscriptions_passes_through() {
-        let distinct = subs(&["io.elembra.files.file.created.v1"]);
-        assert_eq!(
-            expand_subscription_patterns(&subs(&["io.elembra.files.file.created.v1"]), &distinct),
-            subs(&["io.elembra.files.file.created.v1"])
-        );
-    }
-
-    #[test]
-    fn expand_prefix_subscription_against_distinct_types() {
-        let distinct = subs(&[
-            "io.elembra.files.file.created.v1",
-            "io.elembra.files.file.updated.v1",
-            "io.elembra.mail.message.archived.v1",
-        ]);
-        let expanded = expand_subscription_patterns(&subs(&["io.elembra.files.*"]), &distinct);
-        assert_eq!(
-            expanded,
-            subs(&[
-                "io.elembra.files.file.created.v1",
-                "io.elembra.files.file.updated.v1",
-            ])
-        );
-    }
-
-    #[test]
-    fn expand_empty_subscriptions_stays_empty_meaning_all() {
-        assert!(expand_subscription_patterns(&[], &[]).is_empty());
-        assert!(
-            expand_subscription_patterns(&[], &subs(&["io.elembra.files.file.created.v1"]))
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn expand_mixed_list_dedupes_and_preserves_order() {
-        let distinct = subs(&[
-            "io.elembra.files.file.created.v1",
-            "io.elembra.files.file.updated.v1",
-        ]);
-        let expanded = expand_subscription_patterns(
-            &subs(&[
-                "io.elembra.files.file.created.v1",
-                "io.elembra.files.*",
-                "io.elembra.files.file.created.v1",
-            ]),
-            &distinct,
-        );
-        assert_eq!(
-            expanded,
-            subs(&[
-                "io.elembra.files.file.created.v1",
-                "io.elembra.files.file.updated.v1",
-            ])
-        );
     }
 }
