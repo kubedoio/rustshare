@@ -30,7 +30,7 @@ utoipa-swagger-ui = { workspace = true }
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid = { workspace = true, features = ["macro-diagnostics"] }
+uuid = { workspace = true, features = ["macro-diagnostics", "v5"] }
 chrono.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -256,6 +256,10 @@ path = "../tests/outbox_integration_test.rs"
 [[test]]
 name = "chat_observation_memory_catalog_test"
 path = "../tests/chat_observation_memory_catalog_test.rs"
+
+[[test]]
+name = "buzz_push_test"
+path = "../tests/buzz_push_test.rs"
 
 [[test]]
 name = "vault_webui_content_test"

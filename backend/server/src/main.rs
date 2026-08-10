@@ -98,6 +98,7 @@ async fn main() -> Result<()> {
         .merge(routes::note_public_routes())
         .merge(routes::replication_routes())
         .merge(routes::chat_integration_routes())
+        .merge(routes::buzz_observation_routes())
         .merge(routes::admin_routes())
         .merge(routes::scim_routes())
         .merge(routes::folder_routes())

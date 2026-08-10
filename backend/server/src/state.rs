@@ -6,12 +6,16 @@ use std::time::Instant;
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
+use crate::buzz_observation::BuzzObservationService;
 use crate::handlers::collab::CollabRooms;
 use crate::middleware;
 use crate::oidc_runtime::OidcRuntimeCache;
 use crate::services;
 
-use rustshare_storage::{ChatIdentityStore, EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{
+    ChatIdentityStore, ChatObservationStore, EventStore, MemoryCatalogStore, MetadataStore,
+    ObjectStore, OutboxStore,
+};
 
 #[allow(deprecated)]
 pub type AppUserShareService = rustshare_core::services::UserShareService<
@@ -211,6 +215,16 @@ pub struct AppState {
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub chat_integration_service: Arc<AppChatIntegrationService>,
     pub mail_service: Arc<services::mail_service::MailService>,
+    /// Durable integration-event outbox (ADR-0031): publishing is always
+    /// active; the dispatcher loop is gated by `outbox_worker_enabled`.
+    pub outbox_store: Arc<OutboxStore>,
+    /// Bridge-owned observation index of signed Buzz chat events.
+    pub chat_observation_store: Arc<ChatObservationStore>,
+    /// Memory-owned catalog of projected Buzz messages.
+    pub memory_catalog_store: Arc<MemoryCatalogStore>,
+    /// Authenticated ingestion of signed Buzz events (observation half of the
+    /// Buzz → Elembra Memory projection).
+    pub buzz_observation_service: Arc<BuzzObservationService>,
     /// Liveness of the durable integration-event outbox dispatcher, shared
     /// with the readiness probe.
     pub outbox_status: Arc<crate::outbox_dispatcher::OutboxStatus>,

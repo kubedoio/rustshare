@@ -53,6 +53,7 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId, consumer_id: &str) {
         "chat_buzz_admissions",
         "chat_workspace_communities",
         "chat_identity_bindings",
+        "application_enablements",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
             .bind(tenant_id.0)
@@ -810,7 +811,10 @@ async fn memory_catalog_upsert_records_reconciles_without_duplicates() {
     )
     .unwrap();
 
-    let first = store.upsert_records(&[r1.clone()]).await.unwrap();
+    let first = store
+        .upsert_records(std::slice::from_ref(&r1))
+        .await
+        .unwrap();
     assert_eq!(
         first,
         rustshare_storage::ReconcileCounts {
@@ -820,7 +824,10 @@ async fn memory_catalog_upsert_records_reconciles_without_duplicates() {
         }
     );
 
-    let second = store.upsert_records(&[r1.clone()]).await.unwrap();
+    let second = store
+        .upsert_records(std::slice::from_ref(&r1))
+        .await
+        .unwrap();
     assert_eq!(
         second,
         rustshare_storage::ReconcileCounts {
@@ -912,4 +919,122 @@ async fn memory_catalog_get_and_count_are_tenant_scoped() {
 
     cleanup(&pool, tenant_a, "unused-consumer").await;
     cleanup(&pool, tenant_b, "unused-consumer").await;
+}
+
+// ---------------------------------------------------------------------------
+// 9. ChatIdentityStore::mapping_by_community: active mapping by community id
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn chat_identity_mapping_by_community_returns_active_mapping_only() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let store = ChatIdentityStore::new(pool.clone());
+    let tenant_a = tenant();
+    let tenant_b = tenant();
+
+    let mapping_id_a = insert_mapping(
+        &pool,
+        tenant_a,
+        WorkspaceId(tenant_a.0),
+        "community-1",
+        true,
+    )
+    .await;
+    insert_mapping(
+        &pool,
+        tenant_b,
+        WorkspaceId(tenant_b.0),
+        "community-1",
+        false,
+    )
+    .await;
+
+    let found = store
+        .mapping_by_community("community-1")
+        .await
+        .unwrap()
+        .expect("the active mapping must be found");
+    assert_eq!(found.tenant_id, tenant_a);
+    assert_eq!(found.workspace_id, WorkspaceId(tenant_a.0));
+    assert_eq!(found.community_id, "community-1");
+    assert!(found.active);
+    assert_eq!(found.relay_url, "wss://relay.example.test");
+
+    // Deactivate tenant_a's mapping: no active mapping remains → None.
+    sqlx::query(
+        "UPDATE chat_workspace_communities SET active = false WHERE tenant_id = $1 AND mapping_id = $2",
+    )
+    .bind(tenant_a.0)
+    .bind(mapping_id_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        store
+            .mapping_by_community("community-1")
+            .await
+            .unwrap()
+            .is_none(),
+        "an inactive mapping must never be returned"
+    );
+
+    cleanup(&pool, tenant_a, "unused-consumer").await;
+    cleanup(&pool, tenant_b, "unused-consumer").await;
+}
+
+// ---------------------------------------------------------------------------
+// 10. ChatIdentityStore::projection_policy: JSONB configuration flags
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn chat_identity_projection_policy_reads_configuration() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let store = ChatIdentityStore::new(pool.clone());
+    let tenant = tenant();
+    let workspace = WorkspaceId(tenant.0);
+
+    // Absent configuration row ⇒ defaults (both flags false).
+    let defaults = store.projection_policy(tenant, workspace).await.unwrap();
+    assert!(!defaults.memory_projection);
+    assert!(!defaults.content_indexing);
+
+    // Explicit boolean flags in the chat Application's configuration JSONB.
+    sqlx::query(
+        "INSERT INTO application_enablements
+            (tenant_id, workspace_id, application_id, enabled, configuration)
+         VALUES ($1, $2, 'io.elembra.chat', true,
+                 '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb)",
+    )
+    .bind(tenant.0)
+    .bind(workspace.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let enabled = store.projection_policy(tenant, workspace).await.unwrap();
+    assert!(enabled.memory_projection);
+    assert!(enabled.content_indexing);
+
+    // Non-boolean flag values fail closed to false.
+    sqlx::query(
+        "UPDATE application_enablements
+         SET configuration = '{\"memory_projection\": \"yes\"}'::jsonb
+         WHERE tenant_id = $1 AND workspace_id = $2 AND application_id = 'io.elembra.chat'",
+    )
+    .bind(tenant.0)
+    .bind(workspace.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let partial = store.projection_policy(tenant, workspace).await.unwrap();
+    assert!(
+        !partial.memory_projection,
+        "non-boolean value must fail closed"
+    );
+    assert!(!partial.content_indexing);
+
+    cleanup(&pool, tenant, "unused-consumer").await;
 }

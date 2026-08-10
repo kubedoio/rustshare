@@ -48,6 +48,57 @@ impl ChatIdentityStore {
         .transpose()
     }
 
+    /// The workspace↔community mapping for `community_id` regardless of tenant,
+    /// if active. `community_id` is unique per tenant.
+    pub async fn mapping_by_community(
+        &self,
+        community_id: &str,
+    ) -> Result<Option<WorkspaceCommunityMapping>> {
+        let row = sqlx::query(
+            "SELECT tenant_id, workspace_id, community_id, relay_url, active
+             FROM chat_workspace_communities
+             WHERE community_id = $1 AND active",
+        )
+        .bind(community_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|row| {
+            Ok(WorkspaceCommunityMapping {
+                tenant_id: TenantId(row.try_get("tenant_id")?),
+                workspace_id: WorkspaceId(row.try_get("workspace_id")?),
+                community_id: row.try_get("community_id")?,
+                relay_url: row.try_get("relay_url")?,
+                active: row.try_get("active")?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Current projection policy for the chat Application in this tenant/workspace,
+    /// read from `application_enablements.configuration` (JSONB). Absent config
+    /// ⇒ defaults (both flags false).
+    ///
+    /// Uses `rustshare_memory::policy::ProjectionPolicy::from_config`, which
+    /// fails closed: absent or non-boolean flag values mean `false`.
+    pub async fn projection_policy(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+    ) -> Result<rustshare_memory::policy::ProjectionPolicy> {
+        let configuration: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT configuration FROM application_enablements
+             WHERE tenant_id = $1 AND workspace_id = $2 AND application_id = 'io.elembra.chat'",
+        )
+        .bind(tenant_id.0)
+        .bind(workspace_id.0)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(rustshare_memory::policy::ProjectionPolicy::from_config(
+            configuration.as_ref().unwrap_or(&serde_json::Value::Null),
+        ))
+    }
+
     pub async fn chat_access(
         &self,
         tenant_id: TenantId,

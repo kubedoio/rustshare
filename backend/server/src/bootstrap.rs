@@ -1,4 +1,5 @@
 use crate::authz;
+use crate::buzz_observation::BuzzObservationService;
 use crate::config::{AppConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
@@ -23,7 +24,7 @@ use rustshare_core::{
         UserShareServiceDeps, VaultSyncService,
     },
 };
-use rustshare_crypto::SecretEncryptionKey;
+use rustshare_crypto::{SecretEncryptionKey, WebhookSigner};
 use rustshare_infrastructure::{
     repositories::{
         FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
@@ -32,7 +33,8 @@ use rustshare_infrastructure::{
     PgVectorStore,
 };
 use rustshare_storage::{
-    repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore, OutboxStore,
+    repos::ShareNotificationRepoImpl, ChatIdentityStore, ChatObservationStore, EventStore,
+    MemoryCatalogStore, MetadataStore, ObjectStore, OutboxStore,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -173,6 +175,17 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+/// Replay-window (seconds) for incoming Buzz/Chat webhook signatures. Mirrors
+/// `ChatIntegrationService`'s parsing of `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS`:
+/// a positive integer, defaulting to 300; any other value is ignored.
+fn chat_webhook_max_age_seconds() -> u64 {
+    std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&value| value >= 1)
+        .unwrap_or(300)
 }
 
 async fn init_stores(
@@ -626,6 +639,21 @@ pub async fn init_app() -> Result<AppState> {
 
     let mail_service = Arc::clone(&services.mail_service);
 
+    // Buzz → Elembra Memory projection (ADR-0033/ADR-0034), observation half:
+    // the authenticated ingestion path for signed Buzz chat events. The
+    // stores are shared with the later Memory consumer via AppState.
+    let chat_identity_store = Arc::new(ChatIdentityStore::new(db_pool.clone()));
+    let chat_observation_store = Arc::new(ChatObservationStore::new(db_pool.clone()));
+    let memory_catalog_store = Arc::new(MemoryCatalogStore::new(db_pool.clone()));
+    let buzz_observation_service = Arc::new(BuzzObservationService::new(
+        db_pool.clone(),
+        (*chat_identity_store).clone(),
+        (*chat_observation_store).clone(),
+        Arc::clone(&services.outbox_store),
+        WebhookSigner::new(config.rustshare_chat_webhook_secret.clone()),
+        chat_webhook_max_age_seconds(),
+    ));
+
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
     info!("Rate limiting initialized");
 
@@ -844,6 +872,10 @@ pub async fn init_app() -> Result<AppState> {
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
         mail_service: services.mail_service,
+        outbox_store: services.outbox_store,
+        chat_observation_store,
+        memory_catalog_store,
+        buzz_observation_service,
         outbox_status,
         outbox_worker_enabled: outbox_worker_config.enabled,
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,

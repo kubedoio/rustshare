@@ -5,6 +5,7 @@ pub mod ai;
 pub mod applications;
 pub mod auth;
 pub mod brainstorming;
+pub mod buzz_events;
 pub mod chat_identity;
 pub mod chat_integration;
 pub mod chat_resource;

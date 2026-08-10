@@ -738,6 +738,16 @@ pub fn chat_integration_routes() -> Router<AppState> {
         )
 }
 
+/// Buzz event ingestion (observation half of the Buzz → Elembra Memory
+/// projection, ADR-0033/ADR-0034).
+pub fn buzz_observation_routes() -> Router<AppState> {
+    use axum::routing::post;
+    Router::new().route(
+        "/api/v1/integrations/buzz/events",
+        post(crate::handlers::buzz_events::receive_buzz_event),
+    )
+}
+
 pub fn admin_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
