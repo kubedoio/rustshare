@@ -1822,6 +1822,39 @@ mod tests {
             .unwrap());
         assert_eq!(delivery_state(&pool, &consumer_id, &event).await, "claimed");
 
+        // Every finalize path must be fenced the same way: a stale worker
+        // holding an old token can neither fail retryable nor dead-letter
+        // the new lease.
+        assert!(
+            !store
+                .fail_retryable(
+                    &consumer_id,
+                    &claimed.source,
+                    claimed.event_id,
+                    Uuid::new_v4(),
+                    "stale retry",
+                    &OutboxConfig::default(),
+                )
+                .await
+                .unwrap(),
+            "a stale token must not fail the delivery retryable"
+        );
+        assert_eq!(delivery_state(&pool, &consumer_id, &event).await, "claimed");
+        assert!(
+            !store
+                .dead_letter(
+                    &consumer_id,
+                    &claimed.source,
+                    claimed.event_id,
+                    Uuid::new_v4(),
+                    "stale dead-letter",
+                )
+                .await
+                .unwrap(),
+            "a stale token must not dead-letter the delivery"
+        );
+        assert_eq!(delivery_state(&pool, &consumer_id, &event).await, "claimed");
+
         // Right token: acknowledged.
         assert!(store
             .acknowledge(
@@ -2006,6 +2039,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(claimed.len(), 1);
+        // Fresh DB-clock baseline immediately before the write: comparing
+        // against the first failure's `available_at` (written at a different
+        // wall-clock time) could not prove the 2s deferral.
+        let baseline2 = sqlx::query_scalar::<_, DateTime<Utc>>("SELECT now()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert!(store
             .fail_retryable(
                 &consumer_id,
@@ -2031,8 +2071,12 @@ mod tests {
             .try_get::<chrono::DateTime<Utc>, _>("available_at")
             .unwrap();
         assert!(
-            available_at_second - available_at >= chrono::Duration::seconds(1),
-            "backoff must grow monotonically (1s -> 2s), first {available_at}, second {available_at_second}"
+            available_at_second >= baseline2 + chrono::Duration::seconds(2),
+            "second failure must defer at least 2s (1s -> 2s), available_at {available_at_second} vs baseline {baseline2}"
+        );
+        assert!(
+            available_at_second <= baseline2 + chrono::Duration::seconds(10),
+            "second failure deferral unexpectedly large: {available_at_second} vs baseline {baseline2}"
         );
 
         // Exhaust attempts: force the count to max and fail again.
@@ -2486,11 +2530,73 @@ mod tests {
             "pending delivery blocks compaction"
         );
 
+        // Dead-letter the pending delivery, then age the outbox rows: a
+        // dead-lettered obligation must also block compaction (operators keep
+        // visibility until they requeue or clear it).
+        sqlx::query(
+            "UPDATE integration_deliveries SET available_at = now() - interval '1 second' WHERE consumer_id = $1 AND event_id = $2",
+        )
+        .bind(&consumer_id)
+        .bind(second.event_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let re_claimed = store
+            .claim_batch(&consumer_id, &config, "worker")
+            .await
+            .unwrap();
+        assert_eq!(
+            re_claimed.len(),
+            1,
+            "only the pending delivery is claimable"
+        );
+        assert!(store
+            .dead_letter(
+                &consumer_id,
+                &re_claimed[0].source,
+                re_claimed[0].event_id,
+                re_claimed[0].claim_token,
+                "poisoned data",
+            )
+            .await
+            .unwrap());
+        sqlx::query(
+            "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE event_id = ANY($1)",
+        )
+        .bind([created.id, updated.id])
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            store.maintenance(1).await.unwrap(),
+            1,
+            "only the fully-delivered row compacts; the dead-lettered obligation blocks"
+        );
+        let surviving = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_outbox WHERE event_id = $1",
+        )
+        .bind(updated.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            surviving, 1,
+            "the dead-lettered event's outbox row must survive maintenance"
+        );
+
+        // Once every obligation is gone (or processed), the surviving aged
+        // row compacts (the first was already removed by the call above).
         sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
             .bind(&consumer_id)
             .execute(&pool)
             .await
             .unwrap();
+        assert_eq!(
+            store.maintenance(1).await.unwrap(),
+            1,
+            "fully-delivered or obligation-free rows compact after retention"
+        );
+
         cleanup(&pool, &[&created, &updated]).await;
     }
 
@@ -2579,6 +2685,58 @@ mod tests {
         assert!(
             !valid_subscription_pattern(&"x".repeat(257)),
             "oversized patterns should be rejected"
+        );
+    }
+
+    #[test]
+    fn expanded_subscription_filter_expands_and_dedups() {
+        // Exact patterns pass through unchanged — the distinct-type set is
+        // only consulted for `.*` prefixes.
+        assert_eq!(
+            expanded_subscription_filter(
+                &["io.elembra.files.file.created.v1".to_string()],
+                &["io.elembra.other.note.v1".to_string()],
+            ),
+            Some(vec!["io.elembra.files.file.created.v1".to_string()]),
+        );
+
+        // `.*` prefix expansion against a distinct-type set: only types under
+        // the prefix (next segment boundary) match, unrelated types are
+        // dropped, and the result is sorted.
+        let distinct = vec![
+            "io.elembra.files.file.updated.v1".to_string(),
+            "io.elembra.other.note.v1".to_string(),
+            "io.elembra.files.file.created.v1".to_string(),
+        ];
+        assert_eq!(
+            expanded_subscription_filter(&["io.elembra.files.*".to_string()], &distinct),
+            Some(vec![
+                "io.elembra.files.file.created.v1".to_string(),
+                "io.elembra.files.file.updated.v1".to_string(),
+            ]),
+        );
+
+        // Mixed exact + prefix patterns deduplicate (the exact type is also
+        // produced by the prefix) and sort; duplicate patterns collapse.
+        let mixed = vec![
+            "io.elembra.files.*".to_string(),
+            "io.elembra.files.file.created.v1".to_string(),
+            "io.elembra.files.file.created.v1".to_string(),
+        ];
+        assert_eq!(
+            expanded_subscription_filter(&mixed, &distinct),
+            Some(vec![
+                "io.elembra.files.file.created.v1".to_string(),
+                "io.elembra.files.file.updated.v1".to_string(),
+            ]),
+        );
+
+        // Empty subscriptions fail closed: `Some(empty)` matches nothing in
+        // the SQL `event_type = ANY($2)` filter (claim paths must never
+        // fall back to "match everything").
+        assert_eq!(
+            expanded_subscription_filter(&[], &distinct),
+            Some(Vec::new()),
         );
     }
 

@@ -26,7 +26,9 @@
 //!   obligations — tests 22–25.
 //!
 //! The outbox tables are global (not tenant-scoped), so every test takes a
-//! shared `SERIAL` guard and cleans up exactly the rows it created. Run with:
+//! shared `SERIAL` guard and cleans up exactly the rows it created. Run with
+//! `--test-threads=1` (serializes the tests within this binary) or `-j 1`
+//! (CI, `integration-tests.yml`, serializes whole test binaries):
 //!
 //!   set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
 //!     cargo test --test outbox_integration_test -p rustshare-server \
@@ -59,7 +61,7 @@ use rustshare_server::outbox_dispatcher::OutboxDispatcher;
 use rustshare_storage::{OutboxConfig, OutboxStore, OutboxStoreError};
 use sqlx::Row;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -720,7 +722,12 @@ async fn concurrent_workers_no_duplicate_effect() {
     // Both workers race for the same batch; claim fencing (FOR UPDATE SKIP
     // LOCKED + per-row claim state) and the consumer's ON CONFLICT receipt
     // make duplicate effects impossible even if both ever claimed the same
-    // event.
+    // event. Note: the idempotent receipt is the backstop here — this test
+    // would still pass if the claim had no fencing at all (both workers would
+    // claim, both would process, and the receipt would collapse the effects);
+    // fencing itself is proven by the stale-token tests
+    // (`acknowledge_fencing_rejects_stale_tokens`, and
+    // `worker_crash_lease_expiry_recovers` below).
     tokio::join!(dispatcher_a.tick(), dispatcher_b.tick());
 
     assert_eq!(
@@ -2712,6 +2719,134 @@ async fn wedged_consumer_times_out_and_recovers() {
 }
 
 // ---------------------------------------------------------------------------
+// 27b. A timed-out consumer task is aborted before its redelivery starts
+// ---------------------------------------------------------------------------
+
+/// A consumer whose `process()` never resolves on its own, tracking the
+/// current number of active invocations (and the observed maximum) so a test
+/// can prove timed-out invocations are aborted before a redelivery starts.
+struct NeverResolvingConsumer {
+    active: AtomicUsize,
+    max_active: AtomicUsize,
+    parked: tokio::sync::Notify,
+    consumer_id: String,
+}
+
+impl NeverResolvingConsumer {
+    fn new(consumer_id: &str) -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            parked: tokio::sync::Notify::new(),
+            consumer_id: consumer_id.to_string(),
+        }
+    }
+}
+
+/// Decrements the active-invocation counter when the task running `process`
+/// is dropped — normally after the consumer returns, or at abort teardown.
+struct ActiveInvocationGuard<'a> {
+    counter: &'a AtomicUsize,
+}
+
+impl Drop for ActiveInvocationGuard<'_> {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl OutboxConsumer for NeverResolvingConsumer {
+    fn consumer_id(&self) -> &str {
+        &self.consumer_id
+    }
+    fn subscriptions(&self) -> Vec<String> {
+        vec![FILES_FILE_CREATED_V1.to_string()]
+    }
+    async fn process(&self, _event: &IntegrationEvent) -> ConsumerOutcome {
+        let _guard = ActiveInvocationGuard {
+            counter: &self.active,
+        };
+        let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_active.fetch_max(current, Ordering::SeqCst);
+        // Park forever: only the dispatcher's abort can end this invocation.
+        self.parked.notified().await;
+        ConsumerOutcome::Processed
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn timed_out_consumer_task_is_aborted_before_redelivery() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let consumer_id = "io.elembra.test.never-resolves";
+    store
+        .register_consumer(consumer_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+
+    let consumer = Arc::new(NeverResolvingConsumer::new(consumer_id));
+    let dispatcher = Arc::new(OutboxDispatcher::new(
+        store.clone(),
+        vec![consumer.clone() as Arc<dyn OutboxConsumer>],
+        OutboxWorkerConfig {
+            process_timeout: std::time::Duration::from_millis(100),
+            backoff_initial_ms: 1,
+            backoff_max_ms: 10,
+            ..OutboxWorkerConfig::default()
+        },
+        "abort-worker".to_string(),
+    ));
+
+    // Tick 1: the delivery is claimed and times out; the wedged process()
+    // invocation must be aborted and joined (not detached) before the
+    // delivery is failed retryable — no invocation may survive the tick.
+    dispatcher.tick().await;
+    assert_eq!(
+        delivery_state(&ctx.pool, consumer_id, &event).await,
+        "pending"
+    );
+    assert_eq!(
+        consumer.active.load(Ordering::SeqCst),
+        0,
+        "no process() invocation may survive the tick"
+    );
+    assert_eq!(consumer.max_active.load(Ordering::SeqCst), 1);
+
+    // Redelivery: backdate available_at and tick again. If the first
+    // invocation had been detached instead of aborted, it would still be
+    // parked and the second would run concurrently (max_active == 2).
+    sqlx::query(
+        "UPDATE integration_deliveries SET available_at = now() - interval '1 second' WHERE consumer_id = $1 AND event_id = $2",
+    )
+    .bind(consumer_id)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    dispatcher.tick().await;
+
+    assert_eq!(
+        consumer.max_active.load(Ordering::SeqCst),
+        1,
+        "timed-out process() invocations must be aborted before a redelivery starts"
+    );
+    assert_eq!(
+        consumer.active.load(Ordering::SeqCst),
+        0,
+        "the second timed-out invocation must also be cleaned up"
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
 // 28. update_file / restore_version / edit_file publish file.updated.v1
 // ---------------------------------------------------------------------------
 
@@ -2825,33 +2960,37 @@ async fn file_update_restore_edit_publish_updated_events() {
     // The versioned resource selector matches the mutated content: the
     // update carries the new hash, the restore carries the restored v1 hash,
     // the edit carries the edited hash (content hashes are stable for fixed
-    // content, so the comparison is deterministic).
-    let selectors: HashSet<String> = events
-        .iter()
-        .map(|event| event.data["version"].as_str().unwrap().to_string())
-        .collect();
-    let expected_selectors: HashSet<String> = [
-        format!("sha256:{}", updated.content_hash),
-        format!("sha256:{}", restored.content_hash),
-        format!("sha256:{}", edited.content_hash),
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(selectors, expected_selectors);
-
-    // Sizes mirror the mutated content lengths.
-    let sizes: HashSet<i64> = events
-        .iter()
-        .map(|event| event.data["size"].as_i64().unwrap())
-        .collect();
-    let expected_sizes: HashSet<i64> = [
-        b"second content updated".len() as i64,
-        b"first content".len() as i64,
-        b"edited!".len() as i64,
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(sizes, expected_sizes);
+    // content, so the comparison is deterministic). The pairing is per
+    // operation — asserting version/size as sets would pass even if two
+    // publish sites swapped their payloads.
+    let operations = [
+        ("updated", &updated, b"second content updated".as_slice()),
+        ("restored", &restored, b"first content".as_slice()),
+        ("edited", &edited, b"edited!".as_slice()),
+    ];
+    for (label, operation, content) in operations {
+        let expected_version = format!("sha256:{}", operation.content_hash);
+        let matching: Vec<&IntegrationEvent> = events
+            .iter()
+            .filter(|event| event.data["version"].as_str() == Some(expected_version.as_str()))
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{label} must publish exactly one file.updated.v1 row (found {})",
+            matching.len()
+        );
+        let event = matching[0];
+        assert_eq!(
+            event.data["size"].as_i64(),
+            Some(content.len() as i64),
+            "{label} must carry the mutated content's size"
+        );
+        assert_eq!(event.actor, expected_actor, "{label} actor");
+        assert_eq!(event.tenant_id.0, ctx.tenant_id, "{label} tenant");
+        assert_eq!(event.data["name"], "notes.txt", "{label} name");
+        assert_eq!(event.data["mime_type"], "text/plain", "{label} mime");
+    }
 
     // Clean the test tenant's Files outbox rows (the seed upload's
     // `file.created.v1` row has no `IntegrationEvent` handle here, so this
