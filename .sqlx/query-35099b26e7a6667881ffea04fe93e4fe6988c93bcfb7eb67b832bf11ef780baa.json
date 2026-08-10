@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE integration_consumers\n            SET enabled = $2, updated_at = now()\n            WHERE consumer_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "35099b26e7a6667881ffea04fe93e4fe6988c93bcfb7eb67b832bf11ef780baa"
+}

@@ -57,18 +57,25 @@ CREATE TABLE integration_consumer_receipts (
     PRIMARY KEY (consumer_id, source, event_id)
 );
 
--- Reference-consumer projection effects (reference implementation, v1alpha1).
-CREATE TABLE integration_reference_effects (
-    consumer_id  TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    event_id     UUID NOT NULL,
-    event_type   TEXT NOT NULL,
-    tenant_id    UUID NOT NULL,
-    workspace_id UUID NOT NULL,
-    name         TEXT,
-    mime_type    TEXT,
-    size         BIGINT,
-    version      TEXT,
-    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (consumer_id, source, event_id)
+-- Durable consumer registration. `enabled` gates claiming only: obligations
+-- are created for every registered consumer at publish time (eager fan-out),
+-- so an offline or disabled consumer never loses events. Re-registration
+-- preserves `enabled` and `registered_at` (both are only ever set on the
+-- first insert).
+CREATE TABLE integration_consumers (
+    consumer_id   TEXT PRIMARY KEY,
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Subscription patterns per consumer: exact event types
+-- (`io.elembra.files.file.created.v1`) or `.*`-terminated prefixes
+-- (`io.elembra.files.*`). These are authoritative for both eager fan-out at
+-- publish time and claim filtering (the consumer PK covers lookups by
+-- consumer_id).
+CREATE TABLE integration_consumer_subscriptions (
+    consumer_id TEXT NOT NULL REFERENCES integration_consumers(consumer_id) ON DELETE CASCADE,
+    pattern     TEXT NOT NULL,
+    PRIMARY KEY (consumer_id, pattern)
 );

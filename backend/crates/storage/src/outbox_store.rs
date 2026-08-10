@@ -4,7 +4,11 @@
 //!
 //! * [`OutboxStore::insert_in_tx`] writes an outbox row atomically inside the
 //!   source mutation's transaction (the mutation can never commit without its
-//!   event);
+//!   event) and eagerly creates pending delivery obligations for every
+//!   registered consumer whose subscriptions match the event type;
+//! * [`OutboxStore::register_consumer`] / [`OutboxStore::set_consumer_enabled`]
+//!   durably register consumers and their subscription patterns — the durable
+//!   registration is authoritative for both fan-out and claiming;
 //! * [`OutboxStore::claim_batch`] claims deliveries with a fencing token and
 //!   lease for at-least-once dispatch;
 //! * [`OutboxStore::acknowledge`] / [`OutboxStore::fail_retryable`] /
@@ -33,11 +37,13 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
+    valid_event_type, ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
 };
 use rustshare_core::services::{
-    IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError,
+    IntegrationEventActor, IntegrationEventFacts, IntegrationEventPublisher,
+    IntegrationPublishError,
 };
+use rustshare_integration_events::consumer::event_matches_subscription;
 use rustshare_integration_events::event::{ActorRef, EventValidationError, IntegrationEvent};
 use rustshare_integration_events::redact::redact_error;
 use rustshare_resource_auth::resource_ref::ResourceRef;
@@ -55,6 +61,13 @@ pub enum OutboxStoreError {
     InvalidEvent(String),
     /// The event type is not declared by the source application's manifest.
     OwnershipRejected(String),
+    /// A consumer subscription pattern is not valid event-type syntax
+    /// (exact type or `prefix.*`).
+    InvalidSubscription(String),
+    /// A duplicate publish reused a `(source, event_id)` that already exists
+    /// with a different payload — the caller's transaction must be rolled
+    /// back (this store does not partially roll back the caller's tx).
+    EventIdentityConflict { source: String, event_id: Uuid },
     /// Underlying database failure.
     Storage(sqlx::Error),
     /// A claimed row failed envelope re-validation.
@@ -77,6 +90,12 @@ impl fmt::Display for OutboxStoreError {
             }
             OutboxStoreError::OwnershipRejected(event_type) => {
                 write!(f, "event type not owned by application: {event_type}")
+            }
+            OutboxStoreError::InvalidSubscription(pattern) => {
+                write!(f, "invalid consumer subscription pattern: {pattern}")
+            }
+            OutboxStoreError::EventIdentityConflict { source, event_id } => {
+                write!(f, "event identity conflict for {source}/{event_id}: a publish reused the event id with a different payload")
             }
             OutboxStoreError::Storage(error) => write!(f, "storage error: {error}"),
             OutboxStoreError::PoisonDelivery {
@@ -118,6 +137,14 @@ impl From<OutboxStoreError> for IntegrationPublishError {
             OutboxStoreError::OwnershipRejected(message) => {
                 IntegrationPublishError::OwnershipRejected(message)
             }
+            OutboxStoreError::InvalidSubscription(message) => {
+                IntegrationPublishError::InvalidEvent(message)
+            }
+            OutboxStoreError::EventIdentityConflict { source, event_id } => {
+                IntegrationPublishError::Persistence(format!(
+                    "event identity conflict for {source}/{event_id}: event id reused with a different payload"
+                ))
+            }
             OutboxStoreError::Storage(database_error) => {
                 IntegrationPublishError::Persistence(database_error.to_string())
             }
@@ -140,6 +167,22 @@ pub struct ClaimedEvent {
     pub attempt_count: i32,
     /// The envelope deserialized from `event_json` and re-validated.
     pub event: IntegrationEvent,
+}
+
+/// Durable registration of one integration-event consumer.
+///
+/// The registration table is authoritative for both eager fan-out at publish
+/// time and claim filtering: an unregistered consumer receives no obligations
+/// and is never claimed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsumerRegistration {
+    pub consumer_id: String,
+    /// Claim gating only — obligations are created regardless of `enabled`.
+    pub enabled: bool,
+    /// Subscription patterns (exact event types or `prefix.*`), sorted.
+    pub subscriptions: Vec<String>,
+    /// When the consumer was first registered; never updated by re-registration.
+    pub registered_at: DateTime<Utc>,
 }
 
 /// Dispatcher/lease configuration.
@@ -232,10 +275,21 @@ impl OutboxStore {
     }
 
     /// Validate the envelope, verify the source application owns the event
-    /// type, and insert the outbox row atomically inside `tx`.
+    /// type, insert the outbox row atomically inside `tx`, and eagerly create
+    /// a pending delivery obligation for every registered consumer whose
+    /// subscription patterns match the event type (same connection — the
+    /// obligations are atomic with the outbox row).
     ///
-    /// Idempotent: publishing the same `(source, event_id)` twice succeeds
-    /// silently (the duplicate insert is a no-op, logged at debug).
+    /// Idempotency: republishing the same `(source, event_id)` with an
+    /// identical payload succeeds silently (the duplicate insert is a no-op
+    /// and obligations are re-ensured via `ON CONFLICT DO NOTHING`);
+    /// republishing with a *different* payload fails with
+    /// [`OutboxStoreError::EventIdentityConflict`] and the caller must roll
+    /// back its transaction.
+    ///
+    /// Obligations are created for registered consumers regardless of their
+    /// `enabled` flag — `enabled` only gates claiming, so a disabled or
+    /// offline consumer never loses events.
     pub async fn insert_in_tx(
         &self,
         tx: &mut Transaction<'static, Postgres>,
@@ -269,27 +323,316 @@ impl OutboxStore {
         .execute(&mut **tx)
         .await?;
         if result.rows_affected() == 0 {
-            tracing::debug!(
-                source = %event.source,
-                event_id = %event.id,
-                "duplicate integration event publish ignored"
-            );
+            // Event-id idempotency hardening: a duplicate (source, event_id)
+            // must carry the identical payload. Anything else is a call-site
+            // bug and fails the caller's transaction (no partial rollback
+            // attempted here — the caller owns the tx).
+            let existing = sqlx::query_scalar::<_, serde_json::Value>(
+                "SELECT event_json FROM integration_outbox WHERE source = $1 AND event_id = $2",
+            )
+            .bind(&event.source)
+            .bind(event.id)
+            .fetch_optional(&mut **tx)
+            .await?;
+            if let Some(existing) = existing {
+                if existing != event_json {
+                    return Err(OutboxStoreError::EventIdentityConflict {
+                        source: event.source.clone(),
+                        event_id: event.id,
+                    });
+                }
+                tracing::debug!(
+                    source = %event.source,
+                    event_id = %event.id,
+                    "duplicate integration event publish ignored (identical payload)"
+                );
+            }
+        }
+        self.fan_out_obligations(tx, event).await?;
+        Ok(())
+    }
+
+    /// Eager fan-out: insert a `pending` delivery obligation for every
+    /// registered consumer whose subscription patterns match `event`'s type,
+    /// inside the caller's transaction (same connection).
+    ///
+    /// `enabled` is deliberately NOT consulted: obligations must exist so a
+    /// disabled or offline consumer can catch up after re-enablement.
+    async fn fan_out_obligations(
+        &self,
+        tx: &mut Transaction<'static, Postgres>,
+        event: &IntegrationEvent,
+    ) -> Result<(), OutboxStoreError> {
+        let subscriptions = sqlx::query!(
+            r#"
+            SELECT consumer_id, pattern
+            FROM integration_consumer_subscriptions
+            ORDER BY consumer_id, pattern
+            "#,
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut by_consumer: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for subscription in subscriptions {
+            by_consumer
+                .entry(subscription.consumer_id)
+                .or_default()
+                .push(subscription.pattern);
+        }
+        for (consumer_id, patterns) in by_consumer {
+            if !event_matches_subscription(&event.r#type, &patterns) {
+                continue;
+            }
+            sqlx::query!(
+                r#"
+                INSERT INTO integration_deliveries
+                    (consumer_id, source, event_id, event_type, tenant_id, workspace_id,
+                     state, available_at)
+                VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())
+                ON CONFLICT (consumer_id, source, event_id) DO NOTHING
+                "#,
+                consumer_id,
+                &event.source,
+                event.id,
+                &event.r#type,
+                event.tenant_id.0,
+                event.workspace_id.0,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         Ok(())
     }
 
+    /// Register (or re-register) a consumer and replace its subscription
+    /// patterns atomically.
+    ///
+    /// Re-registration preserves `enabled` and `registered_at` (both are
+    /// only ever set on first registration); the subscription list is
+    /// replaced wholesale. Patterns are exact event types or `.*`-terminated
+    /// prefixes; an empty list subscribes to everything (discouraged, but
+    /// consistent with [`event_matches_subscription`]).
+    pub async fn register_consumer(
+        &self,
+        consumer_id: &str,
+        subscriptions: &[String],
+    ) -> Result<(), OutboxStoreError> {
+        for pattern in subscriptions {
+            if !valid_subscription_pattern(pattern) {
+                return Err(OutboxStoreError::InvalidSubscription(pattern.clone()));
+            }
+        }
+        let mut subscriptions: Vec<String> = subscriptions.to_vec();
+        subscriptions.sort();
+        subscriptions.dedup();
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            INSERT INTO integration_consumers (consumer_id, enabled, registered_at, updated_at)
+            VALUES ($1, true, now(), now())
+            ON CONFLICT (consumer_id) DO UPDATE SET updated_at = now()
+            "#,
+            consumer_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM integration_consumer_subscriptions WHERE consumer_id = $1",
+            consumer_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        for pattern in &subscriptions {
+            sqlx::query!(
+                r#"
+                INSERT INTO integration_consumer_subscriptions (consumer_id, pattern)
+                VALUES ($1, $2)
+                ON CONFLICT (consumer_id, pattern) DO NOTHING
+                "#,
+                consumer_id,
+                pattern
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Set a consumer's `enabled` flag. Returns `false` when the consumer is
+    /// not registered. Disabling does NOT remove pending obligations; it only
+    /// stops claiming until re-enabled.
+    pub async fn set_consumer_enabled(
+        &self,
+        consumer_id: &str,
+        enabled: bool,
+    ) -> Result<bool, OutboxStoreError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE integration_consumers
+            SET enabled = $2, updated_at = now()
+            WHERE consumer_id = $1
+            "#,
+            consumer_id,
+            enabled
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Whether a consumer is enabled; `false` when the consumer is unknown.
+    pub async fn is_consumer_enabled(&self, consumer_id: &str) -> Result<bool, OutboxStoreError> {
+        let enabled = sqlx::query_scalar!(
+            "SELECT enabled FROM integration_consumers WHERE consumer_id = $1",
+            consumer_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(enabled.unwrap_or(false))
+    }
+
+    /// All registered consumers with their subscription patterns, ordered by
+    /// `consumer_id`.
+    pub async fn list_consumers(&self) -> Result<Vec<ConsumerRegistration>, OutboxStoreError> {
+        let consumers = sqlx::query!(
+            r#"
+            SELECT consumer_id, enabled, registered_at
+            FROM integration_consumers
+            ORDER BY consumer_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let subscriptions = sqlx::query!(
+            r#"
+            SELECT consumer_id, pattern
+            FROM integration_consumer_subscriptions
+            ORDER BY consumer_id, pattern
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut by_consumer: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for subscription in subscriptions {
+            by_consumer
+                .entry(subscription.consumer_id)
+                .or_default()
+                .push(subscription.pattern);
+        }
+        Ok(consumers
+            .into_iter()
+            .map(|consumer| {
+                let consumer_id = consumer.consumer_id;
+                ConsumerRegistration {
+                    subscriptions: by_consumer.remove(&consumer_id).unwrap_or_default(),
+                    consumer_id,
+                    enabled: consumer.enabled,
+                    registered_at: consumer.registered_at,
+                }
+            })
+            .collect())
+    }
+
+    /// The sorted subscription patterns for one consumer; empty when the
+    /// consumer is unknown.
+    pub async fn consumer_subscriptions(
+        &self,
+        consumer_id: &str,
+    ) -> Result<Vec<String>, OutboxStoreError> {
+        let patterns = sqlx::query_scalar!(
+            r#"
+            SELECT pattern
+            FROM integration_consumer_subscriptions
+            WHERE consumer_id = $1
+            ORDER BY pattern
+            "#,
+            consumer_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(patterns)
+    }
+
+    /// Load a consumer's durable registration (subscriptions, `enabled`,
+    /// `registered_at`); `None` when the consumer is not registered.
+    async fn consumer_registration(
+        &self,
+        consumer_id: &str,
+    ) -> Result<Option<ConsumerRegistration>, OutboxStoreError> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT enabled, registered_at
+            FROM integration_consumers
+            WHERE consumer_id = $1
+            "#,
+            consumer_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None); // uncommitted tx rolls back on drop
+        };
+        let subscriptions = sqlx::query_scalar!(
+            r#"
+            SELECT pattern
+            FROM integration_consumer_subscriptions
+            WHERE consumer_id = $1
+            ORDER BY pattern
+            "#,
+            consumer_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(ConsumerRegistration {
+            consumer_id: consumer_id.to_string(),
+            enabled: row.enabled,
+            subscriptions,
+            registered_at: row.registered_at,
+        }))
+    }
+
     /// Claim a batch of events for one consumer.
+    ///
+    /// The consumer's durable registration (subscriptions, `enabled`,
+    /// `registered_at` — see [`Self::register_consumer`]) is authoritative:
+    /// an unregistered or disabled consumer claims nothing, and its pending
+    /// obligations remain untouched until it is registered/enabled.
     ///
     /// Two steps, each in its own transaction (claim atomicity per row is
     /// what matters):
     /// 1. re-claim existing delivery rows that are `pending` and available or
     ///    `claimed` with an expired lease;
-    /// 2. first delivery: insert a delivery row for outbox events that have
-    ///    no delivery row yet for this consumer.
+    /// 2. first delivery / safety net: insert a claimed delivery row for
+    ///    outbox events that have no delivery row yet for this consumer.
+    ///    Step 2 never creates historical backlog: only events created at or
+    ///    after the consumer's `registered_at` are eligible.
     ///
-    /// `subscriptions` is the concrete event-type list (the caller expands
-    /// `.*` prefix patterns via `event_matches_subscription`); an empty list
-    /// subscribes to everything.
+    /// Subscription matching: claim candidates are filtered by the durable
+    /// subscription patterns. `.*` prefix patterns are expanded against the
+    /// distinct event types present in the source table (deliveries for
+    /// step 1, outbox for step 2) so the SQL `event_type = ANY($2)` filter is
+    /// complete; see [`expanded_subscription_filter`]. A claimed batch
+    /// therefore never contains an event whose type does not match the
+    /// durable patterns (additionally enforced on the deserialized envelope
+    /// below). An empty subscription list subscribes to everything.
+    ///
+    /// The total returned rows never exceed `config.claim_batch_size`: step 1
+    /// is bounded by `claim_batch_size` and step 2 by the remainder.
+    ///
+    /// No tenant filter by design: the delivery ledger and outbox are
+    /// platform-global, so a consumer with a stable identity (e.g. a Memory
+    /// projection serving all tenants) processes events across tenants. This
+    /// is intentional — the envelope still enforces tenant/workspace equality
+    /// on every published event, and a consumer that must not mix tenants
+    /// applies its own scope rule in `process` (the reference consumer merely
+    /// records each event's tenant id with its effect). Per-tenant claim
+    /// scoping is a future consumer contract, not a transport concern.
     ///
     /// Every claim regenerates `claim_token` (`gen_random_uuid()`), so a
     /// stale worker holding an old token can never acknowledge the new lease
@@ -299,23 +642,35 @@ impl OutboxStore {
     pub async fn claim_batch(
         &self,
         consumer_id: &str,
-        subscriptions: &[String],
         config: &OutboxConfig,
         worker_id: &str,
     ) -> Result<Vec<ClaimedEvent>, OutboxStoreError> {
-        let subscription_filter: Option<&[String]> = if subscriptions.is_empty() {
-            None
-        } else {
-            Some(subscriptions)
+        // The durable registration is authoritative; a disabled consumer
+        // keeps its obligations but is not claimed.
+        let Some(registration) = self.consumer_registration(consumer_id).await? else {
+            return Ok(Vec::new());
         };
+        if !registration.enabled {
+            return Ok(Vec::new());
+        }
 
         let mut rows = self
-            .reclaim_existing(consumer_id, subscription_filter, config, worker_id)
+            .reclaim_existing(consumer_id, &registration.subscriptions, config, worker_id)
             .await?;
-        rows.extend(
-            self.first_delivery(consumer_id, subscription_filter, config, worker_id)
+        // Bounded total: step 2 may only fill the remainder of the batch.
+        let remaining = (config.claim_batch_size - rows.len() as i64).max(0);
+        if remaining > 0 {
+            rows.extend(
+                self.first_delivery(
+                    consumer_id,
+                    &registration.subscriptions,
+                    config,
+                    worker_id,
+                    remaining,
+                )
                 .await?,
-        );
+            );
+        }
 
         // Defensive dedupe: a row cannot normally appear in both steps.
         let mut seen = std::collections::HashSet::new();
@@ -345,6 +700,16 @@ impl OutboxStore {
                 .await?;
                 continue;
             }
+            // Invariant guard: the SQL filter above is complete, but never
+            // hand a consumer an event outside its durable subscriptions.
+            if !event_matches_subscription(&event.r#type, &registration.subscriptions) {
+                tracing::warn!(
+                    %consumer_id,
+                    event_type = %event.r#type,
+                    "skipping claimed delivery outside durable subscriptions"
+                );
+                continue;
+            }
             claimed.push(ClaimedEvent {
                 consumer_id: consumer_id.to_string(),
                 source: row.source,
@@ -359,14 +724,28 @@ impl OutboxStore {
 
     /// Step 1 of [`Self::claim_batch`]: re-claim existing pending or
     /// lease-expired delivery rows.
+    ///
+    /// `.*` prefix patterns are expanded against the distinct event types
+    /// present in this consumer's delivery rows — the only types step 1 can
+    /// match — so the SQL `event_type = ANY($2)` filter is complete for the
+    /// candidate set.
     async fn reclaim_existing(
         &self,
         consumer_id: &str,
-        subscription_filter: Option<&[String]>,
+        subscriptions: &[String],
         config: &OutboxConfig,
         worker_id: &str,
     ) -> Result<Vec<ClaimedRow>, OutboxStoreError> {
         let mut tx = self.pool.begin().await?;
+        let distinct_types: Vec<String> = sqlx::query_scalar!(
+            r#"
+            SELECT DISTINCT event_type FROM integration_deliveries WHERE consumer_id = $1
+            "#,
+            consumer_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let subscription_filter = expanded_subscription_filter(subscriptions, &distinct_types);
         let rows = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH updated AS (
@@ -397,7 +776,7 @@ impl OutboxStore {
             "#,
         )
         .bind(consumer_id)
-        .bind(subscription_filter)
+        .bind(subscription_filter.as_deref())
         .bind(config.claim_batch_size)
         .bind(worker_id)
         .bind(config.lease_secs)
@@ -407,17 +786,29 @@ impl OutboxStore {
         Ok(rows)
     }
 
-    /// Step 2 of [`Self::claim_batch`]: first delivery — insert a claimed
-    /// delivery row for outbox events without a delivery row for this
-    /// consumer.
+    /// Step 2 of [`Self::claim_batch`]: first delivery / safety net — insert
+    /// a claimed delivery row for outbox events without a delivery row for
+    /// this consumer.
+    ///
+    /// Bounded by `limit` (the batch remainder from [`Self::claim_batch`]) so
+    /// the total returned never exceeds `config.claim_batch_size`. `.*`
+    /// prefix patterns are expanded against the distinct event types in the
+    /// outbox — the only types step 2 can produce. Events created before the
+    /// consumer's `registered_at` are never backfilled.
     async fn first_delivery(
         &self,
         consumer_id: &str,
-        subscription_filter: Option<&[String]>,
+        subscriptions: &[String],
         config: &OutboxConfig,
         worker_id: &str,
+        limit: i64,
     ) -> Result<Vec<ClaimedRow>, OutboxStoreError> {
         let mut tx = self.pool.begin().await?;
+        let distinct_types: Vec<String> =
+            sqlx::query_scalar!("SELECT DISTINCT event_type FROM integration_outbox")
+                .fetch_all(&mut *tx)
+                .await?;
+        let subscription_filter = expanded_subscription_filter(subscriptions, &distinct_types);
         let rows = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH inserted AS (
@@ -432,6 +823,7 @@ impl OutboxStore {
                     SELECT o.source, o.event_id, o.event_type, o.tenant_id, o.workspace_id
                     FROM integration_outbox o
                     WHERE o.available_at <= now()
+                      AND o.created_at >= (SELECT registered_at FROM integration_consumers WHERE consumer_id = $1)
                       AND NOT EXISTS (
                           SELECT 1 FROM integration_deliveries d
                           WHERE d.consumer_id = $1 AND d.source = o.source AND d.event_id = o.event_id
@@ -450,8 +842,8 @@ impl OutboxStore {
             "#,
         )
         .bind(consumer_id)
-        .bind(subscription_filter)
-        .bind(config.claim_batch_size)
+        .bind(subscription_filter.as_deref())
+        .bind(limit)
         .bind(worker_id)
         .bind(config.lease_secs)
         .fetch_all(&mut *tx)
@@ -702,6 +1094,14 @@ impl OutboxStore {
     /// Compact outbox rows older than `retention_hours` whose deliveries are
     /// all `processed` (or gone). Returns the number of deleted outbox rows.
     ///
+    /// With eager fan-out, every event published while at least one consumer
+    /// is registered carries an obligation row per entitled consumer: an
+    /// event is compacted only when every consumer obligated at publication
+    /// has reached `processed`. Events with zero obligations (no registered
+    /// consumer at publish time) are compactable after the retention window,
+    /// and dead-lettered obligations block compaction so operators keep
+    /// visibility.
+    ///
     /// The FK cascade removes the processed delivery rows; `integration_consumer_receipts`
     /// rows are deliberately not FK-linked and remain as harmless durable
     /// idempotency records. Pass `retention_hours <= 0` to disable.
@@ -759,6 +1159,57 @@ impl OutboxStore {
     }
 }
 
+/// Expand `.*` subscription patterns against the distinct event types
+/// present in the source table so the claim SQL's `event_type = ANY($2)`
+/// filter is complete: a prefix can only match types that actually exist in
+/// the source. Exact patterns pass through unchanged; the result is
+/// deduplicated and sorted. Returns `None` when the consumer subscribes to
+/// everything (empty pattern list), which disables the SQL filter.
+fn expanded_subscription_filter(
+    subscriptions: &[String],
+    distinct_types: &[String],
+) -> Option<Vec<String>> {
+    if subscriptions.is_empty() {
+        return None;
+    }
+    let mut expanded = Vec::new();
+    for pattern in subscriptions {
+        if pattern.ends_with(".*") {
+            expanded.extend(
+                distinct_types
+                    .iter()
+                    .filter(|event_type| {
+                        event_matches_subscription(event_type, std::slice::from_ref(pattern))
+                    })
+                    .cloned(),
+            );
+        } else {
+            expanded.push(pattern.clone());
+        }
+    }
+    expanded.sort();
+    expanded.dedup();
+    Some(expanded)
+}
+
+/// Validate a durable subscription pattern: a non-empty string of at most
+/// 256 chars over `[a-z0-9-_.]`, either an exact event type (checked with
+/// [`valid_event_type`]) or a `prefix.*` wildcard whose prefix is non-empty
+/// and does not end with `.` (a trailing dot could never match a segment).
+fn valid_subscription_pattern(pattern: &str) -> bool {
+    if pattern.is_empty() || pattern.len() > 256 {
+        return false;
+    }
+    let Some(prefix) = pattern.strip_suffix(".*") else {
+        return valid_event_type(pattern);
+    };
+    !prefix.is_empty()
+        && !prefix.ends_with('.')
+        && prefix.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' || b == b'.'
+        })
+}
+
 /// Files integration-event publisher adapter wired into `FileService`
 /// (rustshare-core seam): builds the envelope from the neutral facts and
 /// inserts it atomically into the outbox.
@@ -784,10 +1235,21 @@ impl IntegrationEventPublisher<Transaction<'static, Postgres>> for OutboxStore {
             .subject(resource.to_uri())
             .tenant_id(TenantId(facts.tenant_id))
             .workspace_id(WorkspaceId(facts.workspace_id))
-            .actor(ActorRef::Principal(PrincipalId(facts.actor_user_id)))
             .resource(resource)
             .data(facts.data.clone())
             .build()
+            .map_err(|error| IntegrationPublishError::InvalidEvent(error.to_string()))?;
+        // Actor attribution: only an authenticated Elembra Principal is
+        // attributed. External actions (e.g. a public-share session upload)
+        // omit `elembraActor` entirely — the resource owner is never used as
+        // a fallback actor.
+        let mut event = event;
+        event.actor = match facts.actor {
+            IntegrationEventActor::Principal(id) => Some(ActorRef::Principal(PrincipalId(id))),
+            IntegrationEventActor::External => None,
+        };
+        event
+            .validate()
             .map_err(|error| IntegrationPublishError::InvalidEvent(error.to_string()))?;
         self.insert_in_tx(tx, &event).await.map_err(Into::into)
     }
@@ -843,8 +1305,18 @@ mod tests {
 
     /// Empty the outbox tables. Safe because the DB tests are serialized by
     /// `DB_TEST_LOCK`; rows left behind by an aborted previous run would
-    /// otherwise leak into another test's empty-subscription claim.
+    /// otherwise leak into another test's empty-subscription claim. Consumer
+    /// registrations are cleared too so a leaked registration cannot fan out
+    /// obligations into another test's fixtures.
     async fn clean_slate(pool: &PgPool) {
+        sqlx::query("DELETE FROM integration_consumer_subscriptions")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM integration_consumers")
+            .execute(pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM integration_deliveries")
             .execute(pool)
             .await
@@ -990,6 +1462,15 @@ mod tests {
         let consumer_id = format!("io.elembra.test.claim-filter-{}", Uuid::new_v4());
         clean_slate(&pool).await;
 
+        // Registered before publishing: fan-out creates an obligation only
+        // for the subscribed event type.
+        store
+            .register_consumer(
+                &consumer_id,
+                &["io.elembra.files.file.created.v1".to_string()],
+            )
+            .await
+            .unwrap();
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &created).await.unwrap();
         store.insert_in_tx(&mut tx, &updated).await.unwrap();
@@ -997,12 +1478,7 @@ mod tests {
 
         let config = OutboxConfig::default();
         let claimed = store
-            .claim_batch(
-                &consumer_id,
-                &["io.elembra.files.file.created.v1".to_string()],
-                &config,
-                "test-worker",
-            )
+            .claim_batch(&consumer_id, &config, "test-worker")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 1);
@@ -1042,13 +1518,15 @@ mod tests {
         let consumer_id = format!("io.elembra.test.claim-all-{}", Uuid::new_v4());
         clean_slate(&pool).await;
 
+        // Empty subscription list subscribes to everything.
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &created).await.unwrap();
         store.insert_in_tx(&mut tx, &updated).await.unwrap();
         tx.commit().await.unwrap();
 
         let claimed = store
-            .claim_batch(&consumer_id, &[], &OutboxConfig::default(), "test-worker")
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "test-worker")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 2);
@@ -1069,13 +1547,14 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.fencing-{}", Uuid::new_v4());
         clean_slate(&pool).await;
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
         tx.commit().await.unwrap();
 
         let claimed = store
-            .claim_batch(&consumer_id, &[], &OutboxConfig::default(), "worker-a")
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker-a")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 1);
@@ -1135,13 +1614,14 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.lease-{}", Uuid::new_v4());
         clean_slate(&pool).await;
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
         tx.commit().await.unwrap();
 
         let first = store
-            .claim_batch(&consumer_id, &[], &OutboxConfig::default(), "worker-a")
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker-a")
             .await
             .unwrap();
         assert_eq!(first.len(), 1);
@@ -1157,7 +1637,7 @@ mod tests {
         .unwrap();
 
         let second = store
-            .claim_batch(&consumer_id, &[], &OutboxConfig::default(), "worker-b")
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker-b")
             .await
             .unwrap();
         assert_eq!(second.len(), 1);
@@ -1190,13 +1670,14 @@ mod tests {
         clean_slate(&pool).await;
         let config = OutboxConfig::default();
         let secret = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWNyZXQifQ.signature";
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
         tx.commit().await.unwrap();
 
         let claimed = store
-            .claim_batch(&consumer_id, &[], &config, "worker")
+            .claim_batch(&consumer_id, &config, "worker")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 1);
@@ -1250,7 +1731,7 @@ mod tests {
         .await
         .unwrap();
         let claimed = store
-            .claim_batch(&consumer_id, &[], &config, "worker")
+            .claim_batch(&consumer_id, &config, "worker")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 1);
@@ -1315,11 +1796,16 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires database
-    async fn duplicate_publish_is_idempotent() {
+    async fn duplicate_identical_publish_idempotent() {
         let _db_guard = DB_TEST_LOCK.lock().await;
         let (store, pool) = setup().await;
         let event = test_event("io.elembra.files.file.created.v1");
+        let consumer_id = format!("io.elembra.test.idem-{}", Uuid::new_v4());
         clean_slate(&pool).await;
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -1335,6 +1821,82 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 1);
+        let delivery_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1 AND source = $2 AND event_id = $3",
+        )
+        .bind(&consumer_id)
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_count, 1,
+            "single obligation row for a duplicate publish"
+        );
+
+        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn duplicate_conflicting_publish_fails_and_rolls_back_caller_tx() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let event = test_event("io.elembra.files.file.created.v1");
+        clean_slate(&pool).await;
+
+        // First publish commits.
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // A retry of the same (source, event_id) with a different payload
+        // fails the caller's transaction wholesale.
+        let mut conflicting = event.clone();
+        conflicting.data = json!({"name": "different.txt", "mime_type": "text/plain", "size": 99});
+        let mut tx = store.pool().begin().await.unwrap();
+        // A marker row proves the caller's transaction rolls back wholesale.
+        sqlx::query(
+            "INSERT INTO integration_consumer_receipts (consumer_id, source, event_id, event_type, tenant_id, workspace_id) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind("io.elembra.test.scratch")
+        .bind(&event.source)
+        .bind(event.id)
+        .bind(&event.r#type)
+        .bind(event.tenant_id.0)
+        .bind(event.workspace_id.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let result = store.insert_in_tx(&mut tx, &conflicting).await;
+        assert!(matches!(
+            result,
+            Err(OutboxStoreError::EventIdentityConflict { .. })
+        ));
+        drop(tx); // caller rolls back
+
+        let marker_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = 'io.elembra.test.scratch'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(marker_count, 0, "caller tx rolled back wholesale");
+        let outbox_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+        )
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 1, "committed first publish survives");
 
         cleanup(&pool, &[&event]).await;
     }
@@ -1354,7 +1916,7 @@ mod tests {
             data: json!({"name": "facts.txt", "mime_type": "text/plain", "size": 9}),
             tenant_id: tenant,
             workspace_id: tenant,
-            actor_user_id: actor,
+            actor: IntegrationEventActor::Principal(actor),
         };
 
         let mut tx = store.pool().begin().await.unwrap();
@@ -1393,6 +1955,52 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires database
+    async fn publisher_trait_omits_actor_for_external() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let tenant = Uuid::new_v4();
+        let facts = IntegrationEventFacts {
+            event_type: "io.elembra.files.file.created.v1",
+            resource_type: "file",
+            resource_id: &Uuid::new_v4().to_string(),
+            version: None,
+            data: json!({"name": "external.txt", "mime_type": "text/plain", "size": 4}),
+            tenant_id: tenant,
+            workspace_id: tenant,
+            actor: IntegrationEventActor::External,
+        };
+
+        let mut tx = store.pool().begin().await.unwrap();
+        store
+            .publish_in_tx(&mut tx, &facts)
+            .await
+            .map_err(|e| e.to_string())
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let event_json = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT event_json FROM integration_outbox WHERE source = 'elembra://io.elembra.files' AND application_id = 'io.elembra.files' ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let event: IntegrationEvent = serde_json::from_value(event_json).unwrap();
+        event.validate().unwrap();
+        assert_eq!(
+            event.actor, None,
+            "External must omit elembraActor entirely (no owner fallback)"
+        );
+
+        sqlx::query("DELETE FROM integration_outbox WHERE source = $1 AND event_id = $2")
+            .bind(&event.source)
+            .bind(event.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
     async fn observability_and_maintenance() {
         let _db_guard = DB_TEST_LOCK.lock().await;
         let (store, pool) = setup().await;
@@ -1400,6 +2008,7 @@ mod tests {
         let updated = test_event("io.elembra.files.file.updated.v1");
         let consumer_id = format!("io.elembra.test.observability-{}", Uuid::new_v4());
         clean_slate(&pool).await;
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &created).await.unwrap();
@@ -1408,7 +2017,7 @@ mod tests {
 
         let config = OutboxConfig::default();
         let claimed = store
-            .claim_batch(&consumer_id, &[], &config, "worker")
+            .claim_batch(&consumer_id, &config, "worker")
             .await
             .unwrap();
         assert_eq!(claimed.len(), 2);
@@ -1502,6 +2111,7 @@ mod tests {
         let event = test_event("io.elembra.files.file.created.v1");
         let consumer_id = format!("io.elembra.test.poison-{}", Uuid::new_v4());
         clean_slate(&pool).await;
+        store.register_consumer(&consumer_id, &[]).await.unwrap();
 
         let mut tx = store.pool().begin().await.unwrap();
         store.insert_in_tx(&mut tx, &event).await.unwrap();
@@ -1518,7 +2128,7 @@ mod tests {
         .unwrap();
 
         let claimed = store
-            .claim_batch(&consumer_id, &[], &OutboxConfig::default(), "worker")
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
             .await
             .unwrap();
         assert!(claimed.is_empty(), "poison row must be skipped");
@@ -1545,5 +2155,409 @@ mod tests {
             .await
             .unwrap();
         cleanup(&pool, &[&event]).await;
+    }
+
+    #[test]
+    fn subscription_pattern_validation() {
+        for valid in ["io.elembra.files.file.created.v1", "io.elembra.files.*"] {
+            assert!(
+                valid_subscription_pattern(valid),
+                "{valid} should be a valid subscription pattern"
+            );
+        }
+        for invalid in [
+            "",
+            "*",
+            "io.elembra.files.",
+            "io.elembra.*.v1",
+            "hello world.*",
+            "io.elembra.Files.*",
+        ] {
+            assert!(
+                !valid_subscription_pattern(invalid),
+                "{invalid} should be rejected"
+            );
+        }
+        assert!(
+            !valid_subscription_pattern(&"x".repeat(257)),
+            "oversized patterns should be rejected"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn register_consumer_upserts_and_replaces_subscriptions() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.register-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+
+        store
+            .register_consumer(
+                &consumer_id,
+                &["io.elembra.files.file.created.v1".to_string()],
+            )
+            .await
+            .unwrap();
+        let registered_at = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(store.is_consumer_enabled(&consumer_id).await.unwrap());
+        assert_eq!(
+            store.consumer_subscriptions(&consumer_id).await.unwrap(),
+            vec!["io.elembra.files.file.created.v1".to_string()]
+        );
+
+        // Re-register with different patterns: replaced, while `enabled` and
+        // `registered_at` are preserved.
+        assert!(store
+            .set_consumer_enabled(&consumer_id, false)
+            .await
+            .unwrap());
+        store
+            .register_consumer(
+                &consumer_id,
+                &[
+                    "io.elembra.files.*".to_string(),
+                    "io.elembra.files.file.updated.v1".to_string(),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(
+            !store.is_consumer_enabled(&consumer_id).await.unwrap(),
+            "re-registration must not reset enabled"
+        );
+        assert_eq!(
+            store.consumer_subscriptions(&consumer_id).await.unwrap(),
+            vec![
+                "io.elembra.files.*".to_string(),
+                "io.elembra.files.file.updated.v1".to_string(),
+            ],
+            "subscriptions replaced and sorted"
+        );
+        let registered_at_after = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            registered_at_after, registered_at,
+            "registered_at is only ever set on first registration"
+        );
+
+        // Invalid patterns are rejected.
+        let result = store
+            .register_consumer(&consumer_id, &["io.elembra.files.".to_string()])
+            .await;
+        assert!(matches!(
+            result,
+            Err(OutboxStoreError::InvalidSubscription(_))
+        ));
+
+        sqlx::query("DELETE FROM integration_consumer_subscriptions WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn publish_creates_obligations_for_matching_registered_consumers() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_a = format!("io.elembra.test.obligation-a-{}", Uuid::new_v4());
+        let consumer_b = format!("io.elembra.test.obligation-b-{}", Uuid::new_v4());
+        let consumer_c = format!("io.elembra.test.obligation-c-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+
+        store
+            .register_consumer(
+                &consumer_a,
+                &["io.elembra.files.file.created.v1".to_string()],
+            )
+            .await
+            .unwrap();
+        store
+            .register_consumer(
+                &consumer_b,
+                &["io.elembra.files.file.updated.v1".to_string()],
+            )
+            .await
+            .unwrap();
+        store
+            .register_consumer(&consumer_c, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+
+        let created = test_event("io.elembra.files.file.created.v1");
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &created).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Exact match and prefix match get obligations; non-matching does not.
+        assert_eq!(
+            delivery_state(&pool, &consumer_a, &created).await,
+            "pending"
+        );
+        assert_eq!(
+            delivery_state(&pool, &consumer_c, &created).await,
+            "pending"
+        );
+        let count_b = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1 AND source = $2 AND event_id = $3",
+        )
+        .bind(&consumer_b)
+        .bind(&created.source)
+        .bind(created.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count_b, 0, "non-matching consumer gets no obligation");
+
+        sqlx::query("DELETE FROM integration_deliveries")
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &[&created]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn publish_creates_no_backlog_for_events_before_registration() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.nobacklog-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+
+        let event = test_event("io.elembra.files.file.created.v1");
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Registered after the publish: no obligation and no backfill.
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
+            .await
+            .unwrap();
+        assert!(
+            claimed.is_empty(),
+            "pre-registration events must never be claimed"
+        );
+        let delivery_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(delivery_count, 0, "no delivery row was created");
+
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn disabled_consumer_not_claimed_but_obligation_kept() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.disabled-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+        assert!(store
+            .set_consumer_enabled(&consumer_id, false)
+            .await
+            .unwrap());
+
+        let event = test_event("io.elembra.files.file.created.v1");
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            delivery_state(&pool, &consumer_id, &event).await,
+            "pending",
+            "obligations are created regardless of enabled"
+        );
+
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
+            .await
+            .unwrap();
+        assert!(claimed.is_empty(), "disabled consumer is not claimed");
+        assert_eq!(
+            delivery_state(&pool, &consumer_id, &event).await,
+            "pending",
+            "obligation kept while disabled"
+        );
+
+        assert!(store
+            .set_consumer_enabled(&consumer_id, true)
+            .await
+            .unwrap());
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
+            .await
+            .unwrap();
+        assert_eq!(claimed.len(), 1, "re-enabled consumer claims its backlog");
+        assert_eq!(claimed[0].event, event);
+
+        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn claim_batch_total_respects_batch_size() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.batchsize-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+        // Move registered_at into the past so step 2's guard never blocks.
+        sqlx::query(
+            "UPDATE integration_consumers SET registered_at = now() - interval '1 day' WHERE consumer_id = $1",
+        )
+        .bind(&consumer_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let events: Vec<IntegrationEvent> = (0..6)
+            .map(|_| test_event("io.elembra.files.file.created.v1"))
+            .collect();
+        let mut tx = store.pool().begin().await.unwrap();
+        for event in &events {
+            store.insert_in_tx(&mut tx, event).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        // Fan-out created 6 pending obligations; drop the deliveries for the
+        // last three so they exist only in the outbox (step-2 candidates).
+        for event in &events[3..] {
+            sqlx::query(
+                "DELETE FROM integration_deliveries WHERE consumer_id = $1 AND source = $2 AND event_id = $3",
+            )
+            .bind(&consumer_id)
+            .bind(&event.source)
+            .bind(event.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let config = OutboxConfig {
+            claim_batch_size: 4,
+            ..OutboxConfig::default()
+        };
+        let first = store
+            .claim_batch(&consumer_id, &config, "worker")
+            .await
+            .unwrap();
+        assert!(
+            first.len() <= 4,
+            "total returned must never exceed claim_batch_size"
+        );
+        assert_eq!(first.len(), 4, "3 existing deliveries + 1 first delivery");
+        let second = store
+            .claim_batch(&consumer_id, &config, "worker")
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 2, "second claim returns the rest");
+        assert!(
+            second
+                .iter()
+                .all(|c| !first.iter().any(|f| f.event_id == c.event_id)),
+            "no event claimed twice"
+        );
+
+        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for event in &events {
+            cleanup(&pool, &[event]).await;
+        }
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn claim_batch_skips_events_outside_subscriptions() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let consumer_id = format!("io.elembra.test.subfilter-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+        store
+            .register_consumer(
+                &consumer_id,
+                &["io.elembra.files.file.created.v1".to_string()],
+            )
+            .await
+            .unwrap();
+
+        let created = test_event("io.elembra.files.file.created.v1");
+        let updated = test_event("io.elembra.files.file.updated.v1");
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &created).await.unwrap();
+        store.insert_in_tx(&mut tx, &updated).await.unwrap();
+        tx.commit().await.unwrap();
+        // Fan-out only created an obligation for `created`; plant a pending
+        // delivery for the non-subscribed type directly.
+        sqlx::query(
+            "INSERT INTO integration_deliveries (consumer_id, source, event_id, event_type, tenant_id, workspace_id, state, available_at) VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())",
+        )
+        .bind(&consumer_id)
+        .bind(&updated.source)
+        .bind(updated.id)
+        .bind(&updated.r#type)
+        .bind(updated.tenant_id.0)
+        .bind(updated.workspace_id.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker")
+            .await
+            .unwrap();
+        assert_eq!(claimed.len(), 1, "only the subscribed event is claimed");
+        assert_eq!(claimed[0].event, created);
+        assert_eq!(
+            delivery_state(&pool, &consumer_id, &updated).await,
+            "pending",
+            "non-subscribed delivery is never claimed"
+        );
+
+        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &[&created, &updated]).await;
     }
 }

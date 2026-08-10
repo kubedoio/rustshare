@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO integration_consumer_subscriptions (consumer_id, pattern)\n                VALUES ($1, $2)\n                ON CONFLICT (consumer_id, pattern) DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c28f915d6cacbaafbb9337086f38fda6ae6117b6d4c08968abe4aab4acf1e6f2"
+}
