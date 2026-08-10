@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their tenant fail closed before any owner is consulted (1:1
   tenant/workspace invariant).
 
+- Elembra Chat Files attachments now use the canonical `ResourceRef` in a
+  credential-free `elembra-ref` Buzz tag, with authenticated prepare/preview/
+  open APIs that reauthorize through Files at access time.
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,

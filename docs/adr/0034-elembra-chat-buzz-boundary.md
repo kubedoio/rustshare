@@ -258,6 +258,63 @@ Rejected. Memory/search projections may exist, but Buzz remains the chat source 
 
 ## Identity and admission foundation (2026-08-10)
 
+## ResourceRef attachment slice (2026-08-10)
+
+The first Chat×Files slice uses the existing `ResourceRef`, `PrincipalContext`,
+`SourceAuthorizer`, and Files owner adapter. No second Files ACL or resource
+reference type was added.
+
+The signed Buzz representation is a normal Nostr event (normally kind `1`)
+with exactly one generic tag:
+
+```json
+["elembra-ref", "elembra://io.elembra.files/file/<uuid>?version=sha256%3A<64-hex>"]
+```
+
+The tag is an identifier only. It contains no tenant hint, URL, token, cookie,
+authorization grant, storage key, or private metadata. `rustshare-resource-auth`
+provides the tag builder/parser and rejects malformed, duplicate, or extended
+tags. Buzz requires no upstream modification: its existing generic Nostr tag
+transport preserves the tag and its existing signed-event/relay behavior owns
+the event.
+
+The authenticated Elembra API is:
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /api/v1/applications/chat/attachments/prepare` | Files reauthorizes the selected ref and returns safe metadata plus the exact Buzz tag for client-side signing. |
+| `POST /api/v1/applications/chat/attachments/preview` | Files reauthorizes the current Principal and returns safe preview metadata. |
+| `POST /api/v1/applications/chat/attachments/open` | Files reauthorizes again and returns content through Elembra; it never redirects to a stored URL. |
+
+The existing authenticated Files list/picker APIs remain the selection surface;
+Chat does not create a second browser or ACL model. The selected ref preserves
+the exact file version. A newer version is not substituted. Deleted,
+unavailable, unauthorized, malformed, and cross-tenant refs produce the same
+`resource unavailable` response where existence hiding applies. A Files outage
+degrades these attachment calls without affecting Buzz event publication or
+history.
+
+The security-critical path is current authorization at every preview/open
+request. Chat membership is never consulted as Files authority, and Files
+access never grants Buzz channel access. No attachment event is copied into an
+Elembra message database and no outbox implementation was added.
+
+The implementation tests signed-event tag round-tripping, credential absence,
+malformed/duplicate/extended tag rejection, and standard-tag isolation. The
+existing Files owner and SourceAuthorizer tests cover tenant/workspace scope,
+delegation, permission denial, version selection, and fail-closed routing. A
+full production deployment still needs a real Elembra Files/Buzz environment
+test covering attach, revoke, and post-revocation preview/open.
+
+An isolated Buzz relay proof on 2026-08-10 accepted and returned a signed kind
+`1` event carrying the exact `elembra-ref` tag (`event_id`
+`699ff87ec08e9e4d68a961f217e0f3da48e8812ec4314e0ab60a818b8ec945c`); the
+retrieved event signature verified. The temporary client and relay database
+were destroyed afterward. RustShare startup was also validated against the
+local Postgres/RustFS services, but the full HTTP attach/revoke scenario was
+not claimed because the local deployment lacked a complete authenticated Files
+fixture.
+
 ### Current-state findings
 
 The current Buzz `main` branch checked for this foundation (head `f53bbd1152464ecbb1de495e2d1d959e156138f0`)
@@ -461,7 +518,7 @@ integration test.
 - [x] Workspace↔Buzz community mapping contract exists.
 - [x] OIDC design explicitly preserves Buzz signing authentication.
 - [x] Offboarding revokes Chat admission independently of key validity.
-- [ ] Files attachments use ResourceRefs and read-time reauthorization.
+- [x] Files attachments use ResourceRefs and read-time reauthorization.
 - [ ] Memory projection preserves Buzz provenance/source ownership.
 - [x] No shared Buzz/Elembra private database access exists.
 - [ ] Agent Chat identity and delegated Elembra authority remain separate.

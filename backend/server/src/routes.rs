@@ -697,6 +697,18 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::chat_identity::admit_identity),
         )
         .route(
+            "/api/v1/applications/chat/attachments/prepare",
+            post(crate::handlers::chat_resource::prepare_attachment),
+        )
+        .route(
+            "/api/v1/applications/chat/attachments/preview",
+            post(crate::handlers::chat_resource::preview_attachment),
+        )
+        .route(
+            "/api/v1/applications/chat/attachments/open",
+            post(crate::handlers::chat_resource::open_attachment),
+        )
+        .route(
             "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
             post(crate::handlers::chat_identity::configure_mapping),
         )

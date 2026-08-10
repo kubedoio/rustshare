@@ -31,6 +31,7 @@
 pub mod actions;
 pub mod authorizer;
 pub mod chat_identity;
+pub mod chat_resource;
 pub mod contract;
 pub mod decision;
 pub mod principal;
@@ -44,6 +45,10 @@ pub use chat_identity::{
     AdmissionDecision, BindingChallenge, BindingError, BindingStatus, BuzzAdmission,
     BuzzAdmissionCommandError, BuzzAdmissionOperation, ChatIdentityBinding,
     WorkspaceCommunityMapping, BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
+};
+pub use chat_resource::{
+    buzz_resource_ref_tag, resource_ref_from_tags, ChatResourceAttachment, ChatResourceError,
+    BUZZ_RESOURCE_REF_TAG,
 };
 pub use contract::{
     Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation, ResolvedResource,

@@ -7,6 +7,7 @@ pub mod auth;
 pub mod brainstorming;
 pub mod chat_identity;
 pub mod chat_integration;
+pub mod chat_resource;
 pub mod collab;
 pub mod decisions;
 pub mod device_auth;
@@ -44,6 +45,7 @@ pub use brainstorming::{
     get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
     update_brainstorm_board_preview,
 };
+pub use chat_resource::{open_attachment, prepare_attachment, preview_attachment};
 pub use collab::collab_handler;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
