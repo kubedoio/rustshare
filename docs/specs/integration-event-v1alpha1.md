@@ -203,6 +203,8 @@ integration_consumer_subscriptions    -- explicit patterns (exact or prefix.*)
 
 Exact schema may vary, but required semantics may not.
 
+Outbox operations assume `READ COMMITTED` (PostgreSQL default): the identity-conflict and compaction checks rely on per-statement snapshots and re-evaluation after lock waits; callers must not raise the isolation level for outbox transactions.
+
 ## Delivery behavior
 
 Dispatcher:

@@ -364,6 +364,13 @@ impl OutboxStore {
             // must carry the identical payload. Anything else is a call-site
             // bug and fails the caller's transaction (no partial rollback
             // attempted here — the caller owns the tx).
+            //
+            // This INSERT-then-compare assumes READ COMMITTED (PostgreSQL
+            // default): under REPEATABLE READ the SELECT below would use the
+            // transaction's first snapshot, so a conflicting row committed
+            // concurrently could be missed and the duplicate treated as an
+            // idempotent no-op (silent, never corruption). Callers must not
+            // raise the isolation level for outbox transactions.
             let existing = sqlx::query_scalar::<_, serde_json::Value>(
                 "SELECT event_json FROM integration_outbox WHERE source = $1 AND event_id = $2",
             )
