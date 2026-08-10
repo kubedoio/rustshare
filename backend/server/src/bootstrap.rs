@@ -644,7 +644,13 @@ pub async fn init_app() -> Result<AppState> {
     // stores are shared with the later Memory consumer via AppState.
     let chat_identity_store = Arc::new(ChatIdentityStore::new(db_pool.clone()));
     let chat_observation_store = Arc::new(ChatObservationStore::new(db_pool.clone()));
-    let memory_catalog_store = Arc::new(MemoryCatalogStore::new(db_pool.clone()));
+    // The catalog is wired with the observation index so the projection
+    // consumer can enforce the tombstone-before-create delivery guard in
+    // `upsert_from_event_in_tx` (a store without it fails closed).
+    let memory_catalog_store = Arc::new(MemoryCatalogStore::with_observation_store(
+        db_pool.clone(),
+        (*chat_observation_store).clone(),
+    ));
     let buzz_observation_service = Arc::new(BuzzObservationService::new(
         db_pool.clone(),
         (*chat_identity_store).clone(),

@@ -197,7 +197,10 @@ async fn reconcile(
     reconcile_chat_memory_for_tenant(
         &ChatIdentityStore::new(pool.clone()),
         &ChatObservationStore::new(pool.clone()),
-        &MemoryCatalogStore::new(pool.clone()),
+        &MemoryCatalogStore::with_observation_store(
+            pool.clone(),
+            ChatObservationStore::new(pool.clone()),
+        ),
         tenant_id,
         since,
     )

@@ -70,9 +70,10 @@ impl ChatObservationStore {
         Ok(result.rows_affected() == 1)
     }
 
-    /// Latest observed event row for a message (by event_created_at desc), if
-    /// any. Used by the authorization owner adapter to route a message ref to
-    /// its community/channel and to detect tombstones.
+    /// Latest observed event row for a message (by `event_created_at` desc,
+    /// `event_id` desc as a deterministic tie-break), if any. Used by the
+    /// authorization owner adapter to route a message ref to its
+    /// community/channel and to detect tombstones.
     pub async fn lookup_for_auth(
         &self,
         tenant_id: TenantId,
@@ -86,7 +87,7 @@ impl ChatObservationStore {
                     signature_verified, body, active
              FROM chat_observed_events
              WHERE tenant_id = $1 AND message_id = $2
-             ORDER BY event_created_at DESC
+             ORDER BY event_created_at DESC, event_id DESC
              LIMIT 1",
         )
         .bind(tenant_id.0)
@@ -94,6 +95,31 @@ impl ChatObservationStore {
         .fetch_optional(&self.pool)
         .await?;
         row.map(|row| row_to_event(&row)).transpose()
+    }
+
+    /// Whether a Deleted observation exists for this message with
+    /// `event_created_at >= since` (authorizer-level tombstone override:
+    /// a message is never exposable once it has been deleted at-or-after the
+    /// candidate row's time, even if a later edit was pushed).
+    pub async fn has_tombstone_since(
+        &self,
+        tenant_id: TenantId,
+        message_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                 SELECT 1 FROM chat_observed_events
+                 WHERE tenant_id = $1 AND message_id = $2
+                   AND event_type = 'deleted' AND event_created_at >= $3
+             )",
+        )
+        .bind(tenant_id.0)
+        .bind(message_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
     }
 
     /// The observation row for a specific Buzz event id (used by the Memory

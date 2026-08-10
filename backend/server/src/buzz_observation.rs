@@ -249,17 +249,21 @@ impl BuzzObservationService {
             .ok_or(BuzzPushError::UnboundAuthor)?;
 
         // 7. Body gate: message bodies are stored only when the tenant has
-        //    `content_indexing` enabled; otherwise reference-first.
+        //    `content_indexing` enabled AND the event is in a `workspace`
+        //    channel; otherwise reference-first. Bodies from never-eligible
+        //    channels (`dm`/`private`/`excluded`) are never captured, so they
+        //    can never leak into an indexing copy under the tenant's opt-in.
         let policy = self
             .chat_identity
             .projection_policy(tenant, workspace)
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        let body = if policy.content_indexing {
-            Some(event.content.clone())
-        } else {
-            None
-        };
+        let body =
+            if policy.content_indexing && push.context.channel_kind == ChatChannelKind::Workspace {
+                Some(event.content.clone())
+            } else {
+                None
+            };
 
         // 8. Build the observation payload + row. `observed_at` is captured
         //    once, before the transaction, so the row and the durable envelope

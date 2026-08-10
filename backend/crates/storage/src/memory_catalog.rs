@@ -2,6 +2,7 @@
 //! projection of observed Buzz chat events, plus the admin reconciliation
 //! repair path.
 
+use crate::chat_observation::ChatObservationStore;
 use anyhow::Result;
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_integration_events::IntegrationEvent;
@@ -35,11 +36,38 @@ const RECORD_COLUMNS: &str = "record_id, tenant_id, workspace_id, source_applica
 #[derive(Clone)]
 pub struct MemoryCatalogStore {
     pool: PgPool,
+    /// Optional bridge observation index. `upsert_from_event_in_tx` consults
+    /// it in the no-existing-record branch to enforce the
+    /// tombstone-before-create delivery guard (a Deleted observation
+    /// at-or-after the event whose delete envelope was already consumed means
+    /// the message is deleted and must never be projected). `new` leaves it
+    /// unset (legacy construction: reconcile-only and AppState-only users,
+    /// which never call `upsert_from_event_in_tx`); consumers that project
+    /// MUST use [`MemoryCatalogStore::with_observation_store`], and
+    /// `upsert_from_event_in_tx` fails closed (error → retryable) when the
+    /// index is absent rather than silently skipping the guard.
+    chat_observation: Option<ChatObservationStore>,
 }
 
 impl MemoryCatalogStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            chat_observation: None,
+        }
+    }
+
+    /// Construct the store with the bridge observation index so
+    /// [`MemoryCatalogStore::upsert_from_event_in_tx`] can enforce the
+    /// tombstone-before-create delivery guard. The consumer
+    /// (`MemoryChatProjectionConsumer`) and bootstrap wiring use this; stores
+    /// built with [`MemoryCatalogStore::new`] are for reconcile/AppState-only
+    /// callers and fail closed if they ever reach `upsert_from_event_in_tx`.
+    pub fn with_observation_store(pool: PgPool, chat_observation: ChatObservationStore) -> Self {
+        Self {
+            pool,
+            chat_observation: Some(chat_observation),
+        }
     }
 
     /// Consumer-side durable projection: in ONE tx — (1) idempotency receipt
@@ -53,11 +81,14 @@ impl MemoryCatalogStore {
     /// (pure fns from `rustshare-memory`), (5) persist. Returns the persisted
     /// record, or `None` when the event was (a) a duplicate delivery (receipt
     /// already present), (b) skipped by policy (projection disabled, or a
-    /// never-eligible `dm`/`private`/`excluded` channel), or (c) a Deleted
+    /// never-eligible `dm`/`private`/`excluded` channel), (c) a Deleted
     /// event with no existing catalog record — a tombstone for a message that
     /// was never projected is a no-op; the deletion already lives in the
-    /// observation index. `content` must already be gated by policy by the
-    /// caller (None unless `content_indexing` on and body exists).
+    /// observation index, or (d) a Deleted observation exists at-or-after this
+    /// event for the message AND its delete envelope was already consumed
+    /// (tombstone-before-create delivery). `content`
+    /// must already be gated by policy by the caller (None unless
+    /// `content_indexing` on and body exists).
     pub async fn upsert_from_event_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
@@ -128,6 +159,62 @@ impl MemoryCatalogStore {
                     // the observation index. The receipt above records that
                     // the event was processed; its effect is "nothing".
                     return Ok(None);
+                }
+                // Tombstone-before-create delivery guard: if the create's
+                // first processing transiently failed (Retryable/backoff) and
+                // the delete was CONSUMED first (a no-op above), the later
+                // create retry would otherwise build a LIVE record for a
+                // deleted message. Consult the observation index BEFORE
+                // projecting: when a Deleted observation exists at-or-after
+                // this event's time AND that delete envelope was already
+                // consumed (its durable receipt exists), the message is
+                // deleted — never project it (this receipt stays). The
+                // consumed-receipt condition keeps the delivery-order
+                // distinction: a create processed BEFORE its delete still
+                // projects (the delete then tombstones the record — preserving
+                // the tombstoned-provenance path); only a create retry that
+                // arrives AFTER the delete was processed is suppressed. DB
+                // errors propagate (the caller retries; a rollback undoes the
+                // receipt). A store without the observation index cannot
+                // enforce this guard and fails closed rather than silently
+                // projecting.
+                let observations = self.chat_observation.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "MemoryCatalogStore has no ChatObservationStore; \
+                         cannot enforce the tombstone-before-create guard"
+                    )
+                })?;
+                if let Some(latest) = observations
+                    .lookup_for_auth(event.tenant_id, &data.buzz.message_id)
+                    .await?
+                {
+                    if latest.event_type == ObservedEventType::Deleted
+                        && latest.event_created_at >= data.buzz.created_at
+                    {
+                        // The durable event id for the delete is the
+                        // deterministic UUIDv5 of its Buzz event id (see
+                        // `build_envelope`); its receipt proves the delete was
+                        // consumed before this create retry.
+                        let deleted_event_id = Uuid::new_v5(
+                            &Uuid::NAMESPACE_URL,
+                            format!("elembra://io.elembra.chat/event/{}", latest.event_id)
+                                .as_bytes(),
+                        );
+                        let consumed = sqlx::query_scalar::<_, bool>(
+                            "SELECT EXISTS(
+                                 SELECT 1 FROM integration_consumer_receipts
+                                 WHERE consumer_id = $1 AND source = $2 AND event_id = $3
+                             )",
+                        )
+                        .bind(consumer_id)
+                        .bind(&event.source)
+                        .bind(deleted_event_id)
+                        .fetch_one(&mut **tx)
+                        .await?;
+                        if consumed {
+                            return Ok(None);
+                        }
+                    }
                 }
                 let record =
                     project_record(event.tenant_id, event.workspace_id, data, policy, content)

@@ -33,6 +33,14 @@
 //! from "not authorized" through those entry points. `authorize` keeps the
 //! Deny/NotFound distinction for typed internal callers.
 //!
+//! # Tombstone override
+//!
+//! The gate additionally refuses any message for which a Deleted observation
+//! exists at-or-after the latest candidate row: a message is never exposable
+//! once it has been deleted, and later pushed edits cannot resurrect it at
+//! the authorizer (a same-second delete/edit tie resolves deterministically
+//! by `event_id` in `lookup_for_auth`, and the tombstone check then wins).
+//!
 //! # Signature handling
 //!
 //! Signatures are NOT re-verified here: the observation index is the bridge's
@@ -132,6 +140,29 @@ impl ChatResourceOwner {
         // exposable message: it looks absent (existence-hiding).
         if !row.active || row.event_type == ObservedEventType::Deleted {
             return Err(Decision::NotFound);
+        }
+        // Authorizer-level tombstone override: a message is never exposable
+        // once any Deleted observation exists at-or-after the latest candidate
+        // row's time. A later-pushed edit that ties the delete's created_at
+        // (Nostr timestamps are second-resolution) and wins the `event_id`
+        // tie-break must not resurrect the message at the authorizer.
+        match self
+            .observations
+            .has_tombstone_since(ctx.tenant_id, message_id, row.event_created_at)
+            .await
+        {
+            Ok(true) => return Err(Decision::NotFound),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(
+                    application = CHAT_APPLICATION_ID,
+                    %resource,
+                    tenant = %ctx.tenant_id,
+                    %error,
+                    "chat tombstone check failed; denying access"
+                );
+                return Err(Decision::Deny);
+            }
         }
         // dm/private/excluded channels are never candidate-exposable through
         // Elembra; coarse channel filter.

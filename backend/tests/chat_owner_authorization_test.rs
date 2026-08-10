@@ -20,10 +20,12 @@
 //! tenant and community, so the suites never interfere (the active-community
 //! mapping index is global).
 
+use chrono::{Duration, Utc};
 use nostr::Keys;
 use rustshare_core::domain::{
     ActionCapability, ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
 };
+use rustshare_memory::event::ObservedEventType;
 use rustshare_resource_auth::{
     Candidate, Decision, PrincipalContext, Purpose, Representation, ResourceOwnerRegistry,
     ResourceRef, SourceAuthorizer, SourceError, CHAT_READ,
@@ -215,7 +217,7 @@ async fn set_chat_enablement(pool: &PgPool, tenant: TenantId, enabled: bool) {
 /// the bridge's verified state — so `signature_verified` is set and the
 /// checksum/signature columns carry placeholders that satisfy the NOT NULL
 /// constraints. `event_id == message_id` (created-event semantics; the row is
-/// the message's root).
+/// the message's root) and `event_created_at = now()`.
 #[allow(clippy::too_many_arguments)]
 async fn insert_observation(
     pool: &PgPool,
@@ -227,25 +229,56 @@ async fn insert_observation(
     active: bool,
     body: Option<&str>,
 ) {
+    insert_observation_at(
+        pool,
+        tenant,
+        community_id,
+        message_id,
+        message_id,
+        channel_kind,
+        event_type,
+        active,
+        body,
+        Utc::now(),
+    )
+    .await;
+}
+
+/// [`insert_observation`] with an explicit `event_id` and `event_created_at`
+/// (for the ordering/tie-break and tombstone-override tests).
+#[allow(clippy::too_many_arguments)]
+async fn insert_observation_at(
+    pool: &PgPool,
+    tenant: TenantId,
+    community_id: &str,
+    message_id: &str,
+    event_id: &str,
+    channel_kind: &str,
+    event_type: &str,
+    active: bool,
+    body: Option<&str>,
+    created_at: chrono::DateTime<Utc>,
+) {
     sqlx::query(
         "INSERT INTO chat_observed_events
             (tenant_id, workspace_id, event_id, message_id, event_type,
              community_id, channel_id, channel_kind, author_pubkey,
              event_created_at, observed_at, checksum, signature,
              signature_verified, body, active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now(),
-                 $10, $11, true, $12, $13)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(),
+                 $11, $12, true, $13, $14)",
     )
     .bind(tenant.0)
     .bind(tenant.0)
-    .bind(message_id)
+    .bind(event_id)
     .bind(message_id)
     .bind(event_type)
     .bind(community_id)
     .bind("channel-1")
     .bind(channel_kind)
     .bind(hex64(0xbb))
-    .bind(format!("sha256:{message_id}"))
+    .bind(created_at)
+    .bind(format!("sha256:{event_id}"))
     .bind("c".repeat(128))
     .bind(body)
     .bind(active)
@@ -699,6 +732,159 @@ async fn materialize_drops_denied_candidates() {
         !output.contains("stale cached hint"),
         "cached hints must never materialize"
     );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 11. A later-pushed edit must not resurrect a deleted message
+//     (authorizer-level tombstone override)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn post_delete_edit_does_not_reexpose() {
+    let _guard = SERIAL.lock().await;
+    let (pool, authorizer) = setup().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    let principal = PrincipalId::from(Uuid::new_v4());
+    let community_id = format!("community-{}", Uuid::new_v4());
+    let message_id = unique_hex64();
+
+    let mapping_id = insert_mapping(&pool, tenant, &community_id).await;
+    let binding_id = insert_binding(&pool, tenant, principal, &keys.public_key().to_hex()).await;
+    insert_admission(
+        &pool,
+        tenant,
+        mapping_id,
+        binding_id,
+        &keys.public_key().to_hex(),
+        true,
+    )
+    .await;
+    set_chat_enablement(&pool, tenant, true).await;
+
+    // The message root (created), then a Deleted observation at `t1`.
+    let base = Utc::now() - Duration::seconds(60);
+    let t1 = base + Duration::seconds(30);
+    insert_observation_at(
+        &pool,
+        tenant,
+        &community_id,
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("hello buzz"),
+        base,
+    )
+    .await;
+    insert_observation_at(
+        &pool,
+        tenant,
+        &community_id,
+        &message_id,
+        &hex64(0x01),
+        "workspace",
+        "deleted",
+        false,
+        None,
+        t1,
+    )
+    .await;
+    // A later-pushed edit whose `event_created_at` TIES the delete at `t1`
+    // (Nostr timestamps are second-resolution) and whose event id wins the
+    // deterministic `event_id DESC` tie-break: `lookup_for_auth` returns the
+    // ACTIVE edited row, so without the tombstone override the gate would
+    // re-expose the deleted message. The override must keep it NotFound.
+    insert_observation_at(
+        &pool,
+        tenant,
+        &community_id,
+        &message_id,
+        &hex64(0x02),
+        "workspace",
+        "edited",
+        true,
+        Some("edited after delete"),
+        t1,
+    )
+    .await;
+
+    let ctx = user_ctx(principal, tenant);
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &chat_ref(&message_id))
+            .await,
+        Decision::NotFound,
+        "a message with a Deleted observation at-or-after the candidate row must \
+         never be re-exposed by a later-pushed edit"
+    );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 12. `lookup_for_auth` tie-break: same created_at → higher event_id wins
+//     (deterministic ORDER BY, covered at the store level)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn lookup_for_auth_ties_break_by_event_id_desc() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let community_id = format!("community-{}", Uuid::new_v4());
+    let message_id = unique_hex64();
+    let same_second = Utc::now();
+
+    // Two rows for the same message with an identical `event_created_at`; the
+    // deterministic `ORDER BY event_created_at DESC, event_id DESC` must pick
+    // the higher event id (Nostr created_at is second-resolution, so this tie
+    // is real in production and must not resolve arbitrarily).
+    insert_observation_at(
+        &pool,
+        tenant,
+        &community_id,
+        &message_id,
+        &hex64(0x01),
+        "workspace",
+        "created",
+        true,
+        None,
+        same_second,
+    )
+    .await;
+    insert_observation_at(
+        &pool,
+        tenant,
+        &community_id,
+        &message_id,
+        &hex64(0x02),
+        "workspace",
+        "edited",
+        true,
+        None,
+        same_second,
+    )
+    .await;
+
+    let store = ChatObservationStore::new(pool.clone());
+    let row = store
+        .lookup_for_auth(tenant, &message_id)
+        .await
+        .expect("lookup must succeed")
+        .expect("a row must be found");
+    assert_eq!(
+        row.event_id,
+        hex64(0x02),
+        "same-second rows must tie-break on event_id DESC"
+    );
+    assert_eq!(row.event_type, ObservedEventType::Edited);
+    assert!(row.active);
 
     cleanup(&pool, tenant).await;
 }

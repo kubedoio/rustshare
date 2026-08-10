@@ -113,13 +113,14 @@ fn outbox_store(pool: PgPool) -> Arc<OutboxStore> {
     Arc::new(OutboxStore::new(pool, registry))
 }
 
-/// The shared chat stores over `pool`.
+/// The shared chat stores over `pool`. The catalog is wired with the
+/// observation index so the consumer's tombstone-before-create delivery guard
+/// is active.
 fn stores(pool: PgPool) -> (ChatIdentityStore, ChatObservationStore, MemoryCatalogStore) {
-    (
-        ChatIdentityStore::new(pool.clone()),
-        ChatObservationStore::new(pool.clone()),
-        MemoryCatalogStore::new(pool),
-    )
+    let chat_identity = ChatIdentityStore::new(pool.clone());
+    let observations = ChatObservationStore::new(pool.clone());
+    let catalog = MemoryCatalogStore::with_observation_store(pool, observations.clone());
+    (chat_identity, observations, catalog)
 }
 
 /// The bridge service under test, backed by the canonical first-party

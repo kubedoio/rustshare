@@ -72,7 +72,8 @@ database.
 
 - `buzz_observation.rs` — `BuzzObservationService::verify_and_ingest` (the
   observation half): HMAC + replay window, context sanity, Nostr id/Schnorr
-  verification (kind 1), mapping + binding, body gate, and the single
+  verification (kind 1), mapping + binding, body gate (workspace channels
+  only, and only when `content_indexing` is on), and the single
   transaction that upserts the observation and publishes the durable event on
   first observation. `BuzzEventPush` / `BuzzPushContext` / `BuzzPushError` /
   `IngestOutcome`; `build_envelope` (deterministic UUIDv5 id, `time` = Buzz
@@ -262,6 +263,13 @@ content-lifecycle policy and belongs at the indexing-copy layer.
   `DuplicateObservation` with nothing written — and the deterministic event id
   (UUIDv5 of the Buzz event id) means the durable event itself is stable across
   retries.
+- **Observation-body no-backfill (documented).** The observation `body`
+  column is captured at observation time and is NOT refreshed by re-push
+  (`DuplicateObservation` is a no-op) or by reconciliation. Enabling
+  `content_indexing` after the fact does not backfill bodies; restoring a
+  corrupted/lost body column requires deleting the affected observation rows
+  and re-pushing from Buzz. Consistent with the reference-first model: bodies
+  are opt-in indexing copies, never authoritative (design §6).
 
 ## 4. Security notes
 

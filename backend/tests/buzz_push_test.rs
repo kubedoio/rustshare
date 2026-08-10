@@ -501,6 +501,67 @@ async fn push_with_content_indexing_stores_body() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Bodies are captured only for workspace channels: even with
+//     content_indexing on, a dm-channel event must not store a body
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn dm_channel_body_not_stored_even_with_content_indexing() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+    let event = EventBuilder::text_note("dm channel secret")
+        .sign_with_keys(&keys)
+        .expect("sign text note");
+    let event_id = event.id.to_hex();
+    let push = BuzzEventPush {
+        event: serde_json::to_value(&event).unwrap(),
+        context: BuzzPushContext {
+            community_id: COMMUNITY_ID.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: ChatChannelKind::Dm,
+            thread_root_id: None,
+            message_id: event_id.clone(),
+            event_type: ObservedEventType::Created,
+            supersedes_event_id: None,
+        },
+    };
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+
+    assert_eq!(
+        service
+            .verify_and_ingest(&payload, &signature)
+            .await
+            .unwrap(),
+        IngestOutcome::FirstObservation
+    );
+
+    // The observation row exists (dm events are still observed) but its body
+    // is never captured: a never-eligible channel cannot leak a body into the
+    // indexing copy under the tenant's opt-in.
+    let row = observation_row(&pool, tenant, &event_id).await;
+    assert!(
+        row.get::<Option<String>, _>("body").is_none(),
+        "a dm-channel body must never be stored, even with content_indexing on"
+    );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
 // 3. Tampered Nostr signature ⇒ VerificationFailed
 // ---------------------------------------------------------------------------
 

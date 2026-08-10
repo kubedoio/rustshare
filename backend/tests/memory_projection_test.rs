@@ -17,7 +17,7 @@
 //! up exactly the rows it created (same convention as the outbox suite).
 
 use chrono::Utc;
-use nostr::{EventBuilder, Keys};
+use nostr::{EventBuilder, Keys, Timestamp};
 use rustshare_core::domain::{ApplicationRegistry, PrincipalId, TenantId};
 use rustshare_crypto::WebhookSigner;
 use rustshare_integration_events::{ConsumerOutcome, IntegrationEvent, OutboxConsumer};
@@ -66,13 +66,15 @@ fn service(pool: PgPool) -> BuzzObservationService {
     )
 }
 
-/// The consumer under test over the same pool.
+/// The consumer under test over the same pool. The catalog is wired with the
+/// observation index so the tombstone-before-create delivery guard is active.
 fn consumer(pool: PgPool) -> MemoryChatProjectionConsumer {
+    let observations = ChatObservationStore::new(pool.clone());
     MemoryChatProjectionConsumer::new(
         pool.clone(),
         ChatIdentityStore::new(pool.clone()),
-        ChatObservationStore::new(pool.clone()),
-        MemoryCatalogStore::new(pool),
+        observations.clone(),
+        MemoryCatalogStore::with_observation_store(pool, observations),
     )
 }
 
@@ -667,6 +669,102 @@ async fn content_indexing_stores_body_copy_in_record() {
         "the consumer copies the body from the observation index"
     );
     assert_eq!(row.get::<String, _>("indexing_status"), "content_stored");
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 7. Tombstone-before-create delivery: the delete is consumed first (no-op),
+//    then the create retry arrives → never a live record
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn tombstone_observed_before_create_produces_no_record() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let consumer = consumer(pool.clone());
+
+    // Created at t0, deleted at t1 > t0. Explicit `created_at` makes the
+    // ordering deterministic regardless of clock resolution (Nostr timestamps
+    // are second-resolution; the guard compares against the event time).
+    let t0 = Timestamp::from_secs(1_752_000_000);
+    let t1 = Timestamp::from_secs(1_752_000_010);
+
+    let created_event = EventBuilder::text_note("hello")
+        .custom_created_at(t0)
+        .sign_with_keys(&keys)
+        .expect("sign created event");
+    let created_id = created_event.id.to_hex();
+    let created_push = BuzzEventPush {
+        event: serde_json::to_value(&created_event).unwrap(),
+        context: BuzzPushContext {
+            community_id: COMMUNITY_ID.to_string(),
+            channel_id: CHANNEL_ID.to_string(),
+            channel_kind: ChatChannelKind::Workspace,
+            thread_root_id: None,
+            message_id: created_id.clone(),
+            event_type: ObservedEventType::Created,
+            supersedes_event_id: None,
+        },
+    };
+    let created_envelope = ingest_envelope(&pool, &service, &created_push, &created_id).await;
+
+    let deleted_event = EventBuilder::text_note("deleted")
+        .custom_created_at(t1)
+        .sign_with_keys(&keys)
+        .expect("sign deleted event");
+    let deleted_push = BuzzEventPush {
+        event: serde_json::to_value(&deleted_event).unwrap(),
+        context: BuzzPushContext {
+            community_id: COMMUNITY_ID.to_string(),
+            channel_id: CHANNEL_ID.to_string(),
+            channel_kind: ChatChannelKind::Workspace,
+            thread_root_id: None,
+            message_id: created_id.clone(),
+            event_type: ObservedEventType::Deleted,
+            supersedes_event_id: Some(created_id.clone()),
+        },
+    };
+    let deleted_id = deleted_event.id.to_hex();
+    let deleted_envelope = ingest_envelope(&pool, &service, &deleted_push, &deleted_id).await;
+
+    // Delivery-order inversion: the delete is consumed FIRST (a no-op — the
+    // message was never projected, so the tombstone leaves no record), then
+    // the create retry arrives. The tombstone-before-create guard consults
+    // the observation index and must refuse to build a live record for a
+    // message with a Deleted observation at-or-after this event.
+    assert_eq!(
+        consumer.process(&deleted_envelope).await,
+        ConsumerOutcome::Processed,
+        "a tombstone with no prior record is consumed with no effect"
+    );
+    assert_eq!(
+        consumer.process(&created_envelope).await,
+        ConsumerOutcome::Processed,
+        "the create retry is consumed but must not project"
+    );
+    assert_eq!(
+        catalog_count(&pool, tenant).await,
+        0,
+        "a deleted message must never be projected, regardless of delivery order"
+    );
+    assert_eq!(
+        receipt_count(&pool).await,
+        2,
+        "both events are durably processed (receipts present)"
+    );
 
     cleanup(&pool, tenant).await;
 }

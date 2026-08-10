@@ -617,7 +617,10 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = tenant();
-    let store = MemoryCatalogStore::new(pool.clone());
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
     let consumer_id = format!("io.elembra.test.memory-catalog-{}", Uuid::new_v4());
     let message_id = hex64(0xaa);
 
@@ -794,7 +797,10 @@ async fn memory_catalog_deleted_without_prior_record_is_no_op() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = tenant();
-    let store = MemoryCatalogStore::new(pool.clone());
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
     let consumer_id = format!("io.elembra.test.memory-catalog-{}", Uuid::new_v4());
     let message_id = hex64(0xaa);
     let deleted_id = hex64(0xdd);
@@ -882,7 +888,10 @@ async fn memory_catalog_policy_disabled_produces_no_record() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = tenant();
-    let store = MemoryCatalogStore::new(pool.clone());
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
     let consumer_id = format!("io.elembra.test.memory-catalog-{}", Uuid::new_v4());
     let message_id = hex64(0xaa);
 
@@ -957,7 +966,10 @@ async fn memory_catalog_upsert_records_reconciles_without_duplicates() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = tenant();
-    let store = MemoryCatalogStore::new(pool.clone());
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
     let policy = ProjectionPolicy {
         memory_projection: true,
         content_indexing: true,
@@ -1061,7 +1073,10 @@ async fn memory_catalog_get_and_count_are_tenant_scoped() {
     let pool = pool().await;
     let tenant_a = tenant();
     let tenant_b = tenant();
-    let store = MemoryCatalogStore::new(pool.clone());
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
     let policy = ProjectionPolicy {
         memory_projection: true,
         content_indexing: false,

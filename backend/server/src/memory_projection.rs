@@ -255,11 +255,12 @@ mod tests {
             "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
         });
         let pool = PgPool::connect_lazy(&database_url).unwrap();
+        let observations = ChatObservationStore::new(pool.clone());
         MemoryChatProjectionConsumer::new(
             pool.clone(),
             ChatIdentityStore::new(pool.clone()),
-            ChatObservationStore::new(pool.clone()),
-            MemoryCatalogStore::new(pool),
+            observations.clone(),
+            MemoryCatalogStore::with_observation_store(pool, observations),
         )
     }
 
