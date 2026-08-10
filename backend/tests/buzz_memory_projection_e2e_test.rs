@@ -945,6 +945,18 @@ async fn e2e_offline_memory_worker_recovers_without_event_loss() {
     assert_eq!(delivery_count(&pool, "processed").await, 0);
     assert_eq!(catalog_count(&pool, tenant).await, 0);
 
+    // A dispatch pass while the worker is disabled must NOT claim the pending
+    // deliveries: the real dispatcher runs with `enabled = false` and leaves
+    // both events queued (nothing processed, nothing projected).
+    dispatch_once(&pool, store.clone()).await;
+    assert_eq!(
+        delivery_count(&pool, "pending").await,
+        2,
+        "disabled consumer must not claim deliveries"
+    );
+    assert_eq!(delivery_count(&pool, "processed").await, 0);
+    assert_eq!(catalog_count(&pool, tenant).await, 0);
+
     // Re-enable the worker and run the dispatch pass: both events process,
     // one record per message, one receipt per event.
     store
@@ -995,8 +1007,8 @@ async fn e2e_memory_outage_does_not_affect_chat() {
     // dependency on Memory-owned state.
     //
     // (If a future change made the ingest path touch `memory_catalog`, this
-    // push would block on the DROP lock and the test would hang/timeout —
-    // the intended regression signal.)
+    // push would block on the DROP lock; the timeout below converts that
+    // regression into a clean test failure instead of an infinite hang.)
     let mut drop_tx = pool.begin().await.unwrap();
     sqlx::query("DROP TABLE memory_catalog")
         .execute(&mut *drop_tx)
@@ -1006,8 +1018,15 @@ async fn e2e_memory_outage_does_not_affect_chat() {
     let service = service(pool.clone());
     let (buzz_push, _event) =
         created_push(&keys, "hello buzz", &community, ChatChannelKind::Workspace);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        ingest_push(&service, &buzz_push),
+    )
+    .await
+    .expect("ingest must not block on the memory_catalog outage")
+    .unwrap();
     assert_eq!(
-        ingest_push(&service, &buzz_push).await.unwrap(),
+        outcome,
         IngestOutcome::FirstObservation,
         "ingest succeeds during a memory outage"
     );
