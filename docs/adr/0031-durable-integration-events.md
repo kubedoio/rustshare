@@ -93,7 +93,7 @@ A consumer must tolerate duplicate and delayed events.
 
 ### Registration and entitlement
 
-Durable consumer registration (`integration_consumers` + `integration_consumer_subscriptions`) is authoritative for both fan-out and claiming. Registration establishes entitlement going forward, not retroactively: events created before `registered_at` are not historical backlog for a newly registered consumer. Events created at or after registration that match the consumer's explicit subscriptions create a durable delivery obligation atomically with publication (eager fan-out in the source transaction).
+Durable consumer registration (`integration_consumers` + `integration_consumer_subscriptions`) is authoritative for both fan-out and claiming. Registration establishes entitlement going forward, not retroactively: events created before `registered_at` are not historical backlog for a newly registered consumer. Events created at or after registration that match the consumer's explicit subscriptions create a durable delivery obligation atomically with publication (eager fan-out in the source transaction). An event's creation time is its outbox insertion timestamp (`clock_timestamp()`), not the source transaction's start time — a consumer that registers before the event row is inserted is entitled even if the source transaction began earlier.
 
 Every durable consumer MUST declare at least one explicit subscription pattern; empty subscription lists are rejected at registration. Broad consumers use explicit prefixes such as `io.elembra.*` or `io.elembra.files.*`. There is no "empty subscription = subscribe to everything" semantic.
 
