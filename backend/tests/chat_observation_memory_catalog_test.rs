@@ -34,6 +34,15 @@ use uuid::Uuid;
 /// this is belt-and-suspenders against leaked rows between tests.
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+/// Fully-enabled policy for the store-level lifecycle tests; policy handling
+/// itself is exercised explicitly by
+/// `memory_catalog_policy_disabled_produces_no_record` and the
+/// never-eligible-channel cases.
+const ENABLED_POLICY: ProjectionPolicy = ProjectionPolicy {
+    memory_projection: true,
+    content_indexing: true,
+};
+
 /// Shared pool over `DATABASE_URL` with the same fallback the storage-layer
 /// tests use.
 async fn pool() -> PgPool {
@@ -390,6 +399,82 @@ async fn chat_observation_list_for_reconcile_respects_since_and_order() {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. ChatObservationStore::get_by_event_id: point lookup by (tenant, event_id)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn chat_observation_get_by_event_id_returns_specific_event() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = ChatObservationStore::new(pool.clone());
+    let message_id = hex64(0xaa);
+
+    let mut tx = pool.begin().await.unwrap();
+    let created_id = message_id.clone();
+    let created_data = event_data(
+        ObservedEventType::Created,
+        &created_id,
+        &message_id,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let created = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &created_data,
+        Some("v1".into()),
+    );
+    store.upsert_event_in_tx(&mut tx, &created).await.unwrap();
+    let edit_id = hex64(0xee);
+    let edit_data = event_data(
+        ObservedEventType::Edited,
+        &edit_id,
+        &message_id,
+        1_752_000_010,
+        ChatChannelKind::Workspace,
+    );
+    let edit = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &edit_data,
+        Some("v2".into()),
+    );
+    store.upsert_event_in_tx(&mut tx, &edit).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let found = store
+        .get_by_event_id(tenant, &edit_id)
+        .await
+        .unwrap()
+        .expect("an observed event must be found by id");
+    assert_eq!(found.event_id, edit_id);
+    assert_eq!(found.message_id, message_id);
+    assert_eq!(found.event_type, ObservedEventType::Edited);
+    assert_eq!(found.body.as_deref(), Some("v2"), "body round-trips");
+
+    assert!(
+        store
+            .get_by_event_id(tenant, &hex64(0xff))
+            .await
+            .unwrap()
+            .is_none(),
+        "unknown event id must yield None"
+    );
+    assert!(
+        store
+            .get_by_event_id(TenantId::from(Uuid::new_v4()), &edit_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "rows are tenant-scoped"
+    );
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+// ---------------------------------------------------------------------------
 // 4. ChatIdentityStore::binding_by_pubkey: live binding, None after revoke
 // ---------------------------------------------------------------------------
 
@@ -553,6 +638,7 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
                 &consumer_id,
                 &created_event,
                 &created_data,
+                &ENABLED_POLICY,
                 Some("v1".into()),
             )
             .await
@@ -579,6 +665,7 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
                 &consumer_id,
                 &created_event,
                 &created_data,
+                &ENABLED_POLICY,
                 Some("v1".into()),
             )
             .await
@@ -610,6 +697,7 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
                 &consumer_id,
                 &edit_event,
                 &edit_data,
+                &ENABLED_POLICY,
                 Some("v2".into()),
             )
             .await
@@ -642,6 +730,7 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
                 &consumer_id,
                 &oob_event,
                 &oob_data,
+                &ENABLED_POLICY,
                 Some("oob".into()),
             )
             .await
@@ -671,7 +760,14 @@ async fn memory_catalog_upsert_from_event_full_lifecycle() {
     let tombstoned = {
         let mut tx = pool.begin().await.unwrap();
         let tombstoned = store
-            .upsert_from_event_in_tx(&mut tx, &consumer_id, &deleted_event, &deleted_data, None)
+            .upsert_from_event_in_tx(
+                &mut tx,
+                &consumer_id,
+                &deleted_event,
+                &deleted_data,
+                &ENABLED_POLICY,
+                None,
+            )
             .await
             .unwrap()
             .expect("deletion must apply");
@@ -716,7 +812,14 @@ async fn memory_catalog_deleted_without_prior_record_is_no_op() {
     let result = {
         let mut tx = pool.begin().await.unwrap();
         let result = store
-            .upsert_from_event_in_tx(&mut tx, &consumer_id, &deleted_event, &deleted_data, None)
+            .upsert_from_event_in_tx(
+                &mut tx,
+                &consumer_id,
+                &deleted_event,
+                &deleted_data,
+                &ENABLED_POLICY,
+                None,
+            )
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -741,7 +844,14 @@ async fn memory_catalog_deleted_without_prior_record_is_no_op() {
     let redelivery = {
         let mut tx = pool.begin().await.unwrap();
         let result = store
-            .upsert_from_event_in_tx(&mut tx, &consumer_id, &deleted_event, &deleted_data, None)
+            .upsert_from_event_in_tx(
+                &mut tx,
+                &consumer_id,
+                &deleted_event,
+                &deleted_data,
+                &ENABLED_POLICY,
+                None,
+            )
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -758,6 +868,81 @@ async fn memory_catalog_deleted_without_prior_record_is_no_op() {
     .await
     .unwrap();
     assert_eq!(receipts, 1, "exactly one receipt for the tombstone");
+
+    cleanup(&pool, tenant, &consumer_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// 6b. MemoryCatalogStore::upsert_from_event_in_tx: per-tenant policy gate
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_policy_disabled_produces_no_record() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::new(pool.clone());
+    let consumer_id = format!("io.elembra.test.memory-catalog-{}", Uuid::new_v4());
+    let message_id = hex64(0xaa);
+
+    // Projection disabled (`memory_projection: false`): a Workspace created
+    // event is consumed but produces no catalog record.
+    let created_data = event_data(
+        ObservedEventType::Created,
+        &message_id,
+        &message_id,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let created_event = integration_event(tenant, &created_data);
+    let disabled = ProjectionPolicy {
+        memory_projection: false,
+        content_indexing: false,
+    };
+    let result = {
+        let mut tx = pool.begin().await.unwrap();
+        let result = store
+            .upsert_from_event_in_tx(
+                &mut tx,
+                &consumer_id,
+                &created_event,
+                &created_data,
+                &disabled,
+                Some("v1".into()),
+            )
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        result
+    };
+    assert!(
+        result.is_none(),
+        "a disabled policy must consume the event without projecting it"
+    );
+    assert_eq!(
+        store.count_for_tenant(tenant).await.unwrap(),
+        0,
+        "no catalog row may be created"
+    );
+    assert!(
+        store.get(tenant, &message_id).await.unwrap().is_none(),
+        "no record exists for the message"
+    );
+
+    // The receipt was still written: the event was durably processed, its
+    // effect is "nothing" (that event will never produce a record).
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        receipts, 1,
+        "a policy-skipped event still leaves exactly one receipt"
+    );
 
     cleanup(&pool, tenant, &consumer_id).await;
 }

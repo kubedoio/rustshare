@@ -6,7 +6,7 @@ use anyhow::Result;
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_integration_events::IntegrationEvent;
 use rustshare_memory::event::{ChatChannelKind, ObservedChatEventData, ObservedEventType};
-use rustshare_memory::policy::ProjectionPolicy;
+use rustshare_memory::policy::{ProjectionDecision, ProjectionPolicy};
 use rustshare_memory::project::{apply_event, apply_tombstone, project_record};
 use rustshare_memory::record::{IndexingStatus, MemoryCatalogRecord};
 use sqlx::{PgPool, Row};
@@ -22,16 +22,6 @@ pub struct ReconcileCounts {
     /// Existing rows updated.
     pub updated: u64,
 }
-
-/// The store's caller has already gated `content` by tenant policy (None
-/// unless `content_indexing` is on and a body exists); the pure projection
-/// functions still take a policy object, so use a fully-enabled one. The
-/// never-eligible channel check (`ProjectionPolicy::decision`) still applies:
-/// `dm`/`private`/`excluded` events are consumed but produce no record.
-const FULL_POLICY: ProjectionPolicy = ProjectionPolicy {
-    memory_projection: true,
-    content_indexing: true,
-};
 
 const RECORD_COLUMNS: &str = "record_id, tenant_id, workspace_id, source_application, \
     source_type, source_ref, message_id, latest_event_id, event_type, community_id, \
@@ -53,23 +43,26 @@ impl MemoryCatalogStore {
     /// Consumer-side durable projection: in ONE tx — (1) idempotency receipt
     /// into `integration_consumer_receipts` (`ON CONFLICT
     /// (consumer_id, source, event_id) DO NOTHING`; `rows_affected() == 1`
-    /// gates the effect), (2) load the existing record by
-    /// `(tenant_id, message_id)`, (3) insert via `project_record` if none,
+    /// gates the effect), (2) per-tenant policy gate
+    /// (`policy.decision(channel_kind)`; a skip keeps the receipt — the event
+    /// is durably processed with no effect), (3) load the existing record by
+    /// `(tenant_id, message_id)`, (4) insert via `project_record` if none,
     /// else `apply_tombstone` for Deleted events or `apply_event` otherwise
-    /// (pure fns from `rustshare-memory`), (4) persist. Returns the persisted
+    /// (pure fns from `rustshare-memory`), (5) persist. Returns the persisted
     /// record, or `None` when the event was (a) a duplicate delivery (receipt
-    /// already present), (b) not projected (never-eligible channel), or
-    /// (c) a Deleted event with no existing catalog record — a tombstone for
-    /// a message that was never projected is a no-op; the deletion already
-    /// lives in the observation index. `content` must already be gated by
-    /// policy by the caller (None unless `content_indexing` on and body
-    /// exists).
+    /// already present), (b) skipped by policy (projection disabled, or a
+    /// never-eligible `dm`/`private`/`excluded` channel), or (c) a Deleted
+    /// event with no existing catalog record — a tombstone for a message that
+    /// was never projected is a no-op; the deletion already lives in the
+    /// observation index. `content` must already be gated by policy by the
+    /// caller (None unless `content_indexing` on and body exists).
     pub async fn upsert_from_event_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         consumer_id: &str,
         event: &IntegrationEvent,
         data: &ObservedChatEventData,
+        policy: &ProjectionPolicy,
         content: Option<String>,
     ) -> Result<Option<MemoryCatalogRecord>> {
         let receipt = sqlx::query(
@@ -91,6 +84,17 @@ impl MemoryCatalogStore {
         if receipt.rows_affected() != 1 {
             // Duplicate delivery: the effect was already applied on the first
             // processing of this (consumer, source, event_id).
+            return Ok(None);
+        }
+
+        // Per-tenant policy gate, centralized here so the consumer does not
+        // need a separate receipt-only path. A skip keeps the receipt: the
+        // event is durably consumed, its effect is "nothing" (the tenant is
+        // not opted in, or the channel is never eligible for projection).
+        if matches!(
+            policy.decision(data.context.channel_kind),
+            ProjectionDecision::Skip(_)
+        ) {
             return Ok(None);
         }
 
@@ -123,16 +127,17 @@ impl MemoryCatalogStore {
                     // the event was processed; its effect is "nothing".
                     return Ok(None);
                 }
-                let Some(record) = project_record(
-                    event.tenant_id,
-                    event.workspace_id,
-                    data,
-                    &FULL_POLICY,
-                    content,
-                ) else {
-                    // Never-eligible channel: consumed, but not projected.
-                    return Ok(None);
-                };
+                let record =
+                    project_record(event.tenant_id, event.workspace_id, data, policy, content)
+                        // The policy gate above already decided Project, so a Skip
+                        // here is unreachable; keep the Option shape of the pure fn
+                        // and fail closed rather than persist a record the policy
+                        // would refuse.
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "policy gate passed but project_record skipped the event"
+                            )
+                        })?;
                 insert_in_tx(tx, &record).await?;
                 record
             }

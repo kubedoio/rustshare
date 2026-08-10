@@ -706,17 +706,30 @@ pub async fn init_app() -> Result<AppState> {
     // the drain loop is gated on RUSTSHARE_OUTBOX_WORKER_ENABLED — a
     // disabled worker just accumulates events until re-enabled.
     //
-    // Production ships a zero-consumer dispatcher: real consumers register
-    // themselves (durable consumer registration, `integration_consumers` /
-    // `integration_consumer_subscriptions`) when their features land
-    // (#213/#119/#214). The reference "memory projection" consumer used by
-    // the integration tests lives in `backend/tests/contracts` only.
+    // Consumers register themselves (durable consumer registration,
+    // `integration_consumers` / `integration_consumer_subscriptions`) at the
+    // start of every dispatcher tick; registration is future-only, so a
+    // consumer must be present in the Vec before any event it should consume
+    // is published. The Memory chat projection consumer is always registered
+    // (it consumes the Chat observation events this process publishes); the
+    // Buzz admission bridge is optional (disabled unless a service key is
+    // configured).
+    let memory_projection_consumer =
+        Arc::new(crate::memory_projection::MemoryChatProjectionConsumer::new(
+            db_pool.clone(),
+            (*chat_identity_store).clone(),
+            (*chat_observation_store).clone(),
+            (*memory_catalog_store).clone(),
+        ));
     let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
         crate::buzz_bridge::BuzzAdmissionBridge::from_env()
             .map(|consumer| {
                 Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
             })
             .into_iter()
+            .chain(std::iter::once(
+                memory_projection_consumer as Arc<dyn rustshare_integration_events::OutboxConsumer>,
+            ))
             .collect();
     let outbox_worker_config = OutboxWorkerConfig::from_env();
     let outbox_dispatcher = Arc::new(OutboxDispatcher::new(

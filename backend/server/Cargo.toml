@@ -262,6 +262,10 @@ name = "buzz_push_test"
 path = "../tests/buzz_push_test.rs"
 
 [[test]]
+name = "memory_projection_test"
+path = "../tests/memory_projection_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 

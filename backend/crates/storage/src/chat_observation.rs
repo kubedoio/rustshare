@@ -96,6 +96,32 @@ impl ChatObservationStore {
         row.map(|row| row_to_event(&row)).transpose()
     }
 
+    /// The observation row for a specific Buzz event id (used by the Memory
+    /// consumer to fetch the indexing-copy body when content_indexing is on).
+    /// The PK is `(tenant_id, event_id)`, so this is a point lookup; an
+    /// unknown event id yields `None` (a missing body must never block
+    /// projection — the record is still created with reference-only status).
+    pub async fn get_by_event_id(
+        &self,
+        tenant_id: TenantId,
+        event_id: &str,
+    ) -> Result<Option<ChatObservedEvent>> {
+        let row = sqlx::query(
+            "SELECT tenant_id, workspace_id, event_id, message_id, event_type,
+                    supersedes_event_id, community_id, channel_id, channel_kind,
+                    thread_root_id, author_pubkey, author_principal_id,
+                    event_created_at, observed_at, checksum, signature,
+                    signature_verified, body, active
+             FROM chat_observed_events
+             WHERE tenant_id = $1 AND event_id = $2",
+        )
+        .bind(tenant_id.0)
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| row_to_event(&row)).transpose()
+    }
+
     /// All observed events for a message, oldest first (reconciliation/audit).
     pub async fn get_by_message_id(
         &self,
