@@ -233,8 +233,8 @@ impl OutboxDispatcher {
         // Claim → hand-off latency (DB + lease time), regardless of outcome.
         metrics::histogram!("outbox_claim_seconds", "consumer" => consumer_id.clone())
             .record(claim_started.elapsed().as_secs_f64());
-        let claimed = match claimed {
-            Ok(claimed) => claimed,
+        let batch = match claimed {
+            Ok(batch) => batch,
             Err(error) => {
                 warn!(
                     %consumer_id,
@@ -244,9 +244,21 @@ impl OutboxDispatcher {
                 return;
             }
         };
+        // Rows dead-lettered store-side during the claim (poison envelopes,
+        // out-of-subscription rows) are part of the documented dead-letter
+        // contract. Their event type is unrecoverable (that is why they are
+        // poison), so they are counted under the fixed `unknown` label.
+        if batch.poison_dead_lettered > 0 {
+            metrics::counter!(
+                "outbox_dead_lettered_total",
+                "consumer" => consumer_id.clone(),
+                "event_type" => "unknown"
+            )
+            .increment(batch.poison_dead_lettered as u64);
+        }
         metrics::counter!("outbox_dispatched_total", "consumer" => consumer_id.clone())
-            .increment(claimed.len() as u64);
-        for claimed_event in claimed {
+            .increment(batch.len() as u64);
+        for claimed_event in batch.deliveries {
             self.process_claimed(consumer, &consumer_id, &claimed_event)
                 .await;
         }

@@ -204,6 +204,31 @@ pub struct ClaimedEvent {
     pub event: IntegrationEvent,
 }
 
+/// Result of one [`OutboxStore::claim_batch`] call.
+///
+/// The struct derefs to the claimed deliveries, so existing call sites keep
+/// working unchanged (`claimed.len()`, `claimed[i]`, `claimed.iter()`); the
+/// metadata fields are only needed by the dispatcher.
+#[derive(Debug, Clone)]
+pub struct ClaimBatch {
+    /// Deliveries claimed and handed to the consumer (validated envelopes
+    /// inside the durable subscription set).
+    pub deliveries: Vec<ClaimedEvent>,
+    /// Rows dead-lettered store-side during the claim (poison envelopes or
+    /// deliveries outside the durable subscriptions). The dispatcher counts
+    /// these in `outbox_dead_lettered_total`; without this, the documented
+    /// "poison events or exhausted retries" contract would undercount.
+    pub poison_dead_lettered: u32,
+}
+
+impl std::ops::Deref for ClaimBatch {
+    type Target = [ClaimedEvent];
+
+    fn deref(&self) -> &Self::Target {
+        &self.deliveries
+    }
+}
+
 /// Durable registration of one integration-event consumer.
 ///
 /// The registration table is authoritative for both eager fan-out at publish
@@ -747,6 +772,11 @@ impl OutboxStore {
     /// The total returned rows never exceed `config.claim_batch_size`: step 1
     /// is bounded by `claim_batch_size` and step 2 by the remainder.
     ///
+    /// Returns the claimed deliveries plus how many claimed rows were
+    /// dead-lettered store-side ([`ClaimBatch`]) — the event type of a poison
+    /// row is not recoverable without parsing its (possibly corrupt) payload,
+    /// so the dispatcher counts those with a fixed `event_type` label.
+    ///
     /// No tenant filter by design: the delivery ledger and outbox are
     /// platform-global, so a consumer with a stable identity (e.g. a Memory
     /// projection serving all tenants) processes events across tenants. This
@@ -766,14 +796,20 @@ impl OutboxStore {
         consumer_id: &str,
         config: &OutboxConfig,
         worker_id: &str,
-    ) -> Result<Vec<ClaimedEvent>, OutboxStoreError> {
+    ) -> Result<ClaimBatch, OutboxStoreError> {
         // The durable registration is authoritative; a disabled consumer
         // keeps its obligations but is not claimed.
         let Some(registration) = self.consumer_registration(consumer_id).await? else {
-            return Ok(Vec::new());
+            return Ok(ClaimBatch {
+                deliveries: Vec::new(),
+                poison_dead_lettered: 0,
+            });
         };
         if !registration.enabled {
-            return Ok(Vec::new());
+            return Ok(ClaimBatch {
+                deliveries: Vec::new(),
+                poison_dead_lettered: 0,
+            });
         }
 
         let mut rows = self
@@ -797,6 +833,7 @@ impl OutboxStore {
         // Defensive dedupe: a row cannot normally appear in both steps.
         let mut seen = std::collections::HashSet::new();
         let mut claimed = Vec::with_capacity(rows.len());
+        let mut poison_dead_lettered = 0u32;
         for row in rows {
             if !seen.insert((row.source.clone(), row.event_id)) {
                 continue;
@@ -810,6 +847,7 @@ impl OutboxStore {
                         &format!("undecodable event_json: {error}"),
                     )
                     .await?;
+                    poison_dead_lettered += 1;
                     continue;
                 }
             };
@@ -820,6 +858,7 @@ impl OutboxStore {
                     &format!("invalid event envelope: {error}"),
                 )
                 .await?;
+                poison_dead_lettered += 1;
                 continue;
             }
             // Invariant guard: the SQL filter above is complete, but never
@@ -834,6 +873,7 @@ impl OutboxStore {
                     "claimed event outside durable subscriptions",
                 )
                 .await?;
+                poison_dead_lettered += 1;
                 continue;
             }
             claimed.push(ClaimedEvent {
@@ -845,7 +885,10 @@ impl OutboxStore {
                 event,
             });
         }
-        Ok(claimed)
+        Ok(ClaimBatch {
+            deliveries: claimed,
+            poison_dead_lettered,
+        })
     }
 
     /// Step 1 of [`Self::claim_batch`]: re-claim existing pending or
@@ -2435,6 +2478,10 @@ mod tests {
             .unwrap();
         assert!(claimed.is_empty(), "poison row must be skipped");
         assert_eq!(
+            claimed.poison_dead_lettered, 1,
+            "claim-time poison dead-letters must be reported to the dispatcher"
+        );
+        assert_eq!(
             delivery_state(&pool, &consumer_id, &event).await,
             "dead_lettered"
         );
@@ -2952,6 +2999,10 @@ mod tests {
             .unwrap();
         assert_eq!(claimed.len(), 1, "only the subscribed event is claimed");
         assert_eq!(claimed[0].event, created);
+        assert_eq!(
+            claimed.poison_dead_lettered, 1,
+            "the out-of-subscription row must be counted as a claim-time dead-letter"
+        );
         // The guard is not retryable: the row must be dead-lettered (not left
         // claimed to be re-claimed and re-skipped forever), with a redacted
         // operator-visible reason.
