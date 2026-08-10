@@ -769,6 +769,11 @@ pub fn valid_namespace(value: &str) -> bool {
 /// `io.elembra.<domain>...<event>.v<N>` with ASCII lowercase segments and a
 /// trailing major version `N >= 1`.
 ///
+/// The version segment is the LAST dot-segment and must be `v` + ASCII
+/// digits; no other segment may look like a version (`v` + digits), so a
+/// version-like segment mid-string (e.g. `io.elembra.files.v1.v2`) cannot
+/// pass envelope syntax.
+///
 /// This is the same rule the envelope validator
 /// (`rustshare-integration-events::validate_event_type`) enforces on event
 /// instances; manifests declaring publishes/subscribes must use it too.
@@ -776,18 +781,28 @@ pub fn valid_event_type(t: &str) -> bool {
     let Some(rest) = t.strip_prefix("io.elembra.") else {
         return false;
     };
-    let Some(version_at) = rest.rfind(".v") else {
+    let Some((domain, version)) = rest.rsplit_once('.') else {
         return false;
     };
-    let version = &rest[version_at + 2..];
-    if version.is_empty() || !version.bytes().all(|b| b.is_ascii_digit()) {
+    let Some(digits) = version.strip_prefix('v') else {
+        return false;
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    if version.trim_start_matches('0').is_empty() {
+    if digits.trim_start_matches('0').is_empty() {
         return false; // `.v0` / `.v00` — major version must be >= 1
     }
-    let domain = &rest[..version_at];
-    !domain.is_empty() && valid_namespace(domain)
+    if domain.is_empty() || !valid_namespace(domain) {
+        return false;
+    }
+    // The version is the last dot-segment and the only one: reject any other
+    // version-like segment in the domain.
+    domain.split('.').all(|segment| {
+        segment
+            .strip_prefix('v')
+            .is_none_or(|d| d.is_empty() || !d.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 fn action_namespace(action: &ActionCapability) -> Option<String> {
@@ -944,6 +959,9 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert!(!valid_event_type("garbage"));
         assert!(!valid_event_type("io.elembra.files.file.created.v0"));
         assert!(!valid_event_type("io.elembra.files.file.created"));
+        // A version-like segment mid-string must not pass envelope syntax.
+        assert!(!valid_event_type("io.elembra.files.v1.v2"));
+        assert!(!valid_event_type("io.elembra.files.file.v1.created.v1"));
     }
 
     #[test]
