@@ -258,6 +258,10 @@ name = "chat_observation_memory_catalog_test"
 path = "../tests/chat_observation_memory_catalog_test.rs"
 
 [[test]]
+name = "buzz_memory_projection_e2e_test"
+path = "../tests/buzz_memory_projection_e2e_test.rs"
+
+[[test]]
 name = "buzz_push_test"
 path = "../tests/buzz_push_test.rs"
 
