@@ -194,6 +194,18 @@ pub struct IntegrationEvents {
     #[serde(default)]
     pub subscribes: Vec<String>,
 }
+
+impl ApplicationManifest {
+    /// Whether this manifest declares `event_type` in
+    /// `integration_events.publishes` (i.e. the Application owns that
+    /// integration-event contract).
+    pub fn publishes_event(&self, event_type: &str) -> bool {
+        self.integration_events
+            .publishes
+            .iter()
+            .any(|declared| declared == event_type)
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MemoryPolicy {
     #[serde(rename = "sourceTypes", default)]
@@ -266,6 +278,8 @@ pub enum ApplicationRegistryError {
     DuplicateContribution(String),
     #[error("duplicate action capability namespace: {0}")]
     DuplicateActionNamespace(String),
+    #[error("invalid integration event type: {0}")]
+    InvalidEventType(String),
 }
 
 pub struct ApplicationRegistry {
@@ -353,6 +367,12 @@ impl ApplicationRegistry {
     }
     pub fn manifest(&self, id: &ApplicationId) -> Option<&ApplicationManifest> {
         self.manifests.get(id)
+    }
+    /// Whether `application`'s manifest declares that it publishes
+    /// `event_type`.
+    pub fn owns_event_type(&self, application: &ApplicationId, event_type: &str) -> bool {
+        self.manifest(application)
+            .is_some_and(|manifest| manifest.publishes_event(event_type))
     }
     pub fn state(
         &self,
@@ -532,6 +552,20 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 actions: vec![ActionCapability::new(format!("{slug}.read"))],
             }]
         };
+        // The Files Application owns the durable integration-event contracts
+        // for file creation and content updates (ADR-0031). Other
+        // Applications declare no integration events yet.
+        let integration_events = if slug == "files" {
+            IntegrationEvents {
+                publishes: vec![
+                    "io.elembra.files.file.created.v1".into(),
+                    "io.elembra.files.file.updated.v1".into(),
+                ],
+                subscribes: Vec::new(),
+            }
+        } else {
+            IntegrationEvents::default()
+        };
         ApplicationManifest {
             api_version: "elembra.io/v1alpha1".into(),
             kind: "Application".into(),
@@ -583,7 +617,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 }],
                 ..Default::default()
             },
-            integration_events: IntegrationEvents::default(),
+            integration_events,
             memory: None,
             configuration: ConfigurationReference {
                 schema: format!("contracts/{id}/config-v1alpha1.schema.json"),
@@ -669,6 +703,18 @@ pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), Applicati
             "empty contract, resource, or event declaration".into(),
         ));
     }
+    // Integration-event declarations must use the canonical namespaced,
+    // versioned syntax (same rule as the envelope's `validate_event_type`).
+    for event in manifest
+        .integration_events
+        .publishes
+        .iter()
+        .chain(manifest.integration_events.subscribes.iter())
+    {
+        if !valid_event_type(event) {
+            return Err(ApplicationRegistryError::InvalidEventType(event.clone()));
+        }
+    }
     if let Some(memory) = &manifest.memory {
         if !matches!(
             memory.publication.as_str(),
@@ -706,7 +752,10 @@ pub fn validate_manifest(manifest: &ApplicationManifest) -> Result<(), Applicati
     Ok(())
 }
 
-fn valid_namespace(value: &str) -> bool {
+/// Namespace syntax shared by Application IDs, resource types and
+/// contribution ids: one or more dot-separated segments of ASCII lowercase
+/// letters, digits, `-` and `_`.
+pub fn valid_namespace(value: &str) -> bool {
     !value.is_empty()
         && value.split('.').all(|part| {
             !part.is_empty()
@@ -714,6 +763,48 @@ fn valid_namespace(value: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
         })
+}
+
+/// Whether `t` is a well-formed integration-event type:
+/// `io.elembra.<domain>...<event>.v<N>` with ASCII lowercase segments and a
+/// trailing major version `N >= 1`.
+///
+/// The version segment is the LAST dot-segment and must be `v` + ASCII
+/// digits; no other segment may look like a version (a bare `v`, or `v` +
+/// digits), so a version-like segment mid-string (e.g.
+/// `io.elembra.files.v1.v2` or `io.elembra.files.v.file.created.v1`) cannot
+/// pass envelope syntax.
+///
+/// This is the same rule the envelope validator
+/// (`rustshare-integration-events::validate_event_type`) enforces on event
+/// instances; manifests declaring publishes/subscribes must use it too.
+pub fn valid_event_type(t: &str) -> bool {
+    let Some(rest) = t.strip_prefix("io.elembra.") else {
+        return false;
+    };
+    let Some((domain, version)) = rest.rsplit_once('.') else {
+        return false;
+    };
+    let Some(digits) = version.strip_prefix('v') else {
+        return false;
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    if digits.trim_start_matches('0').is_empty() {
+        return false; // `.v0` / `.v00` — major version must be >= 1
+    }
+    if domain.is_empty() || !valid_namespace(domain) {
+        return false;
+    }
+    // The version is the last dot-segment and the only one: reject any other
+    // version-like segment in the domain. A bare `v` counts as version-like
+    // too, so `io.elembra.v.file.created.v1` cannot pass envelope syntax.
+    domain.split('.').all(|segment| {
+        segment
+            .strip_prefix('v')
+            .is_none_or(|d| !d.is_empty() && !d.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 fn action_namespace(action: &ActionCapability) -> Option<String> {
@@ -829,6 +920,55 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
             .push(ActionCapability::from("notes.write"));
         assert!(ApplicationRegistry::new([application]).is_ok());
     }
+    #[test]
+    fn rejects_invalid_integration_event_declarations() {
+        let mut application = manifest("io.elembra.notes");
+        application.integration_events.publishes = vec!["garbage".into()];
+        assert!(matches!(
+            validate_manifest(&application),
+            Err(ApplicationRegistryError::InvalidEventType(_))
+        ));
+        let mut application = manifest("io.elembra.notes");
+        application.integration_events.subscribes =
+            vec!["io.elembra.mail.message.archived.v1".into()];
+        assert!(validate_manifest(&application).is_ok());
+    }
+
+    #[test]
+    fn files_manifest_owns_file_events() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let files = ApplicationId::new("io.elembra.files");
+        let notes = ApplicationId::new("io.elembra.notes");
+        let created = "io.elembra.files.file.created.v1";
+        let updated = "io.elembra.files.file.updated.v1";
+
+        let files_manifest = registry.manifest(&files).unwrap();
+        assert!(files_manifest.publishes_event(created));
+        assert!(files_manifest.publishes_event(updated));
+        assert!(!files_manifest.publishes_event("io.elembra.mail.message.archived.v1"));
+
+        assert!(registry.owns_event_type(&files, created));
+        assert!(registry.owns_event_type(&files, updated));
+        assert!(!registry.owns_event_type(&files, "io.elembra.files.file.deleted.v1"));
+        assert!(!registry.owns_event_type(&notes, created));
+        assert!(!registry.owns_event_type(&notes, updated));
+    }
+
+    #[test]
+    fn valid_event_type_rule_matches_envelope_validator() {
+        assert!(valid_event_type("io.elembra.files.file.created.v1"));
+        assert!(valid_event_type("io.elembra.files.v1"));
+        assert!(!valid_event_type("garbage"));
+        assert!(!valid_event_type("io.elembra.files.file.created.v0"));
+        assert!(!valid_event_type("io.elembra.files.file.created"));
+        // A version-like segment mid-string must not pass envelope syntax.
+        assert!(!valid_event_type("io.elembra.files.v1.v2"));
+        assert!(!valid_event_type("io.elembra.files.file.v1.created.v1"));
+        // A bare `v` segment counts as version-like too.
+        assert!(!valid_event_type("io.elembra.v.file.created.v1"));
+        assert!(!valid_event_type("io.elembra.files.v.file.created.v1"));
+    }
+
     #[test]
     fn isolates_enablement_and_preserves_identity_across_runtime_change() {
         let mut a = manifest("io.elembra.notes");

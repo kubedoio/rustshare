@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Durable Integration Events (ADR-0031, v1alpha1) in the new
+  `rustshare-integration-events` crate with a transactional PostgreSQL outbox
+  (`rustshare-storage::OutboxStore`), a CloudEvents-compatible `IntegrationEvent`
+  envelope, and a durable consumer contract. File uploads publish
+  `io.elembra.files.file.created.v1`, and every content mutation — re-upload,
+  `update_file`/`update_file_from_path`, `restore_version`, and `edit_file` —
+  publishes `io.elembra.files.file.updated.v1`, all atomically with their
+  metadata transaction; events carry the acting principal
+  (`elembraActor = principal:<id>`) — authenticated mutations are attributed to
+  the acting user, public-share uploads carry no actor, and the file owner is
+  never used as a fallback actor. Consumers register durably
+  (`integration_consumers` / `integration_consumer_subscriptions`); every
+  publish eagerly fans out a pending delivery obligation to each registered
+  consumer whose subscription patterns match, so an offline or
+  operator-disabled consumer never loses events (retention compacts only
+  events whose obligations are all processed). An asynchronous outbox
+  dispatcher delivers at-least-once with lease fencing, retry backoff,
+  dead-lettering, and a self-healing registration sync each tick; consumer
+  code runs in a spawned task bounded by `RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS`
+  (default 60s) so a panicking or wedged consumer is contained (dead-letter /
+  retryable) and can never kill or stall the dispatch loop. Operators
+  get `RUSTSHARE_OUTBOX_*` configuration, an `outbox` readiness component,
+  and `outbox_*` metrics (#212). The reference "memory projection" consumer
+  used by the integration tests ships in test support only
+  (`backend/tests/contracts/reference_consumer.rs`); production runs a
+  zero-consumer dispatcher until real consumers land.
+
 - Cross-Application identity/resource contracts (ADR-0032, v1alpha1) in the
   new `rustshare-resource-auth` crate: `PrincipalContext` (user/service/agent
   principals with explicit bounded delegation), opaque `ResourceRef` with

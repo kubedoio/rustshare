@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT pattern\n            FROM integration_consumer_subscriptions\n            WHERE consumer_id = $1\n            ORDER BY pattern\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pattern",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b35377cb5b8eb9501d65cf6f9833c7cc60c508f34b6b3df62a1ecd5b55ea138"
+}

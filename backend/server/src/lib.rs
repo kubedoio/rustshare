@@ -13,6 +13,7 @@ pub mod object_gc;
 pub mod oidc;
 pub mod oidc_runtime;
 pub mod openapi;
+pub mod outbox_dispatcher;
 pub mod replication;
 pub mod replication_handlers;
 pub mod retention;

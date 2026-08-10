@@ -62,6 +62,8 @@ pub struct ReadinessResponse {
 /// - `event_delivery`  – event store DB + in-memory broadcaster health
 /// - `auth_session`    – JWT signing/verification + session table accessibility
 /// - `ai`              – AI service presence (optional; does not fail readiness)
+/// - `outbox`          – durable integration-event outbox dispatcher tick
+///                       freshness (informational; does not fail readiness)
 #[utoipa::path(
     get,
     path = "/health/ready",
@@ -139,10 +141,46 @@ pub async fn readiness_check(
     components.insert("ai".to_string(), ai_health);
 
     // ------------------------------------------------------------------
+    // Durable integration-event outbox dispatcher (ADR-0031)
+    // ------------------------------------------------------------------
+    // Optional like `ai`: a stalled or disabled dispatcher does not block
+    // request serving (events accumulate durably in the outbox), so this
+    // component is informational and never fails overall readiness.
+    let outbox_component = check_outbox_health(&state);
+    components.insert("outbox".to_string(), outbox_component);
+
+    // ------------------------------------------------------------------
     // Overall readiness
     // ------------------------------------------------------------------
     let (http_status, response) = evaluate_readiness(components);
     (http_status, Json(response))
+}
+
+/// Health of the outbox dispatcher: healthy while the last tick completed
+/// (`last_tick_ok`) within the configured staleness window; `disabled` when
+/// the worker was not spawned; unhealthy otherwise.
+fn check_outbox_health(state: &AppState) -> ComponentHealth {
+    if !state.outbox_worker_enabled {
+        return ComponentHealth::disabled();
+    }
+    let ok = state
+        .outbox_status
+        .last_tick_ok
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let staleness = std::time::Duration::from_secs(state.outbox_readiness_staleness_secs);
+    let fresh = state
+        .outbox_status
+        .last_tick_at
+        .lock()
+        .ok()
+        .is_some_and(|guard| guard.is_some_and(|last_tick| last_tick.elapsed() <= staleness));
+    if !ok {
+        ComponentHealth::unhealthy("outbox dispatcher has not completed a tick")
+    } else if !fresh {
+        ComponentHealth::unhealthy("outbox dispatcher last tick is stale")
+    } else {
+        ComponentHealth::healthy()
+    }
 }
 
 async fn check_auth_health(state: &AppState) -> ComponentHealth {

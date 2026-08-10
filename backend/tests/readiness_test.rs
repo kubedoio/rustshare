@@ -12,7 +12,9 @@
 //!   cargo test --test readiness_test -- --ignored
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -263,6 +265,9 @@ async fn setup_test_env() -> AppState {
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),
+        outbox_status: Arc::new(rustshare_server::outbox_dispatcher::OutboxStatus::default()),
+        outbox_worker_enabled: false,
+        outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     }
@@ -308,6 +313,87 @@ async fn test_readiness_disabled_ai_does_not_fail() {
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(response.status, "ready");
     assert_eq!(response.components.get("ai").unwrap().status, "disabled");
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_outbox_component_disabled_when_worker_not_spawned() {
+    let state = setup_test_env().await;
+    assert!(
+        !state.outbox_worker_enabled,
+        "harness starts with no outbox worker"
+    );
+
+    let (status, json) = readiness_check(State(state)).await;
+    let response = json.0;
+
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(response.status, "ready");
+    assert_eq!(
+        response.components.get("outbox").unwrap().status,
+        "disabled"
+    );
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_outbox_component_healthy_with_fresh_tick() {
+    let mut state = setup_test_env().await;
+    state.outbox_worker_enabled = true;
+    state
+        .outbox_status
+        .last_tick_ok
+        .store(true, Ordering::Relaxed);
+    *state.outbox_status.last_tick_at.lock().unwrap() = Some(Instant::now());
+
+    let (status, json) = readiness_check(State(state)).await;
+    let response = json.0;
+
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(response.status, "ready");
+    assert_eq!(response.components.get("outbox").unwrap().status, "healthy");
+}
+
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_outbox_component_unhealthy_when_last_tick_absent_or_stale() {
+    // Absent tick timestamp (worker spawned but never ticked) -> unhealthy.
+    let mut state = setup_test_env().await;
+    state.outbox_worker_enabled = true;
+    state
+        .outbox_status
+        .last_tick_ok
+        .store(true, Ordering::Relaxed);
+
+    let (status, json) = readiness_check(State(state)).await;
+    let response = json.0;
+
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(response.status, "ready");
+    assert_eq!(
+        response.components.get("outbox").unwrap().status,
+        "unhealthy"
+    );
+
+    // Aged tick timestamp beyond the 60s staleness window -> unhealthy.
+    let mut state = setup_test_env().await;
+    state.outbox_worker_enabled = true;
+    state
+        .outbox_status
+        .last_tick_ok
+        .store(true, Ordering::Relaxed);
+    *state.outbox_status.last_tick_at.lock().unwrap() =
+        Some(Instant::now() - Duration::from_secs(120));
+
+    let (status, json) = readiness_check(State(state)).await;
+    let response = json.0;
+
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(response.status, "ready");
+    assert_eq!(
+        response.components.get("outbox").unwrap().status,
+        "unhealthy"
+    );
 }
 
 // ---------------------------------------------------------------------------

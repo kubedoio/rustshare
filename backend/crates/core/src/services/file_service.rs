@@ -12,6 +12,7 @@ use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
+use uuid::Uuid;
 
 use crate::domain::{
     File, FileId, FileVersion, Folder, FolderId, ReplicationJob, ReplicationState, UserId,
@@ -215,6 +216,80 @@ use crate::domain::SharePermissions;
 use crate::services::errors::FileError;
 use crate::services::{PermissionResolver, PermissionResolverOps};
 
+/// Who is attributable for an integration event. Never falls back to the
+/// resource owner: an action with no authenticated Elembra Principal
+/// (e.g. a public-share session upload) publishes with
+/// [`IntegrationEventActor::External`], which omits `elembraActor` entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationEventActor {
+    /// An authenticated Elembra Principal, attributed by user id.
+    Principal(Uuid),
+    /// No authenticated Principal (e.g. public-share session); the event is
+    /// published without an `elembraActor`.
+    External,
+}
+
+/// Neutral facts a service hands to the integration-event publisher adapter.
+///
+/// The adapter (storage/server layer) is responsible for building and
+/// validating the concrete integration-event envelope from these facts and
+/// persisting it atomically inside the caller's transaction (ADR-0031).
+#[derive(Debug, Clone)]
+pub struct IntegrationEventFacts<'a> {
+    /// Namespaced event type, e.g. `io.elembra.files.file.created.v1`.
+    pub event_type: &'a str,
+    /// Application-owned resource type, e.g. `file`.
+    pub resource_type: &'a str,
+    /// Opaque resource identifier.
+    pub resource_id: &'a str,
+    /// Immutable version selector (e.g. `sha256:<content hash>`), if the
+    /// resource is content-addressed.
+    pub version: Option<&'a str>,
+    /// Minimal Application-owned payload.
+    pub data: serde_json::Value,
+    /// Tenant scope.
+    pub tenant_id: Uuid,
+    /// Workspace scope. Today `WorkspaceId == TenantId` (one workspace per
+    /// tenant); use the tenant id until real workspace membership exists
+    /// (same policy as #211).
+    pub workspace_id: Uuid,
+    /// Who to attribute the event to. Mapping rule: an authenticated actor
+    /// (`FileUploadActor::actor_user_id` set) maps to
+    /// [`IntegrationEventActor::Principal`]; a missing actor (public-share
+    /// session etc.) maps to [`IntegrationEventActor::External`]. The file
+    /// owner is NEVER used as a fallback actor.
+    pub actor: IntegrationEventActor,
+}
+
+/// Errors raised by [`IntegrationEventPublisher::publish_in_tx`].
+#[derive(Debug, thiserror::Error)]
+pub enum IntegrationPublishError {
+    #[error("invalid integration event: {0}")]
+    InvalidEvent(String),
+    #[error("event type not owned by application: {0}")]
+    OwnershipRejected(String),
+    #[error("integration event persistence failed: {0}")]
+    Persistence(String),
+}
+
+/// Object-safe seam between services and the integration-event publisher.
+///
+/// The concrete transaction type is supplied at the call site, e.g.
+/// `Arc<dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>>`.
+/// The storage layer implements this for its outbox store; services call it
+/// inside their open transaction so a source mutation can never commit
+/// without its durable integration event.
+#[async_trait::async_trait]
+pub trait IntegrationEventPublisher<Tx>: Send + Sync {
+    /// Build and persist the integration event derived from `facts` inside
+    /// `tx`. On `Err` the caller must abort the transaction (full rollback).
+    async fn publish_in_tx(
+        &self,
+        tx: &mut Tx,
+        facts: &IntegrationEventFacts<'_>,
+    ) -> Result<(), IntegrationPublishError>;
+}
+
 /// File service for handling file operations.
 pub struct FileService<E, M, O, P>
 where
@@ -228,6 +303,7 @@ where
     object_store: Arc<O>,
     broadcaster: Arc<EventBroadcaster>,
     permission_resolver: Arc<PermissionResolver<P>>,
+    integration_publisher: Option<Arc<dyn IntegrationEventPublisher<E::Tx>>>,
 }
 
 impl<E, M, O, P> FileService<E, M, O, P>
@@ -251,7 +327,68 @@ where
             object_store,
             broadcaster,
             permission_resolver,
+            integration_publisher: None,
         }
+    }
+
+    /// Attach an integration-event publisher (transactional outbox).
+    ///
+    /// When set, file creation and every content mutation (upload, re-upload,
+    /// `update_file`/`update_file_from_path`, `restore_version`, `edit_file`)
+    /// publish durable integration events atomically with the metadata
+    /// transaction (ADR-0031). A failed publish aborts the mutation.
+    pub fn with_integration_publisher(
+        mut self,
+        publisher: Arc<dyn IntegrationEventPublisher<E::Tx>>,
+    ) -> Self {
+        self.integration_publisher = Some(publisher);
+        self
+    }
+
+    /// Publish integration-event facts for a file mutation inside the open
+    /// transaction, if a publisher is attached. Errors propagate so the
+    /// whole transaction rolls back (required outbox atomicity).
+    ///
+    /// `actor` attribution rule: an authenticated actor maps to
+    /// [`IntegrationEventActor::Principal`]; a missing actor (public-share
+    /// session etc.) maps to [`IntegrationEventActor::External`]. The file
+    /// owner is never used as a fallback actor.
+    async fn publish_file_integration_event(
+        &self,
+        tx: &mut E::Tx,
+        event_type: &'static str,
+        file: &File,
+        version: &FileVersion,
+        actor: IntegrationEventActor,
+    ) -> Result<(), FileError> {
+        let Some(publisher) = &self.integration_publisher else {
+            return Ok(());
+        };
+        let resource_id = file.id.to_string();
+        // Files are content-addressed, so the version selector is the
+        // SHA-256 content hash of the new version.
+        let version_selector = format!("sha256:{}", version.content_hash);
+        let facts = IntegrationEventFacts {
+            event_type,
+            resource_type: "file",
+            resource_id: &resource_id,
+            version: Some(&version_selector),
+            data: serde_json::json!({
+                "name": file.name,
+                "mime_type": file.mime_type,
+                "size": file.size,
+                "version": version_selector,
+            }),
+            tenant_id: file.tenant_id,
+            // WorkspaceId == TenantId today (see File::workspace_id); the
+            // adapter's envelope validation enforces the same invariant.
+            workspace_id: file.workspace_id(),
+            actor,
+        };
+        publisher
+            .publish_in_tx(tx, &facts)
+            .await
+            .map_err(|e| FileError::Database(format!("failed to publish integration event: {e}")))
     }
     async fn require_file_permission(
         &self,
@@ -566,6 +703,17 @@ where
                 .create_file_version_in_tx(&mut tx, &version)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
+            self.publish_file_integration_event(
+                &mut tx,
+                "io.elembra.files.file.updated.v1",
+                &existing,
+                &version,
+                match actor.actor_user_id {
+                    Some(user_id) => IntegrationEventActor::Principal(user_id),
+                    None => IntegrationEventActor::External,
+                },
+            )
+            .await?;
             self.event_store
                 .commit_transaction(tx)
                 .await
@@ -660,6 +808,17 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.created.v1",
+            &file,
+            &version,
+            match actor.actor_user_id {
+                Some(user_id) => IntegrationEventActor::Principal(user_id),
+                None => IntegrationEventActor::External,
+            },
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -889,6 +1048,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -1049,6 +1216,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -1480,6 +1655,14 @@ where
             .create_file_version_in_tx(&mut tx, &version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_integration_event(
+            &mut tx,
+            "io.elembra.files.file.updated.v1",
+            &file,
+            &version,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -2949,5 +3132,689 @@ mod tests {
             .move_file(file.id, Some(nonexistent_folder), owner_id)
             .await;
         assert!(matches!(result, Err(FileError::FolderNotFound(_))));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integration-event publisher seam tests (ADR-0031). Kept separate from the
+// legacy (disabled) test module above: the seam test needs only the upload
+// path, so its stubs are minimal.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod integration_publish_tests {
+    use super::*;
+    use crate::domain::Share;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    /// Minimal transaction handle for the event-store seam.
+    #[derive(Default)]
+    struct TestTx;
+
+    struct MockEventStore {
+        events: Mutex<Vec<Event>>,
+        commit_count: Mutex<usize>,
+    }
+
+    impl MockEventStore {
+        fn new() -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                commit_count: Mutex::new(0),
+            }
+        }
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl EventStoreOps for MockEventStore {
+        type Tx = TestTx;
+
+        async fn append(&self, event: &Event, _broadcaster: &EventBroadcaster) -> Result<()> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+
+        async fn begin_transaction(&self) -> Result<Self::Tx> {
+            Ok(TestTx)
+        }
+
+        async fn commit_transaction(&self, _tx: Self::Tx) -> Result<()> {
+            *self.commit_count.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn append_in_tx(&self, tx: &mut Self::Tx, event: &Event) -> Result<()> {
+            let _ = tx;
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
+
+    struct MockMetadataStore {
+        files: Mutex<Vec<File>>,
+        versions: Mutex<Vec<FileVersion>>,
+    }
+
+    impl MockMetadataStore {
+        fn new() -> Self {
+            Self {
+                files: Mutex::new(Vec::new()),
+                versions: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn add_file(&self, file: File) {
+            self.files.lock().unwrap().push(file);
+        }
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl MetadataStoreOps for MockMetadataStore {
+        type Tx = TestTx;
+
+        async fn create_file(&self, file: &File) -> Result<()> {
+            self.files.lock().unwrap().push(file.clone());
+            Ok(())
+        }
+
+        async fn create_file_in_tx(&self, _tx: &mut Self::Tx, file: &File) -> Result<()> {
+            self.files.lock().unwrap().push(file.clone());
+            Ok(())
+        }
+
+        async fn find_file_by_path(
+            &self,
+            path: &str,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.path == path)
+                .cloned())
+        }
+
+        async fn create_file_version(&self, version: &FileVersion) -> Result<()> {
+            self.versions.lock().unwrap().push(version.clone());
+            Ok(())
+        }
+
+        async fn create_file_version_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            version: &FileVersion,
+        ) -> Result<uuid::Uuid> {
+            self.versions.lock().unwrap().push(version.clone());
+            Ok(version.id)
+        }
+
+        async fn find_folder_by_id(
+            &self,
+            _id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id_unchecked(&self, _id: uuid::Uuid) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn find_file_by_id(
+            &self,
+            id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
+        }
+
+        async fn find_file_by_id_unchecked(&self, id: uuid::Uuid) -> Result<Option<File>> {
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|f| f.id == id)
+                .cloned())
+        }
+
+        async fn update_file(&self, _file: &File) -> Result<()> {
+            Ok(())
+        }
+
+        async fn update_file_in_tx(&self, _tx: &mut Self::Tx, _file: &File) -> Result<()> {
+            Ok(())
+        }
+
+        async fn delete_file(&self, _id: uuid::Uuid, _owner_id: uuid::Uuid) -> Result<()> {
+            Ok(())
+        }
+
+        async fn delete_file_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            _id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn list_file_versions(
+            &self,
+            _file_id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Vec<FileVersion>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_version(
+            &self,
+            _file_id: uuid::Uuid,
+            _version_number: i32,
+            _owner_id: uuid::Uuid,
+        ) -> Result<Option<FileVersion>> {
+            Ok(None)
+        }
+
+        async fn count_enabled_replication_targets(&self) -> Result<i64> {
+            Ok(0)
+        }
+
+        async fn create_replication_job(&self, _job: &ReplicationJob) -> Result<()> {
+            Ok(())
+        }
+
+        async fn update_file_version_replication_state(
+            &self,
+            _version_id: uuid::Uuid,
+            _state: ReplicationState,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockObjectStore {
+        objects: Mutex<HashMap<String, Bytes>>,
+    }
+
+    impl MockObjectStore {
+        fn new() -> Self {
+            Self {
+                objects: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl ObjectStoreOps for MockObjectStore {
+        async fn put(&self, key: &str, data: Bytes) -> Result<()> {
+            self.objects.lock().unwrap().insert(key.to_string(), data);
+            Ok(())
+        }
+
+        async fn put_from_path(&self, key: &str, _path: &std::path::Path) -> Result<()> {
+            self.objects
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), Bytes::new());
+            Ok(())
+        }
+
+        async fn exists(&self, key: &str) -> Result<bool> {
+            Ok(self.objects.lock().unwrap().contains_key(key))
+        }
+
+        async fn get(&self, _key: &str) -> Result<Bytes> {
+            Ok(Bytes::new())
+        }
+
+        async fn delete(&self, _key: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct StubPermissionOps;
+
+    #[allow(async_fn_in_trait)]
+    impl PermissionResolverOps for StubPermissionOps {
+        async fn find_user_share(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _recipient_user_id: UserId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Option<Share>> {
+            Ok(None)
+        }
+
+        async fn find_group_shares(
+            &self,
+            _file_id: Option<FileId>,
+            _folder_id: Option<FolderId>,
+            _group_ids: &[Uuid],
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_user_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _recipient_user_id: UserId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_group_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _group_ids: &[Uuid],
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_file_by_id(
+            &self,
+            _id: FileId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Option<File>> {
+            Ok(None)
+        }
+
+        async fn find_folder_by_id(
+            &self,
+            _id: FolderId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Option<Folder>> {
+            Ok(None)
+        }
+
+        async fn get_user_group_ids(
+            &self,
+            _user_id: UserId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Uuid>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_user_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_group_shares_for_file(
+            &self,
+            _file_id: FileId,
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_user_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+
+        async fn find_all_group_shares_for_folders(
+            &self,
+            _folder_ids: &[FolderId],
+            _tenant_id: uuid::Uuid,
+        ) -> Result<Vec<Share>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Owned snapshot of the facts handed to the publisher, for assertions.
+    #[derive(Debug, Clone)]
+    struct RecordedFacts {
+        event_type: String,
+        resource_type: String,
+        resource_id: String,
+        version: Option<String>,
+        data: serde_json::Value,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        actor: IntegrationEventActor,
+    }
+
+    impl From<&IntegrationEventFacts<'_>> for RecordedFacts {
+        fn from(facts: &IntegrationEventFacts<'_>) -> Self {
+            Self {
+                event_type: facts.event_type.to_string(),
+                resource_type: facts.resource_type.to_string(),
+                resource_id: facts.resource_id.to_string(),
+                version: facts.version.map(str::to_string),
+                data: facts.data.clone(),
+                tenant_id: facts.tenant_id,
+                workspace_id: facts.workspace_id,
+                actor: facts.actor,
+            }
+        }
+    }
+
+    struct RecordingPublisher {
+        calls: Mutex<Vec<RecordedFacts>>,
+    }
+
+    impl RecordingPublisher {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<RecordedFacts> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IntegrationEventPublisher<TestTx> for RecordingPublisher {
+        async fn publish_in_tx(
+            &self,
+            _tx: &mut TestTx,
+            facts: &IntegrationEventFacts<'_>,
+        ) -> Result<(), IntegrationPublishError> {
+            self.calls.lock().unwrap().push(RecordedFacts::from(facts));
+            Ok(())
+        }
+    }
+
+    struct FailingPublisher;
+
+    #[async_trait::async_trait]
+    impl IntegrationEventPublisher<TestTx> for FailingPublisher {
+        async fn publish_in_tx(
+            &self,
+            _tx: &mut TestTx,
+            _facts: &IntegrationEventFacts<'_>,
+        ) -> Result<(), IntegrationPublishError> {
+            Err(IntegrationPublishError::Persistence(
+                "outbox unavailable".to_string(),
+            ))
+        }
+    }
+
+    type TestService =
+        FileService<MockEventStore, MockMetadataStore, MockObjectStore, StubPermissionOps>;
+
+    fn setup_service() -> (
+        TestService,
+        Arc<MockEventStore>,
+        Arc<MockMetadataStore>,
+        Arc<RecordingPublisher>,
+    ) {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let object_store = Arc::new(MockObjectStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let permission_ops = Arc::new(StubPermissionOps);
+        let permission_resolver = Arc::new(PermissionResolver::new(permission_ops));
+        let publisher = Arc::new(RecordingPublisher::new());
+
+        let service = FileService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            object_store.clone(),
+            broadcaster,
+            permission_resolver,
+        )
+        .with_integration_publisher(publisher.clone());
+
+        (service, event_store, metadata_store, publisher)
+    }
+
+    #[tokio::test]
+    async fn new_file_upload_publishes_created_facts() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let content = Bytes::from("Hello World");
+
+        let file = service
+            .upload_file(
+                owner_id,
+                "hello.txt".into(),
+                None,
+                content.clone(),
+                "text/plain".into(),
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        let facts = &calls[0];
+        assert_eq!(facts.event_type, "io.elembra.files.file.created.v1");
+        assert_eq!(facts.resource_type, "file");
+        assert_eq!(facts.resource_id, file.id.to_string());
+        let expected_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(&content);
+            hex::encode(hasher.finalize())
+        };
+        assert_eq!(
+            facts.version.as_deref(),
+            Some(format!("sha256:{expected_hash}").as_str())
+        );
+        assert_eq!(facts.data["name"], "hello.txt");
+        assert_eq!(facts.data["mime_type"], "text/plain");
+        assert_eq!(facts.data["size"], 11);
+        assert_eq!(facts.data["version"], format!("sha256:{expected_hash}"));
+        assert_eq!(facts.tenant_id, tenant_id);
+        assert_eq!(
+            facts.workspace_id, tenant_id,
+            "WorkspaceId == TenantId today"
+        );
+        assert_eq!(
+            facts.actor,
+            IntegrationEventActor::Principal(owner_id),
+            "an authenticated actor maps to a Principal"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_without_authenticated_actor_publishes_external_facts() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let actor = FileUploadActor {
+            actor_type: "public_share_session".to_string(),
+            actor_user_id: None,
+            actor_share_id: Some(Uuid::new_v4()),
+            actor_share_session_id: Some(Uuid::new_v4()),
+            actor_display_name: Some("Guest".to_string()),
+        };
+
+        let file = service
+            .upload_file_with_actor(
+                owner_id,
+                actor,
+                "shared.txt".into(),
+                None,
+                Bytes::from("public data"),
+                "text/plain".into(),
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        assert_eq!(
+            calls[0].actor,
+            IntegrationEventActor::External,
+            "a missing actor must never fall back to the file owner"
+        );
+        assert_eq!(calls[0].resource_id, file.id.to_string());
+    }
+
+    #[tokio::test]
+    async fn publish_file_integration_event_external_actor_yields_external_facts() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file = File::new(
+            "public.txt".to_string(),
+            "/public.txt".to_string(),
+            "contenthash".to_string(),
+            7,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let version = FileVersion::new(
+            file.id,
+            1,
+            "contenthash".to_string(),
+            7,
+            owner_id,
+            Some("Uploaded via public share".to_string()),
+            tenant_id,
+        );
+
+        service
+            .publish_file_integration_event(
+                &mut TestTx,
+                "io.elembra.files.file.created.v1",
+                &file,
+                &version,
+                IntegrationEventActor::External,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        assert_eq!(calls[0].actor, IntegrationEventActor::External);
+        assert_eq!(calls[0].event_type, "io.elembra.files.file.created.v1");
+        assert_eq!(calls[0].data["name"], "public.txt");
+    }
+
+    #[tokio::test]
+    async fn existing_file_upload_publishes_updated_facts() {
+        let (service, _, metadata_store, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+
+        // Pre-existing file at the same path with different content.
+        metadata_store.add_file(File::new(
+            "hello.txt".to_string(),
+            "/hello.txt".to_string(),
+            "oldhash".to_string(),
+            5,
+            "text/plain".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        ));
+
+        let file = service
+            .upload_file(
+                owner_id,
+                "hello.txt".into(),
+                None,
+                Bytes::from("Hello World"),
+                "text/plain".into(),
+                tenant_id,
+            )
+            .await
+            .unwrap();
+
+        let calls = publisher.calls();
+        assert_eq!(calls.len(), 1, "expected exactly one publish call");
+        let facts = &calls[0];
+        assert_eq!(facts.event_type, "io.elembra.files.file.updated.v1");
+        assert_eq!(facts.resource_id, file.id.to_string());
+        assert_eq!(facts.data["name"], "hello.txt");
+        assert_eq!(facts.data["size"], 11);
+        assert!(facts.version.is_some());
+    }
+
+    #[tokio::test]
+    async fn no_publisher_means_no_publish_calls() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let object_store = Arc::new(MockObjectStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(StubPermissionOps)));
+        let service = FileService::new(
+            event_store,
+            metadata_store,
+            object_store,
+            broadcaster,
+            permission_resolver,
+        );
+
+        let file = service
+            .upload_file(
+                Uuid::new_v4(),
+                "plain.txt".into(),
+                None,
+                Bytes::from("data"),
+                "text/plain".into(),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(file.name, "plain.txt");
+    }
+
+    #[tokio::test]
+    async fn failing_publisher_aborts_the_upload_without_commit() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let object_store = Arc::new(MockObjectStore::new());
+        let broadcaster = Arc::new(EventBroadcaster::new(100));
+        let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(StubPermissionOps)));
+        let service = FileService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            object_store.clone(),
+            broadcaster,
+            permission_resolver,
+        )
+        .with_integration_publisher(Arc::new(FailingPublisher));
+
+        let result = service
+            .upload_file(
+                Uuid::new_v4(),
+                "doomed.txt".into(),
+                None,
+                Bytes::from("data"),
+                "text/plain".into(),
+                Uuid::new_v4(),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(FileError::Database(_))),
+            "expected Database error, got {result:?}"
+        );
+        // Atomicity contract at this layer: the open transaction is dropped
+        // uncommitted when the publish fails, so the caller never sees a
+        // committed mutation without its integration event. (The in-memory
+        // stub stores cannot roll back their vecs; real rollback is enforced
+        // by the DB transaction in the storage implementation.)
+        assert_eq!(*event_store.commit_count.lock().unwrap(), 0);
     }
 }

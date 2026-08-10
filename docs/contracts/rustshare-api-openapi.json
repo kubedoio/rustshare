@@ -13290,7 +13290,7 @@
           "Admin"
         ],
         "summary": "Readiness probe endpoint (`GET /ready`).",
-        "description": "Returns `200 OK` when all required dependencies are healthy.\nReturns `503 Service Unavailable` when any required dependency is unhealthy.\n\nComponents checked:\n- `database`        – metadata projection DB connectivity\n- `object_storage`  – S3/RustFS bucket accessibility\n- `event_delivery`  – event store DB + in-memory broadcaster health\n- `auth_session`    – JWT signing/verification + session table accessibility\n- `ai`              – AI service presence (optional; does not fail readiness)",
+        "description": "Returns `200 OK` when all required dependencies are healthy.\nReturns `503 Service Unavailable` when any required dependency is unhealthy.\n\nComponents checked:\n- `database`        – metadata projection DB connectivity\n- `object_storage`  – S3/RustFS bucket accessibility\n- `event_delivery`  – event store DB + in-memory broadcaster health\n- `auth_session`    – JWT signing/verification + session table accessibility\n- `ai`              – AI service presence (optional; does not fail readiness)\n- `outbox`          – durable integration-event outbox dispatcher tick\n                      freshness (informational; does not fail readiness)",
         "operationId": "readiness_check",
         "responses": {
           "200": {

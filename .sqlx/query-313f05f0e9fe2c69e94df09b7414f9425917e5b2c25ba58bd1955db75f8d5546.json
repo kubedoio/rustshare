@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT EXTRACT(EPOCH FROM (now() - min(available_at)))::float8\n                    FROM integration_deliveries\n                    WHERE state = 'pending' AND consumer_id = $1\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "extract",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "313f05f0e9fe2c69e94df09b7414f9425917e5b2c25ba58bd1955db75f8d5546"
+}

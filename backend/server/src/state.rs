@@ -210,6 +210,15 @@ pub struct AppState {
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub chat_integration_service: Arc<AppChatIntegrationService>,
     pub mail_service: Arc<services::mail_service::MailService>,
+    /// Liveness of the durable integration-event outbox dispatcher, shared
+    /// with the readiness probe.
+    pub outbox_status: Arc<crate::outbox_dispatcher::OutboxStatus>,
+    /// Whether the outbox dispatcher loop was spawned (readiness reports the
+    /// `outbox` component as `disabled` when false; publishing stays active
+    /// regardless).
+    pub outbox_worker_enabled: bool,
+    /// Staleness window (seconds) for the `outbox` readiness component.
+    pub outbox_readiness_staleness_secs: u64,
     pub shutdown_tx: broadcast::Sender<()>,
     pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }

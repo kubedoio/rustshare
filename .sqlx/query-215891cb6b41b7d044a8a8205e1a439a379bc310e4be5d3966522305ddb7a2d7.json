@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE integration_deliveries\n            SET state = 'dead_lettered', dead_lettered_at = now(), claimed_by = NULL,\n                claim_token = NULL, claim_expires_at = NULL, last_error = $5\n            WHERE consumer_id = $1 AND source = $2 AND event_id = $3 AND claim_token = $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "215891cb6b41b7d044a8a8205e1a439a379bc310e4be5d3966522305ddb7a2d7"
+}

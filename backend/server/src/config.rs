@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
@@ -145,6 +146,112 @@ fn default_mail_import_worker_stale_secs() -> i64 {
     300
 }
 
+/// Configuration for the durable integration-event outbox dispatcher
+/// (ADR-0031 / issue #212).
+///
+/// Maps onto `rustshare_storage::OutboxConfig` (claim/lease/backoff/retention)
+/// plus the dispatcher's own poll interval, enabled flag and readiness
+/// staleness window. Values are sanity-clamped (never rejected) so a bogus
+/// leftover env var cannot prevent the server from starting. Two special
+/// values are intentional: `retention_hours <= 0` disables retention cleanup
+/// entirely, and `readiness_staleness_secs = 0` makes the `outbox` readiness
+/// component permanently stale (it is informational only and never fails
+/// overall readiness).
+#[derive(Debug, Clone)]
+pub struct OutboxWorkerConfig {
+    /// Whether the dispatcher loop is spawned. Publishing into the outbox
+    /// stays active regardless; a disabled worker just means events
+    /// accumulate until it is enabled again.
+    pub enabled: bool,
+    /// Poll interval between dispatcher ticks.
+    pub poll_interval: Duration,
+    /// Maximum rows claimed per consumer per tick.
+    pub claim_batch_size: i64,
+    /// Lease duration in seconds for a claimed delivery.
+    pub lease_secs: i64,
+    /// Maximum attempts before a delivery is dead-lettered.
+    pub max_attempts: i32,
+    /// Initial retry backoff in milliseconds.
+    pub backoff_initial_ms: u64,
+    /// Maximum retry backoff in milliseconds.
+    pub backoff_max_ms: u64,
+    /// Outbox retention in hours before fully-delivered rows are compacted;
+    /// `<= 0` disables retention cleanup.
+    pub retention_hours: i64,
+    /// Per-event processing deadline: a consumer that does not return within
+    /// this window has its delivery failed retryable (bounded backoff, then
+    /// DLQ) so a wedged consumer cannot stall the dispatch loop.
+    pub process_timeout: Duration,
+    /// Readiness staleness window: the `outbox` readiness component is only
+    /// healthy while the last dispatcher tick is at most this many seconds
+    /// old. `0` makes the component permanently stale; the component is
+    /// informational and never fails overall readiness.
+    pub readiness_staleness_secs: u64,
+}
+
+impl Default for OutboxWorkerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            poll_interval: Duration::from_millis(1000),
+            claim_batch_size: 50,
+            lease_secs: 60,
+            max_attempts: 5,
+            backoff_initial_ms: 1000,
+            backoff_max_ms: 300_000,
+            retention_hours: 168,
+            process_timeout: Duration::from_secs(60),
+            readiness_staleness_secs: 60,
+        }
+    }
+}
+
+impl OutboxWorkerConfig {
+    pub fn from_env() -> Self {
+        let mut config = Self {
+            enabled: env_parse("RUSTSHARE_OUTBOX_WORKER_ENABLED", true),
+            poll_interval: Duration::from_millis(env_parse(
+                "RUSTSHARE_OUTBOX_POLL_INTERVAL_MS",
+                1000u64,
+            )),
+            claim_batch_size: env_parse("RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE", 50i64),
+            lease_secs: env_parse("RUSTSHARE_OUTBOX_LEASE_SECS", 60i64),
+            max_attempts: env_parse("RUSTSHARE_OUTBOX_MAX_ATTEMPTS", 5i32),
+            backoff_initial_ms: env_parse("RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS", 1000u64),
+            backoff_max_ms: env_parse("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", 300_000u64),
+            retention_hours: env_parse("RUSTSHARE_OUTBOX_RETENTION_HOURS", 168i64),
+            process_timeout: Duration::from_secs(env_parse(
+                "RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS",
+                60u64,
+            )),
+            readiness_staleness_secs: env_parse("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", 60u64),
+        };
+        // Sanity clamps: a zero/negative value would make the store misbehave
+        // (e.g. lease that expires instantly or a batch that claims nothing),
+        // and an unbounded backoff would overflow the database's
+        // `timestamptz` on `now() + interval` and wedge deliveries claimed
+        // forever.
+        config.claim_batch_size = config.claim_batch_size.max(1);
+        config.lease_secs = config.lease_secs.max(1);
+        config.max_attempts = config.max_attempts.max(1);
+        config.poll_interval = config.poll_interval.max(Duration::from_millis(1));
+        config.process_timeout = config.process_timeout.max(Duration::from_secs(1));
+        config.backoff_initial_ms = config.backoff_initial_ms.min(86_400_000); // 1 day
+        config.backoff_max_ms = config.backoff_max_ms.min(86_400_000); // 1 day
+        config
+    }
+}
+
+fn env_parse<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 impl AppConfig {
     pub fn from_env() -> Result<Self, Vec<String>> {
         match envy::from_env::<Self>() {
@@ -186,5 +293,117 @@ impl AppConfig {
             }
             Err(e) => Err(vec![format!("Configuration error: {}", e)]),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Env mutation is process-global; serialize the config tests so they
+    /// cannot clobber each other's variables.
+    static ENV_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
+    const OUTBOX_ENV_VARS: [&str; 10] = [
+        "RUSTSHARE_OUTBOX_WORKER_ENABLED",
+        "RUSTSHARE_OUTBOX_POLL_INTERVAL_MS",
+        "RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE",
+        "RUSTSHARE_OUTBOX_LEASE_SECS",
+        "RUSTSHARE_OUTBOX_MAX_ATTEMPTS",
+        "RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS",
+        "RUSTSHARE_OUTBOX_BACKOFF_MAX_MS",
+        "RUSTSHARE_OUTBOX_RETENTION_HOURS",
+        "RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS",
+        "RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS",
+    ];
+
+    fn clear_outbox_env() {
+        for name in OUTBOX_ENV_VARS {
+            std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn from_env_uses_defaults_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_outbox_env();
+        let config = OutboxWorkerConfig::from_env();
+        assert!(config.enabled);
+        assert_eq!(config.poll_interval, Duration::from_millis(1000));
+        assert_eq!(config.claim_batch_size, 50);
+        assert_eq!(config.lease_secs, 60);
+        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.backoff_initial_ms, 1000);
+        assert_eq!(config.backoff_max_ms, 300_000);
+        assert_eq!(config.retention_hours, 168);
+        assert_eq!(config.process_timeout, Duration::from_secs(60));
+        assert_eq!(config.readiness_staleness_secs, 60);
+    }
+
+    #[test]
+    fn from_env_parses_and_sanity_clamps() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_outbox_env();
+        std::env::set_var("RUSTSHARE_OUTBOX_WORKER_ENABLED", "false");
+        std::env::set_var("RUSTSHARE_OUTBOX_POLL_INTERVAL_MS", "250");
+        std::env::set_var("RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE", "0");
+        std::env::set_var("RUSTSHARE_OUTBOX_LEASE_SECS", "-5");
+        std::env::set_var("RUSTSHARE_OUTBOX_MAX_ATTEMPTS", "0");
+        std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS", "500");
+        std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", "90000");
+        std::env::set_var("RUSTSHARE_OUTBOX_RETENTION_HOURS", "24");
+        std::env::set_var("RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS", "0");
+        std::env::set_var("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", "120");
+
+        let config = OutboxWorkerConfig::from_env();
+        assert!(!config.enabled);
+        assert_eq!(config.poll_interval, Duration::from_millis(250));
+        assert_eq!(config.claim_batch_size, 1, "batch size clamped to >= 1");
+        assert_eq!(config.lease_secs, 1, "lease clamped to >= 1 second");
+        assert_eq!(config.max_attempts, 1, "max attempts clamped to >= 1");
+        assert_eq!(config.backoff_initial_ms, 500);
+        assert_eq!(config.backoff_max_ms, 90_000);
+        assert_eq!(config.retention_hours, 24);
+        assert_eq!(
+            config.process_timeout,
+            Duration::from_secs(1),
+            "process timeout clamped to >= 1 second"
+        );
+        assert_eq!(config.readiness_staleness_secs, 120);
+    }
+
+    #[test]
+    fn from_env_clamps_backoff_to_one_day() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_outbox_env();
+        // u64::MAX would overflow `timestamptz` on `now() + interval` and
+        // wedge deliveries claimed forever; both backoffs must be clamped.
+        std::env::set_var(
+            "RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS",
+            "18446744073709551615",
+        );
+        std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", "18446744073709551615");
+
+        let config = OutboxWorkerConfig::from_env();
+        assert_eq!(
+            config.backoff_initial_ms, 86_400_000,
+            "initial backoff clamped to 1 day"
+        );
+        assert_eq!(
+            config.backoff_max_ms, 86_400_000,
+            "max backoff clamped to 1 day"
+        );
+    }
+
+    #[test]
+    fn from_env_ignores_unparseable_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_outbox_env();
+        std::env::set_var("RUSTSHARE_OUTBOX_MAX_ATTEMPTS", "not-a-number");
+        std::env::set_var("RUSTSHARE_OUTBOX_RETENTION_HOURS", "0"); // 0 disables retention
+        let config = OutboxWorkerConfig::from_env();
+        assert_eq!(config.max_attempts, 5, "unparseable falls back to default");
+        assert_eq!(config.retention_hours, 0);
     }
 }

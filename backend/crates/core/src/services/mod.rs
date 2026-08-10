@@ -42,7 +42,8 @@ pub use email_service::{
 pub use eml_parser::{EmlParseError, EmlParser, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
-    EventStoreOps as FileEventStoreOps, FileService, FileUploadActor,
+    EventStoreOps as FileEventStoreOps, FileService, FileUploadActor, IntegrationEventActor,
+    IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError,
     MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
 };
 pub use folder_service::{

@@ -1,0 +1,21 @@
+[package]
+name = "rustshare-integration-events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CloudEvents-compatible durable Integration Event envelope and outbox consumer contract (ADR-0031)"
+
+[dependencies]
+rustshare-core = { path = "../core" }
+rustshare-resource-auth = { path = "../resource-auth" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true }

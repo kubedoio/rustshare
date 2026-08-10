@@ -6,6 +6,9 @@ license.workspace = true
 
 [dependencies]
 rustshare-core = { path = "../core" }
+rustshare-integration-events = { path = "../integration-events" }
+rustshare-resource-auth = { path = "../resource-auth" }
+async-trait = "0.1"
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true

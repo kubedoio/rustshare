@@ -32,8 +32,8 @@ Example:
   "elembraCausation": "01K...",
   "elembraResource": {
     "application": "io.elembra.files",
-    "resource_type": "file",
-    "resource_id": "01K1...",
+    "resourceType": "file",
+    "resourceId": "01K1...",
     "version": "sha256:..."
   },
 
@@ -153,36 +153,57 @@ without pretending the operations are one distributed transaction.
 
 Consumers treat it as opaque. Its presence does not grant access.
 
+## Consumer registration and delivery obligations
+
+Durable registration (`integration_consumers` + `integration_consumer_subscriptions`) is authoritative for both fan-out and claiming.
+
+- **Registration establishes future entitlement.** Events created before `registered_at` are not historical backlog for a newly registered consumer. Events created at or after registration that match the consumer's explicit subscriptions create a durable delivery obligation atomically with publication (eager fan-out). An event's creation time is its outbox insertion timestamp (`clock_timestamp()`), not the source transaction's start time, so a consumer that registers before the event row is inserted is entitled even if the source transaction began earlier.
+- **At least one explicit subscription is required.** Empty subscription lists are rejected at registration. Patterns are exact event types (`io.elembra.files.file.created.v1`) or `.*`-terminated prefixes (`io.elembra.files.*`). There is no "empty subscription = subscribe to everything" semantic.
+- **Subscriptions are immutable in v1alpha1.** Re-registering an existing consumer with identical normalized subscriptions is an idempotent no-op that preserves `registered_at` and `enabled`; different subscriptions are rejected with a typed `ConsumerRegistrationConflict` error and no changes are made. Subscription changes require a new/versioned consumer identity or a future dedicated migration API.
+- **Delivery lifecycle.** At-least-once claim/process; an obligation remains until processed. `enabled=false` pauses claiming but does not remove entitlement or obligations. Pending/claimed/retrying/dead-lettered obligations block outbox compaction. An event with no entitled registered consumers may be compacted after retention.
+- **Consumers are services, not users.** Durable integration consumers are stable Application/Connector/bridge/service consumers — not individual Elembra users, Buzz users, browser sessions, or devices — so eager fan-out never becomes per-user fan-out.
+
+v1alpha1 ships zero production consumers. The integration suite exercises the pipeline with the test-only reference consumer (`backend/tests/contracts/reference_consumer.rs`); its projection table is created at runtime by test code and is not part of the schema migrations.
+
 ## Outbox persistence
 
-Suggested initial tables/fields:
+v1alpha1 tables (see `backend/migrations/20260810000001_create_integration_outbox.up.sql`):
 
 ```text
-integration_outbox
-  id
-  tenant_id
-  application_id
-  event_type
-  event_json
-  created_at
-  available_at
-  claimed_by
-  claim_expires_at
-  attempt_count
-  last_error
-  delivered_at
-  dead_lettered_at
+integration_outbox                    -- events
+  source, event_id, event_type, application_id,
+  tenant_id, workspace_id, event_json, created_at, available_at
+  primary key (source, event_id)
 
-integration_consumer_receipts
-  consumer_id
-  source
-  event_id
-  processed_at
-  result_hash/status
+integration_deliveries                -- per-consumer obligation ledger
+  consumer_id, source, event_id, event_type,
+  tenant_id, workspace_id, state, available_at,
+  claimed_by, claim_token, claim_expires_at,
+  attempt_count, first_attempt_at, last_attempt_at,
+  last_error, processed_at, dead_lettered_at
   primary key (consumer_id, source, event_id)
+  foreign key (source, event_id) -> integration_outbox ON DELETE CASCADE
+  state: pending | claimed | processed | dead_lettered
+
+integration_consumer_receipts         -- idempotency receipts
+  consumer_id, source, event_id, event_type,
+  tenant_id, workspace_id, processed_at
+  primary key (consumer_id, source, event_id)
+  -- deliberately NOT foreign-keyed to the outbox:
+  -- receipts must survive retention compaction
+
+integration_consumers                 -- durable registration
+  consumer_id, enabled, registered_at, updated_at
+  primary key (consumer_id)
+
+integration_consumer_subscriptions    -- explicit patterns (exact or prefix.*)
+  consumer_id, pattern
+  primary key (consumer_id, pattern)
 ```
 
 Exact schema may vary, but required semantics may not.
+
+Outbox operations assume `READ COMMITTED` (PostgreSQL default): the identity-conflict and compaction checks rely on per-statement snapshots and re-evaluation after lock waits; callers must not raise the isolation level for outbox transactions.
 
 ## Delivery behavior
 
@@ -252,3 +273,5 @@ Never log full sensitive `data` by default.
 - Permanent failures enter DLQ with redacted diagnostics.
 - ResourceRef event does not allow source fetch without independent authorization.
 - Event envelope round-trips without depending on one Rust enum.
+- Registration with an empty subscription list is rejected.
+- Re-registration with identical normalized subscriptions is an idempotent no-op; changed subscriptions are rejected and make no changes.

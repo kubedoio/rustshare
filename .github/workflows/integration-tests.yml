@@ -135,4 +135,8 @@ jobs:
         run: sqlx migrate run --source backend/migrations
 
       - name: Run all integration tests
-        run: cargo test --workspace --all-features -- --ignored
+        # `-j 1` serializes the test binaries: the outbox integration suite
+        # and the rustshare-storage outbox unit tests each wipe the same six
+        # integration tables, so running them concurrently would race on the
+        # shared fixture state.
+        run: cargo test --workspace --all-features -j 1 -- --ignored

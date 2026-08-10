@@ -41,13 +41,15 @@ An asynchronous dispatcher then claims and delivers outbox rows.
 Initial properties:
 
 - at-least-once delivery;
+- durable consumer registration: explicit subscription patterns are declared at registration and are immutable in v1alpha1;
+- eager fan-out: delivery obligations for every entitled matching consumer are created atomically at publish time;
 - consumer idempotency;
 - bounded retry/backoff;
 - lease/claim ownership so multiple dispatchers can run safely;
 - dead-letter state after configured permanent/exhausted failures;
 - operator-visible last error/attempt count;
 - correlation and causation propagation;
-- retention/compaction policy after successful delivery.
+- retention/compaction policy: outbox rows are compacted only when no delivery obligations remain outstanding; an event with no entitled registered consumers may be compacted after retention.
 
 Exactly-once delivery is not promised. Business effects that need deduplication use event IDs/idempotency keys.
 
@@ -88,6 +90,27 @@ Each durable consumer must define:
 - reconciliation strategy.
 
 A consumer must tolerate duplicate and delayed events.
+
+### Registration and entitlement
+
+Durable consumer registration (`integration_consumers` + `integration_consumer_subscriptions`) is authoritative for both fan-out and claiming. Registration establishes entitlement going forward, not retroactively: events created before `registered_at` are not historical backlog for a newly registered consumer. Events created at or after registration that match the consumer's explicit subscriptions create a durable delivery obligation atomically with publication (eager fan-out in the source transaction). An event's creation time is its outbox insertion timestamp (`clock_timestamp()`), not the source transaction's start time — a consumer that registers before the event row is inserted is entitled even if the source transaction began earlier.
+
+Every durable consumer MUST declare at least one explicit subscription pattern; empty subscription lists are rejected at registration. Broad consumers use explicit prefixes such as `io.elembra.*` or `io.elembra.files.*`. There is no "empty subscription = subscribe to everything" semantic.
+
+Subscription contracts are IMMUTABLE in v1alpha1. Re-registering an existing consumer with identical normalized subscriptions is an idempotent no-op that preserves `registered_at` and `enabled`; different subscriptions are rejected with a typed `ConsumerRegistrationConflict` error and no changes are made. Subscription changes require a new/versioned consumer identity or a future dedicated migration API.
+
+### Delivery lifecycle
+
+- at-least-once claim/process; an obligation remains until processed;
+- `enabled=false` pauses claiming but does not remove entitlement or obligations;
+- pending/claimed/retrying/dead-lettered obligations block outbox compaction;
+- an event with no entitled registered consumers may be compacted after retention.
+
+### Consumers are services, not users
+
+Durable integration consumers are stable Application/Connector/bridge/service consumers — NOT individual Elembra users, Buzz users, browser sessions, or devices. This prevents eager fan-out from becoming per-user fan-out.
+
+The v1alpha1 implementation ships zero production consumers. The integration suite exercises the full pipeline with the test-only reference consumer (`backend/tests/contracts/reference_consumer.rs`); its projection table is created at runtime by test code and is not part of the schema migrations.
 
 ## Reconciliation
 
@@ -138,6 +161,11 @@ Rejected. Applications must not require atomic transactions across independent s
 
 Rejected. It adds infrastructure before throughput/retention requirements justify it and does not replace the need for transactional publication from the source database.
 
+## Deferred
+
+- **Second publisher Application.** The v1alpha1 publisher adapter in the storage crate (`OutboxStore::publish_in_tx`) hardcodes the `io.elembra.files` source application. A second Application publisher (e.g. Memory or Mail) is deferred until those Applications publish integration events.
+- **DLQ operator surface.** `list_dead_letters` / `requeue` are programmatic in v1alpha1 (store API + tests); operators observe DLQ counts and age via metrics. There is no admin UI for the DLQ by design.
+
 ## Acceptance criteria
 
 - [ ] Integration-event schema exists and is transport-neutral.
@@ -147,3 +175,4 @@ Rejected. It adds infrastructure before throughput/retention requirements justif
 - [ ] `EventBroadcaster` is documented as ephemeral UI fan-out only.
 - [ ] Integration event types are namespaced strings owned by Applications.
 - [ ] A consumer can be offline during a source mutation and process the event after recovery.
+- [ ] Registration requires at least one explicit subscription pattern; re-registration with identical normalized subscriptions is an idempotent no-op and changed subscriptions are rejected.

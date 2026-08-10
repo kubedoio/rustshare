@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE integration_deliveries\n            SET state = 'pending', claimed_by = NULL, claim_token = NULL, claim_expires_at = NULL,\n                available_at = now() + ($5::int8 * interval '1 second'), last_error = $6\n            WHERE consumer_id = $1 AND source = $2 AND event_id = $3 AND claim_token = $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a7616ddc1b1a55be3e13e4daafa3897c5f72a35c6fa3ea756a549c0c18f8db0f"
+}
