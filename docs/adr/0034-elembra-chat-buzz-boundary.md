@@ -302,18 +302,24 @@ Elembra message database and no outbox implementation was added.
 The implementation tests signed-event tag round-tripping, credential absence,
 malformed/duplicate/extended tag rejection, and standard-tag isolation. The
 existing Files owner and SourceAuthorizer tests cover tenant/workspace scope,
-delegation, permission denial, version selection, and fail-closed routing. A
-full production deployment still needs a real Elembra Files/Buzz environment
-test covering attach, revoke, and post-revocation preview/open.
+delegation, permission denial, version selection, and fail-closed routing.
+
+The live vertical-slice proof used a disposable real RustShare server backed by
+Postgres/RustFS and a disposable real Buzz relay. It passed: A selected an
+existing Files resource; the signed Buzz event stored the exact ResourceRef;
+B previewed and opened it; a Chat-only Principal and a different-tenant
+Principal were denied; Files access was revoked;
+the historical Buzz event was retrieved unchanged with a valid signature; B's
+subsequent preview/open requests were denied; and deletion returned the safe
+unavailable result. Temporary users, file rows, relay containers, and relay
+database were removed afterward.
 
 An isolated Buzz relay proof on 2026-08-10 accepted and returned a signed kind
 `1` event carrying the exact `elembra-ref` tag (`event_id`
 `699ff87ec08e9e4d68a961f217e0f3da48e8812ec4314e0ab60a818b8ec945c`); the
 retrieved event signature verified. The temporary client and relay database
-were destroyed afterward. RustShare startup was also validated against the
-local Postgres/RustFS services, but the full HTTP attach/revoke scenario was
-not claimed because the local deployment lacked a complete authenticated Files
-fixture.
+were destroyed afterward. The later vertical-slice proof above supplied the
+authenticated Files fixture and covered the complete attach/revoke behavior.
 
 ### Current-state findings
 
@@ -507,12 +513,12 @@ the Buzz community.
 
 The Elembra-side foundation and optional bridge consumer are implemented:
 durable binding/challenge/mapping/admission tables, trusted routes, NIP-42
-verification, canonical CloudEvents, and NIP-43 relay commands. The remaining
-verification slice is a real Buzz relay test for bind → sign/post → disable →
-revoke → old-key-denied. The current unit tests cover cryptographic proof,
-replay/expiry/key/relay failures, tenant mismatch, inactive Principal, revoked
-binding, and service-key command signing; they are not a substitute for that
-integration test.
+verification, canonical CloudEvents, and NIP-43 relay commands. The live Buzz
+relay proof is complete: bind/admit, sign and publish, disable, revoke, and
+verify that old signed history remains valid while new publication is denied.
+The current unit tests cover cryptographic proof, replay/expiry/key/relay
+failures, tenant mismatch, inactive Principal, revoked binding, and service-key
+command signing.
 
 - [x] Principal↔Buzz pubkey binding contract exists.
 - [x] Workspace↔Buzz community mapping contract exists.
