@@ -18,7 +18,12 @@
 //! * durable-registration regressions: retention survival for an offline
 //!   consumer, no historical backlog for new consumers, actor attribution
 //!   (public-share uploads are never attributed to the owner), event-identity
-//!   conflicts, and claim-batch bounds — tests 16–21.
+//!   conflicts, and claim-batch bounds — tests 16–21;
+//! * registration-contract regressions: empty subscription lists are
+//!   rejected, an explicit broad-prefix consumer's offline obligation
+//!   survives retention, identical re-registration is idempotent, and a
+//!   changed subscription contract conflicts without touching rows or
+//!   obligations — tests 22–25.
 //!
 //! The outbox tables are global (not tenant-scoped), so every test takes a
 //! shared `SERIAL` guard and cleans up exactly the rows it created. Run with:
@@ -2071,5 +2076,357 @@ async fn claim_batch_respects_bound_across_phases() {
         .chain(without_delivery.iter())
         .collect();
     cleanup_events(&ctx.pool, &all_events).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 22. Empty subscription registration is rejected
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn empty_subscription_registration_is_rejected() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let consumer_id = format!("io.elembra.test.empty-{}", Uuid::new_v4());
+
+    // An empty pattern list cannot be discovered at eager fan-out, so no
+    // durable obligation would ever be created: registration must fail with
+    // a typed error and must not create any rows.
+    let result = store.register_consumer(&consumer_id, &[]).await;
+    assert!(
+        matches!(result, Err(OutboxStoreError::EmptySubscriptionList(_))),
+        "empty registration must fail with a typed error: {result:?}"
+    );
+    let consumers = store.list_consumers().await.unwrap();
+    assert!(
+        !consumers.iter().any(|c| c.consumer_id == consumer_id),
+        "a rejected registration must not create a consumer row"
+    );
+    assert!(
+        store
+            .consumer_subscriptions(&consumer_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a rejected registration must not create subscription rows"
+    );
+    assert!(
+        !store.is_consumer_enabled(&consumer_id).await.unwrap(),
+        "a rejected registration must not enable anything"
+    );
+
+    // The consumer id is still usable afterwards with an explicit pattern.
+    store
+        .register_consumer(&consumer_id, &["io.elembra.*".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        store.consumer_subscriptions(&consumer_id).await.unwrap(),
+        vec!["io.elembra.*".to_string()]
+    );
+
+    sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
+        .bind(&consumer_id)
+        .execute(&ctx.pool)
+        .await
+        .unwrap();
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 23. An offline broad-prefix consumer's obligation survives retention
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn broad_prefix_consumer_offline_obligation_survives_retention() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let consumer_id = format!("io.elembra.test.broad-{}", Uuid::new_v4());
+
+    // Broad consumers must declare an explicit prefix — NOT an empty list.
+    store
+        .register_consumer(&consumer_id, &["io.elembra.*".to_string()])
+        .await
+        .unwrap();
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+    assert_eq!(
+        delivery_state(&ctx.pool, &consumer_id, &event).await,
+        "pending",
+        "a matching broad-prefix consumer must get an eager obligation"
+    );
+
+    // The consumer stays fully offline. Age the outbox row past any
+    // retention horizon and run maintenance: the pending obligation must
+    // block compaction.
+    sqlx::query(
+        "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    let deleted = store.maintenance(1).await.unwrap();
+    assert_eq!(deleted, 0, "a pending obligation must block compaction");
+    let outbox_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1, "the aged outbox row must still exist");
+    assert_eq!(
+        delivery_state(&ctx.pool, &consumer_id, &event).await,
+        "pending",
+        "the obligation must still be pending"
+    );
+
+    // The consumer returns later and processes the event.
+    let claimed = store
+        .claim_batch(&consumer_id, &OutboxConfig::default(), "late-worker")
+        .await
+        .unwrap();
+    assert_eq!(
+        claimed.len(),
+        1,
+        "the offline period must not lose the event"
+    );
+    assert_eq!(claimed[0].event, event);
+    let consumer = Arc::new(ReferenceMemoryProjectionConsumer::new(
+        ctx.pool.clone(),
+        true,
+    ));
+    let outcome = consumer.process(&claimed[0].event).await;
+    assert_eq!(outcome, ConsumerOutcome::Processed);
+    assert!(store
+        .acknowledge(
+            &consumer_id,
+            &claimed[0].source,
+            claimed[0].event_id,
+            claimed[0].claim_token,
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        delivery_state(&ctx.pool, &consumer_id, &event).await,
+        "processed"
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 24. Re-registering with identical subscriptions is idempotent
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn re_registration_with_identical_subscriptions_is_idempotent() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let consumer_id = format!("io.elembra.test.rereg-idem-{}", Uuid::new_v4());
+
+    store
+        .register_consumer(
+            &consumer_id,
+            &[
+                "io.elembra.files.file.created.v1".to_string(),
+                "io.elembra.files.file.updated.v1".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+    let registered_at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert!(store.is_consumer_enabled(&consumer_id).await.unwrap());
+
+    // Disable, then re-register with the identical normalized set — passed
+    // unsorted and with a duplicate. Must succeed idempotently, preserving
+    // `enabled` and `registered_at`.
+    assert!(store
+        .set_consumer_enabled(&consumer_id, false)
+        .await
+        .unwrap());
+    store
+        .register_consumer(
+            &consumer_id,
+            &[
+                "io.elembra.files.file.updated.v1".to_string(),
+                "io.elembra.files.file.created.v1".to_string(),
+                "io.elembra.files.file.updated.v1".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+    assert!(
+        !store.is_consumer_enabled(&consumer_id).await.unwrap(),
+        "identical re-registration must not reset enabled"
+    );
+    assert_eq!(
+        store.consumer_subscriptions(&consumer_id).await.unwrap(),
+        vec![
+            "io.elembra.files.file.created.v1".to_string(),
+            "io.elembra.files.file.updated.v1".to_string(),
+        ],
+        "the durable set is the sorted, deduplicated contract"
+    );
+    let registered_at_after = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        registered_at_after, registered_at,
+        "identical re-registration must not update registered_at"
+    );
+    // `list_consumers` reflects the unchanged registration.
+    let consumers = store.list_consumers().await.unwrap();
+    let registration = consumers
+        .iter()
+        .find(|c| c.consumer_id == consumer_id)
+        .expect("consumer must be listed");
+    assert!(!registration.enabled);
+    assert_eq!(registration.registered_at, registered_at);
+
+    sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
+        .bind(&consumer_id)
+        .execute(&ctx.pool)
+        .await
+        .unwrap();
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 25. Re-registering with different subscriptions conflicts, rows untouched
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn re_registration_with_different_subscriptions_conflicts() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let consumer_id = format!("io.elembra.test.rereg-conflict-{}", Uuid::new_v4());
+
+    store
+        .register_consumer(&consumer_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
+    let registered_at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    // A pending obligation exists for pattern A (eager fan-out at publish).
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+    assert_eq!(
+        delivery_state(&ctx.pool, &consumer_id, &event).await,
+        "pending"
+    );
+
+    // Re-register with pattern B: v1alpha1 contracts are immutable.
+    let result = store
+        .register_consumer(&consumer_id, &[FILES_FILE_UPDATED_V1.to_string()])
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(OutboxStoreError::ConsumerRegistrationConflict { .. })
+        ),
+        "a changed subscription contract must conflict: {result:?}"
+    );
+    // No row changed: subscriptions, enabled and registered_at are intact.
+    assert_eq!(
+        store.consumer_subscriptions(&consumer_id).await.unwrap(),
+        vec![FILES_FILE_CREATED_V1.to_string()],
+        "subscription rows must be unchanged after a conflict"
+    );
+    assert!(
+        store.is_consumer_enabled(&consumer_id).await.unwrap(),
+        "the consumer row must be unchanged after a conflict"
+    );
+    let registered_at_after = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT registered_at FROM integration_consumers WHERE consumer_id = $1",
+    )
+    .bind(&consumer_id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(registered_at_after, registered_at);
+
+    // The pre-existing pending obligation is untouched: maintenance must not
+    // delete the event while it is pending…
+    sqlx::query(
+        "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        store.maintenance(1).await.unwrap(),
+        0,
+        "a pending obligation must block compaction after a conflicted re-registration"
+    );
+    let outbox_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1);
+
+    // …and the obligation remains claimable afterwards.
+    let claimed = store
+        .claim_batch(
+            &consumer_id,
+            &OutboxConfig::default(),
+            "post-conflict-worker",
+        )
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1, "the obligation must still be claimable");
+    assert_eq!(claimed[0].event, event);
+    assert!(store
+        .acknowledge(
+            &consumer_id,
+            &claimed[0].source,
+            claimed[0].event_id,
+            claimed[0].claim_token,
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        delivery_state(&ctx.pool, &consumer_id, &event).await,
+        "processed"
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
     ctx.cleanup().await;
 }
