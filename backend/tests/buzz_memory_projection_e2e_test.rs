@@ -546,6 +546,10 @@ async fn e2e_one_event_creates_exactly_one_record() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -601,6 +605,10 @@ async fn e2e_duplicate_observation_creates_no_duplicate() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -681,6 +689,10 @@ async fn e2e_event_id_signature_checksum_provenance_preserved() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let setup = setup_tenant(
@@ -751,6 +763,10 @@ async fn e2e_principal_mapping_correct() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let setup = setup_tenant(
@@ -798,6 +814,10 @@ async fn e2e_workspace_community_mapping_correct() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -844,6 +864,9 @@ async fn e2e_cross_tenant_fails_closed() {
     let pool = pool().await;
     let tenant_a = TenantId::from(Uuid::new_v4());
     let tenant_b = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup for both tenants (see the other tests' comment).
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let configuration = serde_json::json!({ "memory_projection": true, "content_indexing": false });
@@ -911,6 +934,10 @@ async fn e2e_offline_memory_worker_recovers_without_event_loss() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -987,6 +1014,10 @@ async fn e2e_memory_outage_does_not_affect_chat() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -1055,6 +1086,10 @@ async fn e2e_excluded_and_dm_channels_not_projected() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -1109,6 +1144,10 @@ async fn e2e_revoked_membership_blocks_future_exposure() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let setup = setup_tenant(
@@ -1190,6 +1229,10 @@ async fn e2e_stale_memory_cannot_override_buzz_authorization() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let setup = setup_tenant(
@@ -1308,6 +1351,10 @@ async fn e2e_tombstone_behavior_follows_buzz_semantics() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     let setup = setup_tenant(
@@ -1402,6 +1449,10 @@ async fn e2e_reconciliation_repairs_missing_projection() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
@@ -1460,6 +1511,10 @@ async fn e2e_ingestion_requires_signed_events_only() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
+    // Defensive pre-cleanup: every test must be deterministic even if a
+    // previous (possibly interrupted) run left rows for this tenant or for
+    // the shared consumer id behind.
+    cleanup(&pool, tenant).await;
     let keys = Keys::generate();
     let community = format!("community-{}", Uuid::new_v4());
     setup_tenant(
