@@ -2457,24 +2457,33 @@ mod tests {
             .unwrap();
         assert_eq!(claimed.len(), 2);
 
-        // One processed, one failed (retryable → pending).
-        let first = &claimed[0];
+        // One processed, one failed (retryable → pending). Select the rows by
+        // event identity rather than position: the claim order ties on
+        // `available_at` (same transaction) and breaks on the random event
+        // id, so `claimed[0]`/`claimed[1]` are not stable across runs.
+        let created_claim = claimed
+            .iter()
+            .find(|c| c.event_id == created.id)
+            .expect("created event is claimed");
+        let updated_claim = claimed
+            .iter()
+            .find(|c| c.event_id == updated.id)
+            .expect("updated event is claimed");
         store
             .acknowledge(
                 &consumer_id,
-                &first.source,
-                first.event_id,
-                first.claim_token,
+                &created_claim.source,
+                created_claim.event_id,
+                created_claim.claim_token,
             )
             .await
             .unwrap();
-        let second = &claimed[1];
         store
             .fail_retryable(
                 &consumer_id,
-                &second.source,
-                second.event_id,
-                second.claim_token,
+                &updated_claim.source,
+                updated_claim.event_id,
+                updated_claim.claim_token,
                 "transient",
                 &config,
             )
@@ -2537,7 +2546,7 @@ mod tests {
             "UPDATE integration_deliveries SET available_at = now() - interval '1 second' WHERE consumer_id = $1 AND event_id = $2",
         )
         .bind(&consumer_id)
-        .bind(second.event_id)
+        .bind(updated.id)
         .execute(&pool)
         .await
         .unwrap();
