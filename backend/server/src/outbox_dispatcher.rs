@@ -10,6 +10,10 @@
 //! consumer-side idempotency (the reference consumer records a durable
 //! receipt atomically with its effect). The dispatcher itself is stateless
 //! between ticks; `OutboxStatus` exposes last-tick health to readiness.
+//! Consumer code runs inside a spawned task bounded by a per-event timeout
+//! (`RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS`), so a panicking or wedged
+//! consumer is contained (dead-letter / retryable) and can never kill or
+//! stall the dispatch loop.
 //!
 //! # Durable consumer registration (v1alpha1)
 //!
@@ -238,6 +242,18 @@ impl OutboxDispatcher {
     }
 
     /// Run one claimed event through the consumer and persist the outcome.
+    ///
+    /// The consumer runs in a spawned task bounded by `process_timeout`, so
+    /// consumer code can never kill or stall the dispatch loop:
+    ///
+    /// * a panicking consumer surfaces as a `JoinError` — the delivery is
+    ///   dead-lettered (reason `consumer panicked`);
+    /// * a wedged consumer trips the timeout — the delivery is failed
+    ///   retryable (reason `processing timed out`) and re-enters the bounded
+    ///   backoff, dead-lettering only when attempts are exhausted.
+    ///
+    /// Both reasons are fixed strings (the store redacts them anyway); the
+    /// panic payload is deliberately not persisted.
     async fn process_claimed(
         &self,
         consumer: &Arc<dyn OutboxConsumer>,
@@ -245,7 +261,35 @@ impl OutboxDispatcher {
         claimed: &ClaimedEvent,
     ) {
         let started = Instant::now();
-        let outcome = consumer.process(&claimed.event).await;
+        let event = claimed.event.clone();
+        let consumer = consumer.clone();
+        let task = tokio::task::spawn(async move { consumer.process(&event).await });
+        let outcome = match tokio::time::timeout(self.config.process_timeout, task).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_join_error)) => {
+                warn!(
+                    %consumer_id,
+                    source = %claimed.source,
+                    event_id = %claimed.event_id,
+                    "outbox consumer panicked; dead-lettering the delivery"
+                );
+                ConsumerOutcome::Permanent {
+                    reason: "consumer panicked".to_string(),
+                }
+            }
+            Err(_elapsed) => {
+                warn!(
+                    %consumer_id,
+                    source = %claimed.source,
+                    event_id = %claimed.event_id,
+                    process_timeout_secs = self.config.process_timeout.as_secs(),
+                    "outbox consumer timed out; failing the delivery retryable"
+                );
+                ConsumerOutcome::Retryable {
+                    reason: "processing timed out".to_string(),
+                }
+            }
+        };
         metrics::histogram!(
             "outbox_process_seconds",
             "consumer" => consumer_id.to_string(),

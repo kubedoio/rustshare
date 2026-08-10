@@ -174,6 +174,10 @@ pub struct OutboxWorkerConfig {
     /// Outbox retention in hours before fully-delivered rows are compacted;
     /// `0` disables retention cleanup.
     pub retention_hours: i64,
+    /// Per-event processing deadline: a consumer that does not return within
+    /// this window has its delivery failed retryable (bounded backoff, then
+    /// DLQ) so a wedged consumer cannot stall the dispatch loop.
+    pub process_timeout: Duration,
     /// Readiness staleness window: the `outbox` readiness component is only
     /// healthy while the last dispatcher tick is at most this many seconds
     /// old.
@@ -191,6 +195,7 @@ impl Default for OutboxWorkerConfig {
             backoff_initial_ms: 1000,
             backoff_max_ms: 300_000,
             retention_hours: 168,
+            process_timeout: Duration::from_secs(60),
             readiness_staleness_secs: 60,
         }
     }
@@ -210,6 +215,10 @@ impl OutboxWorkerConfig {
             backoff_initial_ms: env_parse("RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS", 1000u64),
             backoff_max_ms: env_parse("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", 300_000u64),
             retention_hours: env_parse("RUSTSHARE_OUTBOX_RETENTION_HOURS", 168i64),
+            process_timeout: Duration::from_secs(env_parse(
+                "RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS",
+                60u64,
+            )),
             readiness_staleness_secs: env_parse("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", 60u64),
         };
         // Sanity clamps: a zero/negative value would make the store misbehave
@@ -218,6 +227,7 @@ impl OutboxWorkerConfig {
         config.lease_secs = config.lease_secs.max(1);
         config.max_attempts = config.max_attempts.max(1);
         config.poll_interval = config.poll_interval.max(Duration::from_millis(1));
+        config.process_timeout = config.process_timeout.max(Duration::from_secs(1));
         config
     }
 }
@@ -285,7 +295,7 @@ mod tests {
     static ENV_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
-    const OUTBOX_ENV_VARS: [&str; 9] = [
+    const OUTBOX_ENV_VARS: [&str; 10] = [
         "RUSTSHARE_OUTBOX_WORKER_ENABLED",
         "RUSTSHARE_OUTBOX_POLL_INTERVAL_MS",
         "RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE",
@@ -294,6 +304,7 @@ mod tests {
         "RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS",
         "RUSTSHARE_OUTBOX_BACKOFF_MAX_MS",
         "RUSTSHARE_OUTBOX_RETENTION_HOURS",
+        "RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS",
         "RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS",
     ];
 
@@ -316,6 +327,7 @@ mod tests {
         assert_eq!(config.backoff_initial_ms, 1000);
         assert_eq!(config.backoff_max_ms, 300_000);
         assert_eq!(config.retention_hours, 168);
+        assert_eq!(config.process_timeout, Duration::from_secs(60));
         assert_eq!(config.readiness_staleness_secs, 60);
     }
 
@@ -331,6 +343,7 @@ mod tests {
         std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_INITIAL_MS", "500");
         std::env::set_var("RUSTSHARE_OUTBOX_BACKOFF_MAX_MS", "90000");
         std::env::set_var("RUSTSHARE_OUTBOX_RETENTION_HOURS", "24");
+        std::env::set_var("RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS", "0");
         std::env::set_var("RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS", "120");
         std::env::set_var("RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE", "0");
 
@@ -343,6 +356,11 @@ mod tests {
         assert_eq!(config.backoff_initial_ms, 500);
         assert_eq!(config.backoff_max_ms, 90_000);
         assert_eq!(config.retention_hours, 24);
+        assert_eq!(
+            config.process_timeout,
+            Duration::from_secs(1),
+            "process timeout clamped to >= 1 second"
+        );
         assert_eq!(config.readiness_staleness_secs, 120);
     }
 
