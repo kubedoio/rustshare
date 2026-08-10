@@ -6,14 +6,19 @@
 //!
 //! * atomic publish (outbox row commits with the source mutation, never
 //!   without it) — tests 1–3;
-//! * lazy fan-out, recovery, at-least-once + idempotency, lease fencing and
-//!   concurrent workers — tests 4–7;
+//! * durable consumer registration with eager fan-out obligations, offline
+//!   recovery, at-least-once + idempotency, lease fencing and concurrent
+//!   workers — tests 4–7;
 //! * retry backoff, dead-lettering, requeue and redaction — tests 8–10;
 //! * fail-closed behavior (poison rows, validation, ownership) — tests
 //!   11–12;
 //! * security invariants (an event grants no access; serialized authority
 //!   context is inert data) — tests 13–14;
-//! * transport-neutral envelope contract — test 15.
+//! * transport-neutral envelope contract — test 15;
+//! * durable-registration regressions: retention survival for an offline
+//!   consumer, no historical backlog for new consumers, actor attribution
+//!   (public-share uploads are never attributed to the owner), event-identity
+//!   conflicts, and claim-batch bounds — tests 16–21.
 //!
 //! The outbox tables are global (not tenant-scoped), so every test takes a
 //! shared `SERIAL` guard and cleans up exactly the rows it created. Run with:
@@ -24,13 +29,18 @@
 
 mod contracts;
 use contracts::common::{setup_test_env, TestContext};
+use contracts::reference_consumer::{
+    ensure_effect_table, extract_projection, ReferenceMemoryProjectionConsumer,
+    REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+};
 
 use bytes::Bytes;
 use rustshare_core::domain::{
     ActionCapability, ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
 };
 use rustshare_core::services::{
-    IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError, PermissionResolver,
+    FileUploadActor, IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError,
+    PermissionResolver,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_integration_events::event_types::{FILES_FILE_CREATED_V1, FILES_FILE_UPDATED_V1};
@@ -40,12 +50,10 @@ use rustshare_resource_auth::{
 };
 use rustshare_server::authz::FilesResourceOwner;
 use rustshare_server::config::OutboxWorkerConfig;
-use rustshare_server::outbox_consumers::{
-    extract_projection, ReferenceMemoryProjectionConsumer, REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
-};
 use rustshare_server::outbox_dispatcher::OutboxDispatcher;
 use rustshare_storage::{OutboxConfig, OutboxStore, OutboxStoreError};
 use sqlx::Row;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -91,16 +99,21 @@ async fn publish(store: &OutboxStore, event: &IntegrationEvent) {
     tx.commit().await.unwrap();
 }
 
-/// Remove every outbox-side row for the given events (all four tables; the
-/// delivery/receipt/effect tables are keyed by source+event_id, so deleting
-/// by those two columns covers every consumer).
-/// Empty the outbox tables. Safe because every test in this file holds
-/// `SERIAL`; rows leaked by an aborted previous run would otherwise be
-/// claimed by the next test (claims filter by event type, not by test).
+/// Remove every outbox-side row the suite creates (all four tables plus the
+/// durable registrations) and ensure the test-support effect table exists.
+/// Safe because every test in this file holds `SERIAL`; rows leaked by an
+/// aborted previous run would otherwise be claimed by the next test (claims
+/// filter by event type, not by test).
+///
+/// Deleting the `integration_consumers` rows also resets `registered_at`,
+/// which tests with a registration-time gate (16, 17, 21) depend on.
 async fn clean_slate(pool: &sqlx::PgPool) {
+    ensure_effect_table(pool).await.unwrap();
     for table in [
         "integration_reference_effects",
         "integration_consumer_receipts",
+        "integration_consumer_subscriptions",
+        "integration_consumers",
         "integration_deliveries",
         "integration_outbox",
     ] {
@@ -109,6 +122,20 @@ async fn clean_slate(pool: &sqlx::PgPool) {
             .await
             .unwrap();
     }
+}
+
+/// Register the reference consumer durably (subscriptions + effect table),
+/// so publish-time eager fan-out creates its delivery obligations.
+async fn register_ref_consumer(store: &OutboxStore, pool: &sqlx::PgPool) {
+    ensure_effect_table(pool).await.unwrap();
+    let consumer = ReferenceMemoryProjectionConsumer::new(pool.clone(), true);
+    store
+        .register_consumer(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &consumer.subscriptions(),
+        )
+        .await
+        .unwrap();
 }
 
 async fn cleanup_events(pool: &sqlx::PgPool, events: &[&IntegrationEvent]) {
@@ -201,6 +228,9 @@ async fn publishes_file_events_atomically_on_upload() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    // A registered consumer gets an eager delivery obligation at publish
+    // time, so register before the uploads.
+    register_ref_consumer(&store, &ctx.pool).await;
     let owner = ctx.create_test_user("upload_owner").await;
     let publisher: Arc<dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>> =
         store.clone();
@@ -251,6 +281,23 @@ async fn publishes_file_events_atomically_on_upload() {
         format!("sha256:{}", file.content_hash)
     );
 
+    // Eager fan-out: the registered consumer already has a pending delivery
+    // obligation for the event, straight after publish.
+    let obligation = sqlx::query(
+        "SELECT state FROM integration_deliveries WHERE consumer_id = $1 AND source = $2 AND event_id = $3",
+    )
+    .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
+    .bind(&first_event.source)
+    .bind(first_event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        obligation.try_get::<String, _>("state").unwrap(),
+        "pending",
+        "a registered consumer must get an eager delivery obligation on publish"
+    );
+
     // A NEW VERSION of the same file → a second row, `file.updated.v1`.
     std::fs::write(&path, b"hello outbox v2").unwrap();
     let updated = file_service
@@ -294,6 +341,20 @@ async fn publishes_file_events_atomically_on_upload() {
     );
 
     let all_events = [&first_event, &second_event];
+    // Both events carried an obligation for the registered consumer.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1 AND event_id = ANY($2)",
+        )
+        .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
+        .bind(&[first_event.id, second_event.id][..])
+        .fetch_one(&ctx.pool)
+        .await
+        .unwrap(),
+        2,
+        "each published event must create one pending obligation"
+    );
+
     cleanup_events(&ctx.pool, &all_events).await;
     ctx.cleanup().await;
 }
@@ -393,7 +454,7 @@ async fn rollback_after_outbox_insert_leaves_no_event() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Lazy fan-out + offline consumer recovery
+// 4. Eager fan-out + offline consumer recovery
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -403,21 +464,17 @@ async fn offline_consumer_recovers_and_processes() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
-    // Fan-out is lazy: no consumer has run yet, so no delivery row exists.
-    let delivery_rows = sqlx::query_scalar::<_, i64>(
-        "SELECT count(*)::bigint FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
-    )
-    .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
-    .bind(event.id)
-    .fetch_one(&ctx.pool)
-    .await
-    .unwrap();
+    // Fan-out is eager: the registered consumer's delivery obligation row
+    // exists right after publish (state pending); nothing is claimed until a
+    // worker runs.
     assert_eq!(
-        delivery_rows, 0,
-        "fan-out must be lazy (no delivery row yet)"
+        delivery_state(&ctx.pool, REFERENCE_MEMORY_PROJECTION_CONSUMER_ID, &event).await,
+        "pending",
+        "a registered consumer must have a pending obligation at publish time"
     );
 
     let dispatcher = reference_dispatcher(store.clone(), &ctx.pool, OutboxWorkerConfig::default());
@@ -469,6 +526,7 @@ async fn duplicate_delivery_produces_single_effect() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
@@ -476,12 +534,10 @@ async fn duplicate_delivery_produces_single_effect() {
         ctx.pool.clone(),
         true,
     ));
-    let subscriptions = vec![FILES_FILE_CREATED_V1.to_string()];
     for round in 1..=3 {
         let claimed = store
             .claim_batch(
                 REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
-                &subscriptions,
                 &OutboxConfig::default(),
                 &format!("worker-{round}"),
             )
@@ -552,6 +608,7 @@ async fn worker_crash_lease_expiry_recovers() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
@@ -559,7 +616,6 @@ async fn worker_crash_lease_expiry_recovers() {
     let claimed = store
         .claim_batch(
             REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
-            &[FILES_FILE_CREATED_V1.to_string()],
             &OutboxConfig::default(),
             "crashed-worker",
         )
@@ -629,6 +685,7 @@ async fn concurrent_workers_no_duplicate_effect() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let events: Vec<IntegrationEvent> =
         (0..5).map(|_| files_created_event(ctx.tenant_id)).collect();
     for event in &events {
@@ -786,11 +843,18 @@ async fn retry_backoff_then_success() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    let consumer_id = "io.elembra.test.flaky";
+    // The stub consumer's durable registration must exist before publish so
+    // the event fans out a pending obligation for it.
+    store
+        .register_consumer(consumer_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
     const SECRET: &str = "token=abc123secret";
-    let consumer = Arc::new(FlakyConsumer::new("io.elembra.test.flaky", 2, SECRET));
+    let consumer = Arc::new(FlakyConsumer::new(consumer_id, 2, SECRET));
     let dispatcher = Arc::new(OutboxDispatcher::new(
         store.clone(),
         vec![consumer as Arc<dyn OutboxConsumer>],
@@ -801,7 +865,6 @@ async fn retry_backoff_then_success() {
         },
         "backoff-worker".to_string(),
     ));
-    let consumer_id = "io.elembra.test.flaky";
 
     // Tick 1: first failure → pending with backoff, attempt 1, redacted error.
     dispatcher.tick().await;
@@ -884,6 +947,11 @@ async fn exhausted_retries_dead_letter_and_requeue() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    let consumer_id = "io.elembra.test.dlq";
+    store
+        .register_consumer(consumer_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
@@ -891,7 +959,7 @@ async fn exhausted_retries_dead_letter_and_requeue() {
     let consumer = Arc::new(AlwaysRetryThenSucceedConsumer {
         succeed: AtomicBool::new(false),
         secret: SECRET,
-        consumer_id: "io.elembra.test.dlq".to_string(),
+        consumer_id: consumer_id.to_string(),
     });
     let dispatcher = Arc::new(OutboxDispatcher::new(
         store.clone(),
@@ -904,7 +972,6 @@ async fn exhausted_retries_dead_letter_and_requeue() {
         },
         "dlq-worker".to_string(),
     ));
-    let consumer_id = "io.elembra.test.dlq";
 
     // Tick until dead-lettered (bounded; each tick is one claim).
     for _ in 0..10 {
@@ -999,11 +1066,16 @@ async fn permanent_failure_dead_letters() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    let consumer_id = "io.elembra.test.permanent";
+    store
+        .register_consumer(consumer_id, &[FILES_FILE_CREATED_V1.to_string()])
+        .await
+        .unwrap();
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
     let consumer = Arc::new(AlwaysPermanentConsumer {
-        consumer_id: "io.elembra.test.permanent".to_string(),
+        consumer_id: consumer_id.to_string(),
     });
     let dispatcher = Arc::new(OutboxDispatcher::new(
         store.clone(),
@@ -1011,7 +1083,6 @@ async fn permanent_failure_dead_letters() {
         OutboxWorkerConfig::default(),
         "permanent-worker".to_string(),
     ));
-    let consumer_id = "io.elembra.test.permanent";
 
     dispatcher.tick().await;
 
@@ -1048,6 +1119,7 @@ async fn poison_event_cannot_crash_dispatcher() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
@@ -1233,8 +1305,8 @@ async fn event_does_not_grant_resource_access() {
     // The reference consumer never consults the authorizer or fetches
     // content — it only projects `event.data`. Code-level invariant: the
     // consumer's only queries touch the receipt/effect tables (see
-    // outbox_consumers.rs); nothing here constructs authorization from the
-    // event.
+    // contracts/reference_consumer.rs); nothing here constructs
+    // authorization from the event.
     let consumer = Arc::new(ReferenceMemoryProjectionConsumer::new(
         ctx.pool.clone(),
         true,
@@ -1362,13 +1434,13 @@ async fn contract_independence_from_internal_event_enum() {
     let ctx = setup_test_env().await;
     clean_slate(&ctx.pool).await;
     let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
     let event = files_created_event(ctx.tenant_id);
     publish(&store, &event).await;
 
     let claimed = store
         .claim_batch(
             REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
-            &[FILES_FILE_CREATED_V1.to_string()],
             &OutboxConfig::default(),
             "roundtrip-worker",
         )
@@ -1389,5 +1461,615 @@ async fn contract_independence_from_internal_event_enum() {
     assert_eq!(reparsed.source, "elembra://io.elembra.files");
 
     cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 16. An offline consumer's pending obligation survives retention
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn long_offline_consumer_survives_retention() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+
+    // The consumer is offline: no worker ever claims. Age the outbox row past
+    // any retention horizon.
+    sqlx::query(
+        "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    // Retention with a 1-hour horizon must NOT compact: the pending
+    // obligation blocks deletion.
+    let deleted = store.maintenance(1).await.unwrap();
+    assert_eq!(deleted, 0, "a pending obligation must block compaction");
+    let outbox_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1, "the aged outbox row must still exist");
+    assert_eq!(
+        delivery_state(&ctx.pool, REFERENCE_MEMORY_PROJECTION_CONSUMER_ID, &event).await,
+        "pending",
+        "the obligation must still be pending"
+    );
+
+    // When the consumer comes back online, the event is still delivered.
+    let dispatcher = reference_dispatcher(store.clone(), &ctx.pool, OutboxWorkerConfig::default());
+    dispatcher.tick().await;
+    assert_eq!(
+        effect_count(
+            &ctx.pool,
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &[&event]
+        )
+        .await,
+        1,
+        "the offline period must not lose the event"
+    );
+    assert_eq!(
+        delivery_state(&ctx.pool, REFERENCE_MEMORY_PROJECTION_CONSUMER_ID, &event).await,
+        "processed"
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 17. A newly registered consumer gets no historical backlog
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn newly_registered_consumer_gets_no_historical_backlog() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    // Publish BEFORE any consumer is registered: no obligation is created.
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE event_id = $1",
+        )
+        .bind(event.id)
+        .fetch_one(&ctx.pool)
+        .await
+        .unwrap(),
+        0,
+        "no consumer was registered at publish time, so no obligation exists"
+    );
+
+    // Register the consumer after the fact.
+    register_ref_consumer(&store, &ctx.pool).await;
+
+    // Claiming must not backfill events created before registration.
+    let claimed = store
+        .claim_batch(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &OutboxConfig::default(),
+            "no-backlog-worker",
+        )
+        .await
+        .unwrap();
+    assert!(claimed.is_empty(), "no historical backlog may be claimed");
+
+    // A dispatcher tick (which also re-registers) processes nothing either.
+    let dispatcher = reference_dispatcher(store.clone(), &ctx.pool, OutboxWorkerConfig::default());
+    dispatcher.tick().await;
+    assert_eq!(
+        effect_count(
+            &ctx.pool,
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &[&event]
+        )
+        .await,
+        0,
+        "no effect for pre-registration events"
+    );
+    assert_eq!(
+        receipt_count(
+            &ctx.pool,
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &[&event]
+        )
+        .await,
+        0,
+        "no receipt for pre-registration events"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::bigint FROM integration_deliveries WHERE event_id = $1",
+        )
+        .bind(event.id)
+        .fetch_one(&ctx.pool)
+        .await
+        .unwrap(),
+        0,
+        "no obligation row may be created for pre-registration events"
+    );
+
+    // With no obligations at all, the event is fully delivered (vacuously)
+    // and retention may compact it once it ages out.
+    sqlx::query(
+        "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    let deleted = store.maintenance(1).await.unwrap();
+    assert_eq!(deleted, 1, "an obligation-free event is deletable");
+    let outbox_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 0, "retention must compact the old event");
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 18. A public-share upload is never attributed to the owner
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn public_share_upload_actor_not_attributed_to_owner() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let owner = ctx.create_test_user("public_share_owner").await;
+    let publisher: Arc<dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>> =
+        store.clone();
+    let file_service = ctx.file_service().with_integration_publisher(publisher);
+
+    // Same actor shape the public-share handler builds (see
+    // handlers/public_shares.rs): no authenticated user.
+    let public_actor = FileUploadActor {
+        actor_type: "public_share_session".to_string(),
+        actor_user_id: None,
+        actor_share_id: Some(Uuid::new_v4()),
+        actor_share_session_id: Some(Uuid::new_v4()),
+        actor_display_name: Some("Anonymous Uploader".to_string()),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pub.txt");
+    std::fs::write(&path, b"public upload").unwrap();
+    file_service
+        .upload_file_with_actor_from_path(
+            owner.id,
+            public_actor,
+            "pub.txt".to_string(),
+            None,
+            &path,
+            "text/plain".to_string(),
+            ctx.tenant_id,
+        )
+        .await
+        .unwrap();
+
+    let rows = sqlx::query(
+        "SELECT event_json FROM integration_outbox WHERE tenant_id = $1 ORDER BY created_at, event_id",
+    )
+    .bind(ctx.tenant_id)
+    .fetch_all(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    let public_event: IntegrationEvent = serde_json::from_value(
+        rows[0]
+            .try_get::<serde_json::Value, _>("event_json")
+            .unwrap(),
+    )
+    .unwrap();
+
+    // No `elembraActor` extension on the wire, and no owner id anywhere in
+    // the payload: the owner is NEVER used as a fallback actor.
+    assert!(
+        public_event.actor.is_none(),
+        "a public-share upload must have no actor, got: {:?}",
+        public_event.actor
+    );
+    let serialized = serde_json::to_value(&public_event).unwrap();
+    assert!(
+        serialized.get("elembraActor").is_none(),
+        "the wire envelope must not carry elembraActor"
+    );
+    assert!(
+        !public_event
+            .data
+            .to_string()
+            .contains(&owner.id.to_string()),
+        "event data must not reference the file owner: {}",
+        public_event.data
+    );
+
+    // Contrast: an authenticated upload (any user) IS attributed.
+    let path2 = dir.path().join("auth.txt");
+    std::fs::write(&path2, b"authenticated upload").unwrap();
+    file_service
+        .upload_file_from_path(
+            owner.id,
+            "auth.txt".to_string(),
+            None,
+            &path2,
+            "text/plain".to_string(),
+            ctx.tenant_id,
+        )
+        .await
+        .unwrap();
+    let rows = sqlx::query(
+        "SELECT event_json FROM integration_outbox WHERE tenant_id = $1 ORDER BY created_at, event_id",
+    )
+    .bind(ctx.tenant_id)
+    .fetch_all(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let auth_event: IntegrationEvent = serde_json::from_value(
+        rows[1]
+            .try_get::<serde_json::Value, _>("event_json")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        auth_event.actor,
+        Some(ActorRef::Principal(PrincipalId(owner.id))),
+        "an authenticated upload must be attributed to the acting principal"
+    );
+    let serialized = serde_json::to_value(&auth_event).unwrap();
+    assert_eq!(
+        serialized["elembraActor"],
+        format!("principal:{}", owner.id),
+        "the wire actor must be the canonical principal reference"
+    );
+
+    cleanup_events(&ctx.pool, &[&public_event, &auth_event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 19. A shared-recipient upload is attributed to the acting user
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn shared_recipient_upload_actor_is_acting_user() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let owner = ctx.create_test_user("shared_owner_upload").await;
+    let recipient = ctx.create_test_user("shared_recipient_upload").await;
+    let publisher: Arc<dyn IntegrationEventPublisher<sqlx::Transaction<'static, sqlx::Postgres>>> =
+        store.clone();
+    let file_service = ctx.file_service().with_integration_publisher(publisher);
+
+    // A recipient uploads into the owner's root folder: the file still
+    // belongs to the owner, but the acting user is the recipient.
+    let actor = FileUploadActor {
+        actor_type: "user".to_string(),
+        actor_user_id: Some(recipient.id),
+        actor_share_id: None,
+        actor_share_session_id: None,
+        actor_display_name: None,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shared.txt");
+    std::fs::write(&path, b"recipient upload").unwrap();
+    let file = file_service
+        .upload_file_with_actor_from_path(
+            owner.id,
+            actor,
+            "shared.txt".to_string(),
+            None,
+            &path,
+            "text/plain".to_string(),
+            ctx.tenant_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        file.owner_id, owner.id,
+        "the file itself still belongs to the owner"
+    );
+
+    let rows = sqlx::query(
+        "SELECT event_json FROM integration_outbox WHERE tenant_id = $1 ORDER BY created_at, event_id",
+    )
+    .bind(ctx.tenant_id)
+    .fetch_all(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    let event: IntegrationEvent = serde_json::from_value(
+        rows[0]
+            .try_get::<serde_json::Value, _>("event_json")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        event.actor,
+        Some(ActorRef::Principal(PrincipalId(recipient.id))),
+        "the event actor must be the acting user, not the file owner"
+    );
+    let serialized = serde_json::to_value(&event).unwrap();
+    assert_eq!(
+        serialized["elembraActor"],
+        format!("principal:{}", recipient.id)
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 20. Republishing the same event identity with different payload conflicts
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn duplicate_event_identity_conflict_rolls_back_caller() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+
+    // Republishing the identical payload is idempotent.
+    let mut tx = store.pool().begin().await.unwrap();
+    store.insert_in_tx(&mut tx, &event).await.unwrap();
+    tx.commit().await.unwrap();
+
+    // Same (source, event_id) with different data → identity conflict.
+    let mut different_data = event.clone();
+    different_data.data = serde_json::json!({"name": "other.txt"});
+    let mut tx = store.pool().begin().await.unwrap();
+    let result = store.insert_in_tx(&mut tx, &different_data).await;
+    assert!(
+        matches!(result, Err(OutboxStoreError::EventIdentityConflict { .. })),
+        "a payload change under a stable event id must conflict: {result:?}"
+    );
+    tx.rollback().await.unwrap();
+
+    // Same (source, event_id) with a different type → identity conflict too.
+    let mut different_type = event.clone();
+    different_type.r#type = FILES_FILE_UPDATED_V1.to_string();
+    let mut tx = store.pool().begin().await.unwrap();
+    let result = store.insert_in_tx(&mut tx, &different_type).await;
+    assert!(
+        matches!(result, Err(OutboxStoreError::EventIdentityConflict { .. })),
+        "a type change under a stable event id must conflict: {result:?}"
+    );
+    tx.rollback().await.unwrap();
+
+    // Caller-tx rollback proof: marker rows written before the conflicting
+    // publish must vanish with the caller's rollback, and the outbox keeps
+    // exactly the one original row.
+    let marker_id = Uuid::new_v4();
+    let mut tx = store.pool().begin().await.unwrap();
+    sqlx::query(
+        r#"
+        INSERT INTO integration_consumer_receipts
+            (consumer_id, source, event_id, event_type, tenant_id, workspace_id, processed_at)
+        VALUES ('identity-conflict-marker', $1, $2, $3, $4, $5, now())
+        "#,
+    )
+    .bind(&event.source)
+    .bind(marker_id)
+    .bind(&event.r#type)
+    .bind(event.tenant_id.0)
+    .bind(event.workspace_id.0)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let result = store.insert_in_tx(&mut tx, &different_data).await;
+    assert!(
+        matches!(
+            result,
+            Err(OutboxStoreError::EventIdentityConflict { ref source, event_id })
+                if source == &event.source && event_id == event.id
+        ),
+        "the conflict must name the offending identity: {result:?}"
+    );
+    drop(tx); // rollback without commit
+
+    let marker_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = 'identity-conflict-marker'",
+    )
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marker_count, 0,
+        "the caller's tx rollback must remove its rows"
+    );
+    let outbox_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM integration_outbox WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        outbox_count, 1,
+        "conflicting republishes must never add or replace the outbox row"
+    );
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// 21. claim_batch respects the batch bound across both claim phases
+// ---------------------------------------------------------------------------
+
+/// Insert an outbox row directly (bypassing the store) with a valid
+/// envelope, `created_at = now()`.
+async fn insert_outbox_row(pool: &sqlx::PgPool, event: &IntegrationEvent) {
+    sqlx::query(
+        r#"
+        INSERT INTO integration_outbox
+            (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json,
+             created_at, available_at)
+        VALUES ($1, $2, $3, 'io.elembra.files', $4, $5, $6, now(), now())
+        "#,
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .bind(&event.r#type)
+    .bind(event.tenant_id.0)
+    .bind(event.workspace_id.0)
+    .bind(serde_json::to_value(event).unwrap())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Insert a directly-created pending delivery obligation for `event` (the
+/// event's outbox row must exist first).
+async fn insert_pending_delivery(pool: &sqlx::PgPool, consumer_id: &str, event: &IntegrationEvent) {
+    sqlx::query(
+        r#"
+        INSERT INTO integration_deliveries
+            (consumer_id, source, event_id, event_type, tenant_id, workspace_id, state, available_at)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending', now() - interval '1 second')
+        "#,
+    )
+    .bind(consumer_id)
+    .bind(&event.source)
+    .bind(event.id)
+    .bind(&event.r#type)
+    .bind(event.tenant_id.0)
+    .bind(event.workspace_id.0)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn claim_batch_respects_bound_across_phases() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
+    // Registered long ago, so step 2 (first delivery) may backfill rows
+    // created "now".
+    sqlx::query(
+        "UPDATE integration_consumers SET registered_at = now() - interval '1 day' WHERE consumer_id = $1",
+    )
+    .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    // 3 events with pending delivery rows (claimable by step 1) and 3 events
+    // with no delivery row (only reachable via step 2).
+    let mut with_delivery = Vec::new();
+    for _ in 0..3 {
+        let event = files_created_event(ctx.tenant_id);
+        insert_outbox_row(&ctx.pool, &event).await;
+        insert_pending_delivery(&ctx.pool, REFERENCE_MEMORY_PROJECTION_CONSUMER_ID, &event).await;
+        with_delivery.push(event);
+    }
+    let mut without_delivery = Vec::new();
+    for _ in 0..3 {
+        let event = files_created_event(ctx.tenant_id);
+        insert_outbox_row(&ctx.pool, &event).await;
+        without_delivery.push(event);
+    }
+
+    let config = OutboxConfig {
+        claim_batch_size: 4,
+        ..OutboxConfig::default()
+    };
+    let first = store
+        .claim_batch(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &config,
+            "batch-worker-1",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first.len(),
+        4,
+        "first claim must respect the batch bound (3 re-claims + 1 first-delivery)"
+    );
+
+    let second = store
+        .claim_batch(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &config,
+            "batch-worker-2",
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 2, "the remainder must be claimed next");
+
+    // Every event is claimed exactly once across the two batches.
+    let mut seen: HashSet<(String, Uuid)> = HashSet::new();
+    for claimed in first.iter().chain(second.iter()) {
+        assert!(
+            seen.insert((claimed.source.clone(), claimed.event_id)),
+            "event {:?}/{} claimed twice",
+            claimed.source,
+            claimed.event_id
+        );
+    }
+    assert_eq!(
+        seen.len(),
+        6,
+        "all six events must be claimed exactly once in total"
+    );
+
+    // Nothing is left for a third claim (all rows claimed / delivered).
+    let third = store
+        .claim_batch(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &config,
+            "batch-worker-3",
+        )
+        .await
+        .unwrap();
+    assert!(
+        third.is_empty(),
+        "a third claim must find nothing claimable"
+    );
+
+    let all_events: Vec<&IntegrationEvent> = with_delivery
+        .iter()
+        .chain(without_delivery.iter())
+        .collect();
+    cleanup_events(&ctx.pool, &all_events).await;
     ctx.cleanup().await;
 }

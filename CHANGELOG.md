@@ -20,11 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`rustshare-storage::OutboxStore`), a CloudEvents-compatible `IntegrationEvent`
   envelope, and a durable consumer contract. File uploads/updates now publish
   `io.elembra.files.file.created.v1` / `file.updated.v1` events atomically
-  with their metadata transaction; an asynchronous outbox dispatcher delivers
-  them at-least-once with lease fencing, retry backoff, dead-lettering, and an
-  idempotent reference "memory projection" consumer. Operators get
-  `RUSTSHARE_OUTBOX_*` configuration, an `outbox` readiness component, and
-  `outbox_*` metrics (#212).
+  with their metadata transaction; events carry the acting principal
+  (`elembraActor = principal:<id>`) — authenticated uploads are attributed to
+  the acting user, public-share uploads carry no actor, and the file owner is
+  never used as a fallback actor. Consumers register durably
+  (`integration_consumers` / `integration_consumer_subscriptions`); every
+  publish eagerly fans out a pending delivery obligation to each registered
+  consumer whose subscription patterns match, so an offline or
+  operator-disabled consumer never loses events (retention compacts only
+  events whose obligations are all processed). An asynchronous outbox
+  dispatcher delivers at-least-once with lease fencing, retry backoff,
+  dead-lettering, and a self-healing registration sync each tick. Operators
+  get `RUSTSHARE_OUTBOX_*` configuration, an `outbox` readiness component,
+  and `outbox_*` metrics (#212). The reference "memory projection" consumer
+  used by the integration tests ships in test support only
+  (`backend/tests/contracts/reference_consumer.rs`); production runs a
+  zero-consumer dispatcher until real consumers land.
 
 - Cross-Application identity/resource contracts (ADR-0032, v1alpha1) in the
   new `rustshare-resource-auth` crate: `PrincipalContext` (user/service/agent
