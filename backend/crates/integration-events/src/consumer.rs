@@ -39,10 +39,10 @@ pub trait OutboxConsumer: Send + Sync {
     fn consumer_id(&self) -> &str;
 
     /// Exact event types OR prefix patterns ending with `.*` this consumer
-    /// subscribes to.
-    ///
-    /// An empty vec subscribes to everything — documented and discouraged;
-    /// consumers should always declare the types they actually handle.
+    /// subscribes to. Must be non-empty: durable registration rejects an
+    /// empty list (an empty pattern set cannot be discovered at eager
+    /// fan-out, so no durable obligation would ever be created). Broad
+    /// consumers declare an explicit prefix such as `io.elembra.*`.
     fn subscriptions(&self) -> Vec<String>;
 
     /// Process one event.
@@ -57,14 +57,14 @@ pub trait OutboxConsumer: Send + Sync {
 /// Whether `event_type` matches any of the subscription patterns.
 ///
 /// Matching rules:
-/// * an empty `subscriptions` list matches everything (documented,
-///   discouraged);
+/// * an empty `subscriptions` list matches nothing (fail closed — a
+///   consumer without explicit patterns must never receive events);
 /// * a subscription without a trailing `.*` matches exactly;
 /// * a subscription ending in `.*` (e.g. `io.elembra.files.*`) matches any
 ///   event type under that prefix (`io.elembra.files.file.created.v1`).
 pub fn event_matches_subscription(event_type: &str, subscriptions: &[String]) -> bool {
     if subscriptions.is_empty() {
-        return true;
+        return false;
     }
     subscriptions.iter().any(|subscription| {
         if let Some(prefix) = subscription.strip_suffix(".*") {
@@ -115,13 +115,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_subscriptions_match_everything() {
+    fn empty_subscriptions_match_nothing() {
         let subs: Vec<String> = vec![];
-        assert!(event_matches_subscription(
+        assert!(!event_matches_subscription(
             "io.elembra.files.file.created.v1",
             &subs
         ));
-        assert!(event_matches_subscription("anything.at.all.v9", &subs));
+        assert!(!event_matches_subscription("anything.at.all.v9", &subs));
     }
 
     #[test]
