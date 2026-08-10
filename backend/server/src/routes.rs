@@ -685,6 +685,22 @@ pub fn chat_integration_routes() -> Router<AppState> {
     use axum::routing::{get, post};
     Router::new()
         .route(
+            "/api/v1/applications/chat/identity-binding/challenge",
+            post(crate::handlers::chat_identity::create_challenge),
+        )
+        .route(
+            "/api/v1/applications/chat/identity-binding/verify",
+            post(crate::handlers::chat_identity::verify_binding),
+        )
+        .route(
+            "/api/v1/applications/chat/admission",
+            post(crate::handlers::chat_identity::admit_identity),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+            post(crate::handlers::chat_identity::configure_mapping),
+        )
+        .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
         )

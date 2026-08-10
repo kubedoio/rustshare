@@ -30,6 +30,7 @@
 
 pub mod actions;
 pub mod authorizer;
+pub mod chat_identity;
 pub mod contract;
 pub mod decision;
 pub mod principal;
@@ -38,6 +39,12 @@ pub mod resource_ref;
 
 pub use actions::*;
 pub use authorizer::SourceAuthorizer;
+pub use chat_identity::{
+    authorize_admission, build_buzz_admission_event, build_buzz_admission_event_at,
+    AdmissionDecision, BindingChallenge, BindingError, BindingStatus, BuzzAdmission,
+    BuzzAdmissionCommandError, BuzzAdmissionOperation, ChatIdentityBinding,
+    WorkspaceCommunityMapping, BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
+};
 pub use contract::{
     Candidate, FetchedResource, MaterializedCandidate, Purpose, Representation, ResolvedResource,
     ResourceCapability, ResourceOwner, SourceError, MAX_BATCH_SIZE,

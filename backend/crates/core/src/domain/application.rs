@@ -490,6 +490,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
         ("files", "Files", "folder", "files", 10),
         ("notes", "Notes", "sticky-note", "okf-note", 20),
         ("mail", "Mail", "mail", "mail", 30),
+        ("chat", "Chat", "message-circle", "chat", 60),
         ("meetings", "Meeting Notes", "calendar-days", "meetings", 70),
         ("standups", "Standups", "activity", "standups", 80),
         ("kanban", "Kanban", "columns", "kanban", 90),
@@ -576,7 +577,11 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 description: format!("Elembra {name} Application"),
             },
             runtime: ApplicationRuntime {
-                kind: ApplicationRuntimeKind::Embedded,
+                kind: if slug == "chat" {
+                    ApplicationRuntimeKind::Bridge
+                } else {
+                    ApplicationRuntimeKind::Embedded
+                },
             },
             contracts: ApplicationContracts {
                 provides: vec![ContractRef {
@@ -862,6 +867,19 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
             .unwrap();
         assert_eq!(chat.runtime.kind, ApplicationRuntimeKind::Bridge);
         assert_eq!(chat.metadata.id.0, "io.elembra.chat");
+        assert_eq!(
+            chat.contributions.navigation[0].route.as_deref(),
+            Some("/apps/chat")
+        );
+    }
+
+    #[test]
+    fn first_party_catalogue_includes_chat_as_a_bridge_application() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let chat = registry
+            .manifest(&ApplicationId::new("io.elembra.chat"))
+            .unwrap();
+        assert_eq!(chat.runtime.kind, ApplicationRuntimeKind::Bridge);
         assert_eq!(
             chat.contributions.navigation[0].route.as_deref(),
             Some("/apps/chat")

@@ -12,11 +12,14 @@ rustshare-core = { path = "../core" }
 uuid = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 bytes = { workspace = true }
 percent-encoding = "2.3"
 tracing = { workspace = true }
+nostr = { workspace = true }
+url = "2.5"
 
 [dev-dependencies]
 tokio = { workspace = true }

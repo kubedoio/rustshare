@@ -683,10 +683,17 @@ pub async fn init_app() -> Result<AppState> {
     // `integration_consumer_subscriptions`) when their features land
     // (#213/#119/#214). The reference "memory projection" consumer used by
     // the integration tests lives in `backend/tests/contracts` only.
+    let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
+        crate::buzz_bridge::BuzzAdmissionBridge::from_env()
+            .map(|consumer| {
+                Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
+            })
+            .into_iter()
+            .collect();
     let outbox_worker_config = OutboxWorkerConfig::from_env();
     let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
         Arc::clone(&services.outbox_store),
-        vec![],
+        outbox_consumers,
         outbox_worker_config.clone(),
         format!("outbox-{}", uuid::Uuid::new_v4()),
     ));

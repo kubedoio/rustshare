@@ -16,6 +16,7 @@ rustshare-auth = { path = "../crates/auth" }
 rustshare-infrastructure = { path = "../crates/infrastructure" }
 rustshare-crypto = { path = "../crates/crypto" }
 rustshare-resource-auth = { path = "../crates/resource-auth" }
+nostr = { workspace = true }
 rustshare-integration-events = { path = "../crates/integration-events" }
 
 tokio.workspace = true
@@ -37,6 +38,7 @@ bytes.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
+tokio-tungstenite = "0.30"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
@@ -255,7 +257,6 @@ name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 
 [dev-dependencies]
-tokio-tungstenite = "0.30"
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }

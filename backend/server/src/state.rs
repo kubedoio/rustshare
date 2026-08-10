@@ -11,7 +11,7 @@ use crate::middleware;
 use crate::oidc_runtime::OidcRuntimeCache;
 use crate::services;
 
-use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
+use rustshare_storage::{ChatIdentityStore, EventStore, MetadataStore, ObjectStore};
 
 #[allow(deprecated)]
 pub type AppUserShareService = rustshare_core::services::UserShareService<
@@ -56,6 +56,7 @@ pub struct DatabaseState {
     pub metadata_store: Arc<MetadataStore>,
     pub event_store: Arc<EventStore>,
     pub object_store: Arc<ObjectStore>,
+    pub chat_identity_store: Arc<ChatIdentityStore>,
 }
 
 /// Domain service layer state.
@@ -236,6 +237,7 @@ impl FromRef<AppState> for DatabaseState {
             metadata_store: state.metadata_store.clone(),
             event_store: state.event_store.clone(),
             object_store: state.object_store.clone(),
+            chat_identity_store: Arc::new(ChatIdentityStore::new(state.db_pool.clone())),
         }
     }
 }

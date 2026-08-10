@@ -4,6 +4,7 @@
 
 pub mod authz;
 pub mod bootstrap;
+pub mod buzz_bridge;
 pub mod config;
 pub mod handlers;
 pub mod mail_import_worker;
