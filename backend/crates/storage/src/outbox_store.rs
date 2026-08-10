@@ -703,8 +703,10 @@ impl OutboxStore {
     /// subscription patterns. `.*` prefix patterns are expanded against the
     /// distinct event types present in the source table (deliveries for
     /// step 1, outbox for step 2) so the SQL `event_type = ANY($2)` filter is
-    /// complete; see [`expanded_subscription_filter`]. A claimed batch
-    /// therefore never contains an event whose type does not match the
+    /// complete; see [`expanded_subscription_filter`]. The SQL predicate is
+    /// `$2::text[] IS NOT NULL AND event_type = ANY($2)` — fail closed: an
+    /// absent/NULL filter must match nothing, never everything. A claimed
+    /// batch therefore never contains an event whose type does not match the
     /// durable patterns (additionally enforced on the deserialized envelope
     /// below). Durable registrations always declare at least one explicit
     /// pattern (see [`Self::register_consumer`]); if a registration were
@@ -843,7 +845,7 @@ impl OutboxStore {
                     WHERE d.consumer_id = $1
                       AND ( (d.state = 'pending' AND d.available_at <= now())
                             OR (d.state = 'claimed' AND d.claim_expires_at <= now()) )
-                      AND ($2::text[] IS NULL OR d.event_type = ANY($2))
+                      AND ($2::text[] IS NOT NULL AND d.event_type = ANY($2))
                     ORDER BY d.available_at, d.event_id
                     LIMIT $3
                     FOR UPDATE OF d SKIP LOCKED
@@ -916,7 +918,7 @@ impl OutboxStore {
                           SELECT 1 FROM integration_deliveries d
                           WHERE d.consumer_id = $1 AND d.source = o.source AND d.event_id = o.event_id
                       )
-                      AND ($2::text[] IS NULL OR o.event_type = ANY($2))
+                      AND ($2::text[] IS NOT NULL AND o.event_type = ANY($2))
                     ORDER BY o.available_at, o.created_at
                     LIMIT $3
                     FOR UPDATE OF o SKIP LOCKED
