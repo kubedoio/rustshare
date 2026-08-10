@@ -554,18 +554,23 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
             }]
         };
         // The Files Application owns the durable integration-event contracts
-        // for file creation and content updates (ADR-0031). Other
-        // Applications declare no integration events yet.
-        let integration_events = if slug == "files" {
-            IntegrationEvents {
+        // for file creation and content updates (ADR-0031). The Chat
+        // Application publishes the Buzz event observation contract that
+        // feeds the Buzz → Elembra Memory projection (ADR-0033/ADR-0034).
+        // Other Applications declare no integration events yet.
+        let integration_events = match slug {
+            "files" => IntegrationEvents {
                 publishes: vec![
                     "io.elembra.files.file.created.v1".into(),
                     "io.elembra.files.file.updated.v1".into(),
                 ],
                 subscribes: Vec::new(),
-            }
-        } else {
-            IntegrationEvents::default()
+            },
+            "chat" => IntegrationEvents {
+                publishes: vec!["io.elembra.chat.buzz.event.observed.v1".into()],
+                subscribes: Vec::new(),
+            },
+            _ => IntegrationEvents::default(),
         };
         ApplicationManifest {
             api_version: "elembra.io/v1alpha1".into(),
@@ -623,7 +628,16 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 ..Default::default()
             },
             integration_events,
-            memory: None,
+            // The Chat Application publishes to Memory via a reference-first
+            // projection of its `message` source records (ADR-0033/ADR-0034).
+            memory: if slug == "chat" {
+                Some(MemoryPolicy {
+                    source_types: vec!["message".into()],
+                    publication: "reference-first".into(),
+                })
+            } else {
+                None
+            },
             configuration: ConfigurationReference {
                 schema: format!("contracts/{id}/config-v1alpha1.schema.json"),
             },
@@ -970,6 +984,35 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert!(!registry.owns_event_type(&files, "io.elembra.files.file.deleted.v1"));
         assert!(!registry.owns_event_type(&notes, created));
         assert!(!registry.owns_event_type(&notes, updated));
+    }
+
+    #[test]
+    fn chat_manifest_owns_buzz_event_and_declares_memory_policy() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let chat = ApplicationId::new("io.elembra.chat");
+        let buzz_event = "io.elembra.chat.buzz.event.observed.v1";
+
+        assert!(registry.owns_event_type(&chat, buzz_event));
+        assert!(!registry.owns_event_type(&chat, "io.elembra.files.file.created.v1"));
+
+        let chat_manifest = registry.manifest(&chat).unwrap();
+        let memory = chat_manifest.memory.as_ref().unwrap();
+        assert_eq!(memory.publication, "reference-first");
+        assert_eq!(memory.source_types, ["message".to_string()]);
+        assert!(validate_manifest(chat_manifest).is_ok());
+    }
+
+    #[test]
+    fn files_manifest_unchanged_by_chat_declaration() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let files = ApplicationId::new("io.elembra.files");
+        let created = "io.elembra.files.file.created.v1";
+        let updated = "io.elembra.files.file.updated.v1";
+
+        assert!(registry.owns_event_type(&files, created));
+        assert!(registry.owns_event_type(&files, updated));
+        assert!(!registry.owns_event_type(&files, "io.elembra.chat.buzz.event.observed.v1"));
+        assert!(registry.manifest(&files).unwrap().memory.is_none());
     }
 
     #[test]
