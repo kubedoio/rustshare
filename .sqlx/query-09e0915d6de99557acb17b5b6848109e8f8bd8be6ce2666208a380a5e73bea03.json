@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO integration_consumers (consumer_id, enabled, registered_at, updated_at)\n            VALUES ($1, true, now(), now())\n            ON CONFLICT (consumer_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09e0915d6de99557acb17b5b6848109e8f8bd8be6ce2666208a380a5e73bea03"
+}
