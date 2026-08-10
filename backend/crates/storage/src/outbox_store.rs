@@ -252,7 +252,11 @@ pub struct ConsumerRegistration {
 pub struct OutboxConfig {
     /// Maximum rows claimed per batch.
     pub claim_batch_size: i64,
-    /// Lease duration in seconds for a claimed delivery.
+    /// Lease duration in seconds for a claimed delivery. The dispatcher
+    /// renews each delivery's lease right before processing it, so a lease
+    /// only needs to cover one processing run; multi-worker deployments
+    /// should keep `lease_secs >= process_timeout` so a renewed lease spans
+    /// the full processing window.
     pub lease_secs: i64,
     /// Maximum attempts before a delivery is dead-lettered.
     pub max_attempts: i32,
@@ -411,6 +415,13 @@ impl OutboxStore {
     /// INSERT the outbox row idempotently (`ON CONFLICT DO NOTHING`).
     /// Returns the number of rows actually inserted — `0` means a row with
     /// this `(source, event_id)` identity already exists.
+    ///
+    /// `created_at` is the statement-time insertion timestamp
+    /// (`clock_timestamp()`), NOT the transaction-start time (`now()`): a
+    /// source transaction that began before a consumer registered but
+    /// inserted its outbox row after that registration committed must
+    /// timestamp the event at insertion, so the `registered_at <= created_at`
+    /// entitlement gate cannot exclude an already-registered consumer.
     async fn insert_outbox_row(
         &self,
         tx: &mut Transaction<'static, Postgres>,
@@ -421,7 +432,7 @@ impl OutboxStore {
         let result = sqlx::query!(
             r#"
             INSERT INTO integration_outbox (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json, created_at, available_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), now())
             ON CONFLICT (source, event_id) DO NOTHING
             "#,
             &event.source,
@@ -466,13 +477,16 @@ impl OutboxStore {
     ///
     /// Only consumers registered at or before the event row's `created_at`
     /// gain obligations — registration establishes entitlement going
-    /// forward, never retroactively (ADR-0031). The gate closes two leaks:
-    /// the duplicate-identical-publish path (a consumer registered after the
-    /// original event must not gain an obligation when the identical event is
-    /// republished later) and a narrow publish/registration race (a
-    /// registration committing mid-publish must not backfill an event that
-    /// already existed). The normal publish path is unaffected: every
-    /// pre-existing matching consumer has `registered_at <= created_at`.
+    /// forward, never retroactively (ADR-0031). `created_at` is the event's
+    /// insertion time (`clock_timestamp()`), so the boundary is precise: a
+    /// consumer whose registration commits before the event row is inserted
+    /// is entitled; one registering after the insert is not. The gate closes
+    /// two leaks: the duplicate-identical-publish path (a consumer registered
+    /// after the original event must not gain an obligation when the
+    /// identical event is republished later) and the backfill path (a
+    /// consumer registered after the event must not inherit it as historical
+    /// backlog). The normal publish path is unaffected: every pre-existing
+    /// matching consumer has `registered_at <= created_at`.
     async fn fan_out_obligations(
         &self,
         tx: &mut Transaction<'static, Postgres>,
@@ -1092,6 +1106,45 @@ impl OutboxStore {
             source,
             event_id,
             claim_token
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Renew (extend) the lease on one claimed delivery before the consumer
+    /// starts processing it.
+    ///
+    /// Returns `false` when the lease is no longer held — a stale claim token
+    /// or a row that is no longer `claimed` (e.g. another worker reclaimed it
+    /// after this lease expired) — in which case the caller MUST NOT process
+    /// the delivery: it belongs to the current claim holder.
+    ///
+    /// This is what keeps batch claims alive while the dispatcher works
+    /// through the batch sequentially: every row in a batch is claimed with
+    /// the same expiry, but later rows may not be processed until long after
+    /// that expiry, and a second dispatcher could otherwise reclaim and
+    /// process them concurrently with the first.
+    pub async fn renew_claim(
+        &self,
+        consumer_id: &str,
+        source: &str,
+        event_id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, OutboxStoreError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE integration_deliveries
+            SET claim_expires_at = now() + ($5::int8 * interval '1 second')
+            WHERE consumer_id = $1 AND source = $2 AND event_id = $3
+              AND claim_token = $4 AND state = 'claimed'
+            "#,
+            consumer_id,
+            source,
+            event_id,
+            claim_token,
+            lease_secs,
         )
         .execute(&self.pool)
         .await?;
@@ -1886,6 +1939,150 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn renew_claim_extends_lease_and_detects_lost_claims() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let event = test_event("io.elembra.files.file.created.v1");
+        let consumer_id = format!("io.elembra.test.renew-{}", Uuid::new_v4());
+        clean_slate(&pool).await;
+        store
+            .register_consumer(&consumer_id, &["io.elembra.files.*".to_string()])
+            .await
+            .unwrap();
+
+        let mut tx = store.pool().begin().await.unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let claimed = store
+            .claim_batch(&consumer_id, &OutboxConfig::default(), "worker-a")
+            .await
+            .unwrap();
+        assert_eq!(claimed.len(), 1);
+        let claimed = &claimed[0];
+
+        // Renewal with the current token extends the lease and keeps the row
+        // claimed — this is what protects late-batch rows from being reclaimed
+        // by a second dispatcher while the first still holds them.
+        let expires_before: f64 = sqlx::query_scalar::<_, f64>(
+            "SELECT extract(epoch from claim_expires_at)::float8 FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
+        )
+        .bind(&consumer_id)
+        .bind(claimed.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(store
+            .renew_claim(
+                &consumer_id,
+                &claimed.source,
+                claimed.event_id,
+                claimed.claim_token,
+                OutboxConfig::default().lease_secs,
+            )
+            .await
+            .unwrap());
+        let expires_after: f64 = sqlx::query_scalar::<_, f64>(
+            "SELECT extract(epoch from claim_expires_at)::float8 FROM integration_deliveries WHERE consumer_id = $1 AND event_id = $2",
+        )
+        .bind(&consumer_id)
+        .bind(claimed.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            expires_after > expires_before,
+            "renewal must extend the lease expiry (before={expires_before}, after={expires_after})"
+        );
+        assert_eq!(delivery_state(&pool, &consumer_id, &event).await, "claimed");
+
+        // A stale token cannot renew: the lease belongs to the current holder.
+        assert!(!store
+            .renew_claim(
+                &consumer_id,
+                &claimed.source,
+                claimed.event_id,
+                Uuid::new_v4(),
+                OutboxConfig::default().lease_secs,
+            )
+            .await
+            .unwrap());
+        assert_eq!(delivery_state(&pool, &consumer_id, &event).await, "claimed");
+
+        // A finalized delivery cannot be renewed.
+        assert!(store
+            .acknowledge(
+                &consumer_id,
+                &claimed.source,
+                claimed.event_id,
+                claimed.claim_token,
+            )
+            .await
+            .unwrap());
+        assert!(!store
+            .renew_claim(
+                &consumer_id,
+                &claimed.source,
+                claimed.event_id,
+                claimed.claim_token,
+                OutboxConfig::default().lease_secs,
+            )
+            .await
+            .unwrap());
+        assert_eq!(
+            delivery_state(&pool, &consumer_id, &event).await,
+            "processed"
+        );
+
+        sqlx::query("DELETE FROM integration_deliveries WHERE consumer_id = $1")
+            .bind(&consumer_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, &[&event]).await;
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires database
+    async fn event_created_at_uses_insertion_time_not_tx_start() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        let event = test_event("io.elembra.files.file.created.v1");
+        clean_slate(&pool).await;
+
+        let mut tx = store.pool().begin().await.unwrap();
+        let tx_start: f64 = sqlx::query_scalar("SELECT extract(epoch from now())::float8")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        // Simulate a source transaction that began well before the outbox
+        // insert: `now()` would stamp the event with the transaction start,
+        // `clock_timestamp()` with the actual insertion time.
+        sqlx::query("SELECT pg_sleep(0.05)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        store.insert_in_tx(&mut tx, &event).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let created_at: f64 = sqlx::query_scalar(
+            "SELECT extract(epoch from created_at)::float8 FROM integration_outbox WHERE source = $1 AND event_id = $2",
+        )
+        .bind(&event.source)
+        .bind(event.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            created_at - tx_start > 0.04,
+            "created_at must be the insertion time, not the transaction start (tx_start={tx_start}, created_at={created_at})"
+        );
+
         cleanup(&pool, &[&event]).await;
     }
 

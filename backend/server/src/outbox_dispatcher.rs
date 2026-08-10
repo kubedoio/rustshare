@@ -377,6 +377,45 @@ impl OutboxDispatcher {
                 );
                 break;
             }
+            // Renew the lease right before processing: every row in the batch
+            // was claimed with the same expiry, but rows later in the batch
+            // may not start processing until long after that expiry — without
+            // renewal, a second dispatcher could reclaim and process them
+            // concurrently with this one. A failed renewal means the lease is
+            // lost (stale token / reclaimed by another worker): do NOT
+            // process, the current claim holder owns the delivery.
+            match self
+                .store
+                .renew_claim(
+                    &consumer_id,
+                    &claimed_event.source,
+                    claimed_event.event_id,
+                    claimed_event.claim_token,
+                    self.store_config().lease_secs,
+                )
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(
+                        %consumer_id,
+                        source = %claimed_event.source,
+                        event_id = %claimed_event.event_id,
+                        "outbox lease lost before processing; another worker owns the delivery"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    warn!(
+                        %consumer_id,
+                        source = %claimed_event.source,
+                        event_id = %claimed_event.event_id,
+                        error = %error,
+                        "outbox lease renewal failed; skipping delivery"
+                    );
+                    continue;
+                }
+            }
             self.process_claimed(
                 consumer,
                 &consumer_id,
