@@ -1282,12 +1282,17 @@ pub fn ai_routes() -> Router<AppState> {
             "/api/v1/ai/summarize",
             post(crate::handlers::summarize_file),
         )
-        .route("/api/v1/ai/ask", post(crate::handlers::ask_question))
 }
 
 pub fn search_routes() -> Router<AppState> {
     use axum::routing::post;
-    Router::new().route("/api/v1/search", post(crate::handlers::unified_search))
+    Router::new()
+        .route("/api/v1/search", post(crate::handlers::unified_search))
+        .route("/api/v1/memory/ask", post(crate::handlers::ask_workspace))
+        .route(
+            "/api/v1/memory/citations/open",
+            post(crate::handlers::open_citation),
+        )
 }
 
 pub fn trash_routes() -> Router<AppState> {

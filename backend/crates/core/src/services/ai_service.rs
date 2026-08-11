@@ -105,17 +105,6 @@ pub struct FileSummary {
     pub citation: SourceCitation,
 }
 
-/// An answer to a user's question with citations.
-#[derive(Debug, Clone)]
-pub struct QuestionAnswer {
-    /// The answer text
-    pub answer: String,
-    /// Source citations
-    pub citations: Vec<SourceCitation>,
-    /// Confidence score (0.0 to 1.0)
-    pub confidence: f32,
-}
-
 /// AI Service for RustShare.
 ///
 /// Provides permission-aware AI features with safety guarantees.
@@ -462,78 +451,6 @@ where
     /// * `tenant_id` - The tenant ID
     ///
     /// # Returns
-    /// An answer with citations to source documents.
-    ///
-    /// # Contract A-01, A-02, A-03: Permission + Citation + No Hallucinations
-    /// - Only uses documents the user can access
-    /// - Always cites sources
-    /// - Only answers based on retrieved content
-    pub async fn ask_question(
-        &self,
-        query: &str,
-        user_id: UserId,
-        tenant_id: Uuid,
-    ) -> Result<QuestionAnswer, AiError> {
-        // Validate query
-        let query = query.trim();
-        if query.is_empty() {
-            return Err(AiError::InvalidQuery(
-                "Question cannot be empty".to_string(),
-            ));
-        }
-        if query.len() > 2000 {
-            return Err(AiError::InvalidQuery(
-                "Question too long (max 2000 chars)".to_string(),
-            ));
-        }
-
-        // Retrieve relevant documents
-        let search_results = self.semantic_search(query, user_id, tenant_id, 5).await?;
-
-        if search_results.is_empty() {
-            return Ok(QuestionAnswer {
-                answer: "I couldn't find any relevant documents to answer your question."
-                    .to_string(),
-                citations: Vec::new(),
-                confidence: 0.0,
-            });
-        }
-
-        // Build citations from search results
-        let citations: Vec<SourceCitation> = search_results
-            .iter()
-            .map(|result| SourceCitation {
-                file_id: result.file_id.to_string(),
-                file_name: result.file_name.clone(),
-                file_path: result.file_path.clone(),
-                relevance_score: result.relevance_score,
-                excerpt: result.snippet.clone(),
-            })
-            .collect();
-
-        // Generate answer based on retrieved content
-        // Contract A-03: Only use retrieved content, no hallucinations
-        let answer = generate_rag_answer(query, &search_results);
-
-        // Calculate confidence based on relevance scores
-        let confidence = if !search_results.is_empty() {
-            let avg_score: f32 = search_results
-                .iter()
-                .map(|r| r.relevance_score)
-                .sum::<f32>()
-                / search_results.len() as f32;
-            avg_score.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        Ok(QuestionAnswer {
-            answer,
-            citations,
-            confidence,
-        })
-    }
-
     /// Index a file for AI search with an ACL projection.
     ///
     /// # Arguments
@@ -673,43 +590,6 @@ fn is_common_word(word: &str) -> bool {
     ];
 
     STOP_WORDS.contains(&word)
-}
-
-/// Generate a RAG-based answer from search results.
-/// Phase 1.5: Simple answer generation based on retrieved content.
-/// Contract A-03: Only use retrieved content, no hallucinations.
-fn generate_rag_answer(query: &str, results: &[SemanticSearchResult]) -> String {
-    if results.is_empty() {
-        return "I couldn't find any relevant information to answer your question.".to_string();
-    }
-
-    // Build answer from top results
-    let mut answer_parts = Vec::new();
-
-    // Add intro
-    answer_parts.push(format!(
-        "Based on the documents I found, here's what I can tell you about \"{}\":",
-        query
-    ));
-
-    // Add information from each result
-    for (i, result) in results.iter().take(3).enumerate() {
-        answer_parts.push(format!(
-            "\n{}. From \"{}\" (relevance: {:.0}%):\n   {}",
-            i + 1,
-            result.file_name,
-            result.relevance_score * 100.0,
-            result.snippet
-        ));
-    }
-
-    // Add closing
-    answer_parts.push(format!(
-        "\nI found {} relevant document(s). See the citations for more details.",
-        results.len()
-    ));
-
-    answer_parts.join("\n")
 }
 
 #[cfg(test)]
@@ -879,35 +759,6 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(AiError::InvalidQuery(_))));
-    }
-
-    #[tokio::test]
-    async fn test_ask_question_valid() {
-        let service = create_test_service();
-        let user_id = Uuid::new_v4();
-        let tenant_id = Uuid::new_v4();
-        let file_id = Uuid::new_v4();
-
-        // Index a document first
-        service
-            .index_file(
-                file_id,
-                "test.txt".to_string(),
-                "/test.txt".to_string(),
-                "Rust is a programming language with memory safety guarantees".to_string(),
-                "text/plain".to_string(),
-                make_file_acl(tenant_id, file_id, user_id),
-            )
-            .await
-            .unwrap();
-
-        let answer = service
-            .ask_question("What is Rust?", user_id, tenant_id)
-            .await;
-
-        assert!(answer.is_ok());
-        let answer = answer.unwrap();
-        assert!(!answer.answer.is_empty());
     }
 
     #[tokio::test]

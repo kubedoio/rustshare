@@ -281,7 +281,13 @@ pub async fn setup_test_server() -> (AppState, String) {
         outbox_store,
         chat_observation_store,
         memory_catalog_store,
-        unified_search_service,
+        unified_search_service: unified_search_service.clone(),
+        ask_workspace_service: Arc::new(
+            rustshare_server::services::ask_workspace::AskWorkspaceService::new(
+                unified_search_service.clone(),
+                None,
+            ),
+        ),
         buzz_observation_service,
         buzz_gateway: None,
         user_repository,

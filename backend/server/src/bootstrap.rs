@@ -907,6 +907,12 @@ pub async fn init_app() -> Result<AppState> {
             services.ai_service.clone(),
             Arc::clone(&memory_catalog_store),
         ));
+    let llm_provider = crate::services::ask_workspace::OpenAiCompatibleProvider::from_env()
+        .map_err(|error| anyhow::anyhow!("LLM provider configuration failed: {error}"))?;
+    let ask_workspace_service = Arc::new(crate::services::ask_workspace::AskWorkspaceService::new(
+        Arc::clone(&unified_search_service),
+        llm_provider,
+    ));
 
     let state = AppState {
         db_pool,
@@ -948,6 +954,7 @@ pub async fn init_app() -> Result<AppState> {
         chat_observation_store,
         memory_catalog_store,
         unified_search_service,
+        ask_workspace_service,
         buzz_observation_service,
         buzz_gateway,
         outbox_status,

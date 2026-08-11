@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 autotests = false
 
+[features]
+test-recording-provider = []
+
 [[bin]]
 name = "rustshare-server"
 path = "src/main.rs"

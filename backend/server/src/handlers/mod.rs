@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod ai;
 pub mod applications;
+pub mod ask_workspace;
 pub mod auth;
 pub mod brainstorming;
 pub mod buzz_events;
@@ -88,10 +89,11 @@ pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 pub use trash::{empty_trash, get_trash_summary};
 pub use validated_json::ValidatedJson;
 
-pub use ai::{ask_question, semantic_search, summarize_file};
+pub use ai::{semantic_search, summarize_file};
 pub use applications::{
     create_from_template, get_application, get_application_summary, list_enabled_applications,
 };
+pub use ask_workspace::{ask_workspace, open_citation};
 pub use auth::{ensure_optional_seed_user, login, logout};
 pub use decisions::{
     create_decision, delete_decision, duplicate_decision, get_decision, list_decisions,

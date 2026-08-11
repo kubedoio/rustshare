@@ -132,6 +132,16 @@ pub struct SearchProvenance {
     pub author_pubkey: Option<String>,
 }
 
+/// Source bytes that passed a second, RAG-specific authorization/materialization pass.
+#[derive(Debug, Clone)]
+pub struct RagSource {
+    pub resource: ResourceRef,
+    pub title: String,
+    pub location: Option<String>,
+    pub provenance: SearchProvenance,
+    pub text: String,
+}
+
 /// Unified search over Files/Notes and Buzz Chat.
 pub struct UnifiedSearchService {
     authorizer: Arc<SourceAuthorizer>,
@@ -278,6 +288,56 @@ impl UnifiedSearchService {
 
         // Step 7: return the normalized contract.
         Ok(UnifiedSearchResponse { results })
+    }
+
+    /// Reauthorize and fetch search results for RAG. Search output is only a
+    /// candidate list; this method is the generation-time authority boundary.
+    pub async fn materialize_for_rag(
+        &self,
+        ctx: &PrincipalContext,
+        results: &[UnifiedSearchResult],
+        max_sources: usize,
+        max_bytes_per_source: usize,
+        max_total_bytes: usize,
+    ) -> Vec<RagSource> {
+        let mut total = 0;
+        let mut materialized = Vec::new();
+        for result in results.iter().take(max_sources) {
+            let Ok(resource) = ResourceRef::from_uri(&result.resource_ref) else {
+                continue;
+            };
+            let Ok(display) = self
+                .authorizer
+                .resolve(ctx, &resource, Purpose::RagContext)
+                .await
+            else {
+                continue;
+            };
+            let Ok(fetched) = self
+                .authorizer
+                .fetch(ctx, &resource, Representation::Text)
+                .await
+            else {
+                // Reference-only Chat records and revoked/deleted resources
+                // never become LLM context.
+                continue;
+            };
+            let data = &fetched.data[..fetched.data.len().min(max_bytes_per_source)];
+            let text = String::from_utf8_lossy(data);
+            let bounded: String = text.chars().take(max_bytes_per_source).collect();
+            if bounded.is_empty() || total + bounded.len() > max_total_bytes {
+                continue;
+            }
+            total += bounded.len();
+            materialized.push(RagSource {
+                resource,
+                title: display.display_name.clone(),
+                location: result.location.clone(),
+                provenance: result.provenance.clone(),
+                text: bounded,
+            });
+        }
+        materialized
     }
 
     /// Files candidates: live `files` rows matching name/path (always) plus

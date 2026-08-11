@@ -80,21 +80,6 @@ pub struct SourceCitation {
     pub excerpt: String,
 }
 
-/// Question answering request.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct AskQuestionRequest {
-    /// The question to answer
-    pub question: String,
-}
-
-/// Question answering response.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct AskQuestionResponse {
-    pub answer: String,
-    pub citations: Vec<SourceCitation>,
-    pub confidence: f32,
-}
-
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -215,70 +200,6 @@ pub async fn summarize_file(
             relevance_score: summary.citation.relevance_score,
             excerpt: summary.citation.excerpt,
         },
-    };
-
-    Ok((StatusCode::OK, Json(response)))
-}
-
-/// POST /api/v1/ai/ask
-///
-/// Answer a question using RAG with citations.
-///
-/// Contract A-01: Only uses accessible documents.
-/// Contract A-02: Citations included.
-/// Contract A-03: No hallucinations.
-/// Contract A-04: Rate limited.
-#[utoipa::path(
-    post,
-    path = "/api/v1/ai/ask",
-    tag = "AI",
-    request_body = AskQuestionRequest,
-    responses(
-        (status = 200, description = "Answer with citations", body = AskQuestionResponse),
-        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
-        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
-        (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
-        (status = 503, description = "AI service not configured", body = crate::handlers::ErrorResponse),
-    ),
-)]
-pub async fn ask_question(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-    Json(request): Json<AskQuestionRequest>,
-) -> Result<(StatusCode, Json<AskQuestionResponse>), AppError> {
-    // Contract A-04: Rate limiting enforced by middleware
-
-    // Contract A-05: Input validation
-    let question = request.question.trim();
-    if question.is_empty() {
-        return Err(AppError::bad_request("Question cannot be empty"));
-    }
-
-    // Get AI service from state or return not implemented
-    let answer = if let Some(ref ai_service) = state.ai_service {
-        ai_service
-            .ask_question(question, auth.user_id, auth.tenant_id)
-            .await?
-    } else {
-        return Err(AppError::service_unavailable("AI service not configured"));
-    };
-
-    let citations: Vec<SourceCitation> = answer
-        .citations
-        .into_iter()
-        .map(|c| SourceCitation {
-            file_id: c.file_id,
-            file_name: c.file_name,
-            file_path: c.file_path,
-            relevance_score: c.relevance_score,
-            excerpt: c.excerpt,
-        })
-        .collect();
-
-    let response = AskQuestionResponse {
-        answer: answer.answer,
-        citations,
-        confidence: answer.confidence,
     };
 
     Ok((StatusCode::OK, Json(response)))

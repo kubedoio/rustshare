@@ -27,9 +27,7 @@ pub use ai::{
     EmbeddingPolicy, InMemoryVectorStore, IndexAclProjection, IndexVisibility, IndexedDocument,
     NoteAclPayload, RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
 };
-pub use ai_service::{
-    AiError, AiService, FileSummary, QuestionAnswer, SemanticSearchResult, SourceCitation,
-};
+pub use ai_service::{AiError, AiService, FileSummary, SemanticSearchResult, SourceCitation};
 pub use chat_integration::{
     validate_chat_webhook_url, ChatEvent, ChatEventPayload, ChatEventType, ChatIntegrationError,
     ChatIntegrationService, EventStoreOps as ChatEventStoreOps, HttpWebhookDispatcher,

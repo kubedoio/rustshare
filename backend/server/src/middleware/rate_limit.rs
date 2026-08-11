@@ -288,7 +288,7 @@ fn matches_ai_query(method: &Method, path: &str) -> bool {
     method == Method::POST
         && (path == "/api/v1/ai/search"
             || path == "/api/v1/ai/summarize"
-            || path == "/api/v1/ai/ask")
+            || path == "/api/v1/memory/ask")
 }
 
 fn matches_auth_login(method: &Method, path: &str) -> bool {

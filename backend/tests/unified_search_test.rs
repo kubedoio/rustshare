@@ -81,6 +81,10 @@ use rustshare_server::authz::{ChatResourceOwner, FilesResourceOwner};
 use rustshare_server::buzz_gateway::{
     BuzzGatewayAuthority, BuzzGatewayClient, BuzzStateContext, BuzzStateEntry,
 };
+#[cfg(feature = "test-recording-provider")]
+use rustshare_server::services::ask_workspace::{
+    AskWorkspaceService, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
+};
 use rustshare_server::services::unified_search::{
     SearchSource, UnifiedSearchResponse, UnifiedSearchService,
 };
@@ -3091,5 +3095,103 @@ async fn full_stack_buzz_gateway_end_to_end() {
     );
 
     fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// Ask Workspace provider boundary
+// ---------------------------------------------------------------------------
+
+/// Proves the exact generation input: both owning sources are freshly fetched,
+/// stable source IDs are assigned by the server, and the provider sees no
+/// candidate snippets or Memory-only content.
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "ask-owner", tenant.0).await;
+    let file = create_file_with_content(
+        &harness,
+        owner.id,
+        "ask-plan.md",
+        "/docs/ask-plan.md",
+        b"FILE-AUTHORIZED-BYTES",
+    )
+    .await;
+    let keys = Keys::generate();
+    let env = setup_tenant_with_relay_for_principal(
+        &pool,
+        tenant,
+        PrincipalId::from(owner.id),
+        &keys,
+        &format!("community-{}", Uuid::new_v4()),
+        "wss://relay.example.test",
+        None,
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    let msg_id = message_id(9001);
+    insert_chat_message(
+        &pool,
+        &harness.memory_catalog_store,
+        tenant,
+        &env.community_id,
+        &msg_id,
+        "CHAT-AUTHORIZED-BYTES",
+        Utc::now(),
+    )
+    .await;
+
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "Both sources agree.".into(),
+        citations: vec!["src-001".into(), "src-002".into()],
+    }));
+    let ask = AskWorkspaceService::new(Arc::new(harness.service()), Some(provider.clone()));
+    let answer = ask
+        .ask(
+            &user_ctx(env.principal, tenant),
+            "What is the plan?",
+            &[SearchSource::Files, SearchSource::Chat],
+            50,
+        )
+        .await
+        .expect("provider-backed Ask succeeds");
+    assert!(answer.grounded);
+    assert_eq!(answer.citations.len(), 2);
+    assert!(answer.citations.iter().any(|citation| citation
+        .resource_ref
+        .ends_with(file.id.to_string().as_str())));
+    assert!(answer
+        .citations
+        .iter()
+        .any(|citation| citation.resource_ref.ends_with(msg_id.as_str())));
+
+    let calls = provider.calls().await;
+    assert_eq!(calls.len(), 1);
+    let call = &calls[0];
+    assert_eq!(call.system_policy, SYSTEM_POLICY);
+    assert_eq!(call.user_question, "What is the plan?");
+    assert_eq!(call.sources.len(), 2);
+    assert_eq!(call.sources[0].source_id, "src-001");
+    assert_eq!(call.sources[1].source_id, "src-002");
+    let context = call
+        .sources
+        .iter()
+        .map(|source| source.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(context
+        .iter()
+        .any(|text| text.contains("FILE-AUTHORIZED-BYTES")));
+    assert!(context
+        .iter()
+        .any(|text| text.contains("CHAT-AUTHORIZED-BYTES")));
+    assert!(!context.iter().any(|text| text.contains("UNAUTHORIZED")));
+
     cleanup(&pool, tenant).await;
 }
