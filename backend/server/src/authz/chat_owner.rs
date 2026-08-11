@@ -237,42 +237,31 @@ impl ChatResourceOwner {
                 application = CHAT_APPLICATION_ID,
                 %resource,
                 tenant = %ctx.tenant_id,
-                "chat community mapping is missing despite an active admission; denying access"
+                "mapping lookup failed or returned no active mapping despite an active admission; denying access"
             );
             return Err(Decision::Deny);
         };
+        // Fail-closed guard: the mapping may have been deactivated between
+        // the `active_admission` check above and the authority call below;
+        // an inactive mapping must never reach the authority.
+        if !mapping.active {
+            return Err(Decision::Deny);
+        }
         // FINAL channel/message decision from the configured Buzz authority
         // (current membership/visibility/message availability). Any
         // authority failure fails closed to Deny.
-        match self
-            .authority
-            .can_read(&BuzzReadRequest {
-                tenant_id: ctx.tenant_id,
-                community_id: mapping.community_id,
-                relay_url: mapping.relay_url,
-                relay_pubkey: mapping.relay_pubkey,
-                channel_id: row.channel_id.clone(),
-                channel_kind: buzz_channel_kind(row.channel_kind),
-                message_id: Some(resource.resource_id.clone()),
-                pubkey: binding.buzz_pubkey,
-                event_created_at: row.event_created_at,
-            })
-            .await
-        {
-            Ok(BuzzReadDecision::Allow) => {}
-            Ok(BuzzReadDecision::Deny) => return Err(Decision::Deny),
-            Ok(BuzzReadDecision::NotFound) => return Err(Decision::NotFound),
-            Err(error) => {
-                tracing::error!(
-                    application = CHAT_APPLICATION_ID,
-                    %resource,
-                    tenant = %ctx.tenant_id,
-                    %error,
-                    "Buzz authority check failed; denying access"
-                );
-                return Err(Decision::Deny);
-            }
-        }
+        let request = BuzzReadRequest {
+            tenant_id: ctx.tenant_id,
+            community_id: mapping.community_id,
+            relay_url: mapping.relay_url,
+            relay_pubkey: mapping.relay_pubkey,
+            channel_id: row.channel_id.clone(),
+            channel_kind: buzz_channel_kind(row.channel_kind),
+            message_id: Some(resource.resource_id.clone()),
+            pubkey: binding.buzz_pubkey,
+            event_created_at: row.event_created_at,
+        };
+        gate_authority(&*self.authority, &request, resource).await?;
         Ok(row)
     }
 
@@ -392,6 +381,32 @@ impl ChatResourceOwner {
                 );
                 false
             }
+        }
+    }
+}
+
+/// Run the FINAL channel/message decision from the configured Buzz authority
+/// against the request built by the gate. `Ok(())` only on `Allow`; every
+/// other outcome fails closed: `Deny`/`NotFound` map directly, and any
+/// authority error logs and fails closed to `Deny`.
+async fn gate_authority(
+    authority: &dyn BuzzAuthority,
+    req: &BuzzReadRequest,
+    resource: &ResourceRef,
+) -> Result<(), Decision> {
+    match authority.can_read(req).await {
+        Ok(BuzzReadDecision::Allow) => Ok(()),
+        Ok(BuzzReadDecision::Deny) => Err(Decision::Deny),
+        Ok(BuzzReadDecision::NotFound) => Err(Decision::NotFound),
+        Err(error) => {
+            tracing::error!(
+                application = CHAT_APPLICATION_ID,
+                %resource,
+                tenant = %req.tenant_id,
+                %error,
+                "Buzz authority check failed; denying access"
+            );
+            Err(Decision::Deny)
         }
     }
 }
@@ -530,7 +545,8 @@ impl ResourceOwner for ChatResourceOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::ApplicationRegistry;
+    use rustshare_core::domain::{ApplicationRegistry, TenantId};
+    use rustshare_resource_auth::BuzzAuthorityError;
 
     /// The adapter's declared resource/action surface must exactly match the
     /// `io.elembra.chat` manifest in the canonical ApplicationRegistry —
@@ -565,5 +581,97 @@ mod tests {
                 capability.resource_type
             );
         }
+    }
+
+    /// A minimal read request; the fake authority below ignores its contents.
+    fn read_request() -> BuzzReadRequest {
+        BuzzReadRequest {
+            tenant_id: TenantId(uuid::Uuid::new_v4()),
+            community_id: "community-1".to_string(),
+            relay_url: String::new(),
+            relay_pubkey: None,
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some("a".repeat(64)),
+            pubkey: "a".repeat(64),
+            event_created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// A message ref shaped like the gate's; only used by the error log.
+    fn message_ref() -> ResourceRef {
+        ResourceRef::new(
+            ApplicationId::new(CHAT_APPLICATION_ID),
+            RESOURCE_TYPE_MESSAGE,
+            "a".repeat(64),
+        )
+    }
+
+    /// Local fake authority returning a fixed canned outcome.
+    struct FakeAuthority {
+        outcome: Result<BuzzReadDecision, BuzzAuthorityError>,
+    }
+
+    #[async_trait::async_trait]
+    impl BuzzAuthority for FakeAuthority {
+        async fn can_read(
+            &self,
+            _req: &BuzzReadRequest,
+        ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+            match &self.outcome {
+                Ok(decision) => Ok(*decision),
+                // `BuzzAuthorityError` is not `Clone`; every authority error
+                // maps to Deny in `gate_authority`, so a fresh transport
+                // error is equivalent to the stored one.
+                Err(_) => Err(BuzzAuthorityError::Transport(
+                    "fake authority failure".to_string(),
+                )),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn gate_authority_maps_allow_to_ok() {
+        let authority = FakeAuthority {
+            outcome: Ok(BuzzReadDecision::Allow),
+        };
+        assert!(gate_authority(&authority, &read_request(), &message_ref())
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn gate_authority_maps_deny_to_deny() {
+        let authority = FakeAuthority {
+            outcome: Ok(BuzzReadDecision::Deny),
+        };
+        assert_eq!(
+            gate_authority(&authority, &read_request(), &message_ref()).await,
+            Err(Decision::Deny)
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_authority_maps_not_found_to_not_found() {
+        let authority = FakeAuthority {
+            outcome: Ok(BuzzReadDecision::NotFound),
+        };
+        assert_eq!(
+            gate_authority(&authority, &read_request(), &message_ref()).await,
+            Err(Decision::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_authority_maps_error_to_deny() {
+        let authority = FakeAuthority {
+            outcome: Err(BuzzAuthorityError::Transport(
+                "relay unreachable".to_string(),
+            )),
+        };
+        assert_eq!(
+            gate_authority(&authority, &read_request(), &message_ref()).await,
+            Err(Decision::Deny)
+        );
     }
 }

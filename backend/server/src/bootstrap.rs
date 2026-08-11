@@ -1,5 +1,5 @@
 use crate::authz;
-use crate::buzz_gateway::BuzzGatewayClient;
+use crate::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
 use crate::buzz_observation::BuzzObservationService;
 use crate::config::{AppConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
@@ -867,18 +867,15 @@ pub async fn init_app() -> Result<AppState> {
         let keys = nostr::Keys::parse(key).map_err(|error| {
             anyhow::anyhow!("invalid RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: {error}")
         })?;
-        // The authority box needs its own client instance: `Arc<T>` has no
-        // forwarding `BuzzAuthority` impl, and the client is stateless
-        // (service key + HTTP client), so a second instance from the same
-        // keys is behaviorally identical to the one stored in AppState.
+        // One client instance is shared: the `BuzzGatewayAuthority` wrapper
+        // presents the same stateless client (service key + HTTP client)
+        // stored in AppState to the source authorizer.
         let gateway = Arc::new(
-            BuzzGatewayClient::new(keys.clone(), reqwest::ClientBuilder::new())
-                .map_err(|error| anyhow::anyhow!("cannot build Buzz gateway client: {error}"))?,
-        );
-        let authority: Box<dyn BuzzAuthority> = Box::new(
             BuzzGatewayClient::new(keys, reqwest::ClientBuilder::new())
                 .map_err(|error| anyhow::anyhow!("cannot build Buzz gateway client: {error}"))?,
         );
+        let authority: Box<dyn BuzzAuthority> =
+            Box::new(BuzzGatewayAuthority(Arc::clone(&gateway)));
         info!("Chat authority mode: buzz (relay-backed gateway)");
         (Some(gateway), authority)
     } else {

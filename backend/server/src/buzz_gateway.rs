@@ -13,6 +13,7 @@
 //! to coerce the client into following a redirect to an unconfigured host
 //! (SSRF protection) — the client talks only to the configured relay URL.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -427,6 +428,25 @@ impl BuzzAuthority for BuzzGatewayClient {
         };
         self.check_access(&req.relay_url, relay_pubkey, &access)
             .await
+    }
+}
+
+/// Shared-client authority handle: the same [`Arc`] gateway instance stored
+/// in `AppState`, presented as a [`BuzzAuthority`].
+///
+/// The orphan rule rejects `impl BuzzAuthority for Arc<BuzzGatewayClient>`
+/// (and the generic `Arc<T>` form) — `Arc` is a foreign type constructor and
+/// the self type must be crate-local — so the shared `Arc` is wrapped in a
+/// crate-local newtype.
+pub struct BuzzGatewayAuthority(pub Arc<BuzzGatewayClient>);
+
+#[async_trait]
+impl BuzzAuthority for BuzzGatewayAuthority {
+    async fn can_read(
+        &self,
+        req: &BuzzReadRequest,
+    ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+        self.0.can_read(req).await
     }
 }
 
