@@ -3362,5 +3362,59 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         .text
         .contains("CHAT-AUTHORIZED-BYTES"));
 
+    harness
+        .scripted
+        .as_ref()
+        .expect("scripted authority")
+        .set(&msg_id, ScriptedOutcome::Deny);
+    let revoked_channel_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be used".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let revoked_channel = AskWorkspaceService::new(
+        Arc::new(harness.service()),
+        Some(revoked_channel_provider.clone()),
+    )
+    .ask_scoped(
+        &user_ctx(env.principal, tenant),
+        "plan",
+        &[SearchSource::Chat],
+        8,
+        &SearchScope::ChatChannel {
+            community_id: env.community_id.clone(),
+            channel_id: CHANNEL_ID.into(),
+        },
+    )
+    .await
+    .expect("revoked channel Ask degrades cleanly");
+    assert!(revoked_channel.insufficient_evidence);
+    assert!(revoked_channel_provider.calls().await.is_empty());
+
+    sqlx::query("UPDATE files SET deleted_at = $1 WHERE id = $2")
+        .bind(Utc::now())
+        .bind(file.id)
+        .execute(&pool)
+        .await
+        .expect("tombstone selected note");
+    let deleted_note_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be used".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let deleted_note = AskWorkspaceService::new(
+        Arc::new(harness.service()),
+        Some(deleted_note_provider.clone()),
+    )
+    .ask_scoped(
+        &user_ctx(env.principal, tenant),
+        "plan",
+        &[SearchSource::Files],
+        8,
+        &SearchScope::Resource(file_ref(file.id)),
+    )
+    .await
+    .expect("deleted note Ask degrades cleanly");
+    assert!(deleted_note.insufficient_evidence);
+    assert!(deleted_note_provider.calls().await.is_empty());
+
     cleanup(&pool, tenant).await;
 }
