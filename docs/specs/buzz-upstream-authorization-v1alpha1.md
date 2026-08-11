@@ -239,7 +239,8 @@ rejected.
 **Transport:** production MUST use `wss://` relay URLs (so the derived base is
 `https://`). Plaintext `ws://` is acceptable only for local development and
 testing: the client's signature pinning, request-echo, and freshness checks
-already defeat MITM replay, but plaintext still exposes the traffic to
+prevent cross-resource and cross-relay replay and bound response replay to the
+60-second freshness window, but plaintext still exposes the traffic to
 observation.
 
 ## Fail-closed mapping (Elembra client)
