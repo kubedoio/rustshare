@@ -92,7 +92,7 @@ pub async fn configure_mapping(
             "community_id and relay_url are required",
         ));
     }
-    validate_relay_url(&input.relay_url)?;
+    validate_relay_url(&input.relay_url).await?;
     if let Some(relay_pubkey) = &input.relay_pubkey {
         validate_relay_pubkey(relay_pubkey)?;
     }
@@ -150,7 +150,7 @@ pub async fn update_community_mapping(
     if input.relay_url.trim().is_empty() {
         return Err(AppError::bad_request("relay_url is required"));
     }
-    validate_relay_url(&input.relay_url)?;
+    validate_relay_url(&input.relay_url).await?;
     if let Some(relay_pubkey) = &input.relay_pubkey {
         validate_relay_pubkey(relay_pubkey)?;
     }
@@ -371,7 +371,7 @@ fn validate_relay_pubkey(value: &str) -> Result<(), AppError> {
     }
 }
 
-fn validate_relay_url(value: &str) -> Result<(), AppError> {
+async fn validate_relay_url(value: &str) -> Result<(), AppError> {
     let url = url::Url::parse(value)
         .map_err(|_| AppError::bad_request("relay_url must be a valid WebSocket URL"))?;
     if !matches!(url.scheme(), "wss" | "ws") || url.host_str().is_none() {
@@ -379,6 +379,24 @@ fn validate_relay_url(value: &str) -> Result<(), AppError> {
             "relay_url must use ws:// or wss:// and include a host",
         ));
     }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(AppError::bad_request(
+            "relay_url must not contain credentials, query parameters, or fragments",
+        ));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::bad_request("relay_url must include a host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| AppError::bad_request("relay_url must include a valid port"))?;
+    rustshare_core::validation::resolve_public_socket_addrs(host, port)
+        .await
+        .map_err(|_| AppError::bad_request("relay_url must resolve to a public address"))?;
     Ok(())
 }
 
@@ -430,25 +448,40 @@ mod tests {
         assert!(validate_relay_pubkey(&"g".repeat(64)).is_err());
     }
 
-    #[test]
-    fn relay_url_accepts_ws_and_wss() {
-        assert!(validate_relay_url("ws://relay.example.test").is_ok());
-        assert!(validate_relay_url("wss://relay.example.test").is_ok());
+    #[tokio::test]
+    async fn relay_url_accepts_ws_and_wss() {
+        assert!(validate_relay_url("ws://1.1.1.1").await.is_ok());
+        assert!(validate_relay_url("wss://1.1.1.1").await.is_ok());
     }
 
-    #[test]
-    fn relay_url_rejects_http_scheme() {
-        assert!(validate_relay_url("http://relay.example.test").is_err());
-        assert!(validate_relay_url("https://relay.example.test").is_err());
+    #[tokio::test]
+    async fn relay_url_rejects_http_scheme() {
+        assert!(validate_relay_url("http://relay.example.test")
+            .await
+            .is_err());
+        assert!(validate_relay_url("https://relay.example.test")
+            .await
+            .is_err());
     }
 
-    #[test]
-    fn relay_url_rejects_missing_host() {
-        assert!(validate_relay_url("ws://").is_err());
+    #[tokio::test]
+    async fn relay_url_rejects_missing_host() {
+        assert!(validate_relay_url("ws://").await.is_err());
     }
 
-    #[test]
-    fn relay_url_rejects_non_url() {
-        assert!(validate_relay_url("not a url").is_err());
+    #[tokio::test]
+    async fn relay_url_rejects_non_url() {
+        assert!(validate_relay_url("not a url").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn relay_url_rejects_private_or_credentialed_targets() {
+        assert!(validate_relay_url("ws://127.0.0.1:8080").await.is_err());
+        assert!(validate_relay_url("wss://user:secret@1.1.1.1")
+            .await
+            .is_err());
+        assert!(validate_relay_url("wss://1.1.1.1/?token=secret")
+            .await
+            .is_err());
     }
 }

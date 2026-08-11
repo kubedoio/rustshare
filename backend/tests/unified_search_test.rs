@@ -2983,7 +2983,7 @@ async fn full_stack_buzz_gateway_end_to_end() {
     let relay_pubkey = relay_keys.public_key().to_hex();
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let harness = harness_with_real_gateway(pool().await, gateway, false).await;
     let pool = harness.pool.clone();
     let tenant = TenantId::from(harness.tenant);

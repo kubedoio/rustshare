@@ -71,6 +71,7 @@
 //! (Memory/RAG `materialize` or a transport adapter) lands.
 
 use bytes::Bytes;
+use futures_util::{stream, StreamExt};
 use rustshare_core::domain::{ActionCapability, ApplicationId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::observed::ChatObservedEvent;
@@ -82,6 +83,8 @@ use rustshare_resource_auth::{
 };
 use rustshare_storage::{ChatIdentityStore, ChatObservationStore};
 use std::sync::OnceLock;
+
+const AUTHORIZATION_CONCURRENCY: usize = 16;
 
 /// The Chat resource type served by this owner.
 pub const RESOURCE_TYPE_MESSAGE: &str = "message";
@@ -458,12 +461,19 @@ impl ResourceOwner for ChatResourceOwner {
                 .map(|resource| BatchDecision::new(resource.clone(), Decision::Deny))
                 .collect();
         }
-        let mut decisions = Vec::with_capacity(resources.len());
-        for resource in resources {
-            let decision = self.authorize(ctx, action, resource).await;
-            decisions.push(BatchDecision::new(resource.clone(), decision));
-        }
+        let mut decisions = stream::iter(resources.iter().cloned().enumerate())
+            .map(|(index, resource)| async move {
+                let decision = self.authorize(ctx, action, &resource).await;
+                (index, BatchDecision::new(resource, decision))
+            })
+            .buffer_unordered(AUTHORIZATION_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        decisions.sort_unstable_by_key(|(index, _)| *index);
         decisions
+            .into_iter()
+            .map(|(_, decision)| decision)
+            .collect()
     }
 
     async fn resolve(

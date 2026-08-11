@@ -391,8 +391,12 @@ async fn chat_observation_list_for_reconcile_respects_since_and_order() {
     let since_ids: Vec<&str> = since.iter().map(|e| e.event_id.as_str()).collect();
     assert_eq!(
         since_ids,
-        [hex64(0xee).as_str(), hex64(0xef).as_str()],
-        "event_created_at >= since"
+        [
+            message_id.as_str(),
+            hex64(0xee).as_str(),
+            hex64(0xef).as_str()
+        ],
+        "since selects affected messages but returns their complete history"
     );
 
     cleanup(&pool, tenant, "unused-consumer").await;

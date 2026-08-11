@@ -85,7 +85,7 @@ pub async fn unified_search(
     if query.is_empty() {
         return Err(AppError::bad_request("Query cannot be empty"));
     }
-    if query.len() > 1000 {
+    if query.chars().count() > 1000 {
         return Err(AppError::bad_request("Query too long (max 1000 chars)"));
     }
 

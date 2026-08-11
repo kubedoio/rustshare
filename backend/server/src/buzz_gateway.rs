@@ -22,6 +22,7 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::{Client, Response, StatusCode};
+use rustshare_core::validation::resolve_public_socket_addrs;
 use rustshare_resource_auth::{
     BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
 };
@@ -113,6 +114,7 @@ pub struct BuzzGatewayClient {
     keys: Keys,
     http: Client,
     timeout: Duration,
+    allow_private_targets: bool,
 }
 
 impl BuzzGatewayClient {
@@ -133,15 +135,37 @@ impl BuzzGatewayClient {
         http: reqwest::ClientBuilder,
         timeout: Duration,
     ) -> Result<Self, BuzzAuthorityError> {
-        let http = http
-            .redirect(reqwest::redirect::Policy::none())
+        Self::with_timeout_policy(keys, http, timeout, false)
+    }
+
+    fn with_timeout_policy(
+        keys: Keys,
+        http: reqwest::ClientBuilder,
+        timeout: Duration,
+        allow_private_targets: bool,
+    ) -> Result<Self, BuzzAuthorityError> {
+        let http = http.redirect(reqwest::redirect::Policy::none());
+        let client = http
             .build()
             .map_err(|e| BuzzAuthorityError::Config(format!("cannot build HTTP client: {e}")))?;
         Ok(Self {
             keys,
-            http,
+            http: client,
             timeout,
+            allow_private_targets,
         })
+    }
+
+    /// Build a client for local relay test doubles. Production callers must
+    /// use [`Self::new`] or [`Self::with_timeout`], which always enforce the
+    /// public-target SSRF policy.
+    #[cfg(feature = "test-recording-provider")]
+    #[doc(hidden)]
+    pub fn new_for_test(
+        keys: Keys,
+        http: reqwest::ClientBuilder,
+    ) -> Result<Self, BuzzAuthorityError> {
+        Self::with_timeout_policy(keys, http, DEFAULT_TIMEOUT, true)
     }
 
     /// Ask the relay whether `req` may currently read its channel/message.
@@ -162,17 +186,15 @@ impl BuzzGatewayClient {
         relay_pubkey: &str,
         req: &BuzzAccessCheckRequest,
     ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
-        let url = Self::http_base(relay_url)?
-            .join("/api/v1/relay/access/check")
-            .map_err(|e| {
-                BuzzAuthorityError::Config(format!("cannot build relay access-check URL: {e}"))
-            })?;
+        let (base, http) = self.validated_http(relay_url).await?;
+        let url = base.join("/api/v1/relay/access/check").map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot build relay access-check URL: {e}"))
+        })?;
         let body = serde_json::to_vec(req).map_err(|e| {
             BuzzAuthorityError::Config(format!("cannot serialize access-check request: {e}"))
         })?;
         let header = self.nip98_header("POST", &url, Some(&body)).await?;
-        let response = self
-            .http
+        let response = http
             .post(url)
             .timeout(self.timeout)
             .header("Authorization", header)
@@ -209,11 +231,10 @@ impl BuzzGatewayClient {
         // Clamp the page size client-side before building the query so a
         // caller cannot ask the relay for an unbounded page.
         let limit = limit.clamp(1, 500);
-        let mut url = Self::http_base(relay_url)?
-            .join("/api/v1/relay/state/events")
-            .map_err(|e| {
-                BuzzAuthorityError::Config(format!("cannot build relay state-events URL: {e}"))
-            })?;
+        let (base, http) = self.validated_http(relay_url).await?;
+        let mut url = base.join("/api/v1/relay/state/events").map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot build relay state-events URL: {e}"))
+        })?;
         {
             let mut query = url.query_pairs_mut();
             if let Some(since) = since {
@@ -225,8 +246,7 @@ impl BuzzGatewayClient {
             }
         }
         let header = self.nip98_header("GET", &url, None).await?;
-        let response = self
-            .http
+        let response = http
             .get(url)
             .timeout(self.timeout)
             .header("Authorization", header)
@@ -262,6 +282,15 @@ impl BuzzGatewayClient {
         let parsed = Url::parse(relay_url).map_err(|e| {
             BuzzAuthorityError::Config(format!("invalid relay_url {relay_url:?}: {e}"))
         })?;
+        if !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(BuzzAuthorityError::Config(
+                "relay_url must not contain credentials, query parameters, or fragments".into(),
+            ));
+        }
         let scheme = match parsed.scheme() {
             "ws" => "http",
             "wss" => "https",
@@ -279,6 +308,31 @@ impl BuzzGatewayClient {
         base.set_query(None);
         base.set_fragment(None);
         Ok(base)
+    }
+
+    async fn validated_http(
+        &self,
+        relay_url: &str,
+    ) -> Result<(Url, reqwest::Client), BuzzAuthorityError> {
+        let base = Self::http_base(relay_url)?;
+        if self.allow_private_targets {
+            return Ok((base, self.http.clone()));
+        }
+        let host = base
+            .host_str()
+            .ok_or_else(|| BuzzAuthorityError::Config("relay_url must include a host".into()))?;
+        let port = base.port_or_known_default().ok_or_else(|| {
+            BuzzAuthorityError::Config("relay_url must include a valid port".into())
+        })?;
+        let addrs = resolve_public_socket_addrs(host, port).await.map_err(|_| {
+            BuzzAuthorityError::Config("relay target failed SSRF validation".into())
+        })?;
+        let http = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(host, &addrs)
+            .build()
+            .map_err(|e| BuzzAuthorityError::Config(format!("cannot build HTTP client: {e}")))?;
+        Ok((base, http))
     }
 
     /// Build the NIP-98 `Authorization` header value for `method`/`url`.
@@ -593,6 +647,16 @@ mod tests {
             BuzzGatewayClient::http_base("not a url"),
             Err(BuzzAuthorityError::Config(_))
         ));
+        for relay_url in [
+            "wss://user:secret@chat.example.test",
+            "wss://chat.example.test?token=secret",
+            "wss://chat.example.test/#secret",
+        ] {
+            assert!(matches!(
+                BuzzGatewayClient::http_base(relay_url),
+                Err(BuzzAuthorityError::Config(_))
+            ));
+        }
     }
 
     #[test]
@@ -767,6 +831,26 @@ mod tests {
             community_id: "community-1".to_string(),
             relay_url: "wss://chat.example.test".to_string(),
             relay_pubkey: None,
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            pubkey: HEX64.to_string(),
+            event_created_at: Utc::now(),
+        };
+        assert!(matches!(
+            service.can_read(&request).await,
+            Err(BuzzAuthorityError::Config(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_private_relay_targets_before_network_io() {
+        let service = client(Keys::generate());
+        let request = BuzzReadRequest {
+            tenant_id: TenantId(Uuid::new_v4()),
+            community_id: "community-1".to_string(),
+            relay_url: "ws://127.0.0.1:8080".to_string(),
+            relay_pubkey: Some(HEX64.to_string()),
             channel_id: "channel-1".to_string(),
             channel_kind: BuzzChannelKind::Workspace,
             message_id: Some(HEX64.to_string()),

@@ -598,7 +598,7 @@ fn validate_query(query: &str) -> Result<&str, UnifiedSearchError> {
             "Query cannot be empty".to_string(),
         ));
     }
-    if query.len() > 1000 {
+    if query.chars().count() > 1000 {
         return Err(UnifiedSearchError::InvalidQuery(
             "Query too long (max 1000 chars)".to_string(),
         ));
@@ -1003,6 +1003,11 @@ mod tests {
         ));
         assert!(matches!(
             validate_query(&"x".repeat(1001)),
+            Err(UnifiedSearchError::InvalidQuery(_))
+        ));
+        assert!(validate_query(&"é".repeat(1000)).is_ok());
+        assert!(matches!(
+            validate_query(&"é".repeat(1001)),
             Err(UnifiedSearchError::InvalidQuery(_))
         ));
         assert_eq!(

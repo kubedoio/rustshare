@@ -359,9 +359,9 @@ async fn reconcile_respects_since() {
     )
     .await;
 
-    // Watermark strictly between the two events: only the later message is
-    // rebuilt.
-    let counts = reconcile(&pool, tenant, Some(t1 + chrono::Duration::microseconds(1))).await;
+    // Watermark strictly between the two observations: only the later
+    // message is rebuilt.
+    let counts = reconcile(&pool, tenant, Some(t1 + chrono::Duration::seconds(2))).await;
     assert_eq!(counts.processed, 1, "the earlier observation is excluded");
     assert_eq!(counts.created, 1);
     assert_eq!(catalog_count(&pool, tenant).await, 1);
@@ -438,6 +438,10 @@ async fn reconcile_tombstones_marked() {
         None,
     )
     .await;
+    let initial = reconcile(&pool, tenant, None).await;
+    assert_eq!(initial.processed, 1);
+    assert_eq!(initial.created, 1);
+
     insert_observation(
         &pool,
         tenant,
@@ -450,9 +454,12 @@ async fn reconcile_tombstones_marked() {
     )
     .await;
 
-    let counts = reconcile(&pool, tenant, None).await;
+    // A late-arriving deletion may have an older source event timestamp than
+    // the watermark. It must still rebuild the affected message from its
+    // complete history; selecting only event_created_at would miss it.
+    let counts = reconcile(&pool, tenant, Some(t0 + chrono::Duration::seconds(6))).await;
     assert_eq!(counts.processed, 2);
-    assert_eq!(counts.created, 1);
+    assert_eq!(counts.updated, 1);
     assert_eq!(catalog_count(&pool, tenant).await, 1);
     let row = catalog_row(&pool, tenant).await.expect("record exists");
     assert_eq!(row.get::<String, _>("event_type"), "deleted");

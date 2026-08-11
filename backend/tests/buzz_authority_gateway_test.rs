@@ -989,7 +989,7 @@ async fn authorized_member_can_materialize_message() {
     dispatch_once(&pool, store).await;
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1088,7 +1088,7 @@ async fn unauthorized_member_cannot_materialize() {
     }
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1199,7 +1199,7 @@ async fn private_channel_non_member_denied() {
     );
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1291,7 +1291,7 @@ async fn membership_removal_immediately_denies() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1396,7 +1396,7 @@ async fn dm_participant_allowed_outsider_denied() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
 
     // Participant: the relay allows — DM bodies are never captured, so the
@@ -1534,7 +1534,7 @@ async fn community_admission_cannot_bypass_channel_authorization() {
         .add_member(CHANNEL_ID, &author.public_key().to_hex());
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(reader_principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1617,7 +1617,7 @@ async fn stale_memory_acl_cannot_grant_access() {
     }
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1701,7 +1701,7 @@ async fn cross_tenant_and_community_denied() {
     }
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway.clone()).await;
 
     // Case 1: tenant B's context through tenant A's authorizer — the lookup is
@@ -1822,7 +1822,7 @@ async fn buzz_unavailable_fails_closed() {
     let message_id = event.id.to_hex();
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -1904,7 +1904,7 @@ async fn no_user_key_required_server_side() {
     // (a) The production request path signs with the SERVICE key: the fake
     // records the authenticated NIP-98 signer on every check.
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     assert_eq!(
@@ -2076,7 +2076,7 @@ async fn reconcile_repairs_missing_memory_projection() {
         .unwrap();
     assert_eq!(catalog_count(&pool, tenant).await, 0);
 
-    let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
     let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
     assert_eq!(counts.processed, 2, "both relay entries are examined");
     assert_eq!(counts.created, 2, "both records are rebuilt exactly once");
@@ -2165,7 +2165,7 @@ async fn reconcile_repairs_missing_observation_via_buzz_replay() {
     assert_eq!(observation_count(&pool, tenant).await, 0);
     assert_eq!(catalog_count(&pool, tenant).await, 0);
 
-    let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
     let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
     assert_eq!(counts.processed, 2, "both relay entries are examined");
     assert_eq!(counts.created, 2, "both records are built");
@@ -2235,7 +2235,7 @@ async fn reconcile_duplicate_replay_is_idempotent() {
     let store = outbox_store(pool.clone());
     register_consumer(&store).await;
 
-    let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
     let first = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
     assert_eq!(first.processed, 2);
     assert_eq!(first.created, 2);
@@ -2319,7 +2319,7 @@ async fn reconcile_flows_through_http_contract_without_any_db() {
     // NO database — `FakeBuzzState` is an in-memory HashMap/Vec topology and
     // there is no relay database anywhere in this test binary. The only way
     // the repair can read the relay's state is over the public HTTP endpoints.
-    let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
     let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
     assert_eq!(counts.created, 2);
     assert_eq!(
@@ -2383,7 +2383,7 @@ async fn deleted_message_is_not_found() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -2502,7 +2502,7 @@ async fn binding_rotation_asks_new_pubkey() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway.clone()).await;
     let ctx = user_ctx(principal, tenant);
     let reference = chat_ref(&message_id);
@@ -2607,7 +2607,7 @@ async fn unknown_channel_returns_not_found() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -2706,7 +2706,7 @@ async fn tenant_scope_guard_skips_foreign_community_entries() {
         ));
     }
 
-    let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
     let counts = reconcile_from_buzz(&pool, tenant_a, &gateway, None).await;
     assert_eq!(
         counts.processed, 2,
@@ -2781,7 +2781,7 @@ async fn admin_can_rotate_mapping_relay_pin() {
     ));
 
     let gateway =
-        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
     let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
     let ctx = user_ctx(env.principal, tenant);
     let reference = chat_ref(&message_id);
@@ -2952,7 +2952,7 @@ async fn update_mapping_happy_path_writes_both_fields() {
     .await;
 
     let db = database_state(pool.clone()).await;
-    let new_relay_url = "wss://relay-rotated.example.test".to_string();
+    let new_relay_url = "wss://1.1.1.1".to_string();
     let new_pin = Keys::generate().public_key().to_hex();
     let (status, Json(updated)) = call_update_mapping(
         &db,
@@ -3001,7 +3001,7 @@ async fn update_mapping_missing_mapping_returns_404() {
         admin_user_id,
         tenant.0,
         WorkspaceId(tenant.0),
-        "wss://relay.example.test".to_string(),
+        "wss://1.1.1.1".to_string(),
         None,
     )
     .await
@@ -3060,7 +3060,7 @@ async fn update_mapping_bad_relay_pubkey_returns_400() {
             admin_user_id,
             tenant.0,
             WorkspaceId(tenant.0),
-            "wss://relay.example.test".to_string(),
+            "wss://1.1.1.1".to_string(),
             Some(bad_pin),
         )
         .await

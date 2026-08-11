@@ -40,9 +40,9 @@ use crate::AppState;
 #[derive(Debug, Deserialize)]
 pub struct ReconcileRequest {
     pub tenant_id: Uuid,
-    /// Optional ISO8601 timestamp. Only observations with
-    /// `event_created_at >= since` are re-projected; parsed by the handler so
-    /// a malformed value returns 400.
+    /// Optional ISO8601 timestamp. Messages with observations at or after
+    /// `since` are re-projected from their complete observation history;
+    /// parsed by the handler so a malformed value returns 400.
     pub since: Option<String>,
     /// Repair source selector: `"observation"` (default) or `"buzz"`.
     #[serde(default = "default_reconcile_source")]

@@ -171,9 +171,10 @@ impl ChatObservationStore {
         rows.iter().map(row_to_event).collect()
     }
 
-    /// Observed events for a tenant, optionally filtered by
-    /// `event_created_at >= since`, ordered by `event_created_at` then
-    /// `event_id` (reconciliation source).
+    /// Observed events for a tenant. When `since` is set, it selects messages
+    /// with an observation (`observed_at`) at or after the watermark, then returns each
+    /// affected message's complete history so deletion/edit folds remain
+    /// correct, ordered by `event_created_at` then `event_id`.
     pub async fn list_for_reconcile(
         &self,
         tenant_id: TenantId,
@@ -182,13 +183,19 @@ impl ChatObservationStore {
         let rows = match since {
             Some(since) => {
                 sqlx::query(
-                    "SELECT tenant_id, workspace_id, event_id, message_id, event_type,
+                    "WITH affected_messages AS (
+                         SELECT DISTINCT message_id
+                         FROM chat_observed_events
+                         WHERE tenant_id = $1 AND observed_at >= $2
+                     )
+                     SELECT tenant_id, workspace_id, event_id, message_id, event_type,
                             supersedes_event_id, community_id, channel_id, channel_kind,
                             thread_root_id, author_pubkey, author_principal_id,
                             event_created_at, observed_at, checksum, signature,
                             signature_verified, body, active
                      FROM chat_observed_events
-                     WHERE tenant_id = $1 AND event_created_at >= $2
+                     WHERE tenant_id = $1
+                       AND message_id IN (SELECT message_id FROM affected_messages)
                      ORDER BY event_created_at, event_id",
                 )
                 .bind(tenant_id.0)
