@@ -179,7 +179,9 @@ Semantics:
 
 Page the community's signed event state for reconciliation.
 
-- `since` — optional; only events created at or after this Unix timestamp.
+- `since` — optional; only events whose **own `created_at`** (the unix
+  seconds of the kind-1 event, not the entry's observation time) is at or
+  after this timestamp.
 - `limit` — optional maximum page size.
 - `cursor` — opaque continuation token returned by a previous page.
 
@@ -224,7 +226,10 @@ The Elembra client derives the HTTPS base URL from the stored community
 `relay_url`:
 
 - `ws://` → `http://`, `wss://` → `https://`, keeping host and port unchanged;
-- append `/api/v1/relay/...` for the endpoints above.
+- any **path** on the stored `relay_url` is NOT carried over — the
+  access-check and state endpoints live at the relay host root
+  (`/api/v1/relay/access/check`, `/api/v1/relay/state/events`); a relay
+  served under a subpath must expose them at the root.
 
 **Host-derived community isolation:** each community's relay host answers only
 its own checks and state. The client never routes community A's checks to

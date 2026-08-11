@@ -81,7 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state over the public HTTP contract (`access/check` + `state/events`, never
   Buzz's private database), re-verifies each event, repairs the observation
   index, and re-projects the Memory catalog idempotently without touching the
-  durable outbox or consumer receipts.
+  durable outbox or consumer receipts. Community mappings gain an admin
+  relay-pin rotation endpoint (`PATCH
+  /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
+  `relay_url` and `relay_pubkey` always written — omitting `relay_pubkey`
+  unpins and fails closed), so a relay signing-key rotation no longer bricks
+  buzz-mode reads, and the Memory-catalog fold is tombstone-immutable:
+  `upsert_records` never re-writes a tombstoned conflict row, so a backdated
+  relay delete excluded by a `since` window cannot un-tombstone a Memory
+  record.
 
 ### Changed
 

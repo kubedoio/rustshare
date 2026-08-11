@@ -67,6 +67,18 @@ response; any failure mode other than an explicit signed `allow` is a denial.
    unknown decision strings all map to denial — never to allow. Rationale: authorization
    failures must be safe by default; only an explicit signed `allow` opens exposure.
 
+9. **Relay pins are per-mapping and admin-rotatable.** The pinned `relay_pubkey` lives on
+   the community mapping and is rotated with
+   `PATCH /api/v1/admin/applications/chat/workspaces/{workspace_id}/community` without
+   remapping the community — `community_id`/`workspace_id` are never rewritten, so
+   admissions are not orphaned. Both `relay_url` and `relay_pubkey` are always written;
+   pass the current value for the side you are not rotating, and omit `relay_pubkey` to
+   unpin. A stale or missing pin fails closed (buzz-mode Deny) rather than weakening
+   trust: an unpinned mapping cannot use the upstream capability, and a pin the relay no
+   longer signs with denies until the relay rotates to the new key. Rationale: the mapping
+   was previously insert-only, so a relay signing-key rotation would otherwise brick
+   buzz-mode reads with no supported remediation.
+
 ## 3. Upstream capabilities
 
 Two HTTP endpoints on the community's relay host, defined in
@@ -117,7 +129,11 @@ with `source: "buzz"`; the gateway must be configured else 503 — no silent fal
    observation upsert transaction, NO outbox insert). One bad entry skips itself; it never
    aborts the repair.
 4. Fold the repaired observation index into `memory_catalog` with the existing idempotent
-   `rebuild_records` / `upsert_records`.
+   `rebuild_records` / `upsert_records`. The fold is tombstone-immutable: `upsert_records`
+   guards its `DO UPDATE` with `WHERE indexing_status <> 'tombstoned'`, so a tombstoned
+   record is never re-written — a backdated relay delete excluded by a `since` window is
+   neutralized at write time and can never re-flip a tombstoned Memory record back to
+   `created`/`content_stored`.
 
 Idempotency: observation upserts keyed on `(tenant_id, event_id)` with `ON CONFLICT DO NOTHING`;
 re-running with no drift yields `created = 0` (conflict-path rows are counted as `updated`; the
@@ -149,6 +165,18 @@ against an in-test fake relay (in-memory, no database) and a real dev database:
 | N2 | Binding rotation asks the new pubkey | old binding revoked + new bound/admitted → Allow; recorded request carries the NEW pubkey; direct check with the old pubkey → Deny |
 | N3 | Unknown channel not_found | message known, channel never registered → not_found → NotFound |
 | N4 | Tenant-scope guard | shared relay pages a foreign-community entry → skipped; no row written into either tenant's index |
+| N5 | Admin relay-pin rotation | PATCH the mapping to pin relay key B while the fake still signs with A → stale pin Denies; swap the fake's key to B → Allow again (`admin_can_rotate_mapping_relay_pin`) |
+| H1 | `update_community_mapping` happy path | PATCH writes both `relay_url` and `relay_pubkey`; omitting `relay_pubkey` unpins |
+| H2 | `update_community_mapping` missing mapping | 404 |
+| H3 | `update_community_mapping` bad `relay_url` | 400 |
+| H4 | `update_community_mapping` bad `relay_pubkey` | 400 |
+| H5 | `update_community_mapping` cross-tenant | 403 |
+
+The 18 acceptance rows (1–14, N1–N4) run against the in-test fake relay. The suite also
+includes the admin pin-rotation test (`admin_can_rotate_mapping_relay_pin`, row N5) and 5
+handler-level tests for the `update_community_mapping` endpoint (rows H1–H5). All 19 of
+those are DB-only; the 5 handler-level tests additionally require S3 (RustFS) because the
+handler runs against the full `DatabaseState`. Total: 24 tests.
 
 ## 7. Non-goals
 
