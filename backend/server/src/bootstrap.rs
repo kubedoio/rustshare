@@ -1,4 +1,5 @@
 use crate::authz;
+use crate::buzz_gateway::BuzzGatewayClient;
 use crate::buzz_observation::BuzzObservationService;
 use crate::config::{AppConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
@@ -32,6 +33,7 @@ use rustshare_infrastructure::{
     },
     PgVectorStore,
 };
+use rustshare_resource_auth::{BuzzAuthority, LocalFallbackAuthority};
 use rustshare_storage::{
     repos::ShareNotificationRepoImpl, ChatIdentityStore, ChatObservationStore, EventStore,
     MemoryCatalogStore, MetadataStore, ObjectStore, OutboxStore,
@@ -844,6 +846,46 @@ pub async fn init_app() -> Result<AppState> {
         }
     });
 
+    // Buzz source-authority gateway (config-driven, fail closed): when
+    // `rustshare_chat_authority` is `buzz`, the Chat owner's FINAL
+    // channel/message decisions go to the community's authoritative relay
+    // through this client. Config validation guarantees the bridge secret
+    // key exists and parses in buzz mode; any failure here is a startup
+    // error — never a silent fallback to local.
+    let (buzz_gateway, chat_buzz_authority): (
+        Option<Arc<BuzzGatewayClient>>,
+        Box<dyn BuzzAuthority>,
+    ) = if config.rustshare_chat_authority == "buzz" {
+        let key = config
+            .rustshare_chat_bridge_secret_key
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "RUSTSHARE_CHAT_AUTHORITY is 'buzz' but RUSTSHARE_CHAT_BRIDGE_SECRET_KEY is not set"
+                )
+            })?;
+        let keys = nostr::Keys::parse(key).map_err(|error| {
+            anyhow::anyhow!("invalid RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: {error}")
+        })?;
+        // The authority box needs its own client instance: `Arc<T>` has no
+        // forwarding `BuzzAuthority` impl, and the client is stateless
+        // (service key + HTTP client), so a second instance from the same
+        // keys is behaviorally identical to the one stored in AppState.
+        let gateway = Arc::new(
+            BuzzGatewayClient::new(keys.clone(), reqwest::ClientBuilder::new())
+                .map_err(|error| anyhow::anyhow!("cannot build Buzz gateway client: {error}"))?,
+        );
+        let authority: Box<dyn BuzzAuthority> = Box::new(
+            BuzzGatewayClient::new(keys, reqwest::ClientBuilder::new())
+                .map_err(|error| anyhow::anyhow!("cannot build Buzz gateway client: {error}"))?,
+        );
+        info!("Chat authority mode: buzz (relay-backed gateway)");
+        (Some(gateway), authority)
+    } else {
+        info!("Chat authority mode: local (coarse workspace-only gate)");
+        (None, Box::new(LocalFallbackAuthority))
+    };
+
     let source_authorizer = Arc::new(
         authz::build_source_authorizer(
             Arc::clone(&services.application_registry),
@@ -853,6 +895,7 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&object_store),
             (*chat_identity_store).clone(),
             (*chat_observation_store).clone(),
+            chat_buzz_authority,
         )
         .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
     );
@@ -897,6 +940,7 @@ pub async fn init_app() -> Result<AppState> {
         chat_observation_store,
         memory_catalog_store,
         buzz_observation_service,
+        buzz_gateway,
         outbox_status,
         outbox_worker_enabled: outbox_worker_config.enabled,
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,

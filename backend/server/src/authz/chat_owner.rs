@@ -17,13 +17,27 @@
 //! * the principal's current active Buzz binding
 //!   (`ChatIdentityStore::active_binding`);
 //! * an active admission for the message's community and the bound Buzz
-//!   pubkey (`ChatIdentityStore::active_admission`).
+//!   pubkey (`ChatIdentityStore::active_admission`);
+//! * the FINAL channel/message decision from the configured
+//!   [`BuzzAuthority`] (current membership/visibility/message availability
+//!   at the community's authoritative relay).
 //!
 //! The bridge-owned observation row (`chat_observed_events`) supplies routing
 //! context (community/channel) and message existence — it NEVER grants access
 //! on its own. Memory-owned state (`memory_catalog`) is never imported or
 //! queried here, so a stale or tampered Memory record cannot override a
 //! current revocation.
+//!
+//! # Channel/message authority
+//!
+//! The gate's FINAL channel/message decision comes from the configured Buzz
+//! authority ([`BuzzAuthority::can_read`]) AFTER the local pre-filter above;
+//! local admission is a coarse pre-filter only, never a final allow. When no
+//! upstream authority is configured ([`LocalFallbackAuthority`]), behavior
+//! matches the historical coarse gate — workspace channels only. That is NOT
+//! per-channel authorization: it requires the upstream capability, and the
+//! community's relay remains the final authority. Every authority failure
+//! fails closed to Deny.
 //!
 //! # Existence-hiding
 //!
@@ -61,9 +75,10 @@ use rustshare_core::domain::{ActionCapability, ApplicationId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::{
-    BatchDecision, ChatIdentityBinding, Decision, FetchedResource, PrincipalContext, Purpose,
-    Representation, ResolvedResource, ResourceCapability, ResourceOwner, ResourceRef, SourceError,
-    CHAT_READ, MAX_BATCH_SIZE,
+    BatchDecision, BuzzAuthority, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
+    ChatIdentityBinding, Decision, FetchedResource, LocalFallbackAuthority, PrincipalContext,
+    Purpose, Representation, ResolvedResource, ResourceCapability, ResourceOwner, ResourceRef,
+    SourceError, WorkspaceCommunityMapping, CHAT_READ, MAX_BATCH_SIZE,
 };
 use rustshare_storage::{ChatIdentityStore, ChatObservationStore};
 use std::sync::OnceLock;
@@ -78,13 +93,34 @@ pub const CHAT_APPLICATION_ID: &str = "io.elembra.chat";
 pub struct ChatResourceOwner {
     chat_identity: ChatIdentityStore,
     observations: ChatObservationStore,
+    /// The FINAL channel/message decision maker: the configured Buzz
+    /// authority when upstream is wired, otherwise
+    /// [`LocalFallbackAuthority`] (historical coarse workspace-only gate).
+    authority: Box<dyn BuzzAuthority>,
 }
 
 impl ChatResourceOwner {
+    /// Build the owner with the coarse local fallback authority
+    /// (workspace channels only) — the unconfigured path.
     pub fn new(chat_identity: ChatIdentityStore, observations: ChatObservationStore) -> Self {
+        Self::with_authority(
+            chat_identity,
+            observations,
+            Box::new(LocalFallbackAuthority),
+        )
+    }
+
+    /// Build the owner with an explicit Buzz authority; the final
+    /// channel/message decision comes from `authority`.
+    pub fn with_authority(
+        chat_identity: ChatIdentityStore,
+        observations: ChatObservationStore,
+        authority: Box<dyn BuzzAuthority>,
+    ) -> Self {
         Self {
             chat_identity,
             observations,
+            authority,
         }
     }
 
@@ -112,6 +148,19 @@ fn is_message_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Map the observed event's channel classification onto the authority
+/// contract's wire-identical enum (both are `workspace|dm|private|excluded`).
+/// A `From` impl is not possible here (both types are foreign to this
+/// crate), so the gate converts through this helper.
+fn buzz_channel_kind(kind: ChatChannelKind) -> BuzzChannelKind {
+    match kind {
+        ChatChannelKind::Workspace => BuzzChannelKind::Workspace,
+        ChatChannelKind::Dm => BuzzChannelKind::Dm,
+        ChatChannelKind::Private => BuzzChannelKind::Private,
+        ChatChannelKind::Excluded => BuzzChannelKind::Excluded,
+    }
 }
 
 impl ChatResourceOwner {
@@ -164,11 +213,11 @@ impl ChatResourceOwner {
                 return Err(Decision::Deny);
             }
         }
-        // dm/private/excluded channels are never candidate-exposable through
-        // Elembra; coarse channel filter.
-        if row.channel_kind != ChatChannelKind::Workspace {
-            return Err(Decision::Deny);
-        }
+        // Local pre-filter (coarse): the tenant must have Chat enabled, the
+        // principal an active Buzz binding, and the bound pubkey an active
+        // admission in the message's community. None of these alone is a
+        // final allow; the Buzz authority below makes the channel/message
+        // decision.
         if !self.current_chat_enabled(ctx).await {
             return Err(Decision::Deny);
         }
@@ -180,6 +229,49 @@ impl ChatResourceOwner {
             .await
         {
             return Err(Decision::Deny);
+        }
+        // Admission requires an active community mapping, so a missing
+        // mapping here is an internal inconsistency; fail closed.
+        let Some(mapping) = self.current_mapping(ctx).await else {
+            tracing::error!(
+                application = CHAT_APPLICATION_ID,
+                %resource,
+                tenant = %ctx.tenant_id,
+                "chat community mapping is missing despite an active admission; denying access"
+            );
+            return Err(Decision::Deny);
+        };
+        // FINAL channel/message decision from the configured Buzz authority
+        // (current membership/visibility/message availability). Any
+        // authority failure fails closed to Deny.
+        match self
+            .authority
+            .can_read(&BuzzReadRequest {
+                tenant_id: ctx.tenant_id,
+                community_id: mapping.community_id,
+                relay_url: mapping.relay_url,
+                relay_pubkey: mapping.relay_pubkey,
+                channel_id: row.channel_id.clone(),
+                channel_kind: buzz_channel_kind(row.channel_kind),
+                message_id: Some(resource.resource_id.clone()),
+                pubkey: binding.buzz_pubkey,
+                event_created_at: row.event_created_at,
+            })
+            .await
+        {
+            Ok(BuzzReadDecision::Allow) => {}
+            Ok(BuzzReadDecision::Deny) => return Err(Decision::Deny),
+            Ok(BuzzReadDecision::NotFound) => return Err(Decision::NotFound),
+            Err(error) => {
+                tracing::error!(
+                    application = CHAT_APPLICATION_ID,
+                    %resource,
+                    tenant = %ctx.tenant_id,
+                    %error,
+                    "Buzz authority check failed; denying access"
+                );
+                return Err(Decision::Deny);
+            }
         }
         Ok(row)
     }
@@ -246,6 +338,28 @@ impl ChatResourceOwner {
                     principal = %ctx.principal_id,
                     %error,
                     "chat binding lookup failed; denying access"
+                );
+                None
+            }
+        }
+    }
+
+    /// The workspace's current Buzz community mapping, if any. Any store
+    /// error fails closed (None + log), mirroring `current_binding`.
+    async fn current_mapping(&self, ctx: &PrincipalContext) -> Option<WorkspaceCommunityMapping> {
+        match self
+            .chat_identity
+            .mapping(ctx.tenant_id, ctx.workspace_id)
+            .await
+        {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                tracing::error!(
+                    application = CHAT_APPLICATION_ID,
+                    tenant = %ctx.tenant_id,
+                    workspace = %ctx.workspace_id,
+                    %error,
+                    "chat community mapping lookup failed; denying access"
                 );
                 None
             }

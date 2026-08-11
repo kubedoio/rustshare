@@ -300,6 +300,7 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         chat_observation_store,
         memory_catalog_store,
         buzz_observation_service,
+        buzz_gateway: None,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

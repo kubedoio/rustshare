@@ -6,6 +6,7 @@ use std::time::Instant;
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
+use crate::buzz_gateway::BuzzGatewayClient;
 use crate::buzz_observation::BuzzObservationService;
 use crate::handlers::collab::CollabRooms;
 use crate::middleware;
@@ -225,6 +226,9 @@ pub struct AppState {
     /// Authenticated ingestion of signed Buzz events (observation half of the
     /// Buzz → Elembra Memory projection).
     pub buzz_observation_service: Arc<BuzzObservationService>,
+    /// NIP-98-authenticated client for the authoritative Buzz relay,
+    /// configured only in `buzz` chat-authority mode. `None` in local mode.
+    pub buzz_gateway: Option<Arc<BuzzGatewayClient>>,
     /// Liveness of the durable integration-event outbox dispatcher, shared
     /// with the readiness probe.
     pub outbox_status: Arc<crate::outbox_dispatcher::OutboxStatus>,
