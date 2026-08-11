@@ -278,6 +278,10 @@ name = "chat_owner_authorization_test"
 path = "../tests/chat_owner_authorization_test.rs"
 
 [[test]]
+name = "buzz_authority_gateway_test"
+path = "../tests/buzz_authority_gateway_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 

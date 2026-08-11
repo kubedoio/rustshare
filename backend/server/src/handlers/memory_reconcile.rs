@@ -247,7 +247,7 @@ const BUZZ_PAGE_LIMIT: u32 = 200;
 /// `ReconcileCounts::processed` counts the entries paged from Buzz (the repair
 /// source), not observation rows.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn reconcile_chat_memory_from_buzz_for_tenant(
+pub async fn reconcile_chat_memory_from_buzz_for_tenant(
     service: &BuzzObservationService,
     chat_identity: &ChatIdentityStore,
     observations: &ChatObservationStore,

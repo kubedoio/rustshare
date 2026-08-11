@@ -66,6 +66,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content exposure; admin reconciliation endpoint at
   `POST /api/v1/admin/applications/memory/chat/reconcile`).
 
+- Buzz source authorization gateway (v1alpha1): Chat content exposure can now
+  be gated on a current, NIP-98-authenticated decision from the community's
+  authoritative Buzz relay instead of the coarse local workspace-only gate.
+  Configured with `RUSTSHARE_CHAT_AUTHORITY=buzz` (requires
+  `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY`, the workload's Nostr service key — no
+  human user key is ever stored or used server-side); every request is signed
+  with the service key and every relay response must be a kind-19030 event
+  signed by the community mapping's pinned `relay_pubkey` (new optional column
+  on community mappings), echoing the request verbatim and fresh within 60
+  seconds — any other outcome (transport error, auth rejection, signature/pin/
+  echo/staleness mismatch) fails closed to a denial. The admin reconcile
+  endpoint gains a `source: "buzz"` repair that pages the relay's signed event
+  state over the public HTTP contract (`access/check` + `state/events`, never
+  Buzz's private database), re-verifies each event, repairs the observation
+  index, and re-projects the Memory catalog idempotently without touching the
+  durable outbox or consumer receipts.
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,
