@@ -3274,6 +3274,66 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         .contains("OUTSIDE-FOLDER-BYTES"));
     assert_ne!(file.id, outside.id);
 
+    let child_folder_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO folders (id, name, path, parent_folder_id, owner_id, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(child_folder_id)
+    .bind("Nested")
+    .bind("/Ask folder/Nested")
+    .bind(folder_id)
+    .bind(owner.id)
+    .bind(tenant.0)
+    .execute(&pool)
+    .await
+    .expect("create nested Ask folder");
+    let child_file = create_file_with_content(
+        &harness,
+        owner.id,
+        "ask-child.md",
+        "/Ask folder/Nested/ask-child.md",
+        b"CHILD-FOLDER-BYTES",
+    )
+    .await;
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(child_folder_id)
+        .bind(child_file.id)
+        .execute(&pool)
+        .await
+        .expect("place note in nested Ask folder");
+    let nested_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The folder tree contains both plans.".into(),
+        citations: vec!["src-001".into(), "src-002".into()],
+    }));
+    let nested_answer =
+        AskWorkspaceService::new(Arc::new(harness.service()), Some(nested_provider.clone()))
+            .ask_scoped(
+                &user_ctx(env.principal, tenant),
+                "ask",
+                &[SearchSource::Files],
+                8,
+                &SearchScope::Folder(ResourceRef::new(
+                    ApplicationId::new("io.elembra.files"),
+                    "folder",
+                    folder_id.to_string(),
+                )),
+            )
+            .await
+            .expect("nested folder Ask succeeds");
+    assert!(nested_answer.grounded);
+    assert_eq!(nested_answer.source_count, 2);
+    let nested_calls = nested_provider.calls().await;
+    let nested_context = &nested_calls[0].sources;
+    assert!(nested_context
+        .iter()
+        .any(|source| source.text.contains("FILE-AUTHORIZED-BYTES")));
+    assert!(nested_context
+        .iter()
+        .any(|source| source.text.contains("CHILD-FOLDER-BYTES")));
+    assert!(!nested_context
+        .iter()
+        .any(|source| source.text.contains("OUTSIDE-FOLDER-BYTES")));
+
     let channel_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
         answer: "The channel contains the plan.".into(),
         citations: vec!["src-001".into()],
