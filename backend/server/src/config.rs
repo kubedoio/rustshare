@@ -391,7 +391,14 @@ mod tests {
     /// A minimal `AppConfig::from_env` environment that passes all existing
     /// required-field checks, with the chat authority vars cleared.
     fn set_valid_base_env() {
-        std::env::set_var("DATABASE_URL", "postgres://test:test@localhost:5432/test");
+        // Preserve an already-configured DATABASE_URL: the config tests only
+        // need `from_env()` to parse, and clobbering the real URL races with
+        // concurrent tests in the same binary (e.g. handlers::auth::tests::
+        // login_*, which connect to the configured database). Only fall back
+        // to a dummy URL when none is set (bare `cargo test --lib` runs).
+        if std::env::var_os("DATABASE_URL").is_none() {
+            std::env::set_var("DATABASE_URL", "postgres://test:test@localhost:5432/test");
+        }
         std::env::set_var("JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789");
         std::env::set_var("RUSTFS_ENDPOINT", "http://localhost:9000");
         std::env::set_var("RUSTFS_REGION", "us-east-1");
