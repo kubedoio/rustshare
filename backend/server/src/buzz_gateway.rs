@@ -1,0 +1,715 @@
+//! Buzz gateway HTTP client: NIP-98-authenticated access checks and state
+//! paging against the community's authoritative Buzz relay.
+//!
+//! Elembra's server workload holds only a Nostr *service* key — never a human
+//! user's signing key. Every request carries a NIP-98 `Authorization` header
+//! (kind-27235 event) signed with that service key. Every response must be a
+//! raw signed Nostr event of kind 19030 whose `pubkey` is the pinned relay
+//! public key, whose content echoes the request verbatim, and whose
+//! `evaluated_at` is within the freshness window. Any failure fails closed
+//! (see `docs/specs/buzz-upstream-authorization-v1alpha1.md`).
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chrono::Utc;
+use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
+use reqwest::{Client, Response, StatusCode};
+use rustshare_resource_auth::{
+    BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use url::Url;
+
+/// Default per-request timeout for relay calls.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Relay responses are kind-19030 events (unregistered, private replaceable
+/// range) — never published, only returned inline as an HTTP response.
+const RELAY_RESPONSE_KIND: u16 = 19_030;
+/// `evaluated_at` must be within this many seconds of the client clock when
+/// received; an older (or future) response is stale and fails closed.
+const MAX_EVALUATED_AT_AGE_SECS: i64 = 60;
+
+/// Access-check request sent to `POST /api/v1/relay/access/check`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzAccessCheckRequest {
+    pub pubkey: String,
+    pub channel_id: String,
+    pub channel_kind: BuzzChannelKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// Optional informational unix-seconds of the checked event; the relay MAY
+    /// ignore it and the client sends it without any validation change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_created_at: Option<i64>,
+}
+
+/// Signed access-check result returned by the relay (kind-19030 content).
+///
+/// The `pubkey`, `channel_id`, and `message_id` fields echo the request
+/// verbatim (`message_id: null` when the request had none); the client rejects
+/// any response whose echoed values do not match the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzAccessCheckResult {
+    pub decision: String,
+    pub reason: String,
+    pub evaluated_at: i64,
+    pub pubkey: String,
+    pub channel_id: String,
+    pub message_id: Option<String>,
+}
+
+/// One page of the relay's signed event state
+/// (`GET /api/v1/relay/state/events`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzStatePage {
+    pub entries: Vec<BuzzStateEntry>,
+    /// Opaque continuation token for the next page; `None` on the final page.
+    pub cursor: Option<String>,
+    /// `true` terminates the stream (the final page).
+    pub complete: bool,
+}
+
+/// A raw signed kind-1 event plus its chat context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzStateEntry {
+    /// The raw signed kind-1 event JSON; verified by the reconcile consumer,
+    /// never by the paging client.
+    pub event: Value,
+    pub context: BuzzStateContext,
+}
+
+/// Chat context of a paged state entry — field-for-field the webhook
+/// `BuzzPushContext` shape, so the reconcile consumer reuses its existing
+/// validation unchanged. `event_type` is `created|edited|deleted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzStateContext {
+    pub community_id: String,
+    pub channel_id: String,
+    pub channel_kind: BuzzChannelKind,
+    pub thread_root_id: Option<String>,
+    pub message_id: String,
+    pub event_type: String,
+    pub supersedes_event_id: Option<String>,
+}
+
+/// NIP-98-authenticated HTTP client for the authoritative Buzz relay.
+pub struct BuzzGatewayClient {
+    /// The workload's service key; every request is signed with it.
+    keys: Keys,
+    http: Client,
+    timeout: Duration,
+}
+
+impl BuzzGatewayClient {
+    /// Build a client with the default [`DEFAULT_TIMEOUT`].
+    pub fn new(keys: Keys, http: Client) -> Self {
+        Self::with_timeout(keys, http, DEFAULT_TIMEOUT)
+    }
+
+    /// Build a client with an explicit per-request timeout.
+    pub fn with_timeout(keys: Keys, http: Client, timeout: Duration) -> Self {
+        Self {
+            keys,
+            http,
+            timeout,
+        }
+    }
+
+    /// Ask the relay whether `req` may currently read its channel/message.
+    ///
+    /// The request is NIP-98-signed (POST ⇒ `payload` tag), and the signed
+    /// kind-19030 response is verified (kind, Schnorr signature, pinned
+    /// pubkey), checked for request echo and freshness, then mapped to a
+    /// [`BuzzReadDecision`]. Non-200 statuses fail closed: 401 becomes
+    /// [`BuzzAuthorityError::Unauthorized`]; other 4xx/5xx become
+    /// [`BuzzAuthorityError::Transport`] — the relay was reachable but did not
+    /// answer with a signed decision, which is the same Deny outcome as a
+    /// transport failure and is kept as `Transport` rather than
+    /// `InvalidResponse` because the failure is in the request/status, not in
+    /// a signed response we received.
+    pub async fn check_access(
+        &self,
+        relay_url: &str,
+        relay_pubkey: &str,
+        req: &BuzzAccessCheckRequest,
+    ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+        let url = Self::http_base(relay_url)?
+            .join("/api/v1/relay/access/check")
+            .map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot build relay access-check URL: {e}"))
+            })?;
+        let body = serde_json::to_vec(req).map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot serialize access-check request: {e}"))
+        })?;
+        let header = self.nip98_header("POST", &url, Some(&body)).await?;
+        let response = self
+            .http
+            .post(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+        let raw = read_response_json(response).await?;
+        self.decision_from_19030(&raw, relay_pubkey, req)
+    }
+
+    /// Page the relay's signed event state for reconciliation.
+    ///
+    /// The response envelope is verified exactly like an access-check response
+    /// (kind 19030, Schnorr signature, pinned pubkey), then parsed as a
+    /// [`BuzzStatePage`]. Individual entry events are NOT verified here — the
+    /// reconcile consumer verifies each kind-1 event. The page envelope IS
+    /// validated: an incomplete page must carry a continuation cursor, or the
+    /// response is malformed and fails closed.
+    pub async fn page_state(
+        &self,
+        relay_url: &str,
+        relay_pubkey: &str,
+        since: Option<i64>,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<BuzzStatePage, BuzzAuthorityError> {
+        let mut url = Self::http_base(relay_url)?
+            .join("/api/v1/relay/state/events")
+            .map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot build relay state-events URL: {e}"))
+            })?;
+        {
+            let mut query = url.query_pairs_mut();
+            if let Some(since) = since {
+                query.append_pair("since", &since.to_string());
+            }
+            query.append_pair("limit", &limit.to_string());
+            if let Some(cursor) = cursor {
+                query.append_pair("cursor", cursor);
+            }
+        }
+        let header = self.nip98_header("GET", &url, None).await?;
+        let response = self
+            .http
+            .get(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .send()
+            .await
+            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+        let raw = read_response_json(response).await?;
+        let event = self.verify_19030(&raw, relay_pubkey)?;
+        let page: BuzzStatePage = serde_json::from_str(&event.content).map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!("state page content is invalid: {e}"))
+        })?;
+        validate_page(&page)?;
+        Ok(page)
+    }
+
+    /// Derive the HTTP base URL from the stored websocket `relay_url`.
+    ///
+    /// `ws://` → `http://` and `wss://` → `https://`, keeping host and port
+    /// unchanged. Any other scheme is a configuration error — the community
+    /// mapping must store a ws/wss relay URL. The path is normalized to `/`;
+    /// the API endpoints are appended with a leading-slash join, so any path
+    /// on the stored URL is not carried over.
+    fn http_base(relay_url: &str) -> Result<Url, BuzzAuthorityError> {
+        let parsed = Url::parse(relay_url).map_err(|e| {
+            BuzzAuthorityError::Config(format!("invalid relay_url {relay_url:?}: {e}"))
+        })?;
+        let scheme = match parsed.scheme() {
+            "ws" => "http",
+            "wss" => "https",
+            other => {
+                return Err(BuzzAuthorityError::Config(format!(
+                    "relay_url uses unsupported scheme {other:?} (expected ws or wss)"
+                )))
+            }
+        };
+        let mut base = parsed;
+        base.set_scheme(scheme).map_err(|_| {
+            BuzzAuthorityError::Config(format!("cannot map relay_url scheme to {scheme}"))
+        })?;
+        base.set_path("/");
+        base.set_query(None);
+        base.set_fragment(None);
+        Ok(base)
+    }
+
+    /// Build the NIP-98 `Authorization` header value for `method`/`url`.
+    ///
+    /// The `u` tag carries the exact request URL (query string included), the
+    /// `method` tag the HTTP method, and — when a body is present — a `payload`
+    /// tag with `hex(sha256(body))`. The kind-27235 event is signed with the
+    /// service key and base64-encoded. NIP-98 leaves the concrete base64
+    /// variant open in the wild; this crate's own verifier
+    /// (`nip98::verify_auth_header`) decodes standard base64 (padded), so we
+    /// encode exactly like `nostr`'s own `HttpData::to_authorization` to keep
+    /// headers produced here verifiable by it and by relays/test doubles built
+    /// on the same crate.
+    async fn nip98_header(
+        &self,
+        method: &str,
+        url: &Url,
+        body: Option<&[u8]>,
+    ) -> Result<String, BuzzAuthorityError> {
+        let mut tags = vec![
+            Tag::parse(["u", url.as_str()]).map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot build NIP-98 u tag: {e}"))
+            })?,
+            Tag::parse(["method", method]).map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot build NIP-98 method tag: {e}"))
+            })?,
+        ];
+        if let Some(body) = body {
+            let digest = hex::encode(Sha256::digest(body));
+            tags.push(Tag::parse(["payload", digest.as_str()]).map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot build NIP-98 payload tag: {e}"))
+            })?);
+        }
+        let event = EventBuilder::new(Kind::HttpAuth, String::new())
+            .tags(tags)
+            .sign_with_keys(&self.keys)
+            .map_err(|e| {
+                BuzzAuthorityError::Config(format!("cannot sign NIP-98 auth event: {e}"))
+            })?;
+        Ok(format!("Nostr {}", STANDARD.encode(event.as_json())))
+    }
+
+    /// Parse and cryptographically verify a relay response envelope.
+    ///
+    /// The response must be a valid Nostr event of kind 19030 whose Schnorr
+    /// signature verifies and whose `pubkey` equals the pinned relay pubkey.
+    /// Any mismatch is an invalid response (fail closed).
+    fn verify_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+    ) -> Result<NostrEvent, BuzzAuthorityError> {
+        let event = NostrEvent::from_json(raw.to_string()).map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!("response is not a valid Nostr event: {e}"))
+        })?;
+        if event.kind.as_u16() != RELAY_RESPONSE_KIND {
+            return Err(BuzzAuthorityError::InvalidResponse(format!(
+                "response kind {} is not {RELAY_RESPONSE_KIND}",
+                event.kind.as_u16()
+            )));
+        }
+        event.verify().map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!(
+                "response signature verification failed: {e}"
+            ))
+        })?;
+        if event.pubkey.to_hex() != relay_pubkey {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response pubkey does not match the pinned relay pubkey".to_string(),
+            ));
+        }
+        Ok(event)
+    }
+
+    /// Verify a kind-19030 access-check response and map it to a read decision.
+    ///
+    /// Beyond [`Self::verify_19030`], the response content must parse as a
+    /// [`BuzzAccessCheckResult`] whose echoed `pubkey`/`channel_id`/`message_id`
+    /// match the request verbatim and whose `evaluated_at` is within
+    /// [`MAX_EVALUATED_AT_AGE_SECS`] of the client clock. `allow`/`deny`/
+    /// `not_found` map to [`BuzzReadDecision`]; anything else fails closed as
+    /// an invalid response.
+    fn decision_from_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+        expected: &BuzzAccessCheckRequest,
+    ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+        let event = self.verify_19030(raw, relay_pubkey)?;
+        let result: BuzzAccessCheckResult = serde_json::from_str(&event.content).map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!(
+                "response content is not an access-check result: {e}"
+            ))
+        })?;
+        if result.pubkey != expected.pubkey {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response pubkey does not echo the requested pubkey".to_string(),
+            ));
+        }
+        if result.channel_id != expected.channel_id {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response channel_id does not echo the requested channel_id".to_string(),
+            ));
+        }
+        if result.message_id != expected.message_id {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response message_id does not echo the requested message_id".to_string(),
+            ));
+        }
+        let age = (Utc::now().timestamp() - result.evaluated_at).abs();
+        if age > MAX_EVALUATED_AT_AGE_SECS {
+            return Err(BuzzAuthorityError::InvalidResponse(format!(
+                "response evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
+            )));
+        }
+        match result.decision.as_str() {
+            "allow" => Ok(BuzzReadDecision::Allow),
+            "deny" => Ok(BuzzReadDecision::Deny),
+            "not_found" => Ok(BuzzReadDecision::NotFound),
+            other => Err(BuzzAuthorityError::InvalidResponse(format!(
+                "response decision {other:?} is not allow/deny/not_found"
+            ))),
+        }
+    }
+}
+
+#[async_trait]
+impl BuzzAuthority for BuzzGatewayClient {
+    async fn can_read(
+        &self,
+        req: &BuzzReadRequest,
+    ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+        let relay_pubkey = req.relay_pubkey.as_deref().ok_or_else(|| {
+            BuzzAuthorityError::Config("community mapping has no pinned relay_pubkey".to_string())
+        })?;
+        let access = BuzzAccessCheckRequest {
+            pubkey: req.pubkey.clone(),
+            channel_id: req.channel_id.clone(),
+            channel_kind: req.channel_kind,
+            message_id: req.message_id.clone(),
+            event_created_at: Some(req.event_created_at.timestamp()),
+        };
+        self.check_access(&req.relay_url, relay_pubkey, &access)
+            .await
+    }
+}
+
+/// Map a non-2xx relay status to a fail-closed error; `None` for success.
+fn status_error(status: StatusCode) -> Option<BuzzAuthorityError> {
+    match status {
+        StatusCode::UNAUTHORIZED => Some(BuzzAuthorityError::Unauthorized),
+        s if s.is_client_error() || s.is_server_error() || s.is_redirection() => Some(
+            BuzzAuthorityError::Transport(format!("relay returned HTTP {s}")),
+        ),
+        _ => None,
+    }
+}
+
+/// Read the raw response body, failing closed on any non-2xx status.
+async fn read_response_json(response: Response) -> Result<Value, BuzzAuthorityError> {
+    if let Some(error) = status_error(response.status()) {
+        return Err(error);
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| BuzzAuthorityError::InvalidResponse(format!("response body is not JSON: {e}")))
+}
+
+/// Validate the state-page envelope: an incomplete page MUST carry a
+/// continuation cursor; `cursor: null` with `complete: false` is malformed and
+/// fails closed.
+fn validate_page(page: &BuzzStatePage) -> Result<(), BuzzAuthorityError> {
+    if !page.complete && page.cursor.is_none() {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "state page is incomplete but carries no continuation cursor".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::nips::nip98::{verify_auth_header, HttpMethod};
+    use nostr::Timestamp;
+    use rustshare_core::domain::TenantId;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    /// A 64-char lowercase hex string (pubkey/event-id shaped).
+    const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn client(keys: Keys) -> BuzzGatewayClient {
+        BuzzGatewayClient::new(keys, Client::new())
+    }
+
+    /// Build a signed kind-19030 response event from the relay key.
+    fn relay_19030(keys: &Keys, content: Value) -> NostrEvent {
+        EventBuilder::new(Kind::from(RELAY_RESPONSE_KIND), content.to_string())
+            .sign_with_keys(keys)
+            .expect("sign the relay response")
+    }
+
+    #[tokio::test]
+    async fn nip98_header_round_trips_with_verify_auth_header() {
+        let keys = Keys::generate();
+        let service = client(keys.clone());
+        let post_url = Url::parse("https://chat.example.test/api/v1/relay/access/check").unwrap();
+
+        // POST: the header carries a payload tag matching the body and verifies
+        // as the service identity.
+        let body = serde_json::to_vec(&BuzzAccessCheckRequest {
+            pubkey: HEX64.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            event_created_at: Some(1_750_000_000),
+        })
+        .unwrap();
+        let header = service
+            .nip98_header("POST", &post_url, Some(&body))
+            .await
+            .unwrap();
+        let verified = verify_auth_header(
+            &header,
+            &post_url,
+            HttpMethod::POST,
+            Timestamp::now(),
+            Some(&body),
+        )
+        .expect("POST header must verify");
+        assert_eq!(verified, keys.public_key());
+
+        // GET with a query string: the u tag must carry the exact URL including
+        // the query, and no payload tag is required.
+        let get_url = Url::parse(
+            "https://chat.example.test/api/v1/relay/state/events?since=1750000000&limit=100&cursor=abc123",
+        )
+        .unwrap();
+        let header = service.nip98_header("GET", &get_url, None).await.unwrap();
+        let verified =
+            verify_auth_header(&header, &get_url, HttpMethod::GET, Timestamp::now(), None)
+                .expect("GET header must verify");
+        assert_eq!(verified, keys.public_key());
+    }
+
+    #[test]
+    fn http_base_swaps_ws_and_wss_schemes() {
+        let http = BuzzGatewayClient::http_base("ws://chat.example.test:8080").unwrap();
+        assert_eq!(http.as_str(), "http://chat.example.test:8080/");
+        let https = BuzzGatewayClient::http_base("wss://chat.example.test:8443").unwrap();
+        assert_eq!(https.as_str(), "https://chat.example.test:8443/");
+        let no_port = BuzzGatewayClient::http_base("wss://chat.example.test").unwrap();
+        assert_eq!(no_port.as_str(), "https://chat.example.test/");
+        // Non-ws/wss schemes and unparseable URLs are configuration errors.
+        assert!(matches!(
+            BuzzGatewayClient::http_base("https://chat.example.test"),
+            Err(BuzzAuthorityError::Config(_))
+        ));
+        assert!(matches!(
+            BuzzGatewayClient::http_base("not a url"),
+            Err(BuzzAuthorityError::Config(_))
+        ));
+    }
+
+    #[test]
+    fn verify_19030_accepts_relay_signed_response_and_rejects_wrong_key_wrong_kind() {
+        let relay = Keys::generate();
+        let relay_pubkey = relay.public_key().to_hex();
+        let service = client(Keys::generate());
+
+        // A properly signed kind-19030 response verifies and yields the relay
+        // pubkey.
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            json!({"decision": "allow", "reason": "member", "evaluated_at": 0}),
+        ))
+        .unwrap();
+        let event = service.verify_19030(&raw, &relay_pubkey).unwrap();
+        assert_eq!(event.pubkey, relay.public_key());
+        assert_eq!(event.kind.as_u16(), RELAY_RESPONSE_KIND);
+
+        // A valid kind-19030 signed by a DIFFERENT key is rejected.
+        let raw = serde_json::to_value(relay_19030(
+            &Keys::generate(),
+            json!({"decision": "allow", "reason": "member", "evaluated_at": 0}),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.verify_19030(&raw, &relay_pubkey),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // A valid kind-1 text note from the relay itself is rejected on kind.
+        let note = EventBuilder::text_note("hello")
+            .sign_with_keys(&relay)
+            .unwrap();
+        let raw = serde_json::to_value(&note).unwrap();
+        assert!(matches!(
+            service.verify_19030(&raw, &relay_pubkey),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Unparseable input is an invalid response.
+        assert!(matches!(
+            service.verify_19030(&Value::Null, &relay_pubkey),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn decision_from_19030_maps_decisions_and_rejects_replay_and_echo_mismatch() {
+        let relay = Keys::generate();
+        let relay_pubkey = relay.public_key().to_hex();
+        let service = client(Keys::generate());
+        let expected = BuzzAccessCheckRequest {
+            pubkey: HEX64.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            event_created_at: Some(1_750_000_000),
+        };
+        let now = Utc::now().timestamp();
+
+        fn response_json(
+            decision: &str,
+            evaluated_at: i64,
+            expected: &BuzzAccessCheckRequest,
+        ) -> Value {
+            json!({
+                "decision": decision,
+                "reason": "member",
+                "evaluated_at": evaluated_at,
+                "pubkey": expected.pubkey,
+                "channel_id": expected.channel_id,
+                "message_id": expected.message_id,
+            })
+        }
+
+        fn checked(
+            service: &BuzzGatewayClient,
+            relay: &Keys,
+            relay_pubkey: &str,
+            expected: &BuzzAccessCheckRequest,
+            content: Value,
+        ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+            let raw = serde_json::to_value(relay_19030(relay, content)).unwrap();
+            service.decision_from_19030(&raw, relay_pubkey, expected)
+        }
+
+        // Fresh, correctly-echoed responses map allow/deny/not_found to their
+        // decisions (evaluated_at == now is the fresh control).
+        for (decision, expected_decision) in [
+            ("allow", BuzzReadDecision::Allow),
+            ("deny", BuzzReadDecision::Deny),
+            ("not_found", BuzzReadDecision::NotFound),
+        ] {
+            assert_eq!(
+                checked(
+                    &service,
+                    &relay,
+                    &relay_pubkey,
+                    &expected,
+                    response_json(decision, now, &expected)
+                )
+                .unwrap(),
+                expected_decision
+            );
+        }
+
+        // Unknown decision strings fail closed.
+        let content = response_json("maybe", now, &expected);
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Echo mismatch: different pubkey.
+        let mut content = response_json("allow", now, &expected);
+        content["pubkey"] = Value::String("f".repeat(64));
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Echo mismatch: different channel_id.
+        let mut content = response_json("allow", now, &expected);
+        content["channel_id"] = Value::String("channel-2".to_string());
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Echo mismatch: message_id dropped (request had one).
+        let mut content = response_json("allow", now, &expected);
+        content["message_id"] = Value::Null;
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Stale response: evaluated_at 120s in the past.
+        let content = response_json("allow", now - 120, &expected);
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Stale response: evaluated_at 120s in the future.
+        let content = response_json("allow", now + 120, &expected);
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn can_read_without_relay_pubkey_fails_closed() {
+        let service = client(Keys::generate());
+        let request = BuzzReadRequest {
+            tenant_id: TenantId(Uuid::new_v4()),
+            community_id: "community-1".to_string(),
+            relay_url: "wss://chat.example.test".to_string(),
+            relay_pubkey: None,
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            pubkey: HEX64.to_string(),
+            event_created_at: Utc::now(),
+        };
+        assert!(matches!(
+            service.can_read(&request).await,
+            Err(BuzzAuthorityError::Config(_))
+        ));
+    }
+
+    #[test]
+    fn page_state_rejects_malformed_paging() {
+        let page = |complete: bool, cursor: Option<&str>| BuzzStatePage {
+            entries: Vec::new(),
+            cursor: cursor.map(String::from),
+            complete,
+        };
+        // `cursor: null` with `complete: false` is malformed.
+        assert!(matches!(
+            validate_page(&page(false, None)),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        // An incomplete page with a cursor is fine...
+        assert!(validate_page(&page(false, Some("next"))).is_ok());
+        // ...and so is any complete page, cursor or not.
+        assert!(validate_page(&page(true, None)).is_ok());
+        assert!(validate_page(&page(true, Some("next"))).is_ok());
+    }
+
+    #[test]
+    fn access_check_request_serde_uses_snake_case_and_omits_optionals() {
+        let req = BuzzAccessCheckRequest {
+            pubkey: HEX64.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Dm,
+            message_id: None,
+            event_created_at: None,
+        };
+        let wire = serde_json::to_value(&req).unwrap();
+        assert_eq!(wire["channel_kind"], "dm");
+        assert!(wire.get("message_id").is_none());
+        assert!(wire.get("event_created_at").is_none());
+        let back: BuzzAccessCheckRequest = serde_json::from_value(wire).unwrap();
+        assert_eq!(back.channel_kind, BuzzChannelKind::Dm);
+        assert_eq!(back.message_id, None);
+    }
+}
