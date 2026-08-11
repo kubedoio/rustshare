@@ -43,7 +43,6 @@ use rustshare_storage::{
     ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore,
 };
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
@@ -430,33 +429,20 @@ impl BuzzObservationService {
     }
 }
 
-/// The deterministic integration-event identity for a Buzz event: a UUIDv5 of
-/// `elembra://io.elembra.chat/event/<nostr event id>` under the URL namespace.
-///
-/// Keying the outbox id on the Buzz event identity makes publication
-/// idempotent per Buzz event: re-observing the same event can never publish a
-/// second durable event, whether through the webhook or a reconcile repair.
-pub fn integration_event_id_for(event_id: &str) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        format!("elembra://io.elembra.chat/event/{event_id}").as_bytes(),
-    )
-}
-
 /// Build the deterministic durable envelope for a first observation.
 ///
 /// Idempotency is keyed on the Buzz event identity: the outbox event id is
-/// [`integration_event_id_for`] over the Nostr event id, and `time` is
-/// the Buzz event's own creation time — not the observation time. Publishing
-/// happens only on first observation, so the payload (which carries
-/// `observed_at`) is deterministic per event id too.
+/// [`rustshare_memory::event::integration_event_id_for`] over the Nostr event
+/// id, and `time` is the Buzz event's own creation time — not the observation
+/// time. Publishing happens only on first observation, so the payload (which
+/// carries `observed_at`) is deterministic per event id too.
 fn build_envelope(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
     data: &ObservedChatEventData,
     principal_id: PrincipalId,
 ) -> Result<IntegrationEvent, BuzzPushError> {
-    let id = integration_event_id_for(&data.buzz.event_id);
+    let id = rustshare_memory::event::integration_event_id_for(&data.buzz.event_id);
     let resource = ResourceRef::new(
         ApplicationId::new("io.elembra.chat"),
         "message",
@@ -562,7 +548,9 @@ fn is_lower_hex(s: &str, len: usize) -> bool {
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys};
+    use rustshare_memory::event::integration_event_id_for;
     use serde_json::json;
+    use uuid::Uuid;
 
     const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 

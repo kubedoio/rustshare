@@ -11,6 +11,7 @@
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::PrincipalId;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Payload `data` of `io.elembra.chat.buzz.event.observed.v1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +152,18 @@ fn is_lower_hex(s: &str, len: usize) -> bool {
     s.len() == len
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Deterministic integration-event id for a Buzz event: UUIDv5 (URL namespace)
+/// over `elembra://io.elembra.chat/event/<nostr event id>`. The Buzz event id
+/// is the sha256 content hash of the signed NIP-01 event, so two distinct Buzz
+/// events cannot produce the same id (barring sha256 collision) and re-
+/// observation of the same event always yields the same id.
+pub fn integration_event_id_for(event_id: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("elembra://io.elembra.chat/event/{event_id}").as_bytes(),
+    )
 }
 
 #[cfg(test)]

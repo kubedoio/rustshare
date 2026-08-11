@@ -12,6 +12,6 @@ rustshare-core = { path = "../core" }
 rustshare-resource-auth = { path = "../resource-auth" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 thiserror = { workspace = true }

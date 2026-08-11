@@ -6,7 +6,9 @@ use crate::chat_observation::ChatObservationStore;
 use anyhow::Result;
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_integration_events::IntegrationEvent;
-use rustshare_memory::event::{ChatChannelKind, ObservedChatEventData, ObservedEventType};
+use rustshare_memory::event::{
+    integration_event_id_for, ChatChannelKind, ObservedChatEventData, ObservedEventType,
+};
 use rustshare_memory::policy::{ProjectionDecision, ProjectionPolicy};
 use rustshare_memory::project::{apply_event, apply_tombstone, project_record};
 use rustshare_memory::record::{IndexingStatus, MemoryCatalogRecord};
@@ -195,11 +197,7 @@ impl MemoryCatalogStore {
                         // deterministic UUIDv5 of its Buzz event id (see
                         // `build_envelope`); its receipt proves the delete was
                         // consumed before this create retry.
-                        let deleted_event_id = Uuid::new_v5(
-                            &Uuid::NAMESPACE_URL,
-                            format!("elembra://io.elembra.chat/event/{}", latest.event_id)
-                                .as_bytes(),
-                        );
+                        let deleted_event_id = integration_event_id_for(&latest.event_id);
                         let consumed = sqlx::query_scalar::<_, bool>(
                             "SELECT EXISTS(
                                  SELECT 1 FROM integration_consumer_receipts
