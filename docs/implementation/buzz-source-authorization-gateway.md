@@ -148,7 +148,8 @@ contract (never Buzz's private DB):
 5. **Fold** — the (now repaired) observation index is re-projected with the existing pure
    `rebuild_records` fold into `memory_catalog` (idempotent `upsert_records`).
 6. **Idempotency** — observation upserts are keyed on `(tenant_id, event_id)` with
-   `ON CONFLICT DO NOTHING`; re-running with no drift changes nothing (created/updated = 0).
+   `ON CONFLICT DO NOTHING`; re-running with no drift creates nothing (`created = 0`; existing rows
+   count as `updated`).
 
 **No outbox writes, no receipts.** The repair path deliberately bypasses the durable pipeline:
 consumer receipts and delivery ledgers are untouched, and the outbox gains no rows, so a
@@ -169,7 +170,7 @@ reconcile can never re-trigger projection work.
 
 ## 6. Negative-test summary
 
-The acceptance suite (`backend/tests/buzz_authority_gateway_test.rs`, 17 tests) proves the
+The acceptance suite (`backend/tests/buzz_authority_gateway_test.rs`, 18 tests) proves the
 fail-closed surface:
 
 - non-member → `Deny`; fetch is existence-hiding `NotFound` (also for private channels);

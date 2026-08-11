@@ -120,7 +120,8 @@ with `source: "buzz"`; the gateway must be configured else 503 — no silent fal
    `rebuild_records` / `upsert_records`.
 
 Idempotency: observation upserts keyed on `(tenant_id, event_id)` with `ON CONFLICT DO NOTHING`;
-re-running with no drift yields `created = 0`, `updated = 0`. No outbox writes, no consumer
+re-running with no drift yields `created = 0` (conflict-path rows are counted as `updated`; the
+idempotency signal is `created == 0`, not `updated == 0`). No outbox writes, no consumer
 receipts, no delivery ledgers — the durable pipeline is never replayed by a repair.
 
 ## 6. Security tests
@@ -142,7 +143,7 @@ against an in-test fake relay (in-memory, no database) and a real dev database:
 | 10 | No user key server-side | fake records the authenticated signer == SERVICE pubkey; forged user-key-signed request → 401; `chat_identity_bindings` has no private-key column |
 | 11 | Reconcile repairs missing projection | catalog rows deleted → rebuilt exactly once; outbox count unchanged |
 | 12 | Reconcile repairs missing observation | observation + catalog rows deleted → rebuilt from relay state over HTTP |
-| 13 | Reconcile idempotent | second run `created == 0`, `updated == 0`, one row per message |
+| 13 | Reconcile idempotent | second run `created == 0` (conflict rows count as `updated`), one row per message |
 | 14 | Reconcile over public HTTP only | fake's `state_requests > 0`; fake has no database by construction |
 | N1 | Deleted message not_found | `mark_deleted` at the fake → not_found → NotFound end-to-end |
 | N2 | Binding rotation asks the new pubkey | old binding revoked + new bound/admitted → Allow; recorded request carries the NEW pubkey; direct check with the old pubkey → Deny |
