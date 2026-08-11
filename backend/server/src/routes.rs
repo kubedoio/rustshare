@@ -682,7 +682,7 @@ pub fn brainstorming_routes() -> Router<AppState> {
 }
 
 pub fn chat_integration_routes() -> Router<AppState> {
-    use axum::routing::{get, post};
+    use axum::routing::{get, patch, post};
     Router::new()
         .route(
             "/api/v1/applications/chat/identity-binding/challenge",
@@ -711,6 +711,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
         .route(
             "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
             post(crate::handlers::chat_identity::configure_mapping),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+            patch(crate::handlers::chat_identity::update_community_mapping),
         )
         .route(
             "/api/v1/admin/applications/memory/chat/reconcile",

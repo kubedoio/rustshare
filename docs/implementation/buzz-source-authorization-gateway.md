@@ -220,3 +220,10 @@ fail-closed surface:
 - **Reconcile-entry author binding.** An entry whose author's binding was revoked is skipped
   (unbound author) — the relay's state is authoritative for what happened, but Elembra only
   records authors it can map to a current active binding.
+- **Batch/latency limitation.** BUZZ mode performs one sequential relay access-check
+  round-trip per message: `authorize_batch` over 64 candidates (`MAX_BATCH_SIZE`) is a `for`
+  loop of single `authorize` calls, each with the client's 10s timeout — up to 640s worst
+  case with a degraded relay before the batch fails closed. Current consumers (Chat
+  attachments) use single-`authorize` and are unaffected; future RAG/search consumers of
+  `materialize`/`authorize_batch` should add bounded concurrency client-side or a batch
+  access-check endpoint to the v1alpha1 spec before production scale.

@@ -2716,6 +2716,113 @@ async fn tenant_scope_guard_skips_foreign_community_entries() {
     cleanup(&pool, tenant_b).await;
 }
 
+// ---------------------------------------------------------------------------
+// F1 follow-up. Admin relay-pin rotation for the community mapping
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn admin_can_rotate_mapping_relay_pin() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys_a = Keys::generate();
+    let relay_keys_b = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys_a.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys_a.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    let service = service(pool.clone());
+    let (buzz_push, event) = created_push(
+        &keys,
+        "rotatable pin",
+        &community,
+        ChatChannelKind::Workspace,
+    );
+    assert_eq!(
+        ingest_push(&service, &buzz_push).await.unwrap(),
+        IngestOutcome::FirstObservation
+    );
+    let message_id = event.id.to_hex();
+    fake.state.lock().unwrap().register_event(state_entry(
+        &event,
+        &community,
+        CHANNEL_ID,
+        ChatChannelKind::Workspace,
+        ObservedEventType::Created,
+    ));
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+    let reference = chat_ref(&message_id);
+
+    // Baseline: the mapping is pinned to relay key A and the fake still signs
+    // with A ⇒ the member is allowed.
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::Allow,
+        "baseline: a member is allowed under the original pin"
+    );
+
+    // Rotate the pin to key B (relay_url unchanged) while the fake STILL signs
+    // with A ⇒ the stale pin fails closed to Deny (the gateway rejects the
+    // A-signed response as not pinned).
+    let (chat_identity, _, _) = stores(pool.clone());
+    let rotated = chat_identity
+        .update_mapping_relay(
+            tenant,
+            WorkspaceId(tenant.0),
+            relay_url.clone(),
+            Some(relay_keys_b.public_key().to_hex()),
+        )
+        .await
+        .expect("rotating the mapping relay pin must succeed");
+    assert!(rotated, "the mapping row matched and was updated");
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::Deny,
+        "a stale pin (B-pinned gateway, A-signing relay) fails closed to Deny"
+    );
+
+    // The relay rotates to key B: swap the fake's signing key (stored in the
+    // shared `FakeBuzzState`) ⇒ the B-pinned mapping authorizes again.
+    fake.state.lock().unwrap().relay_keys = relay_keys_b;
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::Allow,
+        "after the relay rotates to key B, the B-pinned mapping allows again"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
 /// A fixed 64-lowercase-hex id for placeholder (non-member) pubkeys.
 fn hex64(seed: u8) -> String {
     format!("{seed:02x}").repeat(32)

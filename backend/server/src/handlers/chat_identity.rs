@@ -113,6 +113,79 @@ pub async fn configure_mapping(
     Ok(StatusCode::CREATED)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateCommunityMappingRequest {
+    pub relay_url: String,
+    /// Optional pinned relay public key (64 lowercase hex) whose signatures
+    /// are trusted when asking the community's authoritative relay. Both
+    /// fields are always written: pass the current `relay_url` (and/or the
+    /// current pin) for the side you are not rotating.
+    #[serde(default)]
+    pub relay_pubkey: Option<String>,
+}
+
+/// Rotate the mapping's relay endpoint and/or pinned pubkey WITHOUT changing
+/// `community_id`/`workspace_id` (which would orphan admissions). A stale pin
+/// makes BUZZ-mode reads fail closed (Deny) until the relay rotates to the
+/// new key, so an operator can pre-pin the new key before the relay switches.
+pub async fn update_community_mapping(
+    AdminUser { user_id: admin_id }: AdminUser,
+    auth: AuthenticatedUser,
+    State(db): State<DatabaseState>,
+    Path(workspace_id): Path<WorkspaceId>,
+    Json(input): Json<UpdateCommunityMappingRequest>,
+) -> Result<(StatusCode, Json<WorkspaceCommunityMapping>), AppError> {
+    let admin_tenant = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id = $1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&db.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    if admin_tenant != auth.tenant_id {
+        return Err(AppError::Forbidden("tenant scope mismatch".into()));
+    }
+    ensure_workspace_scope(auth.tenant_id, workspace_id.0)?;
+    if input.relay_url.trim().is_empty() {
+        return Err(AppError::bad_request("relay_url is required"));
+    }
+    validate_relay_url(&input.relay_url)?;
+    if let Some(relay_pubkey) = &input.relay_pubkey {
+        validate_relay_pubkey(relay_pubkey)?;
+    }
+
+    let tenant_id = TenantId(auth.tenant_id);
+    let existing = db
+        .chat_identity_store
+        .mapping(tenant_id, workspace_id)
+        .await
+        .map_err(internal_db)?
+        .ok_or_else(|| AppError::not_found("Chat workspace mapping not found"))?;
+    let updated = WorkspaceCommunityMapping {
+        tenant_id: existing.tenant_id,
+        workspace_id: existing.workspace_id,
+        community_id: existing.community_id,
+        relay_url: input.relay_url,
+        relay_pubkey: input.relay_pubkey,
+        active: existing.active,
+    };
+    if !db
+        .chat_identity_store
+        .update_mapping_relay(
+            tenant_id,
+            workspace_id,
+            updated.relay_url.clone(),
+            updated.relay_pubkey.clone(),
+        )
+        .await
+        .map_err(internal_db)?
+    {
+        return Err(AppError::not_found("Chat workspace mapping not found"));
+    }
+    Ok((StatusCode::OK, Json(updated)))
+}
+
 /// Issue a short-lived, mapping-bound NIP-42 challenge.
 pub async fn create_challenge(
     auth: AuthenticatedUser,
@@ -355,5 +428,27 @@ mod tests {
     #[test]
     fn relay_pubkey_rejects_non_hex() {
         assert!(validate_relay_pubkey(&"g".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn relay_url_accepts_ws_and_wss() {
+        assert!(validate_relay_url("ws://relay.example.test").is_ok());
+        assert!(validate_relay_url("wss://relay.example.test").is_ok());
+    }
+
+    #[test]
+    fn relay_url_rejects_http_scheme() {
+        assert!(validate_relay_url("http://relay.example.test").is_err());
+        assert!(validate_relay_url("https://relay.example.test").is_err());
+    }
+
+    #[test]
+    fn relay_url_rejects_missing_host() {
+        assert!(validate_relay_url("ws://").is_err());
+    }
+
+    #[test]
+    fn relay_url_rejects_non_url() {
+        assert!(validate_relay_url("not a url").is_err());
     }
 }

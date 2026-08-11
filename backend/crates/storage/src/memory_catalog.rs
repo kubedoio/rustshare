@@ -237,6 +237,16 @@ impl MemoryCatalogStore {
     /// Reconciliation repair path (admin): upsert a set of records keyed by
     /// the unique `(tenant_id, source_application, source_type, message_id)` —
     /// insert new, update existing. Does NOT touch receipts. Returns counts.
+    ///
+    /// Tombstoned records are immutable: the `DO UPDATE` is guarded by
+    /// `WHERE indexing_status <> 'tombstoned'`, so a conflict row that is
+    /// already tombstoned is never re-written. (a) Deletes are irreversible
+    /// per the projection semantics — a relay that backdates a delete below a
+    /// reconcile `since` window must never re-flip a tombstoned record back to
+    /// `created`/`content_stored`. (b) The insert-vs-update counters come from
+    /// `RETURNING (xmax = 0)` and are advisory for admin reporting, not
+    /// correctness: a skipped (WHERE-false) tombstoned conflict row returns NO
+    /// row (`INSERT 0 0`), so it counts as neither created nor updated.
     pub async fn upsert_records(&self, records: &[MemoryCatalogRecord]) -> Result<ReconcileCounts> {
         let mut counts = ReconcileCounts {
             processed: records.len() as u64,
@@ -275,6 +285,7 @@ impl MemoryCatalogStore {
                      indexing_status = EXCLUDED.indexing_status, \
                      tombstoned_at = EXCLUDED.tombstoned_at, \
                      updated_at = EXCLUDED.updated_at \
+                 WHERE memory_catalog.indexing_status <> 'tombstoned' \
                  RETURNING (xmax = 0) AS inserted"
             ))
             .bind(record.record_id)
@@ -308,8 +319,13 @@ impl MemoryCatalogStore {
             .bind(record.tombstoned_at)
             .bind(record.created_at)
             .bind(record.updated_at)
-            .fetch_one(&self.pool)
+            .fetch_optional(&self.pool)
             .await?;
+            let Some(row) = row else {
+                // A skipped (WHERE-false) tombstoned conflict row: immutable,
+                // counted as neither created nor updated (see the docstring).
+                continue;
+            };
             if row.try_get::<bool, _>("inserted")? {
                 counts.created += 1;
             } else {

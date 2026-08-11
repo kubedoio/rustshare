@@ -169,6 +169,33 @@ impl ChatIdentityStore {
         Ok(())
     }
 
+    /// Rotate the mapping's relay endpoint and/or pinned pubkey WITHOUT
+    /// changing `community_id`/`workspace_id` (which would orphan admissions).
+    /// Both columns are always written: when rotating only the pin, pass the
+    /// current `relay_url` again; when rotating only the URL, pass the current
+    /// (or new) pin. Returns whether a mapping row matched
+    /// (`rows_affected() == 1`).
+    pub async fn update_mapping_relay(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        relay_url: String,
+        relay_pubkey: Option<String>,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE chat_workspace_communities
+             SET relay_url = $1, relay_pubkey = $2
+             WHERE tenant_id = $3 AND workspace_id = $4",
+        )
+        .bind(&relay_url)
+        .bind(&relay_pubkey)
+        .bind(tenant_id.0)
+        .bind(workspace_id.0)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn insert_challenge(&self, challenge: &BindingChallenge) -> Result<()> {
         sqlx::query(
             "INSERT INTO chat_binding_challenges
