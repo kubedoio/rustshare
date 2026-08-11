@@ -1390,6 +1390,11 @@ async fn e2e_tombstone_behavior_follows_buzz_semantics() {
         &community,
         Timestamp::from_secs(1_752_000_005),
     );
+    // Deliver the create before publishing the delete. Outbox delivery order
+    // is not causal once both rows exist, while this test specifically proves
+    // the created-then-deleted projection fold.
+    dispatch_once(&pool, store.clone()).await;
+    assert_eq!(catalog_count(&pool, tenant).await, 1);
     assert_eq!(
         ingest_push(&service, &deleted).await.unwrap(),
         IngestOutcome::FirstObservation
