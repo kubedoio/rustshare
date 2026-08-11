@@ -141,6 +141,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before redirecting (#226).
 - **Ops** — the sqlx offline query cache is regenerated to match the current
   schema, removing orphaned Module-era metadata entries.
+- **Permission-aware unified search v1** (ADR-0036) — a single
+  `POST /api/v1/search` endpoint returns ranked Files/Notes and Buzz Chat
+  results for one query. Candidates come from Files metadata, the
+  permission-aware note index (keyword + existing vector similarity), and the
+  Memory catalog; **every result is reauthorized by its CURRENT owning
+  source** (`SourceAuthorizer` → Files `PermissionResolver` / Chat →
+  `BuzzAuthority`), snippets are built only from authorized source content,
+  and a stale or malicious index hint can never appear in a response. Ranking
+  is deterministic (exact/prefix/substring + occurrence scores, dedupe by
+  canonical `ResourceRef`); results carry `elembra://` citation refs that
+  reauthorize when opened. Keyword search works without embeddings/AI
+  providers. Cross-tenant candidates cannot appear; a Buzz outage denies Chat
+  candidates while Files results still return. Non-LLM: no RAG, no Agents.
 
 ## [0.7.0] - 2026-08-08
 
