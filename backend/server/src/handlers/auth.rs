@@ -416,6 +416,13 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use std::time::{Duration, Instant};
 
+    // Login tests use per-run unique emails (except deliberately identical
+    // emails across tenants within a single test). Fixed emails would let a
+    // transiently interrupted run leave orphan rows behind that permanently
+    // poison later unscoped lookups — the case-insensitive ambiguity check
+    // counts every matching row, so a single leftover turns a one-off flake
+    // into a deterministic failure.
+
     #[test]
     fn non_empty_env_value_treats_blank_values_as_unset() {
         assert_eq!(non_empty_env_value(None), None);
@@ -485,7 +492,7 @@ mod tests {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
 
-        let email = "shared@example.com".to_string();
+        let email = format!("shared_{}@example.com", uuid::Uuid::new_v4());
         let password = "tenant_scoped_password";
         let hash = PasswordHasher::hash(password).unwrap();
 
@@ -515,7 +522,7 @@ mod tests {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
 
-        let email = "legacy@example.com".to_string();
+        let email = format!("legacy_{}@example.com", uuid::Uuid::new_v4());
         let password = "legacy_password";
         let hash = PasswordHasher::hash(password).unwrap();
         let tenant_id = uuid::Uuid::new_v4();
@@ -540,7 +547,7 @@ mod tests {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
 
-        let email = "scoped@example.com".to_string();
+        let email = format!("scoped_{}@example.com", uuid::Uuid::new_v4());
         let password = "scoped_password";
         let hash = PasswordHasher::hash(password).unwrap();
 
@@ -569,7 +576,7 @@ mod tests {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
 
-        let email = "ambiguous@example.com".to_string();
+        let email = format!("ambiguous_{}@example.com", uuid::Uuid::new_v4());
         let password = "ambiguous_password";
         let hash = PasswordHasher::hash(password).unwrap();
 
@@ -606,13 +613,16 @@ mod tests {
         let tenant_a = uuid::Uuid::new_v4();
         let tenant_b = uuid::Uuid::new_v4();
 
-        let user_a_id =
-            insert_test_user(&pool, "Case.Ambiguous@example.com", &hash, tenant_a).await;
-        let user_b_id =
-            insert_test_user(&pool, "case.ambiguous@example.com", &hash, tenant_b).await;
+        // Unique per-run base so an interrupted earlier run can never leave
+        // orphan rows that inflate this fixture past its intended two rows.
+        let mixed = format!("Case.Ambiguous_{}@example.com", uuid::Uuid::new_v4());
+        let lower = mixed.to_lowercase();
+
+        let user_a_id = insert_test_user(&pool, &mixed, &hash, tenant_a).await;
+        let user_b_id = insert_test_user(&pool, &lower, &hash, tenant_b).await;
 
         let req = LoginRequest {
-            email: "case.ambiguous@example.com".to_string(),
+            email: lower.clone(),
             password: password.to_string(),
             tenant_id: None,
         };
@@ -632,13 +642,14 @@ mod tests {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
 
-        let canonical_email = "Mixed.Case@Example.COM";
-        let login_email = "mixed.case@example.com";
+        let run_id = uuid::Uuid::new_v4();
+        let canonical_email = format!("Mixed.Case_{run_id}@Example.COM");
+        let login_email = format!("mixed.case_{run_id}@example.com");
         let password = "case_insensitive_password";
         let hash = PasswordHasher::hash(password).unwrap();
         let tenant_id = uuid::Uuid::new_v4();
 
-        let user_id = insert_test_user(&pool, canonical_email, &hash, tenant_id).await;
+        let user_id = insert_test_user(&pool, &canonical_email, &hash, tenant_id).await;
 
         let req = LoginRequest {
             email: login_email.to_string(),
