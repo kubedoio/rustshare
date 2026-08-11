@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Scoped Ask experiences reuse the single cited-RAG pipeline for workspace,
+  folder subtree, exact current note, and Buzz channel questions. Scope filters
+  narrow candidates only; Files and Buzz reauthorize every source again before
+  materialization.
+
 - Durable Integration Events (ADR-0031, v1alpha1) in the new
   `rustshare-integration-events` crate with a transactional PostgreSQL outbox
   (`rustshare-storage::OutboxStore`), a CloudEvents-compatible `IntegrationEvent`

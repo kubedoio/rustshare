@@ -86,7 +86,7 @@ use rustshare_server::services::ask_workspace::{
     AskWorkspaceService, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
 };
 use rustshare_server::services::unified_search::{
-    SearchSource, UnifiedSearchResponse, UnifiedSearchService,
+    SearchScope, SearchSource, UnifiedSearchResponse, UnifiedSearchService,
 };
 use rustshare_server::state::AppAiService;
 use rustshare_storage::{
@@ -3192,6 +3192,115 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         .iter()
         .any(|text| text.contains("CHAT-AUTHORIZED-BYTES")));
     assert!(!context.iter().any(|text| text.contains("UNAUTHORIZED")));
+
+    let note_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The note contains the plan.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let note_ask =
+        AskWorkspaceService::new(Arc::new(harness.service()), Some(note_provider.clone()));
+    let note_answer = note_ask
+        .ask_scoped(
+            &user_ctx(env.principal, tenant),
+            "unrelated question",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file.id)),
+        )
+        .await
+        .expect("exact note Ask succeeds");
+    assert!(note_answer.grounded);
+    assert_eq!(note_answer.source_count, 1);
+    assert_eq!(note_provider.calls().await[0].sources.len(), 1);
+    assert!(note_provider.calls().await[0].sources[0]
+        .text
+        .contains("FILE-AUTHORIZED-BYTES"));
+
+    let folder_id = Uuid::new_v4();
+    let outside = create_file_with_content(
+        &harness,
+        owner.id,
+        "ask-outside.md",
+        "/ask-outside.md",
+        b"OUTSIDE-FOLDER-BYTES",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO folders (id, name, path, owner_id, tenant_id) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(folder_id)
+    .bind("Ask folder")
+    .bind("/Ask folder")
+    .bind(owner.id)
+    .bind(tenant.0)
+    .execute(&pool)
+    .await
+    .expect("create Ask folder");
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(folder_id)
+        .bind(file.id)
+        .execute(&pool)
+        .await
+        .expect("place note in Ask folder");
+    let folder_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The folder contains the plan.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let folder_ask =
+        AskWorkspaceService::new(Arc::new(harness.service()), Some(folder_provider.clone()));
+    let folder_answer = folder_ask
+        .ask_scoped(
+            &user_ctx(env.principal, tenant),
+            "ask",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Folder(ResourceRef::new(
+                ApplicationId::new("io.elembra.files"),
+                "folder",
+                folder_id.to_string(),
+            )),
+        )
+        .await
+        .expect("folder Ask succeeds");
+    assert!(folder_answer.grounded);
+    assert_eq!(folder_answer.source_count, 1);
+    let folder_calls = folder_provider.calls().await;
+    assert_eq!(folder_calls[0].sources.len(), 1);
+    assert!(folder_calls[0].sources[0]
+        .text
+        .contains("FILE-AUTHORIZED-BYTES"));
+    assert!(!folder_calls[0].sources[0]
+        .text
+        .contains("OUTSIDE-FOLDER-BYTES"));
+    assert_ne!(file.id, outside.id);
+
+    let channel_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The channel contains the plan.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let channel_ask =
+        AskWorkspaceService::new(Arc::new(harness.service()), Some(channel_provider.clone()));
+    let channel_answer = channel_ask
+        .ask_scoped(
+            &user_ctx(env.principal, tenant),
+            "plan",
+            &[SearchSource::Chat],
+            8,
+            &SearchScope::ChatChannel {
+                community_id: env.community_id.clone(),
+                channel_id: CHANNEL_ID.into(),
+            },
+        )
+        .await
+        .expect("channel Ask succeeds");
+    assert!(channel_answer.grounded);
+    assert_eq!(channel_answer.source_count, 1);
+    let channel_calls = channel_provider.calls().await;
+    let channel_call = &channel_calls[0];
+    assert_eq!(channel_call.sources.len(), 1);
+    assert!(channel_call.sources[0]
+        .text
+        .contains("CHAT-AUTHORIZED-BYTES"));
 
     cleanup(&pool, tenant).await;
 }

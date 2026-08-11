@@ -50,6 +50,19 @@ pub enum SearchSource {
     Chat,
 }
 
+/// Candidate-discovery scope for Ask experiences. A scope narrows candidates;
+/// the owning source is still reauthorized during search and RAG materialization.
+#[derive(Debug, Clone)]
+pub enum SearchScope {
+    Workspace,
+    Resource(ResourceRef),
+    Folder(ResourceRef),
+    ChatChannel {
+        community_id: String,
+        channel_id: String,
+    },
+}
+
 /// Errors raised by the unified search service.
 ///
 /// Only client-input errors are surfaced: per-candidate denials and
@@ -192,6 +205,19 @@ impl UnifiedSearchService {
         sources: &[SearchSource],
         limit: usize,
     ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
+        self.search_scoped(ctx, query, sources, limit, &SearchScope::Workspace)
+            .await
+    }
+
+    /// Run the unified search pipeline with a candidate-only scope.
+    pub async fn search_scoped(
+        &self,
+        ctx: &PrincipalContext,
+        query: &str,
+        sources: &[SearchSource],
+        limit: usize,
+        scope: &SearchScope,
+    ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
         // Step 1: validate input.
         let query = validate_query(query)?;
         let limit = limit.clamp(1, 50);
@@ -207,6 +233,131 @@ impl UnifiedSearchService {
         }
         if chat_requested {
             candidates.extend(self.chat_candidates(ctx, query, budget).await);
+        }
+
+        let allowed_folders = match scope {
+            SearchScope::Folder(folder) => {
+                let Ok(resolved) = self
+                    .authorizer
+                    .resolve(ctx, folder, Purpose::RagContext)
+                    .await
+                else {
+                    return Ok(UnifiedSearchResponse {
+                        results: Vec::new(),
+                    });
+                };
+                if resolved.resource.resource_type != "folder" {
+                    return Ok(UnifiedSearchResponse {
+                        results: Vec::new(),
+                    });
+                }
+                let Ok(folder_id) = Uuid::parse_str(&folder.resource_id) else {
+                    return Ok(UnifiedSearchResponse {
+                        results: Vec::new(),
+                    });
+                };
+                let Ok(folders) = self
+                    .metadata
+                    .find_descendant_folders_for_tenant(folder_id, ctx.tenant_id.0)
+                    .await
+                else {
+                    return Ok(UnifiedSearchResponse {
+                        results: Vec::new(),
+                    });
+                };
+                Some(
+                    folders
+                        .into_iter()
+                        .filter(|folder| folder.tenant_id == ctx.tenant_id.0)
+                        .map(|folder| folder.id)
+                        .collect::<std::collections::HashSet<_>>(),
+                )
+            }
+            _ => None,
+        };
+
+        if let SearchScope::Resource(resource) = scope {
+            let Ok(resolved) = self
+                .authorizer
+                .resolve(ctx, resource, Purpose::RagContext)
+                .await
+            else {
+                return Ok(UnifiedSearchResponse {
+                    results: Vec::new(),
+                });
+            };
+            candidates.retain(|candidate| candidate.resource_ref == *resource);
+            if candidates.is_empty() {
+                candidates.push(Candidate {
+                    source_application: resource.application.to_string(),
+                    source_type: resource.resource_type.clone(),
+                    resource_ref: resource.clone(),
+                    score: 1.0,
+                    title: resolved.display_name,
+                    location: None,
+                    occurred_at: None,
+                    file_id: Uuid::parse_str(&resource.resource_id).ok(),
+                    note_id: None,
+                    mime_type: resolved.media_type,
+                    cached_hint: None,
+                    message_id: (resource.resource_type == "message")
+                        .then(|| resource.resource_id.clone()),
+                    community_id: None,
+                    channel_id: None,
+                    channel_kind: None,
+                    author_pubkey: None,
+                });
+            }
+        }
+
+        candidates.retain(|candidate| match scope {
+            SearchScope::Workspace | SearchScope::Resource(_) => true,
+            SearchScope::Folder(_) => {
+                candidate
+                    .file_id
+                    .zip(allowed_folders.as_ref())
+                    .is_some_and(|(id, ids)| {
+                        // The candidate file is checked below against its actual
+                        // parent folder; this branch only keeps file candidates.
+                        ids.contains(&id) || candidate.source_application == FILES_APPLICATION
+                    })
+            }
+            SearchScope::ChatChannel {
+                community_id,
+                channel_id,
+            } => {
+                candidate.source_application == CHAT_APPLICATION
+                    && candidate.community_id.as_deref() == Some(community_id.as_str())
+                    && candidate.channel_id.as_deref() == Some(channel_id.as_str())
+            }
+        });
+
+        if let SearchScope::Folder(_) = scope {
+            let Some(folder_ids) = allowed_folders else {
+                return Ok(UnifiedSearchResponse {
+                    results: Vec::new(),
+                });
+            };
+            let mut scoped = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                let Some(file_id) = candidate.file_id else {
+                    continue;
+                };
+                let Ok(Some(file)) = self
+                    .metadata
+                    .find_file_by_id_for_tenant(file_id, ctx.tenant_id.0)
+                    .await
+                else {
+                    continue;
+                };
+                if file
+                    .parent_folder_id
+                    .is_some_and(|id| folder_ids.contains(&id))
+                {
+                    scoped.push(candidate);
+                }
+            }
+            candidates = scoped;
         }
 
         // Step 3: preliminary dedupe/rank, capped at `limit * 4`.
@@ -304,9 +455,92 @@ impl UnifiedSearchService {
         max_bytes_per_source: usize,
         max_total_bytes: usize,
     ) -> Vec<RagSource> {
+        self.materialize_for_rag_scoped(
+            ctx,
+            results,
+            &SearchScope::Workspace,
+            max_sources,
+            max_bytes_per_source,
+            max_total_bytes,
+        )
+        .await
+    }
+
+    /// Reauthorize and fetch only results that remain inside the requested
+    /// scope. This repeats scope checks at generation time to close the
+    /// search-to-materialization TOCTOU window.
+    pub async fn materialize_for_rag_scoped(
+        &self,
+        ctx: &PrincipalContext,
+        results: &[UnifiedSearchResult],
+        scope: &SearchScope,
+        max_sources: usize,
+        max_bytes_per_source: usize,
+        max_total_bytes: usize,
+    ) -> Vec<RagSource> {
+        let allowed_folders = if let SearchScope::Folder(folder) = scope {
+            let Ok(_) = self
+                .authorizer
+                .resolve(ctx, folder, Purpose::RagContext)
+                .await
+            else {
+                return Vec::new();
+            };
+            let Ok(folder_id) = Uuid::parse_str(&folder.resource_id) else {
+                return Vec::new();
+            };
+            let Ok(folders) = self
+                .metadata
+                .find_descendant_folders_for_tenant(folder_id, ctx.tenant_id.0)
+                .await
+            else {
+                return Vec::new();
+            };
+            Some(
+                folders
+                    .into_iter()
+                    .filter(|folder| folder.tenant_id == ctx.tenant_id.0)
+                    .map(|folder| folder.id)
+                    .collect::<std::collections::HashSet<_>>(),
+            )
+        } else {
+            None
+        };
+
+        let mut scoped_results = Vec::with_capacity(results.len());
+        for result in results {
+            let keep = match scope {
+                SearchScope::Workspace => true,
+                SearchScope::Resource(resource) => result.resource_ref == resource.to_uri(),
+                SearchScope::Folder(_) => {
+                    match (result.provenance.file_id, allowed_folders.as_ref()) {
+                        (Some(file_id), Some(folder_ids)) => self
+                            .metadata
+                            .find_file_by_id_for_tenant(file_id, ctx.tenant_id.0)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|file| file.parent_folder_id)
+                            .is_some_and(|folder_id| folder_ids.contains(&folder_id)),
+                        _ => false,
+                    }
+                }
+                SearchScope::ChatChannel {
+                    community_id,
+                    channel_id,
+                } => {
+                    result.provenance.community_id.as_deref() == Some(community_id.as_str())
+                        && result.provenance.channel_id.as_deref() == Some(channel_id.as_str())
+                }
+            };
+            if keep {
+                scoped_results.push(result);
+            }
+        }
+
         let mut total = 0;
         let mut materialized = Vec::new();
-        for result in results.iter().take(max_sources) {
+        for result in scoped_results.into_iter().take(max_sources) {
             let Ok(resource) = ResourceRef::from_uri(&result.resource_ref) else {
                 continue;
             };

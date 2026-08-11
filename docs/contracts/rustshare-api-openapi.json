@@ -14194,6 +14194,82 @@
           }
         }
       },
+      "AskScopeRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "resourceRef",
+              "type"
+            ],
+            "properties": {
+              "resourceRef": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "folder"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "resourceRef",
+              "type"
+            ],
+            "properties": {
+              "resourceRef": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "note"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "communityId",
+              "channelId",
+              "type"
+            ],
+            "properties": {
+              "channelId": {
+                "type": "string"
+              },
+              "communityId": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "chatChannel"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "AskWorkspaceCitation": {
         "type": "object",
         "required": [
@@ -14232,6 +14308,16 @@
           "result_limit": {
             "type": "integer",
             "minimum": 0
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AskScopeRequest"
+              }
+            ]
           },
           "sources": {
             "type": [

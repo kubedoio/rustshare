@@ -2723,6 +2723,22 @@ impl MetadataStore {
         Ok(file)
     }
 
+    /// Find a live file by ID within its tenant, regardless of owner.
+    pub async fn find_file_by_id_for_tenant(
+        &self,
+        id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Option<File>> {
+        sqlx::query_as::<_, File>(
+            "SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id FROM files WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Find file by ID without owner check.
     ///
     /// ⚠️ WARNING: This bypasses ownership filtering. Only use for public-share
@@ -4704,6 +4720,40 @@ impl MetadataStore {
         }
 
         Ok(folders)
+    }
+
+    /// Find a live folder subtree without crossing the supplied tenant.
+    pub async fn find_descendant_folders_for_tenant(
+        &self,
+        folder_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Folder>> {
+        let rows = sqlx::query_as::<_, Folder>(
+            r#"
+            WITH RECURSIVE folder_tree AS (
+                SELECT id, name, path, parent_folder_id, owner_id, created_at,
+                       updated_at, starred_at, deleted_at, tenant_id, NULL::uuid[] AS ancestor_ids
+                FROM folders
+                WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+                UNION ALL
+                SELECT f.id, f.name, f.path, f.parent_folder_id, f.owner_id,
+                       f.created_at, f.updated_at, f.starred_at, f.deleted_at,
+                       f.tenant_id, NULL::uuid[] AS ancestor_ids
+                FROM folders f
+                JOIN folder_tree parent ON f.parent_folder_id = parent.id
+                WHERE f.tenant_id = $2 AND f.deleted_at IS NULL
+            )
+            SELECT id, name, path, parent_folder_id, owner_id, created_at,
+                   updated_at, starred_at, deleted_at, tenant_id, ancestor_ids
+            FROM folder_tree
+            ORDER BY path ASC
+            "#,
+        )
+        .bind(folder_id)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     /// Create a new share link for a file
