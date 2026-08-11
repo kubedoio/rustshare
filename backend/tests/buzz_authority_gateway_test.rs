@@ -18,7 +18,9 @@
 //! The suite proves the 14 requirements plus 4 negative cases:
 //!
 //! 1. a channel member can materialize a workspace message (body bytes);
-//! 2. a non-member cannot materialize (existence-hiding NotFound);
+//! 2. a non-member cannot materialize (existence-hiding NotFound — at
+//!    `authorize` relay denials surface as the typed `Decision::Deny`, while
+//!    resolve/fetch collapse to NotFound);
 //! 3. a non-member of a private channel is denied;
 //! 4. membership removal at the relay takes effect immediately;
 //! 5. a DM participant is allowed (metadata) with no body; an outsider is
@@ -929,8 +931,10 @@ async fn authorized_member_can_materialize_message() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
-    // Defensive pre-cleanup: every test must be deterministic even if a
-    // previous (possibly interrupted) run left rows behind.
+    // Defensive pre-cleanup: each test runs under a fresh UUID, so runs are
+    // independent; this cleanup is a safety net against rows leaked by a
+    // previously interrupted run that happened to reuse this UUID — not a
+    // determinism guarantee.
     cleanup(&pool, tenant).await;
 
     let keys = Keys::generate();
@@ -1116,7 +1120,7 @@ async fn unauthorized_member_cannot_materialize() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. A non-member of a private channel is denied
+// 3. A non-member of a private channel is denied; private bodies never captured
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1133,6 +1137,9 @@ async fn private_channel_non_member_denied() {
     let service_keys = Keys::generate();
     let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
     let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    // `content_indexing` is enabled so this test proves the private-channel
+    // gate is independent of the body-capture opt-in: even with indexing on,
+    // a private-channel body is NEVER captured.
     let env = setup_tenant_with_relay(
         &pool,
         tenant,
@@ -1140,11 +1147,12 @@ async fn private_channel_non_member_denied() {
         &community,
         &relay_url,
         &relay_keys.public_key().to_hex(),
-        serde_json::json!({ "memory_projection": true }),
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
     )
     .await;
 
     let service = service(pool.clone());
+    // A kind-labeled private-channel message pushed through the real bridge.
     let (buzz_push, event) = created_push(
         &keys,
         "private secret",
@@ -1201,6 +1209,22 @@ async fn private_channel_non_member_denied() {
             Err(SourceError::NotFound)
         ),
         "fetch fails closed"
+    );
+
+    // Body invariant: even with `content_indexing` on, private-channel bodies
+    // are NEVER captured — the observation row exists (reference-first) but
+    // its `body` is NULL.
+    let stored_body = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT body FROM chat_observed_events WHERE tenant_id = $1 AND event_id = $2",
+    )
+    .bind(tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        stored_body.is_none(),
+        "private-channel bodies are never captured, even with content_indexing on"
     );
 
     fake.stop().await;
@@ -1394,17 +1418,18 @@ async fn dm_participant_allowed_outsider_denied() {
         "fetching a body that was never captured is VersionUnavailable"
     );
 
-    // Outsider: the relay denies (not a participant); the exposure surface is
-    // existence-hiding NotFound. (The typed decision is Deny — the fake's
-    // prescribed semantics deny non-members; every non-Allow outcome looks
-    // absent through resolve/fetch.)
+    // Outsider: the relay denies (not a participant) and the typed decision is
+    // EXACTLY Deny — the fake deterministically denies non-members. The
+    // exposure surface stays existence-hiding: resolve/fetch collapse to
+    // NotFound below.
     let outsider_ctx = user_ctx(outsider_principal, tenant);
     let decision = authorizer
         .authorize(&outsider_ctx, &chat_read_action(), &reference)
         .await;
-    assert!(
-        matches!(decision, Decision::Deny | Decision::NotFound),
-        "an outsider can never read the dm, got {decision:?}"
+    assert_eq!(
+        decision,
+        Decision::Deny,
+        "the relay's deny must surface as Deny, got {decision:?}"
     );
     assert!(
         matches!(
@@ -1892,8 +1917,10 @@ async fn no_user_key_required_server_side() {
         "the relay authenticated the SERVICE pubkey, not any user key"
     );
 
-    // (b) A forged request signed by a user-like (non-service) key is rejected
-    // with 401 — the relay accepts only the provisioned service identity.
+    // (b) Fake-fidelity tripwire: a request signed by a user-like (non-service)
+    // key is rejected with 401 — proves the relay rejects requests not signed
+    // by the service key, so any server-side regression that signed with a
+    // user key would fail red at the relay.
     let forged_url = Url::parse(&format!(
         "http://127.0.0.1:{}/api/v1/relay/access/check",
         fake.addr.port()
@@ -1932,9 +1959,11 @@ async fn no_user_key_required_server_side() {
         "a non-service NIP-98 signer must be rejected"
     );
 
-    // (c) Structural: `chat_identity_bindings` stores ONLY the 64-hex pubkey —
-    // the successful insert above already proves the schema accepts a bare
-    // pubkey; assert there is no private-key column to hold a user secret.
+    // (c) Schema contract for `chat_identity_bindings` ONLY: the columns must
+    // include the 64-hex `buzz_pubkey` — whose 64-hex CHECK is the enforced
+    // invariant — and, by column-name substring, no secret/private column. The
+    // private-key absence is a schema-contract assertion, not a runtime check:
+    // nothing in the codebase stores or fetches a user secret.
     let rows = sqlx::query(
         "SELECT column_name FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'chat_identity_bindings'",
@@ -2283,9 +2312,10 @@ async fn reconcile_flows_through_http_contract_without_any_db() {
     let gateway = BuzzGatewayClient::new(service_keys.clone(), Client::builder()).unwrap();
     let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
     assert_eq!(counts.created, 2);
-    assert!(
-        fake.state.lock().unwrap().state_requests >= 1,
-        "the repair served state over the public HTTP contract"
+    assert_eq!(
+        fake.state.lock().unwrap().state_requests,
+        1,
+        "two entries fit on one page ⇒ exactly one state request over the public HTTP contract"
     );
     assert_eq!(observation_count(&pool, tenant).await, 2);
     assert_eq!(catalog_count(&pool, tenant).await, 2);
