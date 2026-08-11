@@ -270,6 +270,7 @@ use utoipa::OpenApi;
         crate::handlers::public_shares::get_share_info,
         crate::handlers::public_shares::get_shared_folder_contents,
         crate::handlers::public_shares::upload_shared_folder_file,
+        crate::handlers::search::unified_search,
         crate::handlers::shares::create_public_file_share,
         crate::handlers::shares::create_public_folder_share,
         crate::handlers::shares::get_share_access_log,
@@ -508,6 +509,9 @@ use utoipa::OpenApi;
         crate::handlers::public_shares::SharedFolderContentsQuery,
         crate::handlers::public_shares::SharedFolderContentsResponse,
         crate::handlers::scim_v2::ListQuery,
+        crate::handlers::search::SearchRequest,
+        crate::handlers::search::SearchResponse,
+        crate::handlers::search::SearchResultItem,
         crate::handlers::shares::CreateShareRequest,
         crate::handlers::shares::OwnedShareResponse,
         crate::handlers::shares::ShareAccessLogQuery,
@@ -589,6 +593,7 @@ use utoipa::OpenApi;
         crate::services::standup_service::StandupSummary,
         crate::services::template_service::CreateTemplateRequest,
         crate::services::template_service::UpdateTemplateRequest,
+        crate::services::unified_search::SearchProvenance,
         rustshare_core::domain::AiIndexingPolicy,
         rustshare_core::domain::AuditPolicy,
         rustshare_core::domain::CreateFromTemplateRequest,
@@ -678,6 +683,7 @@ use utoipa::OpenApi;
         (name = "Auth", description = "Authentication"),
         (name = "Folders", description = "Folder operations"),
         (name = "Public Shares", description = "Public share access"),
+        (name = "Search", description = "Permission-aware unified search across applications"),
         (name = "Vault Sync", description = "Vault synchronization and WebUI content endpoints"),
     )
 )]

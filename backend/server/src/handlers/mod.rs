@@ -30,6 +30,7 @@ pub mod profile;
 pub mod public_shares;
 pub mod scim;
 pub mod scim_v2;
+pub mod search;
 pub mod shares;
 pub mod standups;
 pub mod sync;
@@ -110,6 +111,7 @@ pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
     list_recent_notes, move_note, rename_note, resolve_conflict, save_note, toggle_visibility,
 };
+pub use search::unified_search;
 pub use standups::{
     create_standup, delete_standup, duplicate_standup, get_standup, list_standups, move_standup,
     update_standup,

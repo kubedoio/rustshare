@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
         .merge(routes::public_share_routes())
         .merge(routes::invite_routes())
         .merge(routes::ai_routes())
+        .merge(routes::search_routes())
         .merge(routes::sync_routes())
         .merge(routes::trash_routes())
         .merge(routes::application_routes())

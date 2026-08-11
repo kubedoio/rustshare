@@ -1285,6 +1285,11 @@ pub fn ai_routes() -> Router<AppState> {
         .route("/api/v1/ai/ask", post(crate::handlers::ask_question))
 }
 
+pub fn search_routes() -> Router<AppState> {
+    use axum::routing::post;
+    Router::new().route("/api/v1/search", post(crate::handlers::unified_search))
+}
+
 pub fn trash_routes() -> Router<AppState> {
     use axum::routing::{delete, get};
     Router::new()

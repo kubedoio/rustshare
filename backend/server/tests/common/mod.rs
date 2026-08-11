@@ -233,6 +233,18 @@ pub async fn setup_test_server() -> (AppState, String) {
         ),
     );
 
+    // Unified search service: no source owners registered (suites construct
+    // their own authorizer); the stores are the harness's candidates-only
+    // stores and `ai_service` is disabled.
+    let unified_search_service = Arc::new(
+        rustshare_server::services::unified_search::UnifiedSearchService::new(
+            Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
+            metadata_store.clone(),
+            None,
+            memory_catalog_store.clone(),
+        ),
+    );
+
     let state = AppState {
         db_pool: pool,
         metadata_store,
@@ -269,6 +281,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         outbox_store,
         chat_observation_store,
         memory_catalog_store,
+        unified_search_service,
         buzz_observation_service,
         buzz_gateway: None,
         user_repository,

@@ -257,6 +257,15 @@ async fn setup_test_env() -> AppState {
         ),
     );
 
+    let unified_search_service = Arc::new(
+        rustshare_server::services::unified_search::UnifiedSearchService::new(
+            Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
+            metadata_store.clone(),
+            None,
+            memory_catalog_store.clone(),
+        ),
+    );
+
     AppState {
         db_pool: pool,
         metadata_store,
@@ -293,6 +302,7 @@ async fn setup_test_env() -> AppState {
         outbox_store,
         chat_observation_store,
         memory_catalog_store,
+        unified_search_service,
         buzz_observation_service,
         buzz_gateway: None,
         user_repository,

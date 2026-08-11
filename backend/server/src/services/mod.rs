@@ -13,3 +13,4 @@ pub mod note_index_sink;
 pub mod note_service;
 pub mod standup_service;
 pub mod template_service;
+pub mod unified_search;

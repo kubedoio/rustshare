@@ -223,6 +223,8 @@ pub struct AppState {
     pub chat_observation_store: Arc<ChatObservationStore>,
     /// Memory-owned catalog of projected Buzz messages.
     pub memory_catalog_store: Arc<MemoryCatalogStore>,
+    /// Permission-aware unified search across Files/Notes and Buzz Chat.
+    pub unified_search_service: Arc<crate::services::unified_search::UnifiedSearchService>,
     /// Authenticated ingestion of signed Buzz events (observation half of the
     /// Buzz → Elembra Memory projection).
     pub buzz_observation_service: Arc<BuzzObservationService>,

@@ -897,6 +897,17 @@ pub async fn init_app() -> Result<AppState> {
         .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
     );
 
+    // Permission-aware unified search: candidates come from Files metadata,
+    // the note index and the Memory catalog; final inclusion is gated by the
+    // source authorizer (Files → PermissionResolver; Chat → BuzzAuthority).
+    let unified_search_service =
+        Arc::new(crate::services::unified_search::UnifiedSearchService::new(
+            Arc::clone(&source_authorizer),
+            Arc::clone(&metadata_store),
+            services.ai_service.clone(),
+            Arc::clone(&memory_catalog_store),
+        ));
+
     let state = AppState {
         db_pool,
         metadata_store,
@@ -936,6 +947,7 @@ pub async fn init_app() -> Result<AppState> {
         outbox_store: services.outbox_store,
         chat_observation_store,
         memory_catalog_store,
+        unified_search_service,
         buzz_observation_service,
         buzz_gateway,
         outbox_status,
