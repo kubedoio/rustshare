@@ -179,8 +179,61 @@ impl BuzzObservationService {
         let push: BuzzEventPush = serde_json::from_slice(payload)
             .map_err(|e| BuzzPushError::Malformed(format!("invalid request body: {e}")))?;
 
+        // 3–8. Validate + build the observation row; no writes yet.
+        let (tenant, workspace, row, data) = self.validate_and_build(&push).await?;
+
+        // 9. One transaction: upsert the observation row and publish the
+        //    durable event — but only on first observation.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        let inserted = self
+            .observations
+            .upsert_event_in_tx(&mut tx, &row)
+            .await
+            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        if !inserted {
+            // Identical Buzz event already observed; its durable event was
+            // published on first observation — never publish again.
+            tx.rollback()
+                .await
+                .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+            return Ok(IngestOutcome::DuplicateObservation);
+        }
+        let envelope = build_envelope(tenant, workspace, &data, data.principal.principal_id)?;
+        self.outbox
+            .insert_in_tx(&mut tx, &envelope)
+            .await
+            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        Ok(IngestOutcome::FirstObservation)
+    }
+
+    /// Steps 3–8 of ingestion: validate the Chat context (fail closed), verify
+    /// the signed Nostr event, map community → Workspace and author pubkey →
+    /// Principal (active binding only), apply the body gate, and build the
+    /// observation row + payload. No DB writes happen here: the caller owns
+    /// the transaction so the webhook path can publish the durable outbox
+    /// event on first observation while the reconcile path repairs the
+    /// observation index without touching the outbox.
+    async fn validate_and_build(
+        &self,
+        push: &BuzzEventPush,
+    ) -> Result<
+        (
+            TenantId,
+            WorkspaceId,
+            ChatObservedEvent,
+            ObservedChatEventData,
+        ),
+        BuzzPushError,
+    > {
         // 3. Chat context sanity (fail closed).
-        validate_context(&push)?;
+        validate_context(push)?;
 
         // 4. Cryptographic verification of the signed Nostr event.
         let raw_event_id = push
@@ -303,9 +356,21 @@ impl BuzzObservationService {
             observed_at,
         };
         let row = ChatObservedEvent::from_observed_data(tenant, workspace, &data, body);
+        Ok((tenant, workspace, row, data))
+    }
 
-        // 9. One transaction: upsert the observation row and publish the
-        //    durable event — but only on first observation.
+    /// Repair-path ingestion used by admin reconciliation: validate + build
+    /// and upsert the observation row in ONE transaction, with no durable
+    /// envelope and no outbox insert — consumer receipts stay untouched so the
+    /// durable pipeline is never replayed. Idempotent by `(tenant_id,
+    /// event_id)`: re-running a reconcile over the same Buzz events changes
+    /// nothing. Entry events are independently signature-verified by
+    /// [`Self::validate_and_build`].
+    pub(crate) async fn ingest_without_outbox(
+        &self,
+        push: &BuzzEventPush,
+    ) -> Result<IngestOutcome, BuzzPushError> {
+        let (_, _, row, _) = self.validate_and_build(push).await?;
         let mut tx = self
             .pool
             .begin()
@@ -317,18 +382,13 @@ impl BuzzObservationService {
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
         if !inserted {
-            // Identical Buzz event already observed; its durable event was
-            // published on first observation — never publish again.
+            // Identical Buzz event already observed during an earlier
+            // reconcile or webhook push; nothing to repair.
             tx.rollback()
                 .await
                 .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
             return Ok(IngestOutcome::DuplicateObservation);
         }
-        let envelope = build_envelope(tenant, workspace, &data, binding.principal_id)?;
-        self.outbox
-            .insert_in_tx(&mut tx, &envelope)
-            .await
-            .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
         tx.commit()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
@@ -367,10 +427,23 @@ impl BuzzObservationService {
     }
 }
 
+/// The deterministic integration-event identity for a Buzz event: a UUIDv5 of
+/// `elembra://io.elembra.chat/event/<nostr event id>` under the URL namespace.
+///
+/// Keying the outbox id on the Buzz event identity makes publication
+/// idempotent per Buzz event: re-observing the same event can never publish a
+/// second durable event, whether through the webhook or a reconcile repair.
+pub fn integration_event_id_for(event_id: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("elembra://io.elembra.chat/event/{event_id}").as_bytes(),
+    )
+}
+
 /// Build the deterministic durable envelope for a first observation.
 ///
-/// Idempotency is keyed on the Buzz event identity: the outbox event id is a
-/// UUIDv5 of `elembra://io.elembra.chat/event/<nostr event id>`, and `time` is
+/// Idempotency is keyed on the Buzz event identity: the outbox event id is
+/// [`integration_event_id_for`] over the Nostr event id, and `time` is
 /// the Buzz event's own creation time — not the observation time. Publishing
 /// happens only on first observation, so the payload (which carries
 /// `observed_at`) is deterministic per event id too.
@@ -380,10 +453,7 @@ fn build_envelope(
     data: &ObservedChatEventData,
     principal_id: PrincipalId,
 ) -> Result<IntegrationEvent, BuzzPushError> {
-    let id = Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        format!("elembra://io.elembra.chat/event/{}", data.buzz.event_id).as_bytes(),
-    );
+    let id = integration_event_id_for(&data.buzz.event_id);
     let resource = ResourceRef::new(
         ApplicationId::new("io.elembra.chat"),
         "message",
@@ -630,14 +700,29 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_event_id_is_stable() {
-        let name = format!("elembra://io.elembra.chat/event/{HEX64}");
-        let first = Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes());
-        let second = Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes());
+    fn integration_event_id_is_deterministic_and_pinned() {
+        // (b) The SAME event id produces the SAME UUIDv5 across calls.
+        let first = integration_event_id_for(HEX64);
+        let second = integration_event_id_for(HEX64);
         assert_eq!(first, second, "v5 of a fixed input is deterministic");
         assert_ne!(first, Uuid::new_v4());
-        // RFC 4122 v5 reference value for this fixed input.
+        // (c) RFC 4122 v5 reference value for this fixed input — the stable,
+        // Buzz-specific identity of the integration event.
         assert_eq!(first.to_string(), "c137b36c-4f81-5dcb-b5a0-9bcae9d22466");
+    }
+
+    #[test]
+    fn integration_event_ids_differ_across_events() {
+        // (a) Two DIFFERENT event ids produce DIFFERENT UUIDs: the identity is
+        // Buzz-event-specific, so distinct events never collide.
+        let mut other = HEX64.to_string();
+        let last = other.pop().unwrap();
+        other.push(if last == 'a' { 'b' } else { 'a' });
+        assert_ne!(
+            integration_event_id_for(HEX64),
+            integration_event_id_for(&other),
+            "each Buzz event must map to its own integration-event UUID"
+        );
     }
 
     #[test]
