@@ -63,7 +63,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -81,7 +81,8 @@ use rustshare_integration_events::OutboxConsumer;
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_resource_auth::{
     BuzzChannelKind, BuzzReadDecision, Candidate, Decision, PrincipalContext, Purpose,
-    Representation, ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError, CHAT_READ,
+    Representation, ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError,
+    WorkspaceCommunityMapping, CHAT_READ,
 };
 use rustshare_server::authz::ChatResourceOwner;
 use rustshare_server::buzz_gateway::{
@@ -92,13 +93,20 @@ use rustshare_server::buzz_observation::{
     BuzzEventPush, BuzzObservationService, BuzzPushContext, BuzzPushError, IngestOutcome,
 };
 use rustshare_server::config::OutboxWorkerConfig;
+use rustshare_server::handlers::chat_identity::{
+    update_community_mapping, UpdateCommunityMappingRequest,
+};
+use rustshare_server::handlers::extractors::{AdminUser, AuthenticatedUser};
 use rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_from_buzz_for_tenant;
+use rustshare_server::handlers::AppError;
 use rustshare_server::memory_projection::{
     MemoryChatProjectionConsumer, MEMORY_CHAT_PROJECTION_CONSUMER_ID,
 };
 use rustshare_server::outbox_dispatcher::OutboxDispatcher;
+use rustshare_server::state::DatabaseState;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, OutboxStore, ReconcileCounts,
+    ChatIdentityStore, ChatObservationStore, EventStore, MemoryCatalogStore, MetadataStore,
+    ObjectStore, ObjectStoreOptions, OutboxStore, ReconcileCounts,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
@@ -885,8 +893,9 @@ async fn outbox_count(pool: &PgPool, tenant_id: TenantId) -> i64 {
 
 /// Remove every row the tests create for `tenant_id` — the chat tables, the
 /// chat Application enablement, the receipts for the consumer, the
-/// outbox-side rows (deliveries FK-cascade from the outbox), and the durable
-/// consumer registration (subscriptions cascade).
+/// outbox-side rows (deliveries FK-cascade from the outbox), the durable
+/// consumer registration (subscriptions cascade), and the admin `users` row
+/// the F2 handler tests create per tenant.
 async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
     for table in [
         "memory_catalog",
@@ -895,6 +904,7 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
         "chat_workspace_communities",
         "chat_identity_bindings",
         "application_enablements",
+        "users",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
             .bind(tenant_id.0)
@@ -2826,4 +2836,273 @@ async fn admin_can_rotate_mapping_relay_pin() {
 /// A fixed 64-lowercase-hex id for placeholder (non-member) pubkeys.
 fn hex64(seed: u8) -> String {
     format!("{seed:02x}").repeat(32)
+}
+
+// ---------------------------------------------------------------------------
+// F2 follow-up. Handler-level tests for the admin mapping relay update
+// endpoint (`update_community_mapping`, PATCH
+// `/api/v1/admin/applications/chat/workspaces/{workspace_id}/community`).
+// Direct handler calls — no HTTP server. Only `db_pool` +
+// `chat_identity_store` are read by the handler, but `DatabaseState` requires
+// the full field set, so the RustFS-backed `ObjectStore` construction is the
+// exact idiom from `chat_integration_admin_authorization_test`.
+// ---------------------------------------------------------------------------
+
+/// A minimal `DatabaseState` over `pool` with a RustFS-backed `ObjectStore`
+/// (same construction idiom as `chat_integration_admin_authorization_test`).
+async fn database_state(pool: PgPool) -> DatabaseState {
+    let s3_endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let s3_region = std::env::var("S3_REGION")
+        .or_else(|_| std::env::var("RUSTFS_REGION"))
+        .unwrap_or_else(|_| "us-east-1".to_string());
+    let s3_bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+        .unwrap_or_else(|_| "rustshare".to_string());
+    let object_store = Arc::new(
+        ObjectStore::new_with_options(
+            s3_endpoint,
+            s3_region,
+            s3_bucket,
+            ObjectStoreOptions {
+                auto_create_bucket: true,
+            },
+        )
+        .await
+        .expect("Failed to create object store")
+        .with_blob_lock_pool(pool.clone()),
+    );
+    DatabaseState {
+        db_pool: pool.clone(),
+        metadata_store: Arc::new(MetadataStore::new(pool.clone())),
+        event_store: Arc::new(EventStore::new(pool.clone())),
+        object_store,
+        chat_identity_store: Arc::new(ChatIdentityStore::new(pool)),
+    }
+}
+
+/// Insert an admin `users` row for `tenant` and return its id. The handler
+/// requires the admin's `users.tenant_id` row (compared against
+/// `auth.tenant_id`), so every F2 test creates one; `cleanup` deletes it.
+async fn insert_admin_user(pool: &PgPool, tenant: TenantId) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, true, $6, $7)",
+    )
+    .bind(id)
+    .bind(format!("buzz-admin-{id}"))
+    .bind(format!("buzz-admin-{id}@test.local"))
+    .bind("$argon2id$v=19$m=4096,t=3,p=1$placeholder_hash")
+    .bind(format!("Buzz Admin {id}"))
+    .bind(10_737_418_240i64)
+    .bind(tenant.0)
+    .execute(pool)
+    .await
+    .expect("insert admin user");
+    id
+}
+
+/// Call `update_community_mapping` directly with the given extractor values.
+/// The workspace scope guard requires `workspace_id == tenant_id` for success.
+async fn call_update_mapping(
+    db: &DatabaseState,
+    admin_user_id: Uuid,
+    auth_tenant: Uuid,
+    workspace_id: WorkspaceId,
+    relay_url: String,
+    relay_pubkey: Option<String>,
+) -> Result<(StatusCode, Json<WorkspaceCommunityMapping>), AppError> {
+    update_community_mapping(
+        AdminUser {
+            user_id: admin_user_id,
+        },
+        AuthenticatedUser {
+            user_id: admin_user_id,
+            tenant_id: auth_tenant,
+        },
+        State(db.clone()),
+        Path(workspace_id),
+        Json(UpdateCommunityMappingRequest {
+            relay_url,
+            relay_pubkey,
+        }),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires database and S3-compatible object store"]
+async fn update_mapping_happy_path_writes_both_fields() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    let admin_user_id = insert_admin_user(&pool, tenant).await;
+    let community = format!("community-{}", Uuid::new_v4());
+    let original_pin = Keys::generate().public_key().to_hex();
+    insert_mapping(
+        &pool,
+        tenant,
+        &community,
+        "wss://relay.example.test",
+        Some(&original_pin),
+    )
+    .await;
+
+    let db = database_state(pool.clone()).await;
+    let new_relay_url = "wss://relay-rotated.example.test".to_string();
+    let new_pin = Keys::generate().public_key().to_hex();
+    let (status, Json(updated)) = call_update_mapping(
+        &db,
+        admin_user_id,
+        tenant.0,
+        WorkspaceId(tenant.0),
+        new_relay_url.clone(),
+        Some(new_pin.clone()),
+    )
+    .await
+    .expect("an admin may rotate the mapping's relay endpoint and pin");
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated.relay_url, new_relay_url);
+    assert_eq!(updated.relay_pubkey.as_deref(), Some(new_pin.as_str()));
+    assert_eq!(updated.community_id, community);
+    assert_eq!(updated.workspace_id, WorkspaceId(tenant.0));
+    assert_eq!(updated.tenant_id, tenant);
+    assert!(updated.active, "rotation must not change the active flag");
+
+    // Persisted: the store returns the rotated values.
+    let persisted = db
+        .chat_identity_store
+        .mapping(tenant, WorkspaceId(tenant.0))
+        .await
+        .expect("mapping lookup succeeds")
+        .expect("mapping row is present");
+    assert_eq!(persisted.relay_url, new_relay_url);
+    assert_eq!(persisted.relay_pubkey.as_deref(), Some(new_pin.as_str()));
+
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires database and S3-compatible object store"]
+async fn update_mapping_missing_mapping_returns_404() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    let admin_user_id = insert_admin_user(&pool, tenant).await;
+    let db = database_state(pool.clone()).await;
+
+    let error = call_update_mapping(
+        &db,
+        admin_user_id,
+        tenant.0,
+        WorkspaceId(tenant.0),
+        "wss://relay.example.test".to_string(),
+        None,
+    )
+    .await
+    .expect_err("a missing mapping must be a 404");
+    match error {
+        AppError::NotFound(message) => assert_eq!(message, "Chat workspace mapping not found"),
+        other => panic!("expected AppError::NotFound, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires database and S3-compatible object store"]
+async fn update_mapping_bad_relay_url_returns_400() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    let admin_user_id = insert_admin_user(&pool, tenant).await;
+    let db = database_state(pool.clone()).await;
+
+    let error = call_update_mapping(
+        &db,
+        admin_user_id,
+        tenant.0,
+        WorkspaceId(tenant.0),
+        "http://relay.example.test".to_string(),
+        None,
+    )
+    .await
+    .expect_err("a non-ws relay_url must be rejected");
+    assert!(
+        matches!(error, AppError::BadRequest(_)),
+        "expected AppError::BadRequest, got {error:?}"
+    );
+
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires database and S3-compatible object store"]
+async fn update_mapping_bad_relay_pubkey_returns_400() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    let admin_user_id = insert_admin_user(&pool, tenant).await;
+    let db = database_state(pool.clone()).await;
+
+    // Uppercase hex and wrong length are both rejected by the lowercase
+    // 64-hex validation.
+    for bad_pin in ["AB".repeat(32), "ab".repeat(31)] {
+        let error = call_update_mapping(
+            &db,
+            admin_user_id,
+            tenant.0,
+            WorkspaceId(tenant.0),
+            "wss://relay.example.test".to_string(),
+            Some(bad_pin),
+        )
+        .await
+        .expect_err("an invalid relay_pubkey must be rejected");
+        assert!(
+            matches!(error, AppError::BadRequest(_)),
+            "expected AppError::BadRequest, got {error:?}"
+        );
+    }
+
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires database and S3-compatible object store"]
+async fn update_mapping_cross_tenant_returns_403() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let foreign_tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    cleanup(&pool, foreign_tenant).await;
+    // The admin's `users.tenant_id` row is `tenant`; the authenticated context
+    // claims `foreign_tenant` → tenant scope mismatch.
+    let admin_user_id = insert_admin_user(&pool, tenant).await;
+    let db = database_state(pool.clone()).await;
+
+    let error = call_update_mapping(
+        &db,
+        admin_user_id,
+        foreign_tenant.0,
+        WorkspaceId(tenant.0),
+        "wss://relay.example.test".to_string(),
+        None,
+    )
+    .await
+    .expect_err("a cross-tenant admin call must be rejected");
+    match error {
+        AppError::Forbidden(message) => assert_eq!(message, "tenant scope mismatch"),
+        other => panic!("expected AppError::Forbidden, got {other:?}"),
+    }
+
+    cleanup(&pool, tenant).await;
+    cleanup(&pool, foreign_tenant).await;
 }
