@@ -737,6 +737,183 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
 
         let _ = store.clear_tenant(tenant_id).await;
     }
+
+    // --- Keyword search scenarios (keyword_search_with_acl) ---
+
+    // Scenario 14: owner can find their own private note by keyword.
+    {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let chunk_id = Uuid::new_v4();
+        let acl = make_acl_payload(
+            tenant_id,
+            note_id,
+            chunk_id,
+            owner_id,
+            vec![IndexPrincipal::Owner(owner_id)],
+            IndexVisibility::Private,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let doc = make_indexed_doc(
+            chunk_id,
+            tenant_id,
+            note_id,
+            owner_id,
+            "the quarterly budget plan",
+            acl,
+        );
+        store
+            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        let results = store
+            .keyword_search_with_acl(&owner_principal(tenant_id, owner_id), "budget", 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "owner must find own private note by keyword"
+        );
+        assert!(
+            results[0].1 > 0.0,
+            "keyword result must carry a positive score"
+        );
+
+        let _ = store.clear_tenant(tenant_id).await;
+    }
+
+    // Scenario 15: unrelated user in the same tenant cannot find a private note by keyword.
+    {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let stranger_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let chunk_id = Uuid::new_v4();
+        let acl = make_acl_payload(
+            tenant_id,
+            note_id,
+            chunk_id,
+            owner_id,
+            vec![IndexPrincipal::Owner(owner_id)],
+            IndexVisibility::Private,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let doc = make_indexed_doc(
+            chunk_id,
+            tenant_id,
+            note_id,
+            owner_id,
+            "private budget details",
+            acl,
+        );
+        store
+            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        let results = store
+            .keyword_search_with_acl(&user_principal(tenant_id, stranger_id), "budget", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "stranger must not find private note by keyword"
+        );
+
+        let _ = store.clear_tenant(tenant_id).await;
+    }
+
+    // Scenario 16: stale ACL version fails closed for keyword search.
+    {
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let chunk_id = Uuid::new_v4();
+        let acl = make_acl_payload(
+            tenant_id,
+            note_id,
+            chunk_id,
+            owner_id,
+            vec![IndexPrincipal::Owner(owner_id)],
+            IndexVisibility::Private,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let doc = make_indexed_doc(
+            chunk_id,
+            tenant_id,
+            note_id,
+            owner_id,
+            "stale budget content",
+            acl,
+        );
+        store
+            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        let mut principal = owner_principal(tenant_id, owner_id);
+        principal.min_acl_versions.insert(note_id, 2);
+
+        let results = store
+            .keyword_search_with_acl(&principal, "budget", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "stale ACL version must fail closed for keyword search"
+        );
+
+        let _ = store.clear_tenant(tenant_id).await;
+    }
+
+    // Scenario 17: cross-tenant keyword search fails closed.
+    {
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let other_tenant_user = Uuid::new_v4();
+        let note_id = Uuid::new_v4();
+        let chunk_id = Uuid::new_v4();
+        let acl = make_acl_payload(
+            tenant_a,
+            note_id,
+            chunk_id,
+            owner_id,
+            vec![IndexPrincipal::Public],
+            IndexVisibility::Public,
+            EmbeddingPolicy::Allowed,
+            1,
+        );
+        let doc = make_indexed_doc(
+            chunk_id,
+            tenant_a,
+            note_id,
+            owner_id,
+            "cross tenant budget content",
+            acl,
+        );
+        store
+            .upsert_chunk(tenant_a, chunk_id, &doc, doc.acl.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        let results = store
+            .keyword_search_with_acl(&user_principal(tenant_b, other_tenant_user), "budget", 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "cross-tenant user must not find note by keyword"
+        );
+
+        let _ = store.clear_tenant(tenant_a).await;
+    }
 }
 
 #[tokio::test]

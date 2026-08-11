@@ -6,6 +6,7 @@
 //! `vector` in SQL; retrieved vectors are selected as `text` and parsed.
 
 use anyhow::Result;
+use rustshare_core::services::ai::vector_store::keyword_score;
 use rustshare_core::services::ai::{
     can_access, validate_and_project, IndexAclProjection, IndexedDocument, NoteAclPayload,
     RetrievalPrincipal, VectorStore,
@@ -242,6 +243,86 @@ impl VectorStore for PgVectorStore {
         }
 
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(results)
+    }
+
+    async fn keyword_search_with_acl(
+        &self,
+        principal: &RetrievalPrincipal,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(IndexedDocument, f32)>> {
+        let tenant_id = principal.tenant_id;
+        let limit = limit as i64;
+
+        // Build the caller's principal list for a SQL ACL pre-filter.
+        // Exact enforcement happens in Rust via can_access after the rows are fetched.
+        let caller_principals = principal.to_index_principals();
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
+                file_name, file_path, content, mime_type, owner_id, embedding::text as embedding,
+                acl_hash, acl_version, read_acl,
+                visibility, embedding_policy, indexed_at
+            FROM note_index_chunks
+            WHERE tenant_id = $1
+              AND embedding_policy = 'allowed'
+              AND (
+                  owner_id = $2
+                  OR visibility = 'public'
+                  OR (visibility = 'workspace' AND workspace_id = $5)
+                  OR read_acl && $4::text[]
+              )
+              AND (
+                  content ILIKE '%'||$3||'%'
+                  OR file_name ILIKE '%'||$3||'%'
+                  OR file_path ILIKE '%'||$3||'%'
+              )
+            ORDER BY (file_name ILIKE '%'||$3||'%') DESC, id
+            LIMIT $6
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(principal.user_id)
+        .bind(query)
+        .bind(&caller_principals)
+        .bind(principal.workspace_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results: Vec<(IndexedDocument, f32)> = Vec::new();
+        for row in rows {
+            match row_to_indexed_doc(&row, tenant_id) {
+                Ok(doc) => {
+                    if let Some(projection) = validate_chunk_acl(&doc) {
+                        if can_access(&projection, principal) {
+                            let score = keyword_score(&doc, query);
+                            if score > 0.0 {
+                                results.push((doc, score));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        error = %e,
+                        "failed to decode indexed row during keyword search"
+                    );
+                }
+            }
+        }
+
+        // Deterministic order: score descending, then file_id ascending.
+        results.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.file_id.cmp(&b.0.file_id))
+        });
+        results.truncate(limit as usize);
         Ok(results)
     }
 

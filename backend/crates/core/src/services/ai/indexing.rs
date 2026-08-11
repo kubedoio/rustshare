@@ -419,6 +419,35 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         }
     }
 
+    /// Search for chunks whose text contains the query terms, pre-filtered by
+    /// tenant and ACL.
+    ///
+    /// Candidate producer for keyword search; final source authorization
+    /// happens elsewhere. On store error, logs and returns an empty result set
+    /// (mirrors [`Self::search_with_acl`]).
+    pub async fn keyword_search_with_acl(
+        &self,
+        principal: &RetrievalPrincipal,
+        query: &str,
+        limit: usize,
+    ) -> Vec<(IndexedDocument, f32)> {
+        match self
+            .store
+            .keyword_search_with_acl(principal, query, limit)
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    error = %e,
+                    "AI index keyword search failed; returning empty results"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     /// Update the ACL projection for every indexed chunk of a note.
     ///
     /// Returns the number of chunks that were updated.

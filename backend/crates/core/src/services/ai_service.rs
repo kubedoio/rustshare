@@ -213,6 +213,95 @@ where
             .search_with_acl(&principal, query, limit * 3)
             .await;
 
+        // Filter by permission and build results
+        let results = self
+            .build_search_results(user_id, tenant_id, limit, raw_results)
+            .await;
+
+        Ok(results)
+    }
+
+    /// Perform permission-filtered keyword search.
+    ///
+    /// Same contract as [`Self::semantic_search`], but matches the query terms
+    /// against the indexed file name/path/content instead of vector similarity.
+    ///
+    /// # Contract A-01: Permission Filtering
+    /// Only returns files the user has View permission or higher on.
+    pub async fn keyword_search(
+        &self,
+        query: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<SemanticSearchResult>, AiError> {
+        // Validate query
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(AiError::InvalidQuery("Query cannot be empty".to_string()));
+        }
+        if query.len() > 1000 {
+            return Err(AiError::InvalidQuery(
+                "Query too long (max 1000 chars)".to_string(),
+            ));
+        }
+
+        // Resolve the caller's group IDs for ACL pre-filtering.
+        let group_ids = match self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        // Build a retrieval principal for permission-aware search.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
+        // Perform keyword search. Candidates are fetched 3x over so the
+        // permission post-filter can drop results without starving the limit.
+        let raw_results = self
+            .indexer
+            .keyword_search_with_acl(&principal, query, limit * 3)
+            .await;
+
+        // Filter by permission and build results
+        let results = self
+            .build_search_results(user_id, tenant_id, limit, raw_results)
+            .await;
+
+        Ok(results)
+    }
+
+    /// Shared tail of [`Self::semantic_search`] and [`Self::keyword_search`]:
+    /// drops hidden metadata files, filters by effective permission
+    /// (Contract A-01; unresolvable permission skips the result), and builds
+    /// [`SemanticSearchResult`]s, stopping once `limit` results are produced.
+    async fn build_search_results(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+        raw_results: Vec<(IndexedDocument, f32)>,
+    ) -> Vec<SemanticSearchResult> {
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
             .into_iter()
@@ -270,7 +359,7 @@ where
             }
         }
 
-        Ok(results)
+        results
     }
 
     /// Generate a summary of a file if the user has access.
@@ -1262,6 +1351,58 @@ mod tests {
         assert!(
             results[0].can_edit,
             "AI should reflect effective Edit permission"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_keyword_search_finds_owner_and_excludes_stranger() {
+        let indexer = test_indexer();
+        let ops = Arc::new(ConfigurableMockOps::new());
+
+        let owner_id = Uuid::new_v4();
+        let stranger_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        ops.add_file(make_file(
+            file_id,
+            "keyword_target.txt",
+            owner_id,
+            tenant_id,
+        ));
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        service
+            .index_file(
+                file_id,
+                "keyword_target.txt".to_string(),
+                "/keyword_target.txt".to_string(),
+                "documentation about keyword matching".to_string(),
+                "text/plain".to_string(),
+                make_file_acl(tenant_id, file_id, owner_id),
+            )
+            .await
+            .unwrap();
+
+        // The owner finds the document by keyword.
+        let results = service
+            .keyword_search("keyword", owner_id, tenant_id, 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_name, "keyword_target.txt");
+        assert!(results[0].relevance_score > 0.0);
+
+        // A stranger with no share cannot see it.
+        let results = service
+            .keyword_search("keyword", stranger_id, tenant_id, 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "keyword search must exclude a stranger's denied document"
         );
     }
 
