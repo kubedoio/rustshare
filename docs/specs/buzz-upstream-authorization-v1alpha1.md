@@ -59,11 +59,12 @@ trusted server workload with a provisioned service key can use it.
 Every request carries an HTTP `Authorization` header:
 
 ```text
-Authorization: Nostr <base64url(kind-27235 event)>
+Authorization: Nostr <base64(kind-27235 event)>
 ```
 
-where `<base64url(kind-27235 event)>` is the base64url encoding of the JSON of
-a NIP-98 event of kind 27235:
+where `<base64(kind-27235 event)>` is the STANDARD base64 encoding of the JSON of
+a NIP-98 event of kind 27235 (matching the `nostr` crate's `HttpData::to_authorization`
+and `verify_auth_header`, which both use `general_purpose::STANDARD`):
 
 - `kind`: `27235`
 - `pubkey`: the workload's service public key
