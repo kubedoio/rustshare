@@ -282,6 +282,10 @@ name = "buzz_authority_gateway_test"
 path = "../tests/buzz_authority_gateway_test.rs"
 
 [[test]]
+name = "unified_search_test"
+path = "../tests/unified_search_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 
