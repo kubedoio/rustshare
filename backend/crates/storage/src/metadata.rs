@@ -13,6 +13,7 @@ use rustshare_core::domain::{
     VaultDevice, VaultFile, VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
+use rustshare_core::validation::escape_ilike;
 use serde_json;
 use sqlx::{PgPool, Row};
 use std::time::Duration;
@@ -8518,29 +8519,5 @@ mod tests {
                 .await
                 .unwrap();
         }
-    }
-}
-
-/// Escape ILIKE wildcard characters (`%`, `_`, `\`) so a user-supplied search
-/// query is matched literally. Postgres treats `\` as the default escape
-/// character in `LIKE`/`ILIKE` patterns, so the backslash is escaped first.
-fn escape_ilike(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-#[cfg(test)]
-mod escape_ilike_tests {
-    use super::escape_ilike;
-
-    #[test]
-    fn escapes_like_wildcards() {
-        assert_eq!(escape_ilike("50%_off"), "50\\%\\_off");
-        assert_eq!(escape_ilike("a\\b"), "a\\\\b");
-        assert_eq!(escape_ilike("plain query"), "plain query");
-        assert_eq!(escape_ilike(""), "");
-        assert_eq!(escape_ilike("100%"), "100\\%");
     }
 }

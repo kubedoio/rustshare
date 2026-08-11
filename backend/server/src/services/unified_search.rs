@@ -16,8 +16,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{ActionCapability, ApplicationId};
+use rustshare_core::services::is_hidden_file_name;
 use rustshare_core::services::SemanticSearchResult;
-use rustshare_memory::{event::ChatChannelKind, MemoryCatalogRecord};
+use rustshare_memory::MemoryCatalogRecord;
 use rustshare_resource_auth::{
     PrincipalContext, Purpose, Representation, ResourceRef, SourceAuthorizer, SourceError,
     CHAT_READ, FILES_READ, MAX_BATCH_SIZE,
@@ -47,14 +48,13 @@ pub enum SearchSource {
 
 /// Errors raised by the unified search service.
 ///
-/// Per-candidate denials are never surfaced: the contract only distinguishes
-/// client input errors from internal failures.
+/// Only client-input errors are surfaced: per-candidate denials and
+/// per-source failures are absorbed (dropped) inside the service, so a broken
+/// source can never fail the whole search or reveal a denial.
 #[derive(Debug, thiserror::Error)]
 pub enum UnifiedSearchError {
     #[error("invalid query: {0}")]
     InvalidQuery(String),
-    #[error("internal search failure: {0}")]
-    Internal(String),
 }
 
 /// An internal, pre-authorization candidate.
@@ -68,6 +68,8 @@ struct Candidate {
     resource_ref: ResourceRef,
     score: f32,
     title: String,
+    /// Candidate/index-sourced context (Files path; Chat community/channel).
+    /// Context only, never authorization.
     location: Option<String>,
     occurred_at: Option<DateTime<Utc>>,
     file_id: Option<Uuid>,
@@ -100,6 +102,8 @@ pub struct UnifiedSearchResult {
     pub resource_ref: String,
     pub title: String,
     pub snippet: Option<String>,
+    /// Candidate/index-sourced context (Files path; Chat community/channel).
+    /// Context only, never authorization.
     pub location: Option<String>,
     pub occurred_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -421,14 +425,21 @@ impl UnifiedSearchService {
         let files_action = ActionCapability::new(FILES_READ);
         let chat_action = ActionCapability::new(CHAT_READ);
 
-        // Split by the owning Application's action.
+        // Split by the owning Application's action. Unknown applications are
+        // dropped (fail closed) rather than silently grouped into an action
+        // they do not own.
         let mut files_group = Vec::new();
         let mut chat_group = Vec::new();
         for candidate in candidates {
-            if candidate.source_application == FILES_APPLICATION {
-                files_group.push(candidate);
-            } else {
-                chat_group.push(candidate);
+            match candidate.source_application.as_str() {
+                FILES_APPLICATION => files_group.push(candidate),
+                CHAT_APPLICATION => chat_group.push(candidate),
+                other => {
+                    tracing::warn!(
+                        source_application = other,
+                        "unified search: unknown source application; dropping candidate"
+                    );
+                }
             }
         }
 
@@ -514,28 +525,9 @@ fn chat_candidate(record: MemoryCatalogRecord, score: f32) -> Candidate {
         message_id: Some(record.message_id),
         community_id: Some(record.community_id),
         channel_id: Some(record.channel_id),
-        channel_kind: Some(chat_channel_kind_name(record.channel_kind).to_string()),
+        channel_kind: Some(record.channel_kind.as_str().to_string()),
         author_pubkey: Some(record.author_pubkey),
     }
-}
-
-/// Stable wire name for a chat channel kind.
-fn chat_channel_kind_name(kind: ChatChannelKind) -> &'static str {
-    match kind {
-        ChatChannelKind::Workspace => "workspace",
-        ChatChannelKind::Dm => "dm",
-        ChatChannelKind::Private => "private",
-        ChatChannelKind::Excluded => "excluded",
-    }
-}
-
-/// Whether `name` is a hidden metadata file (same list as `AiService`).
-pub fn is_hidden_file_name(name: &str) -> bool {
-    name.starts_with(".rustshare")
-        || name == "events.jsonl"
-        || name == "index.md"
-        || name == "__primary__.md"
-        || name.ends_with(".editor.json")
 }
 
 /// Trim and validate the search query; returns the trimmed query.
@@ -610,7 +602,17 @@ fn dedupe_and_rank(candidates: Vec<Candidate>, limit: usize) -> Vec<Candidate> {
             .entry(candidate.resource_ref.to_uri())
             .and_modify(|existing| {
                 if candidate.score > existing.score {
-                    *existing = candidate.clone();
+                    let mut winner = candidate.clone();
+                    if winner.occurred_at.is_none() {
+                        // A note-index hit (no timestamp) winning over a
+                        // name/path hit must not lose the timestamp.
+                        winner.occurred_at = existing.occurred_at;
+                    }
+                    *existing = winner;
+                } else if existing.occurred_at.is_none() {
+                    // Keep the higher-scored candidate, but backfill the
+                    // timestamp when only the lower-scored one has it.
+                    existing.occurred_at = candidate.occurred_at;
                 }
             })
             .or_insert(candidate);
@@ -658,9 +660,16 @@ pub fn authorized_snippet(data: &[u8], query: &str, max_chars: usize) -> String 
             })
     };
 
+    // `text_lower` can have MORE chars than the original text when
+    // `to_lowercase` expands a char (e.g. `İ` → `i` + combining dot, `ẞ` →
+    // `ss`), so a match index computed in the lowercased space can exceed the
+    // original length. Treat such an index as "no match" (fall back to the
+    // head of the text) and clamp the window so the slice can never panic.
+    let match_index = match_index.filter(|&index| index < chars.len());
     let window_start = match_index
         .unwrap_or(0)
-        .saturating_sub(SNIPPET_PRE_MATCH_CHARS);
+        .saturating_sub(SNIPPET_PRE_MATCH_CHARS)
+        .min(chars.len());
     let mut window_end = window_start.saturating_add(max_chars);
     let truncated = window_end < chars.len();
     if window_end > chars.len() {
@@ -843,6 +852,21 @@ mod tests {
     }
 
     #[test]
+    fn dedupe_preserves_occurred_at_from_the_losing_candidate() {
+        // A note-index hit (no timestamp) wins on score over a name/path hit
+        // that carries the modified time; the timestamp must survive.
+        let with_ts = candidate("f", 0.6, Some("2024-01-01T00:00:00Z"), "io.elembra.files");
+        let no_ts = candidate("f", 0.9, None, "io.elembra.files");
+        let ranked = dedupe_and_rank(vec![with_ts.clone(), no_ts.clone()], 10);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].score, 0.9, "max score wins");
+        assert_eq!(
+            ranked[0].occurred_at, with_ts.occurred_at,
+            "timestamp from the lower-scored candidate is preserved"
+        );
+    }
+
+    #[test]
     fn snippet_windows_around_the_match() {
         let text = format!("{}needle{}", "a".repeat(50), "b".repeat(300));
         let snippet = authorized_snippet(text.as_bytes(), "needle", 100);
@@ -885,6 +909,21 @@ mod tests {
             snippet.chars().count() <= 81,
             "truncation stays on char boundaries"
         );
+    }
+
+    #[test]
+    fn snippet_never_panics_on_case_mapping_expansion() {
+        // `İ` (U+0130) lowercases to TWO chars (i + combining dot), so the
+        // lowercased string has MORE chars than the original. A match after a
+        // run of them used to compute an out-of-range window and panic; the
+        // helper must clamp and fall back to the head of the text.
+        let text = format!("{}needle", "İ".repeat(400));
+        let snippet = authorized_snippet(text.as_bytes(), "needle", 100);
+        assert!(!snippet.is_empty(), "falls back to the head of the text");
+
+        // An expansion char as the query term itself must also be safe.
+        let snippet = authorized_snippet(text.as_bytes(), "İ", 100);
+        assert!(!snippet.is_empty());
     }
 
     #[test]

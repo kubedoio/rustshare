@@ -54,7 +54,7 @@ impl ChatObservationStore {
         .bind(&event.supersedes_event_id)
         .bind(&event.community_id)
         .bind(&event.channel_id)
-        .bind(channel_kind_str(event.channel_kind))
+        .bind(event.channel_kind.as_str())
         .bind(&event.thread_root_id)
         .bind(&event.author_pubkey)
         .bind(event.author_principal_id.map(|p| p.0))
@@ -257,15 +257,6 @@ fn parse_event_type(value: String) -> Result<ObservedEventType> {
         "deleted" => ObservedEventType::Deleted,
         other => anyhow::bail!("unknown chat_observed_events.event_type `{other}`"),
     })
-}
-
-fn channel_kind_str(channel_kind: ChatChannelKind) -> &'static str {
-    match channel_kind {
-        ChatChannelKind::Workspace => "workspace",
-        ChatChannelKind::Dm => "dm",
-        ChatChannelKind::Private => "private",
-        ChatChannelKind::Excluded => "excluded",
-    }
 }
 
 fn parse_channel_kind(value: String) -> Result<ChatChannelKind> {

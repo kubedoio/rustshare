@@ -5,6 +5,7 @@
 use crate::chat_observation::ChatObservationStore;
 use anyhow::Result;
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
+use rustshare_core::validation::escape_ilike;
 use rustshare_integration_events::IntegrationEvent;
 use rustshare_memory::event::{
     integration_event_id_for, ChatChannelKind, ObservedChatEventData, ObservedEventType,
@@ -297,7 +298,7 @@ impl MemoryCatalogStore {
             .bind(event_type_str(record.event_type))
             .bind(&record.community_id)
             .bind(&record.channel_id)
-            .bind(channel_kind_str(record.channel_kind))
+            .bind(record.channel_kind.as_str())
             .bind(&record.author_pubkey)
             .bind(record.author_principal_id.map(|p| p.0))
             .bind(record.occurred_at)
@@ -375,6 +376,8 @@ impl MemoryCatalogStore {
         let rows = sqlx::query(&format!(
             "SELECT {RECORD_COLUMNS} FROM memory_catalog
              WHERE tenant_id = $1
+               AND source_application = 'io.elembra.chat'
+               AND source_type = 'message'
                AND indexing_status <> 'tombstoned'
                AND (content ILIKE '%' || $2 || '%'
                     OR message_id = $3
@@ -427,7 +430,7 @@ async fn insert_in_tx(
     .bind(event_type_str(record.event_type))
     .bind(&record.community_id)
     .bind(&record.channel_id)
-    .bind(channel_kind_str(record.channel_kind))
+    .bind(record.channel_kind.as_str())
     .bind(&record.author_pubkey)
     .bind(record.author_principal_id.map(|p| p.0))
     .bind(record.occurred_at)
@@ -495,7 +498,7 @@ async fn update_in_tx(
     .bind(event_type_str(record.event_type))
     .bind(&record.community_id)
     .bind(&record.channel_id)
-    .bind(channel_kind_str(record.channel_kind))
+    .bind(record.channel_kind.as_str())
     .bind(&record.author_pubkey)
     .bind(record.author_principal_id.map(|p| p.0))
     .bind(record.occurred_at)
@@ -575,15 +578,6 @@ fn parse_event_type(value: String) -> Result<ObservedEventType> {
     })
 }
 
-fn channel_kind_str(channel_kind: ChatChannelKind) -> &'static str {
-    match channel_kind {
-        ChatChannelKind::Workspace => "workspace",
-        ChatChannelKind::Dm => "dm",
-        ChatChannelKind::Private => "private",
-        ChatChannelKind::Excluded => "excluded",
-    }
-}
-
 fn parse_channel_kind(value: String) -> Result<ChatChannelKind> {
     Ok(match value.as_str() {
         "workspace" => ChatChannelKind::Workspace,
@@ -609,28 +603,4 @@ fn parse_indexing_status(value: String) -> Result<IndexingStatus> {
         "tombstoned" => IndexingStatus::Tombstoned,
         other => anyhow::bail!("unknown memory_catalog.indexing_status `{other}`"),
     })
-}
-
-/// Escape ILIKE wildcard characters (`%`, `_`, `\`) so a user-supplied search
-/// query is matched literally. Postgres treats `\` as the default escape
-/// character in `LIKE`/`ILIKE` patterns, so the backslash is escaped first.
-fn escape_ilike(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-#[cfg(test)]
-mod escape_ilike_tests {
-    use super::escape_ilike;
-
-    #[test]
-    fn escapes_like_wildcards() {
-        assert_eq!(escape_ilike("50%_off"), "50\\%\\_off");
-        assert_eq!(escape_ilike("a\\b"), "a\\\\b");
-        assert_eq!(escape_ilike("plain query"), "plain query");
-        assert_eq!(escape_ilike(""), "");
-        assert_eq!(escape_ilike("100%"), "100\\%");
-    }
 }

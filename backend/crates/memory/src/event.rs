@@ -70,6 +70,18 @@ pub enum ChatChannelKind {
     Excluded,
 }
 
+impl ChatChannelKind {
+    /// Stable wire name, shared by every consumer so the mapping cannot drift.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChatChannelKind::Workspace => "workspace",
+            ChatChannelKind::Dm => "dm",
+            ChatChannelKind::Private => "private",
+            ChatChannelKind::Excluded => "excluded",
+        }
+    }
+}
+
 /// The Elembra Principal the Buzz identity was admitted under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrincipalMeta {

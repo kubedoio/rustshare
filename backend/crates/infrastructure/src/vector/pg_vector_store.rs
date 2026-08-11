@@ -11,6 +11,7 @@ use rustshare_core::services::ai::{
     can_access, validate_and_project, IndexAclProjection, IndexedDocument, NoteAclPayload,
     RetrievalPrincipal, VectorStore,
 };
+use rustshare_core::validation::escape_ilike;
 use sqlx::{postgres::PgRow, PgPool, Row};
 use uuid::Uuid;
 
@@ -259,7 +260,28 @@ impl VectorStore for PgVectorStore {
         // Exact enforcement happens in Rust via can_access after the rows are fetched.
         let caller_principals = principal.to_index_principals();
 
-        let rows = sqlx::query(
+        // Match ANY whitespace-separated query term, mirroring `keyword_score`
+        // and the InMemory backend. Wildcards are escaped so the user's input
+        // is matched literally. Each term becomes one OR'd `(content OR
+        // file_name OR file_path)` triple; binds start at $6.
+        let terms: Vec<String> = query.split_whitespace().map(escape_ilike).collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut term_clause = String::new();
+        for (offset, _term) in terms.iter().enumerate() {
+            if offset > 0 {
+                term_clause.push_str(" OR ");
+            }
+            let index = 6 + offset;
+            term_clause.push_str(&format!(
+                "(content ILIKE '%' || ${index} || '%' \
+                 OR file_name ILIKE '%' || ${index} || '%' \
+                 OR file_path ILIKE '%' || ${index} || '%')"
+            ));
+        }
+
+        let mut query_sql = format!(
             r#"
             SELECT
                 id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
@@ -272,26 +294,27 @@ impl VectorStore for PgVectorStore {
               AND (
                   owner_id = $2
                   OR visibility = 'public'
-                  OR (visibility = 'workspace' AND workspace_id = $5)
-                  OR read_acl && $4::text[]
+                  OR (visibility = 'workspace' AND workspace_id = $4)
+                  OR read_acl && $3::text[]
               )
-              AND (
-                  content ILIKE '%'||$3||'%'
-                  OR file_name ILIKE '%'||$3||'%'
-                  OR file_path ILIKE '%'||$3||'%'
-              )
-            ORDER BY (file_name ILIKE '%'||$3||'%') DESC, id
-            LIMIT $6
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(principal.user_id)
-        .bind(query)
-        .bind(&caller_principals)
-        .bind(principal.workspace_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+              AND ( {term_clause} )
+            ORDER BY (file_name ILIKE '%' || $6 || '%') DESC, id
+            LIMIT $5
+            "#
+        );
+        query_sql = query_sql.replace("{term_clause}", &term_clause);
+
+        let mut query_builder = sqlx::query(&query_sql);
+        query_builder = query_builder
+            .bind(tenant_id)
+            .bind(principal.user_id)
+            .bind(&caller_principals)
+            .bind(principal.workspace_id)
+            .bind(limit);
+        for term in &terms {
+            query_builder = query_builder.bind(term);
+        }
+        let rows = query_builder.fetch_all(&self.pool).await?;
 
         let mut results: Vec<(IndexedDocument, f32)> = Vec::new();
         for row in rows {

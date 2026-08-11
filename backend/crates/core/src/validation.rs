@@ -163,9 +163,27 @@ pub fn calculate_sha256(content: &Bytes) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Escape a user-supplied pattern for use inside a Postgres `LIKE`/`ILIKE`
+/// pattern (`%`/`_`/`\` become literals; `\` is the default escape char).
+pub fn escape_ilike(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_ilike_escapes_wildcards() {
+        assert_eq!(escape_ilike("50%_off"), "50\\%\\_off");
+        assert_eq!(escape_ilike("a\\b"), "a\\\\b");
+        assert_eq!(escape_ilike("plain query"), "plain query");
+        assert_eq!(escape_ilike("100%"), "100\\%");
+        assert_eq!(escape_ilike("a_b"), "a\\_b");
+    }
 
     /// Serializes tests that mutate the process-global
     /// `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` and

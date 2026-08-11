@@ -22,7 +22,7 @@ use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
 use super::ai::indexing::{
-    ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
+    is_hidden_file_name, ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
 };
 use super::ai::EmbeddingGenerator;
 
@@ -305,13 +305,7 @@ where
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
             .into_iter()
-            .filter(|(doc, _)| {
-                !doc.file_name.starts_with(".rustshare")
-                    && doc.file_name != "events.jsonl"
-                    && doc.file_name != "index.md"
-                    && doc.file_name != "__primary__.md"
-                    && !doc.file_name.ends_with(".editor.json")
-            })
+            .filter(|(doc, _)| !is_hidden_file_name(&doc.file_name))
             .collect();
 
         // Filter by permission and build results

@@ -2317,6 +2317,13 @@ async fn unauthorized_snippets_never_enter_response() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn one_source_failure_does_not_corrupt_other_results() {
+    // A Chat authority failure (transport `Error`, which the Chat owner maps
+    // to `Deny` — fail closed) must only drop the Chat candidates: the
+    // request succeeds and the Files results are intact. The service's
+    // `authorize_batch` Err→drop-chunk branch is a defensive guard for
+    // oversized batches (unreachable through this surface — the service
+    // chunks at `MAX_BATCH_SIZE`); the per-candidate deny path is what a real
+    // source outage exercises.
     let _guard = SERIAL.lock().await;
     let harness = harness_with_scripted_authority(pool().await, false).await;
     let pool = harness.pool.clone();
@@ -2834,12 +2841,20 @@ async fn citation_open_path_reauthorizes() {
 }
 
 // ---------------------------------------------------------------------------
-// 14. No private cross-Application DB dependency
+// 14. Chat search has no outbox/receipt dependency, never writes, and the
+//     authorization decision comes from the authority
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
-async fn no_private_cross_application_db_dependency() {
+async fn chat_search_has_no_outbox_or_write_dependency() {
+    // What this proves (and only this): a search needs no outbox/delivery/
+    // receipt rows (the chat tables contain only the gate's own rows), the
+    // search never writes to any table (row counts unchanged before/after),
+    // and the Chat decision came from the authority (asked for the exact
+    // message id). The Chat owner legitimately reads `chat_observed_events`
+    // for routing/existence and `memory_catalog` supplies candidates only —
+    // that boundary is enforced by construction, not by this test.
     let _guard = SERIAL.lock().await;
     let harness = harness_with_scripted_authority(pool().await, false).await;
     let pool = harness.pool.clone();

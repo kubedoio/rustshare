@@ -120,7 +120,6 @@ pub async fn unified_search(
         .await
         .map_err(|error| match error {
             UnifiedSearchError::InvalidQuery(message) => AppError::bad_request(message),
-            UnifiedSearchError::Internal(_) => AppError::internal("search failed"),
         })?;
 
     let results: Vec<SearchResultItem> = response
