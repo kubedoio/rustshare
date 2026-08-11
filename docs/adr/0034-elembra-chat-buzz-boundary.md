@@ -256,12 +256,276 @@ Rejected. Memory/search projections may exist, but Buzz remains the chat source 
 
 ## Acceptance criteria
 
-- [ ] Principal↔Buzz pubkey binding contract exists.
-- [ ] Workspace↔Buzz community mapping contract exists.
-- [ ] OIDC design explicitly preserves Buzz signing authentication.
-- [ ] Offboarding revokes Chat admission independently of key validity.
-- [ ] Files attachments use ResourceRefs and read-time reauthorization.
-- [ ] Memory projection preserves Buzz provenance/source ownership.
-- [ ] No shared Buzz/Elembra private database access exists.
+## Identity and admission foundation (2026-08-10)
+
+## ResourceRef attachment slice (2026-08-10)
+
+The first Chat×Files slice uses the existing `ResourceRef`, `PrincipalContext`,
+`SourceAuthorizer`, and Files owner adapter. No second Files ACL or resource
+reference type was added.
+
+The signed Buzz representation is a normal Nostr event (normally kind `1`)
+with exactly one generic tag:
+
+```json
+["elembra-ref", "elembra://io.elembra.files/file/<uuid>?version=sha256%3A<64-hex>"]
+```
+
+The tag is an identifier only. It contains no tenant hint, URL, token, cookie,
+authorization grant, storage key, or private metadata. `rustshare-resource-auth`
+provides the tag builder/parser and rejects malformed, duplicate, or extended
+tags. Buzz requires no upstream modification: its existing generic Nostr tag
+transport preserves the tag and its existing signed-event/relay behavior owns
+the event.
+
+The authenticated Elembra API is:
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /api/v1/applications/chat/attachments/prepare` | Files reauthorizes the selected ref and returns safe metadata plus the exact Buzz tag for client-side signing. |
+| `POST /api/v1/applications/chat/attachments/preview` | Files reauthorizes the current Principal and returns safe preview metadata. |
+| `POST /api/v1/applications/chat/attachments/open` | Files reauthorizes again and returns content through Elembra; it never redirects to a stored URL. |
+
+The existing authenticated Files list/picker APIs remain the selection surface;
+Chat does not create a second browser or ACL model. The selected ref preserves
+the exact file version. A newer version is not substituted. Deleted,
+unavailable, unauthorized, malformed, and cross-tenant refs produce the same
+`resource unavailable` response where existence hiding applies. A Files outage
+degrades these attachment calls without affecting Buzz event publication or
+history.
+
+The security-critical path is current authorization at every preview/open
+request. Chat membership is never consulted as Files authority, and Files
+access never grants Buzz channel access. No attachment event is copied into an
+Elembra message database and no outbox implementation was added.
+
+The implementation tests signed-event tag round-tripping, credential absence,
+malformed/duplicate/extended tag rejection, and standard-tag isolation. The
+existing Files owner and SourceAuthorizer tests cover tenant/workspace scope,
+delegation, permission denial, version selection, and fail-closed routing.
+
+The live vertical-slice proof used a disposable real RustShare server backed by
+Postgres/RustFS and a disposable real Buzz relay. It passed: A selected an
+existing Files resource; the signed Buzz event stored the exact ResourceRef;
+B previewed and opened it; a Chat-only Principal and a different-tenant
+Principal were denied; Files access was revoked;
+the historical Buzz event was retrieved unchanged with a valid signature; B's
+subsequent preview/open requests were denied; and deletion returned the safe
+unavailable result. Temporary users, file rows, relay containers, and relay
+database were removed afterward.
+
+An isolated Buzz relay proof on 2026-08-10 accepted and returned a signed kind
+`1` event carrying the exact `elembra-ref` tag (`event_id`
+`699ff87ec08e9e4d68a961f217e0f3da48e8812ec4314e0ab60a818b8ec945c`); the
+retrieved event signature verified. The temporary client and relay database
+were destroyed afterward. The later vertical-slice proof above supplied the
+authenticated Files fixture and covered the complete attach/revoke behavior.
+
+### Current-state findings
+
+The current Buzz `main` branch checked for this foundation (head `f53bbd1152464ecbb1de495e2d1d959e156138f0`)
+uses Nostr x-only public keys as user/agent identities. Events are signed Nostr
+events; relay authentication is NIP-42 (`crates/buzz-auth/src/nip42.rs`) and
+stateless HTTP authentication is NIP-98 (`crates/buzz-auth/src/nip98.rs`). Buzz
+derives the community from the relay host and scopes membership rows by that
+community. Relay-wide admission/revocation is already a generic public NIP-43
+surface: signed kind 9030 adds a member and kind 9031 removes one, with admin or
+owner authorization (`crates/buzz-relay/src/handlers/relay_admin.rs`). The
+`buzz-admin` CLI is a separate operator path that writes local relay state and
+must not be used by Elembra. Community moderation commands (9040–9044) are a
+different ban/timeout surface.
+
+The RustShare branch already has the trusted `PrincipalContext` contract in
+`backend/crates/resource-auth/src/principal.rs`, but it had no Chat identity
+binding or workspace/community admission contract. The new
+`resource-auth::chat_identity` module is deliberately policy-only: it does not
+read Buzz tables, store private keys, or claim to be the durable adapter.
+
+### Decisions
+
+* A Principal and a Buzz key are different identities. OIDC proves Principal
+  authentication only; a NIP-42 AUTH event proves possession of the candidate
+  Buzz key.
+* Binding challenges are tenant/Principal/key scoped, short-lived, relay scoped,
+  and one-use. The verifier checks kind, Schnorr signature, pubkey, challenge,
+  relay, and timestamp before consuming the challenge.
+* The default device model is one user-controlled Buzz identity shared through
+  the user's encrypted key backup/device enrollment. Device-specific keys are
+  deferred: Buzz's signed history is pubkey-continuous, and silently changing
+  pubkeys would make rotation/recovery and attribution a different product.
+  A second key therefore requires `rotation_of` to name the current binding;
+  the transaction revokes its old admission before activating the replacement.
+  A second active key without explicit rotation is rejected by the tenant/
+  Principal uniqueness constraint.
+* Elembra stores only public binding metadata and admission state. Sovereign
+  mode never stores a plaintext Buzz private key. Managed/KMS identities, if
+  added later, must be an explicit identity mode and must not reuse this path.
+* Admission requires all of: active Principal, Chat application access, active
+  binding, active tenant-scoped workspace/community mapping, and active Buzz
+  admission. Cryptographic validity is not authorization.
+* Agent identities are separate Principals and separate Buzz keys. A delegation
+  may authorize Elembra actions but never supplies or aliases a human key.
+
+### Contracts implemented
+
+`rustshare-resource-auth` now provides `BindingChallenge`,
+`ChatIdentityBinding`, `WorkspaceCommunityMapping`, `BuzzAdmission`, and
+`authorize_admission`. Persistence, HTTP handlers, and the Buzz adapter must
+implement these contracts at a trusted boundary; a serialized contract is not
+client authorization proof.
+
+The Elembra implementation now exposes the following trusted boundary:
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/community` | Admin-only explicit tenant mapping; names and URLs are not inferred. |
+| `POST /api/v1/applications/chat/identity-binding/challenge` | Authenticated active Principal + enabled Chat Application + active mapping → five-minute challenge. |
+| `POST /api/v1/applications/chat/identity-binding/verify` | Authenticated same Principal + NIP-42 proof → atomic one-use challenge consumption and active binding. |
+| `POST /api/v1/applications/chat/admission` | Active binding + mapping + Chat access → Elembra admission row and durable Buzz bridge operation (`202 queued`). |
+
+The migration adds durable bindings, challenges, mappings, and admissions.
+Admission/revocation requests use the existing transactional
+`integration_outbox` rather than a second queue. A database trigger revokes local binding
+and admission state and queues Buzz revocation whenever a user is disabled,
+including SCIM/admin paths. Queue delivery is intentionally not reported as
+Buzz success: until the separately provisioned Buzz bridge identity has
+submitted and received success for NIP-43 9030/9031, `queued` is not
+`admitted`.
+
+The server includes an optional `io.elembra.chat.buzz-bridge.v1` outbox
+consumer. It is enabled only when `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` contains
+the separately provisioned Buzz service/admin key. It consumes canonical
+CloudEvents, authenticates with NIP-42 when the relay challenges the session,
+publishes kind 9030/9031, and reports relay failures as retryable outbox
+failures. It never reads or stores a human binding private key. The consumer
+must be configured before publishing events; the outbox's eager fan-out does
+not create obligations for an unregistered consumer retroactively.
+
+### Live relay proof
+
+On 2026-08-10, an isolated Buzz relay was started with
+`BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`, a throwaway owner/service key, and a clean
+database. A temporary client using the same NIP-42 and NIP-43 wire contract
+completed the lifecycle: kind 9030 admission was accepted, the admitted key
+published a signed kind 1 message, kind 9031 revocation was accepted, the
+previously signed event still verified cryptographically, and a subsequent
+publish by that old key was denied. The temporary client held the human key only
+in memory; it was not passed to RustShare or persisted.
+
+### Sequence diagrams
+
+```mermaid
+sequenceDiagram
+  participant P as Principal
+  participant E as Elembra
+  participant K as Client key custody
+  participant B as Buzz relay
+  P->>E: OIDC login -> PrincipalContext
+  E-->>K: tenant + principal + pubkey challenge
+  K->>B: NIP-42 AUTH(kind 22242, nonce, relay)
+  K-->>E: signed AUTH proof
+  E->>E: verify, consume once, activate binding
+  E->>B: admit pubkey to mapped community
+  K->>B: signed normal message
+  B-->>K: accepted; Buzz owns event history
+```
+
+```mermaid
+sequenceDiagram
+  participant P as Principal
+  participant E as Bridge
+  participant B as Buzz
+  P->>E: enter workspace
+  E->>E: tenant + workspace + binding + access checks
+  E->>B: NIP-98/API request or NIP-42 relay session
+  B-->>E: community-scoped result
+  P->>E: disable Principal
+  E->>B: revoke community admission (retryable outbox)
+  P->>B: old key signs event
+  B-->>P: denied for revoked community; old history remains valid
+```
+
+The same binding/admission contracts cover first identity creation, existing-key
+binding, additional-device enrollment, lost-device revocation, recovery, and
+rotation. Creation and recovery happen in the client; lost/all-device recovery
+cannot restore the exact old pubkey without an explicit encrypted backup or
+escrow, and the system must say so rather than impersonate the user.
+
+The nine required lifecycle cases are specified as follows:
+
+```mermaid
+sequenceDiagram
+  participant U as User/client
+  participant E as Elembra
+  participant B as Buzz
+  U->>E: 1. First login via OIDC
+  E-->>U: PrincipalContext; no Buzz key
+  U->>U: 2. Generate/store Buzz key locally
+  U->>E: 3. Existing-key challenge + NIP-42 proof
+  E->>E: Consume nonce; activate binding
+  U->>E: 4. Enter mapped workspace
+  E->>E: Check Principal, Chat, mapping, binding
+  E->>B: 5. Queue generic community admission
+  B-->>E: Admission result (upstream adapter contract)
+  U->>B: 6. Sign and post normal Buzz event
+  B-->>U: Signed event accepted; Buzz owns history
+  U->>E: 7. Enroll additional device using encrypted key backup
+  U->>E: 8. Report loss/compromise; rotate and revoke old binding
+  E->>B: 9. Revoke old community admission
+```
+
+Lost-device recovery creates a new key unless the user restores an encrypted
+backup. Full recovery without escrow cannot reconstruct the old identity. Key
+rotation preserves old signed history and denies the old key future admission.
+
+### Threat model and failure behavior
+
+| Threat | Required result |
+| --- | --- |
+| IdP or Elembra DB compromise | No plaintext sovereign private key and no ability to sign as a user. |
+| Wrong tenant/principal/key, replay, expiry, bad relay/signature | Binding fails closed; challenge is not reusable. |
+| Malicious tenant administrator | Cannot cross tenant boundaries or bind a key without its proof. Audit and rotation semantics remain explicit. |
+| Device theft/key compromise | Revoke binding/admission; signed history remains valid; rotate to a new key when custody permits. |
+| Disabled Principal | Bridge revokes admission; a mathematically valid old signature cannot regain workspace access. |
+| Buzz/Elembra/bridge outage | No new admission or access is granted on stale success; signed Buzz history remains Buzz-owned; revocation delivery is retryable and audited. |
+| Agent key confusion | Agent has its own Principal/key; human key is never used as an agent signer. |
+
+### Upstream boundary
+
+Use existing Buzz NIP-42/NIP-98 and relay-host community semantics directly.
+Elembra-specific tenant/workspace mapping and binding records remain downstream.
+The minimal bridge can use Buzz's existing NIP-43 kind 9030/9031 commands over
+an authenticated relay session. It requires a separately provisioned Buzz
+bridge/service identity with admin/owner authority; it never uses a human's
+private key. The bridge must select the relay from the Elembra mapping, verify
+the host-derived community, use an idempotency key from the queue, and record
+the relay response. No upstream Buzz code is required for this slice. An
+upstream SDK helper for these commands is optional future ergonomics, not a
+security dependency. NIP-42 remains the user relay-session authentication
+path and normal events remain signed by the user's Buzz key.
+
+The wire mapping is fixed by Buzz: admission emits kind `9030` with a `p` tag
+containing the bound x-only pubkey; revocation emits kind `9031` with the same
+tag. The relay host, not an Elembra-supplied tenant or community string, selects
+the Buzz community.
+
+### Remaining implementation slice
+
+The Elembra-side foundation and optional bridge consumer are implemented:
+durable binding/challenge/mapping/admission tables, trusted routes, NIP-42
+verification, canonical CloudEvents, and NIP-43 relay commands. The live Buzz
+relay proof is complete: bind/admit, sign and publish, disable, revoke, and
+verify that old signed history remains valid while new publication is denied.
+The current unit tests cover cryptographic proof, replay/expiry/key/relay
+failures, tenant mismatch, inactive Principal, revoked binding, and service-key
+command signing.
+
+- [x] Principal↔Buzz pubkey binding contract exists.
+- [x] Workspace↔Buzz community mapping contract exists.
+- [x] OIDC design explicitly preserves Buzz signing authentication.
+- [x] Offboarding revokes Chat admission independently of key validity.
+- [x] Files attachments use ResourceRefs and read-time reauthorization.
+- [x] Memory projection preserves Buzz provenance/source ownership (implemented via chat_observed_events + memory_catalog + io.elembra.chat.buzz.event.observed.v1, commit range `63e952f3..9d5e3060`).
+- [x] No shared Buzz/Elembra private database access exists.
 - [ ] Agent Chat identity and delegated Elembra authority remain separate.
 - [ ] Buzz upstream/delta compatibility tests are defined before large fork changes.

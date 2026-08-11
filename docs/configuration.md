@@ -214,6 +214,12 @@ RUST_LOG=error                   # Quiet: errors only
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RUSTSHARE_AI_ENABLED` | Enable AI endpoints (search, summarize, ask). | — |
+| `ELEMBRA_LLM_API_KEY` | Optional secret for the OpenAI-compatible Ask Workspace provider. | — |
+| `ELEMBRA_LLM_BASE_URL` | OpenAI-compatible API base URL. | `https://api.openai.com/v1` |
+| `ELEMBRA_LLM_MODEL` | Provider model identifier. | `gpt-4o-mini` |
+| `ELEMBRA_LLM_TIMEOUT_SECS` | Per-request provider timeout, clamped to 1–120 seconds. | `30` |
+| `ELEMBRA_LLM_MAX_OUTPUT_TOKENS` | Maximum provider output tokens, clamped to 1–8000. | `1500` |
+| `ELEMBRA_LLM_TEMPERATURE` | Optional provider temperature, accepted range 0–2. | — |
 | `RUSTSHARE_UPLOAD_STORE_PATH` | Path for temporary upload document storage. | — |
 
 ---

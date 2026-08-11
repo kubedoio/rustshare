@@ -1,4 +1,6 @@
 use crate::authz;
+use crate::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
+use crate::buzz_observation::BuzzObservationService;
 use crate::config::{AppConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
@@ -23,7 +25,7 @@ use rustshare_core::{
         UserShareServiceDeps, VaultSyncService,
     },
 };
-use rustshare_crypto::SecretEncryptionKey;
+use rustshare_crypto::{SecretEncryptionKey, WebhookSigner};
 use rustshare_infrastructure::{
     repositories::{
         FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
@@ -31,8 +33,10 @@ use rustshare_infrastructure::{
     },
     PgVectorStore,
 };
+use rustshare_resource_auth::{BuzzAuthority, LocalFallbackAuthority};
 use rustshare_storage::{
-    repos::ShareNotificationRepoImpl, EventStore, MetadataStore, ObjectStore, OutboxStore,
+    repos::ShareNotificationRepoImpl, ChatIdentityStore, ChatObservationStore, EventStore,
+    MemoryCatalogStore, MetadataStore, ObjectStore, OutboxStore,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -173,6 +177,17 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+/// Replay-window (seconds) for incoming Buzz/Chat webhook signatures. Mirrors
+/// `ChatIntegrationService`'s parsing of `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS`:
+/// a positive integer, defaulting to 300; any other value is ignored.
+fn chat_webhook_max_age_seconds() -> u64 {
+    std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&value| value >= 1)
+        .unwrap_or(300)
 }
 
 async fn init_stores(
@@ -626,6 +641,27 @@ pub async fn init_app() -> Result<AppState> {
 
     let mail_service = Arc::clone(&services.mail_service);
 
+    // Buzz → Elembra Memory projection (ADR-0033/ADR-0034), observation half:
+    // the authenticated ingestion path for signed Buzz chat events. The
+    // stores are shared with the later Memory consumer via AppState.
+    let chat_identity_store = Arc::new(ChatIdentityStore::new(db_pool.clone()));
+    let chat_observation_store = Arc::new(ChatObservationStore::new(db_pool.clone()));
+    // The catalog is wired with the observation index so the projection
+    // consumer can enforce the tombstone-before-create delivery guard in
+    // `upsert_from_event_in_tx` (a store without it fails closed).
+    let memory_catalog_store = Arc::new(MemoryCatalogStore::with_observation_store(
+        db_pool.clone(),
+        (*chat_observation_store).clone(),
+    ));
+    let buzz_observation_service = Arc::new(BuzzObservationService::new(
+        db_pool.clone(),
+        (*chat_identity_store).clone(),
+        (*chat_observation_store).clone(),
+        Arc::clone(&services.outbox_store),
+        WebhookSigner::new(config.rustshare_chat_webhook_secret.clone()),
+        chat_webhook_max_age_seconds(),
+    ));
+
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
     info!("Rate limiting initialized");
 
@@ -678,15 +714,35 @@ pub async fn init_app() -> Result<AppState> {
     // the drain loop is gated on RUSTSHARE_OUTBOX_WORKER_ENABLED — a
     // disabled worker just accumulates events until re-enabled.
     //
-    // Production ships a zero-consumer dispatcher: real consumers register
-    // themselves (durable consumer registration, `integration_consumers` /
-    // `integration_consumer_subscriptions`) when their features land
-    // (#213/#119/#214). The reference "memory projection" consumer used by
-    // the integration tests lives in `backend/tests/contracts` only.
+    // Consumers register themselves (durable consumer registration,
+    // `integration_consumers` / `integration_consumer_subscriptions`) at the
+    // start of every dispatcher tick; registration is future-only, so a
+    // consumer must be present in the Vec before any event it should consume
+    // is published. The Memory chat projection consumer is always registered
+    // (it consumes the Chat observation events this process publishes); the
+    // Buzz admission bridge is optional (disabled unless a service key is
+    // configured).
+    let memory_projection_consumer =
+        Arc::new(crate::memory_projection::MemoryChatProjectionConsumer::new(
+            db_pool.clone(),
+            (*chat_identity_store).clone(),
+            (*chat_observation_store).clone(),
+            (*memory_catalog_store).clone(),
+        ));
+    let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
+        crate::buzz_bridge::BuzzAdmissionBridge::from_env()
+            .map(|consumer| {
+                Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
+            })
+            .into_iter()
+            .chain(std::iter::once(
+                memory_projection_consumer as Arc<dyn rustshare_integration_events::OutboxConsumer>,
+            ))
+            .collect();
     let outbox_worker_config = OutboxWorkerConfig::from_env();
     let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
         Arc::clone(&services.outbox_store),
-        vec![],
+        outbox_consumers,
         outbox_worker_config.clone(),
         format!("outbox-{}", uuid::Uuid::new_v4()),
     ));
@@ -790,6 +846,43 @@ pub async fn init_app() -> Result<AppState> {
         }
     });
 
+    // Buzz source-authority gateway (config-driven, fail closed): when
+    // `rustshare_chat_authority` is `buzz`, the Chat owner's FINAL
+    // channel/message decisions go to the community's authoritative relay
+    // through this client. Config validation guarantees the bridge secret
+    // key exists and parses in buzz mode; any failure here is a startup
+    // error — never a silent fallback to local.
+    let (buzz_gateway, chat_buzz_authority): (
+        Option<Arc<BuzzGatewayClient>>,
+        Box<dyn BuzzAuthority>,
+    ) = if config.rustshare_chat_authority == "buzz" {
+        let key = config
+            .rustshare_chat_bridge_secret_key
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "RUSTSHARE_CHAT_AUTHORITY is 'buzz' but RUSTSHARE_CHAT_BRIDGE_SECRET_KEY is not set"
+                )
+            })?;
+        let keys = nostr::Keys::parse(key).map_err(|error| {
+            anyhow::anyhow!("invalid RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: {error}")
+        })?;
+        // One client instance is shared: the `BuzzGatewayAuthority` wrapper
+        // presents the same stateless client (service key + HTTP client)
+        // stored in AppState to the source authorizer.
+        let gateway = Arc::new(
+            BuzzGatewayClient::new(keys, reqwest::ClientBuilder::new())
+                .map_err(|error| anyhow::anyhow!("cannot build Buzz gateway client: {error}"))?,
+        );
+        let authority: Box<dyn BuzzAuthority> =
+            Box::new(BuzzGatewayAuthority(Arc::clone(&gateway)));
+        info!("Chat authority mode: buzz (relay-backed gateway)");
+        (Some(gateway), authority)
+    } else {
+        info!("Chat authority mode: local (coarse workspace-only gate)");
+        (None, Box::new(LocalFallbackAuthority))
+    };
+
     let source_authorizer = Arc::new(
         authz::build_source_authorizer(
             Arc::clone(&services.application_registry),
@@ -797,9 +890,29 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&permission_resolver_repository),
             Arc::clone(&metadata_store),
             Arc::clone(&object_store),
+            (*chat_identity_store).clone(),
+            (*chat_observation_store).clone(),
+            chat_buzz_authority,
         )
         .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
     );
+
+    // Permission-aware unified search: candidates come from Files metadata,
+    // the note index and the Memory catalog; final inclusion is gated by the
+    // source authorizer (Files → PermissionResolver; Chat → BuzzAuthority).
+    let unified_search_service =
+        Arc::new(crate::services::unified_search::UnifiedSearchService::new(
+            Arc::clone(&source_authorizer),
+            Arc::clone(&metadata_store),
+            services.ai_service.clone(),
+            Arc::clone(&memory_catalog_store),
+        ));
+    let llm_provider = crate::services::ask_workspace::OpenAiCompatibleProvider::from_env()
+        .map_err(|error| anyhow::anyhow!("LLM provider configuration failed: {error}"))?;
+    let ask_workspace_service = Arc::new(crate::services::ask_workspace::AskWorkspaceService::new(
+        Arc::clone(&unified_search_service),
+        llm_provider,
+    ));
 
     let state = AppState {
         db_pool,
@@ -837,6 +950,13 @@ pub async fn init_app() -> Result<AppState> {
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
         mail_service: services.mail_service,
+        outbox_store: services.outbox_store,
+        chat_observation_store,
+        memory_catalog_store,
+        unified_search_service,
+        ask_workspace_service,
+        buzz_observation_service,
+        buzz_gateway,
         outbox_status,
         outbox_worker_enabled: outbox_worker_config.enabled,
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,

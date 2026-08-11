@@ -22,7 +22,7 @@ use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
 use super::ai::indexing::{
-    ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
+    is_hidden_file_name, ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
 };
 use super::ai::EmbeddingGenerator;
 
@@ -103,17 +103,6 @@ pub struct FileSummary {
     pub key_topics: Vec<String>,
     /// Source citation
     pub citation: SourceCitation,
-}
-
-/// An answer to a user's question with citations.
-#[derive(Debug, Clone)]
-pub struct QuestionAnswer {
-    /// The answer text
-    pub answer: String,
-    /// Source citations
-    pub citations: Vec<SourceCitation>,
-    /// Confidence score (0.0 to 1.0)
-    pub confidence: f32,
 }
 
 /// AI Service for RustShare.
@@ -213,16 +202,99 @@ where
             .search_with_acl(&principal, query, limit * 3)
             .await;
 
+        // Filter by permission and build results
+        let results = self
+            .build_search_results(user_id, tenant_id, limit, raw_results)
+            .await;
+
+        Ok(results)
+    }
+
+    /// Perform permission-filtered keyword search.
+    ///
+    /// Same contract as [`Self::semantic_search`], but matches the query terms
+    /// against the indexed file name/path/content instead of vector similarity.
+    ///
+    /// # Contract A-01: Permission Filtering
+    /// Only returns files the user has View permission or higher on.
+    pub async fn keyword_search(
+        &self,
+        query: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<SemanticSearchResult>, AiError> {
+        // Validate query
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(AiError::InvalidQuery("Query cannot be empty".to_string()));
+        }
+        if query.len() > 1000 {
+            return Err(AiError::InvalidQuery(
+                "Query too long (max 1000 chars)".to_string(),
+            ));
+        }
+
+        // Resolve the caller's group IDs for ACL pre-filtering.
+        let group_ids = match self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        // Build a retrieval principal for permission-aware search.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+        };
+
+        // Perform keyword search. Candidates are fetched 3x over so the
+        // permission post-filter can drop results without starving the limit.
+        let raw_results = self
+            .indexer
+            .keyword_search_with_acl(&principal, query, limit * 3)
+            .await;
+
+        // Filter by permission and build results
+        let results = self
+            .build_search_results(user_id, tenant_id, limit, raw_results)
+            .await;
+
+        Ok(results)
+    }
+
+    /// Shared tail of [`Self::semantic_search`] and [`Self::keyword_search`]:
+    /// drops hidden metadata files, filters by effective permission
+    /// (Contract A-01; unresolvable permission skips the result), and builds
+    /// [`SemanticSearchResult`]s, stopping once `limit` results are produced.
+    async fn build_search_results(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+        raw_results: Vec<(IndexedDocument, f32)>,
+    ) -> Vec<SemanticSearchResult> {
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
             .into_iter()
-            .filter(|(doc, _)| {
-                !doc.file_name.starts_with(".rustshare")
-                    && doc.file_name != "events.jsonl"
-                    && doc.file_name != "index.md"
-                    && doc.file_name != "__primary__.md"
-                    && !doc.file_name.ends_with(".editor.json")
-            })
+            .filter(|(doc, _)| !is_hidden_file_name(&doc.file_name))
             .collect();
 
         // Filter by permission and build results
@@ -270,7 +342,7 @@ where
             }
         }
 
-        Ok(results)
+        results
     }
 
     /// Generate a summary of a file if the user has access.
@@ -379,78 +451,6 @@ where
     /// * `tenant_id` - The tenant ID
     ///
     /// # Returns
-    /// An answer with citations to source documents.
-    ///
-    /// # Contract A-01, A-02, A-03: Permission + Citation + No Hallucinations
-    /// - Only uses documents the user can access
-    /// - Always cites sources
-    /// - Only answers based on retrieved content
-    pub async fn ask_question(
-        &self,
-        query: &str,
-        user_id: UserId,
-        tenant_id: Uuid,
-    ) -> Result<QuestionAnswer, AiError> {
-        // Validate query
-        let query = query.trim();
-        if query.is_empty() {
-            return Err(AiError::InvalidQuery(
-                "Question cannot be empty".to_string(),
-            ));
-        }
-        if query.len() > 2000 {
-            return Err(AiError::InvalidQuery(
-                "Question too long (max 2000 chars)".to_string(),
-            ));
-        }
-
-        // Retrieve relevant documents
-        let search_results = self.semantic_search(query, user_id, tenant_id, 5).await?;
-
-        if search_results.is_empty() {
-            return Ok(QuestionAnswer {
-                answer: "I couldn't find any relevant documents to answer your question."
-                    .to_string(),
-                citations: Vec::new(),
-                confidence: 0.0,
-            });
-        }
-
-        // Build citations from search results
-        let citations: Vec<SourceCitation> = search_results
-            .iter()
-            .map(|result| SourceCitation {
-                file_id: result.file_id.to_string(),
-                file_name: result.file_name.clone(),
-                file_path: result.file_path.clone(),
-                relevance_score: result.relevance_score,
-                excerpt: result.snippet.clone(),
-            })
-            .collect();
-
-        // Generate answer based on retrieved content
-        // Contract A-03: Only use retrieved content, no hallucinations
-        let answer = generate_rag_answer(query, &search_results);
-
-        // Calculate confidence based on relevance scores
-        let confidence = if !search_results.is_empty() {
-            let avg_score: f32 = search_results
-                .iter()
-                .map(|r| r.relevance_score)
-                .sum::<f32>()
-                / search_results.len() as f32;
-            avg_score.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        Ok(QuestionAnswer {
-            answer,
-            citations,
-            confidence,
-        })
-    }
-
     /// Index a file for AI search with an ACL projection.
     ///
     /// # Arguments
@@ -590,43 +590,6 @@ fn is_common_word(word: &str) -> bool {
     ];
 
     STOP_WORDS.contains(&word)
-}
-
-/// Generate a RAG-based answer from search results.
-/// Phase 1.5: Simple answer generation based on retrieved content.
-/// Contract A-03: Only use retrieved content, no hallucinations.
-fn generate_rag_answer(query: &str, results: &[SemanticSearchResult]) -> String {
-    if results.is_empty() {
-        return "I couldn't find any relevant information to answer your question.".to_string();
-    }
-
-    // Build answer from top results
-    let mut answer_parts = Vec::new();
-
-    // Add intro
-    answer_parts.push(format!(
-        "Based on the documents I found, here's what I can tell you about \"{}\":",
-        query
-    ));
-
-    // Add information from each result
-    for (i, result) in results.iter().take(3).enumerate() {
-        answer_parts.push(format!(
-            "\n{}. From \"{}\" (relevance: {:.0}%):\n   {}",
-            i + 1,
-            result.file_name,
-            result.relevance_score * 100.0,
-            result.snippet
-        ));
-    }
-
-    // Add closing
-    answer_parts.push(format!(
-        "\nI found {} relevant document(s). See the citations for more details.",
-        results.len()
-    ));
-
-    answer_parts.join("\n")
 }
 
 #[cfg(test)]
@@ -796,35 +759,6 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(AiError::InvalidQuery(_))));
-    }
-
-    #[tokio::test]
-    async fn test_ask_question_valid() {
-        let service = create_test_service();
-        let user_id = Uuid::new_v4();
-        let tenant_id = Uuid::new_v4();
-        let file_id = Uuid::new_v4();
-
-        // Index a document first
-        service
-            .index_file(
-                file_id,
-                "test.txt".to_string(),
-                "/test.txt".to_string(),
-                "Rust is a programming language with memory safety guarantees".to_string(),
-                "text/plain".to_string(),
-                make_file_acl(tenant_id, file_id, user_id),
-            )
-            .await
-            .unwrap();
-
-        let answer = service
-            .ask_question("What is Rust?", user_id, tenant_id)
-            .await;
-
-        assert!(answer.is_ok());
-        let answer = answer.unwrap();
-        assert!(!answer.answer.is_empty());
     }
 
     #[tokio::test]
@@ -1262,6 +1196,58 @@ mod tests {
         assert!(
             results[0].can_edit,
             "AI should reflect effective Edit permission"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_keyword_search_finds_owner_and_excludes_stranger() {
+        let indexer = test_indexer();
+        let ops = Arc::new(ConfigurableMockOps::new());
+
+        let owner_id = Uuid::new_v4();
+        let stranger_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+
+        ops.add_file(make_file(
+            file_id,
+            "keyword_target.txt",
+            owner_id,
+            tenant_id,
+        ));
+
+        let permission_resolver = Arc::new(PermissionResolver::new(ops));
+        let service = AiService::new(indexer, permission_resolver);
+
+        service
+            .index_file(
+                file_id,
+                "keyword_target.txt".to_string(),
+                "/keyword_target.txt".to_string(),
+                "documentation about keyword matching".to_string(),
+                "text/plain".to_string(),
+                make_file_acl(tenant_id, file_id, owner_id),
+            )
+            .await
+            .unwrap();
+
+        // The owner finds the document by keyword.
+        let results = service
+            .keyword_search("keyword", owner_id, tenant_id, 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_name, "keyword_target.txt");
+        assert!(results[0].relevance_score > 0.0);
+
+        // A stranger with no share cannot see it.
+        let results = service
+            .keyword_search("keyword", stranger_id, tenant_id, 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "keyword search must exclude a stranger's denied document"
         );
     }
 

@@ -239,6 +239,33 @@ async fn setup_test_env() -> AppState {
         Arc::new(secret_key.clone()),
     ));
 
+    let outbox_store = Arc::new(rustshare_storage::OutboxStore::new(
+        pool.clone(),
+        Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
+    ));
+    let chat_observation_store =
+        Arc::new(rustshare_storage::ChatObservationStore::new(pool.clone()));
+    let memory_catalog_store = Arc::new(rustshare_storage::MemoryCatalogStore::new(pool.clone()));
+    let buzz_observation_service = Arc::new(
+        rustshare_server::buzz_observation::BuzzObservationService::new(
+            pool.clone(),
+            rustshare_storage::ChatIdentityStore::new(pool.clone()),
+            (*chat_observation_store).clone(),
+            outbox_store.clone(),
+            rustshare_crypto::WebhookSigner::new("test-secret"),
+            300,
+        ),
+    );
+
+    let unified_search_service = Arc::new(
+        rustshare_server::services::unified_search::UnifiedSearchService::new(
+            Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
+            metadata_store.clone(),
+            None,
+            memory_catalog_store.clone(),
+        ),
+    );
+
     AppState {
         db_pool: pool,
         metadata_store,
@@ -272,6 +299,18 @@ async fn setup_test_env() -> AppState {
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        outbox_store,
+        chat_observation_store,
+        memory_catalog_store,
+        unified_search_service: unified_search_service.clone(),
+        ask_workspace_service: Arc::new(
+            rustshare_server::services::ask_workspace::AskWorkspaceService::new(
+                unified_search_service.clone(),
+                None,
+            ),
+        ),
+        buzz_observation_service,
+        buzz_gateway: None,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

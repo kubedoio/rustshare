@@ -205,6 +205,17 @@ fn truncate_to_length(text: &str, max_len: usize) -> String {
     text.chars().take(max_len).collect()
 }
 
+/// Whether `name` is a hidden metadata file that must never surface in
+/// search results (`.rustshare*` vault state, sync journals, and editor
+/// sidecars). Shared by every search surface so the list cannot drift.
+pub fn is_hidden_file_name(name: &str) -> bool {
+    name.starts_with(".rustshare")
+        || name == "events.jsonl"
+        || name == "index.md"
+        || name == "__primary__.md"
+        || name.ends_with(".editor.json")
+}
+
 /// ACL payload stored on indexed note chunks.
 ///
 /// This is a filterable projection of the note's OKF access-control state.
@@ -413,6 +424,35 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
                     tenant_id = %principal.tenant_id,
                     error = %e,
                     "AI index search failed; returning empty results"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// Search for chunks whose text contains the query terms, pre-filtered by
+    /// tenant and ACL.
+    ///
+    /// Candidate producer for keyword search; final source authorization
+    /// happens elsewhere. On store error, logs and returns an empty result set
+    /// (mirrors [`Self::search_with_acl`]).
+    pub async fn keyword_search_with_acl(
+        &self,
+        principal: &RetrievalPrincipal,
+        query: &str,
+        limit: usize,
+    ) -> Vec<(IndexedDocument, f32)> {
+        match self
+            .store
+            .keyword_search_with_acl(principal, query, limit)
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::error!(
+                    tenant_id = %principal.tenant_id,
+                    error = %e,
+                    "AI index keyword search failed; returning empty results"
                 );
                 Vec::new()
             }

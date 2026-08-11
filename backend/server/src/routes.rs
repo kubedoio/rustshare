@@ -682,8 +682,44 @@ pub fn brainstorming_routes() -> Router<AppState> {
 }
 
 pub fn chat_integration_routes() -> Router<AppState> {
-    use axum::routing::{get, post};
+    use axum::routing::{get, patch, post};
     Router::new()
+        .route(
+            "/api/v1/applications/chat/identity-binding/challenge",
+            post(crate::handlers::chat_identity::create_challenge),
+        )
+        .route(
+            "/api/v1/applications/chat/identity-binding/verify",
+            post(crate::handlers::chat_identity::verify_binding),
+        )
+        .route(
+            "/api/v1/applications/chat/admission",
+            post(crate::handlers::chat_identity::admit_identity),
+        )
+        .route(
+            "/api/v1/applications/chat/attachments/prepare",
+            post(crate::handlers::chat_resource::prepare_attachment),
+        )
+        .route(
+            "/api/v1/applications/chat/attachments/preview",
+            post(crate::handlers::chat_resource::preview_attachment),
+        )
+        .route(
+            "/api/v1/applications/chat/attachments/open",
+            post(crate::handlers::chat_resource::open_attachment),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+            post(crate::handlers::chat_identity::configure_mapping),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+            patch(crate::handlers::chat_identity::update_community_mapping),
+        )
+        .route(
+            "/api/v1/admin/applications/memory/chat/reconcile",
+            post(crate::handlers::memory_reconcile::reconcile_chat_memory),
+        )
         .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
@@ -708,6 +744,16 @@ pub fn chat_integration_routes() -> Router<AppState> {
             "/api/v1/admin/integrations/chat/webhooks",
             post(crate::handlers::chat_integration::register_chat_webhook),
         )
+}
+
+/// Buzz event ingestion (observation half of the Buzz → Elembra Memory
+/// projection, ADR-0033/ADR-0034).
+pub fn buzz_observation_routes() -> Router<AppState> {
+    use axum::routing::post;
+    Router::new().route(
+        "/api/v1/integrations/buzz/events",
+        post(crate::handlers::buzz_events::receive_buzz_event),
+    )
 }
 
 pub fn admin_routes() -> Router<AppState> {
@@ -1230,13 +1276,21 @@ pub fn invite_routes() -> Router<AppState> {
 
 pub fn ai_routes() -> Router<AppState> {
     use axum::routing::post;
+    Router::new().route(
+        "/api/v1/ai/summarize",
+        post(crate::handlers::summarize_file),
+    )
+}
+
+pub fn search_routes() -> Router<AppState> {
+    use axum::routing::post;
     Router::new()
-        .route("/api/v1/ai/search", post(crate::handlers::semantic_search))
+        .route("/api/v1/search", post(crate::handlers::unified_search))
+        .route("/api/v1/memory/ask", post(crate::handlers::ask_workspace))
         .route(
-            "/api/v1/ai/summarize",
-            post(crate::handlers::summarize_file),
+            "/api/v1/memory/citations/open",
+            post(crate::handlers::open_citation),
         )
-        .route("/api/v1/ai/ask", post(crate::handlers::ask_question))
 }
 
 pub fn trash_routes() -> Router<AppState> {

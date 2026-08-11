@@ -286,9 +286,9 @@ fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
 
 fn matches_ai_query(method: &Method, path: &str) -> bool {
     method == Method::POST
-        && (path == "/api/v1/ai/search"
+        && (path == "/api/v1/search"
             || path == "/api/v1/ai/summarize"
-            || path == "/api/v1/ai/ask")
+            || path == "/api/v1/memory/ask")
 }
 
 fn matches_auth_login(method: &Method, path: &str) -> bool {
@@ -483,6 +483,10 @@ mod tests {
         assert_eq!(
             classify_request(&Method::POST, "/api/v1/auth/login"),
             Some(RateLimitScope::AuthLogin)
+        );
+        assert_eq!(
+            classify_request(&Method::POST, "/api/v1/search"),
+            Some(RateLimitScope::AiQuery)
         );
         assert_eq!(
             classify_request(&Method::GET, "/api/v1/auth/oidc/login"),

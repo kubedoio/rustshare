@@ -16,7 +16,7 @@ pub mod vector_store;
 
 pub use embedding::{EmbeddingGenerator, SimpleEmbeddingGenerator};
 pub use indexing::{
-    validate_and_project, ContentIndexer, EmbeddingPolicy, IndexAclProjection, IndexPrincipal,
-    IndexVisibility, IndexedDocument, NoteAclPayload, RetrievalPrincipal,
+    is_hidden_file_name, validate_and_project, ContentIndexer, EmbeddingPolicy, IndexAclProjection,
+    IndexPrincipal, IndexVisibility, IndexedDocument, NoteAclPayload, RetrievalPrincipal,
 };
 pub use vector_store::{can_access, InMemoryVectorStore, VectorStore};

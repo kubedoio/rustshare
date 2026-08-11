@@ -1367,140 +1367,6 @@
         }
       }
     },
-    "/api/v1/ai/ask": {
-      "post": {
-        "tags": [
-          "AI"
-        ],
-        "summary": "POST /api/v1/ai/ask",
-        "description": "Answer a question using RAG with citations.\n\nContract A-01: Only uses accessible documents.\nContract A-02: Citations included.\nContract A-03: No hallucinations.\nContract A-04: Rate limited.",
-        "operationId": "ask_question",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AskQuestionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Answer with citations",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AskQuestionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "AI service not configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/ai/search": {
-      "post": {
-        "tags": [
-          "AI"
-        ],
-        "summary": "POST /api/v1/ai/search",
-        "description": "Perform permission-filtered semantic search.\n\nContract A-01: Results are filtered by user permissions.\nContract A-04: Rate limited.",
-        "operationId": "semantic_search",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SemanticSearchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Search results",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SemanticSearchResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/ai/summarize": {
       "post": {
         "tags": [
@@ -10019,6 +9885,117 @@
         }
       }
     },
+    "/api/v1/memory/ask": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "operationId": "ask_workspace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Grounded workspace answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskWorkspaceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LLM provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory/citations/open": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Reauthorize a citation before opening its owning source representation.",
+        "operationId": "open_citation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenCitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized source metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenCitationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid citation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unavailable citation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notes": {
       "get": {
         "tags": [
@@ -11109,6 +11086,68 @@
           },
           "404": {
             "description": "Share not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "POST /api/v1/search",
+        "description": "Ranked, permission-aware search across Files/Notes and Buzz Chat. Results\nare reauthorized by their current owning sources; snippets come only from\nauthorized content.",
+        "operationId": "unified_search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
             "content": {
               "application/json": {
                 "schema": {
@@ -14155,26 +14194,70 @@
           }
         }
       },
-      "AskQuestionRequest": {
+      "AskWorkspaceCitation": {
         "type": "object",
-        "description": "Question answering request.",
         "required": [
-          "question"
+          "resource_ref",
+          "title",
+          "provenance"
         ],
         "properties": {
-          "question": {
-            "type": "string",
-            "description": "The question to answer"
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/SearchProvenance"
+          },
+          "resource_ref": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
-      "AskQuestionResponse": {
+      "AskWorkspaceRequest": {
         "type": "object",
-        "description": "Question answering response.",
+        "required": [
+          "question",
+          "workspace_id"
+        ],
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "result_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Must equal the authenticated tenant/workspace in the current 1:1 model."
+          }
+        }
+      },
+      "AskWorkspaceResponse": {
+        "type": "object",
         "required": [
           "answer",
           "citations",
-          "confidence"
+          "source_count",
+          "grounded",
+          "insufficient_evidence",
+          "run_id"
         ],
         "properties": {
           "answer": {
@@ -14183,12 +14266,22 @@
           "citations": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/SourceCitation"
+              "$ref": "#/components/schemas/AskWorkspaceCitation"
             }
           },
-          "confidence": {
-            "type": "number",
-            "format": "float"
+          "grounded": {
+            "type": "boolean"
+          },
+          "insufficient_evidence": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -21045,6 +21138,56 @@
           }
         }
       },
+      "OpenCitationRequest": {
+        "type": "object",
+        "required": [
+          "resource_ref"
+        ],
+        "properties": {
+          "resource_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "OpenCitationResponse": {
+        "type": "object",
+        "required": [
+          "resource_ref",
+          "display_name",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_ref": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "OwnedShareResponse": {
         "type": "object",
         "required": [
@@ -21945,6 +22088,170 @@
           }
         }
       },
+      "SearchProvenance": {
+        "type": "object",
+        "description": "Per-source provenance context for citation (never authorization).",
+        "properties": {
+          "author_pubkey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "community_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SearchRequest": {
+        "type": "object",
+        "description": "Unified search request.",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default: 10, max: 50)",
+            "minimum": 0
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query"
+          },
+          "sources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Restrict the search to specific sources: `\"files\"` and/or `\"chat\"`.\nOmitted or empty searches both."
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "description": "Unified search response.",
+        "required": [
+          "results",
+          "total"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchResultItem"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SearchResultItem": {
+        "type": "object",
+        "description": "One ranked, permission-aware search result.",
+        "required": [
+          "source_application",
+          "source_type",
+          "resource_ref",
+          "title",
+          "score",
+          "provenance"
+        ],
+        "properties": {
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "occurred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/SearchProvenance"
+          },
+          "resource_ref": {
+            "type": "string",
+            "description": "Canonical `elembra://` resource reference (the cross-Application\nidentity contract; feed it back into source authorization to open)."
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "snippet": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_application": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "SecurityConfigResponse": {
         "type": "object",
         "required": [
@@ -21968,85 +22275,6 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
-          }
-        }
-      },
-      "SemanticSearchRequest": {
-        "type": "object",
-        "description": "Semantic search request.",
-        "required": [
-          "query"
-        ],
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "description": "Maximum number of results (default: 10, max: 50)",
-            "minimum": 0
-          },
-          "query": {
-            "type": "string",
-            "description": "The search query"
-          }
-        }
-      },
-      "SemanticSearchResponse": {
-        "type": "object",
-        "description": "Semantic search response.",
-        "required": [
-          "results",
-          "total_found"
-        ],
-        "properties": {
-          "results": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SemanticSearchResultItem"
-            }
-          },
-          "total_found": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "SemanticSearchResultItem": {
-        "type": "object",
-        "description": "Semantic search result item.",
-        "required": [
-          "file_id",
-          "file_name",
-          "file_path",
-          "relevance_score",
-          "snippet",
-          "mime_type",
-          "owner_id",
-          "can_edit"
-        ],
-        "properties": {
-          "can_edit": {
-            "type": "boolean"
-          },
-          "file_id": {
-            "type": "string"
-          },
-          "file_name": {
-            "type": "string"
-          },
-          "file_path": {
-            "type": "string"
-          },
-          "mime_type": {
-            "type": "string"
-          },
-          "owner_id": {
-            "type": "string"
-          },
-          "relevance_score": {
-            "type": "number",
-            "format": "float"
-          },
-          "snippet": {
-            "type": "string"
           }
         }
       },
@@ -22936,7 +23164,7 @@
       },
       "SourceCitation": {
         "type": "object",
-        "description": "Source citation.",
+        "description": "Source citation for the legacy Files summarization endpoint.",
         "required": [
           "file_id",
           "file_name",
@@ -25607,6 +25835,10 @@
     {
       "name": "Public Shares",
       "description": "Public share access"
+    },
+    {
+      "name": "Search",
+      "description": "Permission-aware unified search across applications"
     },
     {
       "name": "Vault Sync",

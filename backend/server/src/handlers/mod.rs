@@ -3,9 +3,13 @@
 pub mod admin;
 pub mod ai;
 pub mod applications;
+pub mod ask_workspace;
 pub mod auth;
 pub mod brainstorming;
+pub mod buzz_events;
+pub mod chat_identity;
 pub mod chat_integration;
+pub mod chat_resource;
 pub mod collab;
 pub mod decisions;
 pub mod device_auth;
@@ -20,12 +24,14 @@ pub mod invites;
 pub mod kanban;
 pub mod mail;
 pub mod meetings;
+pub mod memory_reconcile;
 pub mod notes;
 pub mod notifications;
 pub mod profile;
 pub mod public_shares;
 pub mod scim;
 pub mod scim_v2;
+pub mod search;
 pub mod shares;
 pub mod standups;
 pub mod sync;
@@ -43,6 +49,7 @@ pub use brainstorming::{
     get_brainstorm_board_source, list_brainstorm_boards, save_brainstorm_board_source,
     update_brainstorm_board_preview,
 };
+pub use chat_resource::{open_attachment, prepare_attachment, preview_attachment};
 pub use collab::collab_handler;
 pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
 pub use files::{
@@ -82,10 +89,11 @@ pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 pub use trash::{empty_trash, get_trash_summary};
 pub use validated_json::ValidatedJson;
 
-pub use ai::{ask_question, semantic_search, summarize_file};
+pub use ai::summarize_file;
 pub use applications::{
     create_from_template, get_application, get_application_summary, list_enabled_applications,
 };
+pub use ask_workspace::{ask_workspace, open_citation};
 pub use auth::{ensure_optional_seed_user, login, logout};
 pub use decisions::{
     create_decision, delete_decision, duplicate_decision, get_decision, list_decisions,
@@ -105,6 +113,7 @@ pub use notes::{
     create_note, delete_note, duplicate_note, get_note, get_public_note, list_notes,
     list_recent_notes, move_note, rename_note, resolve_conflict, save_note, toggle_visibility,
 };
+pub use search::unified_search;
 pub use standups::{
     create_standup, delete_standup, duplicate_standup, get_standup, list_standups, move_standup,
     update_standup,

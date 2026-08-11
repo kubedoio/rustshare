@@ -7,6 +7,7 @@ members = [
     "backend/crates/infrastructure",
     "backend/crates/resource-auth",
     "backend/crates/integration-events",
+    "backend/crates/memory",
     "backend/server",
     "apps/desktop",
     "crates/*",
@@ -28,6 +29,7 @@ keywords = ["file-sharing", "sync", "self-hosted", "rust", "storage"]
 categories = ["filesystem", "web-programming"]
 
 [workspace.dependencies]
+nostr = { version = "0.44", features = ["nip98"] }
 # Async runtime
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }

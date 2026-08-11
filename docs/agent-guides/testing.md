@@ -21,6 +21,24 @@ cargo test --workspace --test contracts -- --ignored
 
 > See [backend/TESTING.md](../../backend/TESTING.md) for setup details.
 
+### Ask Workspace security gate
+
+The host-run DB-backed security matrix must use the credentials that initialized
+the Compose volumes. Do not rely on the test helpers' `changeme` fallback or on
+the Docker-only `postgres` hostname:
+
+```bash
+./scripts/run-ask-workspace-security.sh
+```
+
+The script requires an existing `.env` with `POSTGRES_PASSWORD`,
+`RUSTFS_ROOT_USER`, and `RUSTFS_ROOT_PASSWORD`; it does not generate, print, or
+replace credentials. It starts PostgreSQL and RustFS, applies pending
+migrations, and runs the 15 Unified Search authorization cases plus the
+RecordingLlmProvider case twice with one test thread. Buzz authorization cases
+start an in-process fake relay; no private Buzz database or external relay is
+required.
+
 ## Frontend tests and E2E
 
 ```bash

@@ -55,6 +55,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their tenant fail closed before any owner is consulted (1:1
   tenant/workspace invariant).
 
+- Elembra Chat Files attachments now use the canonical `ResourceRef` in a
+  credential-free `elembra-ref` Buzz tag, with authenticated prepare/preview/
+  open APIs that reauthorize through Files at access time.
+
+- Elembra Memory: Buzz chat activity can now be projected into the Memory
+  catalog as durable references (reference-first; per-workspace
+  `memory_projection` / `content_indexing` policy, default OFF with only
+  `workspace` channels eligible; current Chat authorization always required for
+  content exposure; admin reconciliation endpoint at
+  `POST /api/v1/admin/applications/memory/chat/reconcile`).
+
+- Buzz source authorization gateway (v1alpha1): Chat content exposure can now
+  be gated on a current, NIP-98-authenticated decision from the community's
+  authoritative Buzz relay instead of the coarse local workspace-only gate.
+  Configured with `RUSTSHARE_CHAT_AUTHORITY=buzz` (requires
+  `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY`, the workload's Nostr service key — no
+  human user key is ever stored or used server-side); every request is signed
+  with the service key and every relay response must be a kind-19030 event
+  signed by the community mapping's pinned `relay_pubkey` (new optional column
+  on community mappings), echoing the request verbatim and fresh within 60
+  seconds — any other outcome (transport error, auth rejection, signature/pin/
+  echo/staleness mismatch) fails closed to a denial. The admin reconcile
+  endpoint gains a `source: "buzz"` repair that pages the relay's signed event
+  state over the public HTTP contract (`access/check` + `state/events`, never
+  Buzz's private database), re-verifies each event, repairs the observation
+  index, and re-projects the Memory catalog idempotently without touching the
+  durable outbox or consumer receipts. Community mappings gain an admin
+  relay-pin rotation endpoint (`PATCH
+  /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
+  `relay_url` and `relay_pubkey` always written — omitting `relay_pubkey`
+  unpins and fails closed), so a relay signing-key rotation no longer bricks
+  buzz-mode reads, and the Memory-catalog fold is tombstone-immutable:
+  `upsert_records` never re-writes a tombstoned conflict row, so a backdated
+  relay delete excluded by a `since` window cannot un-tombstone a Memory
+  record.
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,
@@ -105,6 +141,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before redirecting (#226).
 - **Ops** — the sqlx offline query cache is regenerated to match the current
   schema, removing orphaned Module-era metadata entries.
+- **Permission-aware unified search v1** (ADR-0036) — a single
+  `POST /api/v1/search` endpoint returns ranked Files/Notes and Buzz Chat
+  results for one query. Candidates come from Files metadata, the
+  permission-aware note index (keyword + existing vector similarity), and the
+  Memory catalog; **every result is reauthorized by its CURRENT owning
+  source** (`SourceAuthorizer` → Files `PermissionResolver` / Chat →
+  `BuzzAuthority`), snippets are built only from authorized source content,
+  and a stale or malicious index hint can never appear in a response. Ranking
+  is deterministic (exact/prefix/substring + occurrence scores, dedupe by
+  canonical `ResourceRef`); results carry `elembra://` citation refs that
+  reauthorize when opened. Keyword search works without embeddings/AI
+  providers. Cross-tenant candidates cannot appear; a Buzz outage denies Chat
+  candidates while Files results still return. Search remains independently
+  usable when no LLM provider is configured.
+- **Ask Workspace / cited RAG v1** — answers are generated only from source
+  content freshly authorized and materialized through the owning Files or Buzz
+  contract. Stable `ResourceRef` citations are validated against the supplied
+  context; insufficient evidence and unavailable providers degrade cleanly.
 
 ## [0.7.0] - 2026-08-08
 
