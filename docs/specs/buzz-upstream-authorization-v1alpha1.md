@@ -95,9 +95,10 @@ Every response body is a **raw signed Nostr event** (JSON):
 }
 ```
 
-- `kind` is `19030` — a new **private-extension kind** reserved for relay
-  application responses. It is not a NIP-01 event and must never be published
-  or broadcast; it is only ever returned inline as an HTTP response.
+- `kind` is `19030` — a NIP-01-structured event using an **unregistered
+  private kind in the replaceable range (10000–19999)**. It is never published
+  to subscribers and is only ever returned inline as an HTTP response; the
+  kind was chosen to avoid collision with registered NIP kinds.
 - The event is signed by the **relay's key**.
 - `content` is a JSON string (the endpoint-specific payload below).
 
@@ -108,7 +109,14 @@ The client MUST verify all of the following before trusting a response;
 2. `Event::verify()` passes (id and Schnorr signature);
 3. `pubkey` equals the **pinned relay public key** configured for the
    community mapping (`relay_pubkey`); a mapping without a pinned key cannot
-   use this capability.
+   use this capability;
+4. the response content **echoes the request values verbatim** — its `pubkey`,
+   `channel_id`, and `message_id` must equal the request's (`message_id: null`
+   when the request had none) and its `decision`, `reason`, and `evaluated_at`
+   fields must be present and well-typed; any mismatch is an
+   `InvalidResponse`;
+5. `evaluated_at` (unix seconds) is within **60 seconds** of the client's
+   clock when received; a response older than that is stale and is denied.
 
 ## Endpoints
 
@@ -123,9 +131,15 @@ Request body:
   "pubkey": "<64hex>",
   "channel_id": "<str>",
   "channel_kind": "workspace|dm|private|excluded",
-  "message_id": "<64hex>|null"
+  "message_id": "<64hex>|null",
+  "event_created_at": "<unix secs>|null"
 }
 ```
+
+- `event_created_at` is an **optional informational** field — the unix seconds
+  of the event being checked, when the workload has one. The relay MAY ignore
+  it; the client MAY send it. The Rust contract keeps the field so the client
+  can include it without any validation change.
 
 Response `content`:
 
@@ -133,7 +147,10 @@ Response `content`:
 {
   "decision": "allow|deny|not_found",
   "reason": "<str>",
-  "evaluated_at": "<unix secs>"
+  "evaluated_at": "<unix secs>",
+  "pubkey": "<64hex>",
+  "channel_id": "<str>",
+  "message_id": "<64hex>|null"
 }
 ```
 
@@ -141,6 +158,14 @@ Semantics:
 
 - The decision derives from the relay's **current** channel visibility /
   membership and message availability.
+- The response **echoes the request's `pubkey`, `channel_id`, and
+  `message_id` verbatim** (`message_id: null` when the request had none),
+  binding the decision to the exact check that was asked for; the client
+  rejects any response whose echoed values do not match the request.
+- `message_id: null` means a **channel-level read check** — the relay
+  evaluates channel visibility/membership only, with no message-level
+  availability evaluation. Elembra always sends a message id in this
+  integration, so in practice the check is always message-level.
 - `allow` only when the pubkey is a **current member/participant** of the
   channel **and** the message is available (exists and is not deleted).
 - Deleted or unknown messages → `not_found`.
@@ -205,6 +230,12 @@ its own checks and state. The client never routes community A's checks to
 community B's relay host, and a response from an unexpected host/pinned key is
 rejected.
 
+**Transport:** production MUST use `wss://` relay URLs (so the derived base is
+`https://`). Plaintext `ws://` is acceptable only for local development and
+testing: the client's signature pinning, request-echo, and freshness checks
+already defeat MITM replay, but plaintext still exposes the traffic to
+observation.
+
 ## Fail-closed mapping (Elembra client)
 
 | Upstream outcome                                  | Elembra decision |
@@ -216,6 +247,8 @@ rejected.
 | `401` (auth rejected)                              | `Deny`           |
 | `5xx`                                              | `Deny`           |
 | response signature mismatch / wrong kind / wrong pubkey | `Deny`    |
+| response content does not echo request `pubkey`/`channel_id`/`message_id` | `Deny` |
+| `evaluated_at` older than 60 seconds (stale response) | `Deny`        |
 | unparseable or malformed response                  | `Deny`           |
 
 Every failure mode other than an explicit signed `allow` is a denial.

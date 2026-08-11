@@ -289,11 +289,7 @@ fn validate_pubkey(value: &str) -> Result<(), AppError> {
 /// (`^[0-9a-f]{64}$`), so any value that passes validation also satisfies the
 /// column constraint.
 fn validate_relay_pubkey(value: &str) -> Result<(), AppError> {
-    let valid = value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
-    if valid {
+    if crate::config::is_lowercase_hex_64(value) {
         Ok(())
     } else {
         Err(AppError::bad_request(
@@ -334,4 +330,30 @@ fn binding_error(error: BindingError) -> AppError {
 
 fn internal_db(error: impl std::fmt::Display) -> AppError {
     AppError::internal(format!("Chat identity storage failure: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_pubkey_accepts_64_lowercase_hex() {
+        assert!(validate_relay_pubkey(&"ab".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn relay_pubkey_rejects_uppercase_hex() {
+        assert!(validate_relay_pubkey(&"AB".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn relay_pubkey_rejects_wrong_length() {
+        assert!(validate_relay_pubkey(&"ab".repeat(31)).is_err());
+        assert!(validate_relay_pubkey(&"ab".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn relay_pubkey_rejects_non_hex() {
+        assert!(validate_relay_pubkey(&"g".repeat(64)).is_err());
+    }
 }
