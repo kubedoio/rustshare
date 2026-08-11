@@ -121,6 +121,7 @@ pub async fn reconcile_chat_memory(
         ));
     }
 
+    let chat_identity = ChatIdentityStore::new(state.db_pool.clone());
     let counts = if body.source == "buzz" {
         // Repair from the authoritative Buzz relay. Fail closed when this
         // deployment has no gateway configured: reconcile-from-Buzz must not
@@ -135,7 +136,7 @@ pub async fn reconcile_chat_memory(
         })?;
         reconcile_chat_memory_from_buzz_for_tenant(
             &state.buzz_observation_service,
-            &ChatIdentityStore::new(state.db_pool.clone()),
+            &chat_identity,
             &state.chat_observation_store,
             &state.memory_catalog_store,
             gateway,
@@ -149,7 +150,7 @@ pub async fn reconcile_chat_memory(
         })?
     } else {
         reconcile_chat_memory_for_tenant(
-            &ChatIdentityStore::new(state.db_pool.clone()),
+            &chat_identity,
             &state.chat_observation_store,
             &state.memory_catalog_store,
             TenantId(body.tenant_id),
@@ -214,6 +215,10 @@ pub async fn reconcile_chat_memory_for_tenant(
 
 /// Maximum state pages a single reconcile is willing to consume from the
 /// authoritative relay; a misbehaving relay must not loop a repair forever.
+/// 10_000 pages × [`BUZZ_PAGE_LIMIT`] (200/page) caps the repair at 2M
+/// entries. If the cap aborts the repair, the observation index may be
+/// partially repaired and the catalog fold is skipped — re-running is safe
+/// (idempotent).
 const MAX_RECONCILE_PAGES: u32 = 10_000;
 /// Page size for the authoritative relay's state endpoint.
 const BUZZ_PAGE_LIMIT: u32 = 200;
@@ -234,13 +239,15 @@ const BUZZ_PAGE_LIMIT: u32 = 200;
 /// pubkey, or an empty relay URL aborts the repair before any write. A single
 /// bad entry (invalid context, unverifiable signature, unbound author) is
 /// skipped and logged loudly — one poisoned entry must not abort the repair —
-/// but a relay that never terminates its page stream aborts at
-/// [`MAX_RECONCILE_PAGES`].
+/// but an unknown `channel_kind` on the wire fails the whole signed page
+/// (treated as a relay contract violation → 500), whereas unknown `event_type`
+/// and per-entry ingest errors skip just that entry. A relay that never
+/// terminates its page stream aborts at [`MAX_RECONCILE_PAGES`].
 ///
 /// `ReconcileCounts::processed` counts the entries paged from Buzz (the repair
 /// source), not observation rows.
 #[allow(clippy::too_many_arguments)]
-pub async fn reconcile_chat_memory_from_buzz_for_tenant(
+pub(crate) async fn reconcile_chat_memory_from_buzz_for_tenant(
     service: &BuzzObservationService,
     chat_identity: &ChatIdentityStore,
     observations: &ChatObservationStore,
@@ -264,8 +271,17 @@ pub async fn reconcile_chat_memory_from_buzz_for_tenant(
     let relay_pubkey = mapping
         .relay_pubkey
         .as_deref()
+        .filter(|pubkey| !pubkey.is_empty())
         .ok_or_else(|| anyhow::anyhow!("chat community mapping has no pinned relay_pubkey"))?;
 
+    // Stored `event_created_at` values are whole-second, so flooring `since`
+    // keeps the fetch and fold windows identical.
+    let since = since
+        .map(|t| {
+            DateTime::<Utc>::from_timestamp(t.timestamp(), 0)
+                .ok_or_else(|| anyhow::anyhow!("since timestamp out of range"))
+        })
+        .transpose()?;
     // Page the relay's signed state; the gateway verifies each page envelope
     // (kind 19030 + pinned relay pubkey), and each entry event is verified by
     // `ingest_without_outbox` below.
@@ -294,15 +310,35 @@ pub async fn reconcile_chat_memory_from_buzz_for_tenant(
             .await?;
         for entry in &page.entries {
             processed += 1;
+            // Log-only, untrusted: the raw JSON `id` is never used for
+            // identity — `validate_and_build` derives the observation identity
+            // from the parsed, signature-verified event.
+            let event_id = entry.event.get("id").and_then(serde_json::Value::as_str);
             let Some(event_type) = parse_observed_event_type(&entry.context.event_type) else {
                 skipped += 1;
                 tracing::warn!(
                     tenant = %tenant_id,
+                    event_id = event_id.unwrap_or("<missing>"),
                     event_type = %entry.context.event_type,
                     "reconcile-from-buzz: skipping entry with invalid event_type"
                 );
                 continue;
             };
+            // Tenant-scope guard: `validate_and_build` routes each entry via
+            // the global `mapping_by_community`, deriving the row's tenant from
+            // the community, so a shared relay serving multiple communities
+            // could otherwise write rows into another tenant's observation
+            // index during this tenant's admin repair.
+            if entry.context.community_id != mapping.community_id {
+                skipped += 1;
+                tracing::warn!(
+                    tenant = %tenant_id,
+                    community = %entry.context.community_id,
+                    event_id = event_id.unwrap_or("<missing>"),
+                    "reconcile skipped entry from a community outside the target mapping"
+                );
+                continue;
+            }
             let push = BuzzEventPush {
                 event: entry.event.clone(),
                 context: BuzzPushContext {
@@ -325,6 +361,7 @@ pub async fn reconcile_chat_memory_from_buzz_for_tenant(
                     skipped += 1;
                     tracing::warn!(
                         tenant = %tenant_id,
+                        event_id = event_id.unwrap_or("<missing>"),
                         %error,
                         "reconcile-from-buzz: entry rejected by ingestion, skipping"
                     );
@@ -373,7 +410,12 @@ fn map_channel_kind(kind: BuzzChannelKind) -> ChatChannelKind {
 /// Parse a wire `event_type` string (`created|edited|deleted`) into
 /// [`ObservedEventType`]; `None` for any other value.
 fn parse_observed_event_type(raw: &str) -> Option<ObservedEventType> {
-    serde_json::from_value(serde_json::Value::String(raw.to_string())).ok()
+    match raw {
+        "created" => Some(ObservedEventType::Created),
+        "edited" => Some(ObservedEventType::Edited),
+        "deleted" => Some(ObservedEventType::Deleted),
+        _ => None,
+    }
 }
 
 /// Static-details 500, mirroring the buzz_events handler's convention: the

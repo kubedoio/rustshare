@@ -69,7 +69,9 @@ pub struct BuzzPushContext {
     pub supersedes_event_id: Option<String>,
 }
 
-/// Fail-closed errors from [`BuzzObservationService::verify_and_ingest`].
+/// Fail-closed errors from [`BuzzObservationService::verify_and_ingest`],
+/// [`BuzzObservationService::validate_and_build`], and
+/// [`BuzzObservationService::ingest_without_outbox`].
 #[derive(Debug)]
 pub enum BuzzPushError {
     /// HMAC missing/invalid or the replay window was exceeded.
@@ -123,7 +125,8 @@ impl fmt::Display for BuzzPushError {
 
 impl std::error::Error for BuzzPushError {}
 
-/// Outcome of one [`BuzzObservationService::verify_and_ingest`] call.
+/// Outcome of one [`BuzzObservationService::verify_and_ingest`] or
+/// [`BuzzObservationService::ingest_without_outbox`] call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestOutcome {
     /// The observation row was inserted and the durable event published.
