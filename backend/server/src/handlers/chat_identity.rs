@@ -61,6 +61,10 @@ pub struct BindingResponse {
 pub struct MappingRequest {
     pub community_id: String,
     pub relay_url: String,
+    /// Optional pinned relay public key (64 lowercase hex) whose signatures
+    /// are trusted when asking the community's authoritative relay.
+    #[serde(default)]
+    pub relay_pubkey: Option<String>,
 }
 
 /// Configure an explicit tenant/workspace → Buzz community mapping.
@@ -89,11 +93,15 @@ pub async fn configure_mapping(
         ));
     }
     validate_relay_url(&input.relay_url)?;
+    if let Some(relay_pubkey) = &input.relay_pubkey {
+        validate_relay_pubkey(relay_pubkey)?;
+    }
     let mapping = WorkspaceCommunityMapping {
         tenant_id: TenantId(auth.tenant_id),
         workspace_id: WorkspaceId(workspace_id),
         community_id: input.community_id,
         relay_url: input.relay_url,
+        relay_pubkey: input.relay_pubkey,
         active: true,
     };
     db.chat_identity_store
@@ -272,6 +280,24 @@ fn validate_pubkey(value: &str) -> Result<(), AppError> {
     } else {
         Err(AppError::bad_request(
             "buzz_pubkey must be 64 hexadecimal characters",
+        ))
+    }
+}
+
+/// Validate a pinned relay public key: exactly 64 lowercase hex characters,
+/// mirroring the DB CHECK on `chat_workspace_communities.relay_pubkey`
+/// (`^[0-9a-f]{64}$`), so any value that passes validation also satisfies the
+/// column constraint.
+fn validate_relay_pubkey(value: &str) -> Result<(), AppError> {
+    let valid = value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::bad_request(
+            "relay_pubkey must be 64 lowercase hexadecimal characters",
         ))
     }
 }

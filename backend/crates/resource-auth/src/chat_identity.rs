@@ -183,6 +183,12 @@ pub struct WorkspaceCommunityMapping {
     pub workspace_id: WorkspaceId,
     pub community_id: String,
     pub relay_url: String,
+    /// Optional pinned relay public key (64 lowercase hex) whose signatures
+    /// are trusted when asking the community's authoritative relay. Absent for
+    /// legacy mappings; the authority client must fail closed when the pinned
+    /// key is missing.
+    #[serde(default)]
+    pub relay_pubkey: Option<String>,
     pub active: bool,
 }
 
@@ -340,6 +346,7 @@ mod tests {
             workspace_id: workspace,
             community_id: "c1".into(),
             relay_url: RELAY.into(),
+            relay_pubkey: None,
             active: true,
         };
         let admission = BuzzAdmission {
@@ -493,6 +500,7 @@ mod tests {
             workspace_id: workspace,
             community_id: "c1".into(),
             relay_url: RELAY.into(),
+            relay_pubkey: None,
             active: true,
         };
         let admission = BuzzAdmission {
@@ -519,6 +527,7 @@ mod tests {
                 workspace_id: workspace,
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
+                relay_pubkey: None,
                 active: true
             },
             &BuzzAdmission {
@@ -541,6 +550,7 @@ mod tests {
                 workspace_id: workspace,
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
+                relay_pubkey: None,
                 active: true
             },
             &BuzzAdmission {

@@ -41,7 +41,7 @@ impl ChatIdentityStore {
         workspace_id: WorkspaceId,
     ) -> Result<Option<WorkspaceCommunityMapping>> {
         let row = sqlx::query(
-            "SELECT tenant_id, workspace_id, community_id, relay_url, active
+            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active
              FROM chat_workspace_communities
              WHERE tenant_id = $1 AND workspace_id = $2",
         )
@@ -56,6 +56,7 @@ impl ChatIdentityStore {
                 workspace_id: WorkspaceId(row.try_get("workspace_id")?),
                 community_id: row.try_get("community_id")?,
                 relay_url: row.try_get("relay_url")?,
+                relay_pubkey: row.try_get("relay_pubkey")?,
                 active: row.try_get("active")?,
             })
         })
@@ -75,7 +76,7 @@ impl ChatIdentityStore {
         community_id: &str,
     ) -> Result<Option<WorkspaceCommunityMapping>, CommunityMappingError> {
         let rows = sqlx::query(
-            "SELECT tenant_id, workspace_id, community_id, relay_url, active
+            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active
              FROM chat_workspace_communities
              WHERE community_id = $1 AND active",
         )
@@ -97,6 +98,7 @@ impl ChatIdentityStore {
             workspace_id: WorkspaceId(row.try_get("workspace_id")?),
             community_id: row.try_get("community_id")?,
             relay_url: row.try_get("relay_url")?,
+            relay_pubkey: row.try_get("relay_pubkey")?,
             active: row.try_get("active")?,
         }))
     }
@@ -152,14 +154,15 @@ impl ChatIdentityStore {
     pub async fn insert_mapping(&self, mapping: &WorkspaceCommunityMapping) -> Result<()> {
         sqlx::query(
             "INSERT INTO chat_workspace_communities
-                (mapping_id, tenant_id, workspace_id, community_id, relay_url, active)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(Uuid::new_v4())
         .bind(mapping.tenant_id.0)
         .bind(mapping.workspace_id.0)
         .bind(&mapping.community_id)
         .bind(&mapping.relay_url)
+        .bind(&mapping.relay_pubkey)
         .bind(mapping.active)
         .execute(&self.pool)
         .await?;

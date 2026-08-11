@@ -30,6 +30,7 @@
 
 pub mod actions;
 pub mod authorizer;
+pub mod buzz_authority;
 pub mod chat_identity;
 pub mod chat_resource;
 pub mod contract;
@@ -40,6 +41,10 @@ pub mod resource_ref;
 
 pub use actions::*;
 pub use authorizer::SourceAuthorizer;
+pub use buzz_authority::{
+    BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
+    LocalFallbackAuthority,
+};
 pub use chat_identity::{
     authorize_admission, build_buzz_admission_event, build_buzz_admission_event_at,
     AdmissionDecision, BindingChallenge, BindingError, BindingStatus, BuzzAdmission,

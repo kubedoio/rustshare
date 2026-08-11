@@ -42,6 +42,13 @@ pub struct AppConfig {
     pub db_pool_max_lifetime_secs: u64,
     pub rustshare_chat_webhook_secret: String,
     #[serde(
+        default = "default_chat_authority",
+        rename = "RUSTSHARE_CHAT_AUTHORITY"
+    )]
+    pub chat_authority: String,
+    #[serde(default, rename = "RUSTSHARE_CHAT_BRIDGE_SECRET_KEY")]
+    pub chat_bridge_secret_key: Option<String>,
+    #[serde(
         default = "default_bootstrap_password_file",
         rename = "RUSTSHARE_BOOTSTRAP_PASSWORD_FILE"
     )]
@@ -100,6 +107,13 @@ fn default_object_store_auto_create_bucket() -> bool {
 
 fn default_log_format() -> String {
     "pretty".to_string()
+}
+
+/// Default Buzz authority mode: `local` keeps the coarse community-level gate
+/// (see `rustshare_resource_auth::buzz_authority::LocalFallbackAuthority`)
+/// until an upstream Buzz authority is configured and provisioned.
+fn default_chat_authority() -> String {
+    "local".into()
 }
 
 fn default_pool_max() -> u32 {
@@ -252,10 +266,65 @@ where
         .unwrap_or(default)
 }
 
+/// Valid `RUSTSHARE_CHAT_AUTHORITY` values. `buzz` activates the upstream
+/// source-authorization client (built by a later task); `local` keeps the
+/// coarse `LocalFallbackAuthority` community-level gate.
+const CHAT_AUTHORITY_VALUES: &str = "local|buzz";
+
+/// Whether `value` is exactly 64 lowercase hex characters — the shape of a
+/// Nostr x-only public key and of the DB CHECK on `relay_pubkey`.
+fn is_lowercase_hex_64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Fail closed at startup on an invalid chat authority configuration. A
+/// silent fallback to `local` would be a wrong-authorization bug, so this
+/// deliberately rejects `buzz` without a valid bridge key (unlike
+/// `BuzzAdmissionBridge::from_env`, which warns and disables).
+fn validate_chat_authority(config: &AppConfig, errors: &mut Vec<String>) {
+    match config.chat_authority.as_str() {
+        "local" => {}
+        "buzz" => {
+            let Some(key) = config.chat_bridge_secret_key.as_deref() else {
+                errors.push(
+                    "RUSTSHARE_CHAT_AUTHORITY is 'buzz' but RUSTSHARE_CHAT_BRIDGE_SECRET_KEY is not set; failing closed (a silent fallback to local would be a wrong-authorization bug)".to_string(),
+                );
+                return;
+            };
+            if !is_lowercase_hex_64(key) {
+                errors.push(
+                    "RUSTSHARE_CHAT_BRIDGE_SECRET_KEY must be a 64-character lowercase hex x-only key when RUSTSHARE_CHAT_AUTHORITY is 'buzz'".to_string(),
+                );
+            }
+        }
+        other => errors.push(format!(
+            "RUSTSHARE_CHAT_AUTHORITY must be one of {CHAT_AUTHORITY_VALUES}, got {other:?}"
+        )),
+    }
+}
+
 impl AppConfig {
     pub fn from_env() -> Result<Self, Vec<String>> {
         match envy::from_env::<Self>() {
-            Ok(config) => {
+            Ok(mut config) => {
+                // envy 0.4.2 lowercases every env key before matching serde
+                // field names, so `#[serde(rename = "RUSTSHARE_...")]` fields
+                // never match their env var (a known envy/serde interaction)
+                // and silently fall back to their default. Reading the two
+                // chat-authority vars explicitly keeps
+                // RUSTSHARE_CHAT_AUTHORITY and RUSTSHARE_CHAT_BRIDGE_SECRET_KEY
+                // effective: silently ignoring them would fall back to `local`
+                // — the wrong-authorization bug the validation below exists to
+                // prevent.
+                if let Ok(value) = std::env::var("RUSTSHARE_CHAT_AUTHORITY") {
+                    config.chat_authority = value;
+                }
+                if let Ok(value) = std::env::var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY") {
+                    config.chat_bridge_secret_key = Some(value);
+                }
                 let mut errors = Vec::new();
                 if config.database_url.is_empty() {
                     errors.push("DATABASE_URL is required".to_string());
@@ -285,6 +354,7 @@ impl AppConfig {
                 if config.rustshare_chat_webhook_secret.is_empty() {
                     errors.push("RUSTSHARE_CHAT_WEBHOOK_SECRET is required".to_string());
                 }
+                validate_chat_authority(&config, &mut errors);
                 if errors.is_empty() {
                     Ok(config)
                 } else {
@@ -322,6 +392,90 @@ mod tests {
         for name in OUTBOX_ENV_VARS {
             std::env::remove_var(name);
         }
+    }
+
+    const CHAT_AUTHORITY_ENV_VARS: [&str; 2] = [
+        "RUSTSHARE_CHAT_AUTHORITY",
+        "RUSTSHARE_CHAT_BRIDGE_SECRET_KEY",
+    ];
+
+    /// A minimal `AppConfig::from_env` environment that passes all existing
+    /// required-field checks, with the chat authority vars cleared.
+    fn set_valid_base_env() {
+        std::env::set_var("DATABASE_URL", "postgres://test:test@localhost:5432/test");
+        std::env::set_var("JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789");
+        std::env::set_var("RUSTFS_ENDPOINT", "http://localhost:9000");
+        std::env::set_var("RUSTFS_REGION", "us-east-1");
+        std::env::set_var("RUSTFS_BUCKET", "test-bucket");
+        std::env::set_var("RUSTSHARE_CHAT_WEBHOOK_SECRET", "test-webhook-secret");
+        for name in CHAT_AUTHORITY_ENV_VARS {
+            std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn chat_authority_defaults_to_local() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        let config = AppConfig::from_env().expect("base env must validate");
+        assert_eq!(config.chat_authority, "local");
+        assert_eq!(config.chat_bridge_secret_key, None);
+    }
+
+    #[test]
+    fn chat_authority_buzz_requires_bridge_secret_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        let errors = AppConfig::from_env().expect_err("buzz without a key must fail closed");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_authority_rejects_unknown_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "mystery");
+        let errors = AppConfig::from_env().expect_err("unknown authority must fail");
+        assert!(
+            errors.iter().any(|error| error.contains("local|buzz")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_authority_buzz_with_valid_key_passes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        let config = AppConfig::from_env().expect("buzz with a valid key must pass");
+        assert_eq!(config.chat_authority, "buzz");
+        let expected = "a".repeat(64);
+        assert_eq!(
+            config.chat_bridge_secret_key.as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn chat_authority_buzz_rejects_malformed_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "not-a-64-hex-key");
+        let errors = AppConfig::from_env().expect_err("malformed key must fail closed");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY")),
+            "errors: {errors:?}"
+        );
     }
 
     #[test]
