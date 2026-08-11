@@ -3121,7 +3121,7 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         owner.id,
         "ask-plan.md",
         "/docs/ask-plan.md",
-        b"FILE-AUTHORIZED-BYTES",
+        b"FILE-AUTHORIZED-BYTES: What is the plan?",
     )
     .await;
     let keys = Keys::generate();
@@ -3143,7 +3143,7 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         tenant,
         &env.community_id,
         &msg_id,
-        "CHAT-AUTHORIZED-BYTES",
+        "CHAT-AUTHORIZED-BYTES: What is the plan?",
         Utc::now(),
     )
     .await;
@@ -3156,7 +3156,7 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     let answer = ask
         .ask(
             &user_ctx(env.principal, tenant),
-            "What is the plan?",
+            "plan",
             &[SearchSource::Files, SearchSource::Chat],
             50,
         )
@@ -3176,7 +3176,7 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     assert_eq!(calls.len(), 1);
     let call = &calls[0];
     assert_eq!(call.system_policy, SYSTEM_POLICY);
-    assert_eq!(call.user_question, "What is the plan?");
+    assert_eq!(call.user_question, "plan");
     assert_eq!(call.sources.len(), 2);
     assert_eq!(call.sources[0].source_id, "src-001");
     assert_eq!(call.sources[1].source_id, "src-002");
