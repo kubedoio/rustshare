@@ -351,6 +351,47 @@ impl MemoryCatalogStore {
         row.map(|row| row_to_record(&row)).transpose()
     }
 
+    /// Memory-owned keyword search over catalog records (candidates only; final
+    /// authorization is the source owner's). Tombstoned records never appear.
+    ///
+    /// Matches the message content/channel name as a substring and the
+    /// `message_id`/`author_pubkey` exactly; returns at most `limit` rows
+    /// ordered newest-first. An empty/whitespace `query` returns no rows.
+    pub async fn search(
+        &self,
+        tenant_id: TenantId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryCatalogRecord>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        // ILIKE wildcards are escaped so the user's input matches literally;
+        // the raw trimmed query is bound separately for the exact
+        // message_id/author_pubkey match.
+        let pattern = escape_ilike(query);
+        let limit = limit as i64;
+        let rows = sqlx::query(&format!(
+            "SELECT {RECORD_COLUMNS} FROM memory_catalog
+             WHERE tenant_id = $1
+               AND indexing_status <> 'tombstoned'
+               AND (content ILIKE '%' || $2 || '%'
+                    OR message_id = $3
+                    OR author_pubkey = $3
+                    OR channel_id ILIKE '%' || $2 || '%')
+             ORDER BY occurred_at DESC, message_id
+             LIMIT $4"
+        ))
+        .bind(tenant_id.0)
+        .bind(&pattern)
+        .bind(query)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_record).collect()
+    }
+
     /// Number of catalog records for `tenant_id`.
     pub async fn count_for_tenant(&self, tenant_id: TenantId) -> Result<i64> {
         Ok(
@@ -568,4 +609,28 @@ fn parse_indexing_status(value: String) -> Result<IndexingStatus> {
         "tombstoned" => IndexingStatus::Tombstoned,
         other => anyhow::bail!("unknown memory_catalog.indexing_status `{other}`"),
     })
+}
+
+/// Escape ILIKE wildcard characters (`%`, `_`, `\`) so a user-supplied search
+/// query is matched literally. Postgres treats `\` as the default escape
+/// character in `LIKE`/`ILIKE` patterns, so the backslash is escaped first.
+fn escape_ilike(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+#[cfg(test)]
+mod escape_ilike_tests {
+    use super::escape_ilike;
+
+    #[test]
+    fn escapes_like_wildcards() {
+        assert_eq!(escape_ilike("50%_off"), "50\\%\\_off");
+        assert_eq!(escape_ilike("a\\b"), "a\\\\b");
+        assert_eq!(escape_ilike("plain query"), "plain query");
+        assert_eq!(escape_ilike(""), "");
+        assert_eq!(escape_ilike("100%"), "100\\%");
+    }
 }

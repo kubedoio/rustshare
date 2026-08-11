@@ -14,9 +14,7 @@ use rustshare_core::domain::{
 };
 use rustshare_core::services::VaultSyncError;
 use serde_json;
-use sqlx::PgPool;
-#[cfg(test)]
-use sqlx::Row;
+use sqlx::{PgPool, Row};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -2737,6 +2735,62 @@ impl MetadataStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(file)
+    }
+
+    /// Tenant-scoped name/path keyword search over live files (candidates only;
+    /// the caller performs final source authorization). Returns at most `limit`
+    /// rows. Deleted files are excluded.
+    pub async fn search_files_by_name_path(
+        &self,
+        tenant_id: Uuid,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<File>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Escape ILIKE wildcards so the user's input is matched literally; the
+        // bare escaped pattern in the ORDER BY also pins exact-name matches first.
+        let pattern = escape_ilike(query);
+        let limit = limit as i64;
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, path, size, mime_type, content_hash, owner_id, parent_folder_id, current_version, created_at, modified_at, starred_at, deleted_at, tenant_id
+            FROM files
+            WHERE tenant_id = $1 AND deleted_at IS NULL
+              AND (name ILIKE '%' || $2 || '%' OR path ILIKE '%' || $2 || '%')
+            ORDER BY (name ILIKE $2) DESC, (name ILIKE '%' || $2 || '%') DESC, path
+            LIMIT $3
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(&pattern)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        let files = rows
+            .iter()
+            .map(|row| {
+                Ok(File {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                    path: row.try_get("path")?,
+                    size: row.try_get("size")?,
+                    mime_type: row.try_get("mime_type")?,
+                    content_hash: row.try_get("content_hash")?,
+                    owner_id: row.try_get("owner_id")?,
+                    parent_folder_id: row.try_get("parent_folder_id")?,
+                    current_version: row.try_get("current_version")?,
+                    created_at: row.try_get("created_at")?,
+                    modified_at: row.try_get("modified_at")?,
+                    starred_at: row.try_get("starred_at")?,
+                    deleted_at: row.try_get("deleted_at")?,
+                    tenant_id: row.try_get("tenant_id")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(files)
     }
 
     /// Find a file by its canonical path for a specific owner.
@@ -8464,5 +8518,29 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+}
+
+/// Escape ILIKE wildcard characters (`%`, `_`, `\`) so a user-supplied search
+/// query is matched literally. Postgres treats `\` as the default escape
+/// character in `LIKE`/`ILIKE` patterns, so the backslash is escaped first.
+fn escape_ilike(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+#[cfg(test)]
+mod escape_ilike_tests {
+    use super::escape_ilike;
+
+    #[test]
+    fn escapes_like_wildcards() {
+        assert_eq!(escape_ilike("50%_off"), "50\\%\\_off");
+        assert_eq!(escape_ilike("a\\b"), "a\\\\b");
+        assert_eq!(escape_ilike("plain query"), "plain query");
+        assert_eq!(escape_ilike(""), "");
+        assert_eq!(escape_ilike("100%"), "100\\%");
     }
 }
