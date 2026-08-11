@@ -153,7 +153,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical `ResourceRef`); results carry `elembra://` citation refs that
   reauthorize when opened. Keyword search works without embeddings/AI
   providers. Cross-tenant candidates cannot appear; a Buzz outage denies Chat
-  candidates while Files results still return. Non-LLM: no RAG, no Agents.
+  candidates while Files results still return. Search remains independently
+  usable when no LLM provider is configured.
+- **Ask Workspace / cited RAG v1** — answers are generated only from source
+  content freshly authorized and materialized through the owning Files or Buzz
+  contract. Stable `ResourceRef` citations are validated against the supplied
+  context; insufficient evidence and unavailable providers degrade cleanly.
 
 ## [0.7.0] - 2026-08-08
 

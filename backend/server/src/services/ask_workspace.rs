@@ -180,32 +180,36 @@ impl LlmProvider for OpenAiCompatibleProvider {
             max_tokens: self.max_output_tokens,
             temperature: self.temperature,
         };
-        let response = tokio::time::timeout(
-            self.timeout,
-            self.client
+        tokio::time::timeout(self.timeout, async {
+            let response = self
+                .client
                 .post(&self.endpoint)
                 .bearer_auth(&self.api_key)
                 .json(&request)
-                .send(),
-        )
+                .send()
+                .await
+                .map_err(|_| LlmError::Failed)?;
+            if !response.status().is_success() {
+                return Err(LlmError::Failed);
+            }
+            let body: ChatResponse = response.json().await.map_err(|_| LlmError::Failed)?;
+            let content = body
+                .choices
+                .into_iter()
+                .find_map(|choice| choice.message.content)
+                .ok_or(LlmError::Failed)?;
+            let result: GroundedModelResponse =
+                serde_json::from_str(&content).map_err(|_| LlmError::Failed)?;
+            if result.answer.trim().is_empty() {
+                return Err(LlmError::Failed);
+            }
+            Ok(LlmResult {
+                answer: result.answer,
+                citations: result.citations,
+            })
+        })
         .await
         .map_err(|_| LlmError::Failed)?
-        .map_err(|_| LlmError::Failed)?;
-        if !response.status().is_success() {
-            return Err(LlmError::Failed);
-        }
-        let body: ChatResponse = response.json().await.map_err(|_| LlmError::Failed)?;
-        let content = body
-            .choices
-            .into_iter()
-            .find_map(|choice| choice.message.content)
-            .ok_or(LlmError::Failed)?;
-        let result: GroundedModelResponse =
-            serde_json::from_str(&content).map_err(|_| LlmError::Failed)?;
-        Ok(LlmResult {
-            answer: result.answer,
-            citations: result.citations,
-        })
     }
 
     fn model_class(&self) -> &'static str {
@@ -458,6 +462,129 @@ impl LlmProvider for RecordingLlmProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::Body,
+        extract::State,
+        http::{header, HeaderMap, StatusCode, Uri},
+        response::Response,
+        routing::post,
+        Router,
+    };
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tokio::sync::{oneshot, Mutex};
+    use tokio::time::Duration;
+
+    #[derive(Debug, Clone)]
+    struct RecordedHttpRequest {
+        path: String,
+        authorization: Option<String>,
+        body: Value,
+    }
+
+    #[derive(Clone)]
+    struct MockHttpState {
+        status: StatusCode,
+        body: String,
+        delay: Duration,
+        requests: Arc<Mutex<Vec<RecordedHttpRequest>>>,
+    }
+
+    struct MockHttpServer {
+        state: MockHttpState,
+        shutdown: oneshot::Sender<()>,
+        task: tokio::task::JoinHandle<()>,
+        endpoint: String,
+    }
+
+    impl MockHttpServer {
+        async fn start(status: StatusCode, body: String, delay: Duration) -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind mock provider");
+            let address = listener.local_addr().expect("mock provider address");
+            let state = MockHttpState {
+                status,
+                body,
+                delay,
+                requests: Arc::new(Mutex::new(Vec::new())),
+            };
+            let app = Router::new()
+                .route("/chat/completions", post(mock_completion))
+                .with_state(state.clone());
+            let (shutdown, shutdown_signal) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = shutdown_signal.await;
+                    })
+                    .await
+                    .expect("mock provider server");
+            });
+            Self {
+                state,
+                shutdown,
+                task,
+                endpoint: format!("http://{address}"),
+            }
+        }
+
+        async fn requests(&self) -> Vec<RecordedHttpRequest> {
+            self.state.requests.lock().await.clone()
+        }
+
+        async fn stop(self) {
+            let _ = self.shutdown.send(());
+            self.task.await.expect("stop mock provider");
+        }
+    }
+
+    async fn mock_completion(
+        State(state): State<MockHttpState>,
+        headers: HeaderMap,
+        uri: Uri,
+        body: String,
+    ) -> Response {
+        state.requests.lock().await.push(RecordedHttpRequest {
+            path: uri.path().to_string(),
+            authorization: headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+            body: serde_json::from_str(&body).unwrap_or(Value::Null),
+        });
+        if !state.delay.is_zero() {
+            tokio::time::sleep(state.delay).await;
+        }
+        Response::builder()
+            .status(state.status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(state.body))
+            .expect("mock provider response")
+    }
+
+    fn openai_response(content: Value) -> String {
+        serde_json::json!({
+            "choices": [{"message": {"content": content.to_string()}}]
+        })
+        .to_string()
+    }
+
+    fn provider(
+        endpoint: &str,
+        timeout: Duration,
+        max_output_tokens: usize,
+    ) -> OpenAiCompatibleProvider {
+        OpenAiCompatibleProvider {
+            client: reqwest::Client::new(),
+            endpoint: format!("{endpoint}/chat/completions"),
+            api_key: "test-provider-secret".into(),
+            model: "test-model".into(),
+            timeout,
+            max_output_tokens,
+            temperature: Some(0.2),
+        }
+    }
 
     fn prompt() -> LlmPrompt {
         LlmPrompt {
@@ -487,6 +614,116 @@ mod tests {
         let expected = prompt();
         provider.generate(expected.clone()).await.unwrap();
         assert_eq!(provider.calls().await, vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn openai_provider_sends_contract_request_and_parses_citations() {
+        let server = MockHttpServer::start(
+            StatusCode::OK,
+            openai_response(serde_json::json!({
+                "answer": "grounded",
+                "citations": ["src-001"]
+            })),
+            Duration::ZERO,
+        )
+        .await;
+        let provider = provider(&server.endpoint, Duration::from_secs(1), 37);
+        let result = provider.generate(prompt()).await.expect("provider result");
+        let requests = server.requests().await;
+        server.stop().await;
+
+        assert_eq!(result.answer, "grounded");
+        assert_eq!(result.citations, vec!["src-001"]);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].path, "/chat/completions");
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer test-provider-secret")
+        );
+        assert_eq!(requests[0].body["model"], "test-model");
+        assert_eq!(requests[0].body["max_tokens"], 37);
+        assert_eq!(requests[0].body["temperature"], 0.2);
+        assert_eq!(requests[0].body["messages"][0]["role"], "system");
+        assert_eq!(requests[0].body["messages"][1]["role"], "user");
+        assert!(requests[0].body["messages"][1]["content"]
+            .as_str()
+            .expect("user content")
+            .contains("AUTHORIZED SOURCES"));
+    }
+
+    #[tokio::test]
+    async fn openai_provider_rejects_non_success_and_does_not_expose_response_data() {
+        let server = MockHttpServer::start(
+            StatusCode::BAD_GATEWAY,
+            "provider-secret-response-body".into(),
+            Duration::ZERO,
+        )
+        .await;
+        let provider = provider(&server.endpoint, Duration::from_secs(1), 10);
+        let error = provider
+            .generate(prompt())
+            .await
+            .expect_err("provider failure");
+        server.stop().await;
+
+        assert!(matches!(error, LlmError::Failed));
+        let rendered = format!("{error:?}");
+        assert!(!rendered.contains("test-provider-secret"));
+        assert!(!rendered.contains("provider-secret-response-body"));
+    }
+
+    #[tokio::test]
+    async fn openai_provider_rejects_malformed_and_empty_model_output() {
+        for body in [
+            "not-json".to_string(),
+            openai_response(serde_json::json!({"answer": "", "citations": []})),
+            openai_response(serde_json::json!({"answer": "missing citations"})),
+        ] {
+            let server = MockHttpServer::start(StatusCode::OK, body, Duration::ZERO).await;
+            let provider = provider(&server.endpoint, Duration::from_secs(1), 10);
+            let error = provider
+                .generate(prompt())
+                .await
+                .expect_err("invalid output");
+            server.stop().await;
+            assert!(matches!(error, LlmError::Failed));
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_provider_timeout_covers_the_full_http_exchange() {
+        let server = MockHttpServer::start(
+            StatusCode::OK,
+            openai_response(serde_json::json!({
+                "answer": "too late",
+                "citations": ["src-001"]
+            })),
+            Duration::from_millis(100),
+        )
+        .await;
+        let provider = provider(&server.endpoint, Duration::from_millis(10), 10);
+        let error = provider.generate(prompt()).await.expect_err("timeout");
+        server.stop().await;
+        assert!(matches!(error, LlmError::Failed));
+    }
+
+    #[tokio::test]
+    async fn openai_provider_generation_can_be_cancelled_without_runaway_work() {
+        let server = MockHttpServer::start(
+            StatusCode::OK,
+            openai_response(serde_json::json!({
+                "answer": "cancelled",
+                "citations": ["src-001"]
+            })),
+            Duration::from_secs(30),
+        )
+        .await;
+        let provider = provider(&server.endpoint, Duration::from_secs(60), 10);
+        let task = tokio::spawn(async move { provider.generate(prompt()).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        task.abort();
+        assert!(task.await.expect_err("cancelled task").is_cancelled());
+        server.stop().await;
     }
 
     #[test]
