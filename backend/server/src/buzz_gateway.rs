@@ -8,12 +8,17 @@
 //! public key, whose content echoes the request verbatim, and whose
 //! `evaluated_at` is within the freshness window. Any failure fails closed
 //! (see `docs/specs/buzz-upstream-authorization-v1alpha1.md`).
+//!
+//! Redirects are disabled on the HTTP client: a hostile relay must not be able
+//! to coerce the client into following a redirect to an unconfigured host
+//! (SSRF protection) — the client talks only to the configured relay URL.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Utc;
+use futures_util::StreamExt;
 use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::{Client, Response, StatusCode};
 use rustshare_resource_auth::{
@@ -22,6 +27,7 @@ use rustshare_resource_auth::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tracing::warn;
 use url::Url;
 
 /// Default per-request timeout for relay calls.
@@ -31,7 +37,11 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const RELAY_RESPONSE_KIND: u16 = 19_030;
 /// `evaluated_at` must be within this many seconds of the client clock when
 /// received; an older (or future) response is stale and fails closed.
-const MAX_EVALUATED_AT_AGE_SECS: i64 = 60;
+const MAX_EVALUATED_AT_AGE_SECS: u64 = 60;
+/// Hard cap on the relay response body we are willing to buffer; a larger
+/// body (8 MiB covers the largest signed state page) is treated as hostile
+/// and fails closed instead of exhausting server memory.
+const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Access-check request sent to `POST /api/v1/relay/access/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,17 +116,31 @@ pub struct BuzzGatewayClient {
 
 impl BuzzGatewayClient {
     /// Build a client with the default [`DEFAULT_TIMEOUT`].
-    pub fn new(keys: Keys, http: Client) -> Self {
+    ///
+    /// The `http` builder is used with redirects disabled: a hostile relay
+    /// must not be able to coerce the client into following a redirect to an
+    /// unconfigured host (SSRF protection), so the client talks only to the
+    /// configured relay URL. The only failure mode is an invalid builder,
+    /// reported as a configuration error.
+    pub fn new(keys: Keys, http: reqwest::ClientBuilder) -> Result<Self, BuzzAuthorityError> {
         Self::with_timeout(keys, http, DEFAULT_TIMEOUT)
     }
 
     /// Build a client with an explicit per-request timeout.
-    pub fn with_timeout(keys: Keys, http: Client, timeout: Duration) -> Self {
-        Self {
+    pub fn with_timeout(
+        keys: Keys,
+        http: reqwest::ClientBuilder,
+        timeout: Duration,
+    ) -> Result<Self, BuzzAuthorityError> {
+        let http = http
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| BuzzAuthorityError::Config(format!("cannot build HTTP client: {e}")))?;
+        Ok(Self {
             keys,
             http,
             timeout,
-        }
+        })
     }
 
     /// Ask the relay whether `req` may currently read its channel/message.
@@ -155,9 +179,14 @@ impl BuzzGatewayClient {
             .body(body)
             .send()
             .await
-            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
-        let raw = read_response_json(response).await?;
+            .map_err(|e| {
+                log_relay_error(relay_url, BuzzAuthorityError::Transport(e.to_string()))
+            })?;
+        let raw = read_response_json(response)
+            .await
+            .map_err(|e| log_relay_error(relay_url, e))?;
         self.decision_from_19030(&raw, relay_pubkey, req)
+            .map_err(|e| log_relay_error(relay_url, e))
     }
 
     /// Page the relay's signed event state for reconciliation.
@@ -176,6 +205,9 @@ impl BuzzGatewayClient {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<BuzzStatePage, BuzzAuthorityError> {
+        // Clamp the page size client-side before building the query so a
+        // caller cannot ask the relay for an unbounded page.
+        let limit = limit.clamp(1, 500);
         let mut url = Self::http_base(relay_url)?
             .join("/api/v1/relay/state/events")
             .map_err(|e| {
@@ -199,13 +231,22 @@ impl BuzzGatewayClient {
             .header("Authorization", header)
             .send()
             .await
-            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
-        let raw = read_response_json(response).await?;
-        let event = self.verify_19030(&raw, relay_pubkey)?;
+            .map_err(|e| {
+                log_relay_error(relay_url, BuzzAuthorityError::Transport(e.to_string()))
+            })?;
+        let raw = read_response_json(response)
+            .await
+            .map_err(|e| log_relay_error(relay_url, e))?;
+        let event = self
+            .verify_19030(&raw, relay_pubkey)
+            .map_err(|e| log_relay_error(relay_url, e))?;
         let page: BuzzStatePage = serde_json::from_str(&event.content).map_err(|e| {
-            BuzzAuthorityError::InvalidResponse(format!("state page content is invalid: {e}"))
+            log_relay_error(
+                relay_url,
+                BuzzAuthorityError::InvalidResponse(format!("state page content is invalid: {e}")),
+            )
         })?;
-        validate_page(&page)?;
+        validate_page(&page).map_err(|e| log_relay_error(relay_url, e))?;
         Ok(page)
     }
 
@@ -346,7 +387,12 @@ impl BuzzGatewayClient {
                 "response message_id does not echo the requested message_id".to_string(),
             ));
         }
-        let age = (Utc::now().timestamp() - result.evaluated_at).abs();
+        // Saturating arithmetic: `evaluated_at` is relay-controlled and may be
+        // `i64::MIN`, which would panic a plain subtraction/`abs()` pair.
+        let age = Utc::now()
+            .timestamp()
+            .saturating_sub(result.evaluated_at)
+            .unsigned_abs();
         if age > MAX_EVALUATED_AT_AGE_SECS {
             return Err(BuzzAuthorityError::InvalidResponse(format!(
                 "response evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
@@ -395,15 +441,39 @@ fn status_error(status: StatusCode) -> Option<BuzzAuthorityError> {
     }
 }
 
+/// Ops visibility: log a fail-closed gateway outcome with the relay URL before
+/// it propagates. The request body and pubkey are deliberately not logged.
+fn log_relay_error(relay_url: &str, error: BuzzAuthorityError) -> BuzzAuthorityError {
+    if matches!(
+        error,
+        BuzzAuthorityError::Transport(_) | BuzzAuthorityError::InvalidResponse(_)
+    ) {
+        warn!(relay_url = %relay_url, error = %error, "Buzz gateway request failed closed");
+    }
+    error
+}
+
 /// Read the raw response body, failing closed on any non-2xx status.
+///
+/// The body is read as a bounded stream: a relay response larger than
+/// [`MAX_RESPONSE_BYTES`] is treated as invalid rather than buffered without
+/// limit, so a hostile relay cannot exhaust server memory. Chunk-level stream
+/// failures map to [`BuzzAuthorityError::Transport`].
 async fn read_response_json(response: Response) -> Result<Value, BuzzAuthorityError> {
     if let Some(error) = status_error(response.status()) {
         return Err(error);
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response body exceeds size cap".to_string(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     serde_json::from_slice(&bytes)
         .map_err(|e| BuzzAuthorityError::InvalidResponse(format!("response body is not JSON: {e}")))
 }
@@ -433,7 +503,7 @@ mod tests {
     const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn client(keys: Keys) -> BuzzGatewayClient {
-        BuzzGatewayClient::new(keys, Client::new())
+        BuzzGatewayClient::new(keys, Client::builder()).expect("build test client")
     }
 
     /// Build a signed kind-19030 response event from the relay key.
@@ -654,6 +724,19 @@ mod tests {
             checked(&service, &relay, &relay_pubkey, &expected, content),
             Err(BuzzAuthorityError::InvalidResponse(_))
         ));
+
+        // Hostile evaluated_at: i64::MIN (and i64::MAX) must fail closed — the
+        // freshness arithmetic must not panic on relay-controlled extremes.
+        let content = response_json("allow", i64::MIN, &expected);
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        let content = response_json("allow", i64::MAX, &expected);
+        assert!(matches!(
+            checked(&service, &relay, &relay_pubkey, &expected, content),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
     }
 
     #[tokio::test]
@@ -711,5 +794,41 @@ mod tests {
         let back: BuzzAccessCheckRequest = serde_json::from_value(wire).unwrap();
         assert_eq!(back.channel_kind, BuzzChannelKind::Dm);
         assert_eq!(back.message_id, None);
+    }
+
+    #[test]
+    fn status_error_maps_401_to_unauthorized_and_other_statuses_to_transport() {
+        // 401 is the relay's explicit "reject" signal and maps to
+        // Unauthorized; other non-2xx — including redirects, which the client
+        // never follows — fail closed as transport errors.
+        assert!(matches!(
+            status_error(StatusCode::UNAUTHORIZED),
+            Some(BuzzAuthorityError::Unauthorized)
+        ));
+        assert!(matches!(
+            status_error(StatusCode::INTERNAL_SERVER_ERROR),
+            Some(BuzzAuthorityError::Transport(_))
+        ));
+        assert!(matches!(
+            status_error(StatusCode::MOVED_PERMANENTLY),
+            Some(BuzzAuthorityError::Transport(_))
+        ));
+        assert!(status_error(StatusCode::OK).is_none());
+    }
+
+    #[tokio::test]
+    async fn read_response_json_rejects_non_json_success_body() {
+        // A 2xx response carrying a non-JSON (including empty) body fails
+        // closed as an invalid response — exercised without any network call.
+        for body in ["", "definitely not json"] {
+            let http_response = axum::http::Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            assert!(matches!(
+                read_response_json(Response::from(http_response)).await,
+                Err(BuzzAuthorityError::InvalidResponse(_))
+            ));
+        }
     }
 }
