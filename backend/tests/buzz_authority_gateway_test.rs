@@ -99,9 +99,7 @@ use rustshare_server::handlers::chat_identity::{
 use rustshare_server::handlers::extractors::{AdminUser, AuthenticatedUser};
 use rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_from_buzz_for_tenant;
 use rustshare_server::handlers::AppError;
-use rustshare_server::memory_projection::{
-    MemoryChatProjectionConsumer, MEMORY_CHAT_PROJECTION_CONSUMER_ID,
-};
+use rustshare_server::memory_projection::MemoryChatProjectionConsumer;
 use rustshare_server::outbox_dispatcher::OutboxDispatcher;
 use rustshare_server::state::DatabaseState;
 use rustshare_storage::{
@@ -118,6 +116,7 @@ use uuid::Uuid;
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 const WEBHOOK_SECRET: &str = "test-buzz-webhook-secret";
+const TEST_CONSUMER_ID: &str = "io.elembra.memory.chat-projection.buzz-gateway-test.v1";
 const CHANNEL_ID: &str = "channel-1";
 
 // ---------------------------------------------------------------------------
@@ -547,7 +546,13 @@ fn service(pool: PgPool) -> BuzzObservationService {
 /// The memory projection consumer under test over the same pool.
 fn consumer(pool: PgPool) -> MemoryChatProjectionConsumer {
     let (chat_identity, observations, catalog) = stores(pool.clone());
-    MemoryChatProjectionConsumer::new(pool, chat_identity, observations, catalog)
+    MemoryChatProjectionConsumer::new_for_test(
+        pool,
+        chat_identity,
+        observations,
+        catalog,
+        TEST_CONSUMER_ID,
+    )
 }
 
 /// Register the memory consumer durably BEFORE pushing, so publish-time eager
@@ -555,10 +560,7 @@ fn consumer(pool: PgPool) -> MemoryChatProjectionConsumer {
 /// buzz-memory-projection suite).
 async fn register_consumer(store: &OutboxStore) {
     store
-        .register_consumer(
-            MEMORY_CHAT_PROJECTION_CONSUMER_ID,
-            &[CHAT_BUZZ_EVENT_OBSERVED_V1.to_string()],
-        )
+        .register_consumer(TEST_CONSUMER_ID, &[CHAT_BUZZ_EVENT_OBSERVED_V1.to_string()])
         .await
         .unwrap();
 }
@@ -913,7 +915,7 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
             .unwrap();
     }
     sqlx::query("DELETE FROM integration_consumer_receipts WHERE consumer_id = $1")
-        .bind(MEMORY_CHAT_PROJECTION_CONSUMER_ID)
+        .bind(TEST_CONSUMER_ID)
         .execute(pool)
         .await
         .unwrap();
@@ -925,7 +927,7 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
             .unwrap();
     }
     sqlx::query("DELETE FROM integration_consumers WHERE consumer_id = $1")
-        .bind(MEMORY_CHAT_PROJECTION_CONSUMER_ID)
+        .bind(TEST_CONSUMER_ID)
         .execute(pool)
         .await
         .unwrap();

@@ -267,11 +267,13 @@ pub enum BindingError {
 
 fn normalize_url(value: &str) -> String {
     let Ok(mut url) = Url::parse(value) else {
-        return value.trim_end_matches('/').to_ascii_lowercase();
+        return value.trim_end_matches('/').to_string();
     };
     let path = url.path().trim_end_matches('/').to_owned();
     url.set_path(&path);
-    url.to_string().to_ascii_lowercase()
+    // `url` canonicalizes the scheme and host, while the path remains
+    // case-sensitive. Lowercasing the complete URL would bind `/A` to `/a`.
+    url.to_string()
 }
 
 #[cfg(test)]
@@ -290,7 +292,11 @@ mod tests {
     }
 
     fn proof(keys: &Keys, nonce: &str) -> Event {
-        EventBuilder::auth(nonce, RelayUrl::parse(RELAY).unwrap())
+        proof_for_relay(keys, nonce, RELAY)
+    }
+
+    fn proof_for_relay(keys: &Keys, nonce: &str, relay: &str) -> Event {
+        EventBuilder::auth(nonce, RelayUrl::parse(relay).unwrap())
             .sign_with_keys(keys)
             .unwrap()
     }
@@ -370,6 +376,30 @@ mod tests {
     fn bridge_commands_use_generic_nip43_membership_kinds() {
         assert_eq!(BuzzAdmissionOperation::Admit.buzz_kind(), 9030);
         assert_eq!(BuzzAdmissionOperation::Revoke.buzz_kind(), 9031);
+    }
+
+    #[test]
+    fn nip42_relay_paths_remain_case_sensitive() {
+        let (tenant, _, principal) = ids();
+        let keys = Keys::generate();
+        let mut challenge = BindingChallenge::issue(
+            tenant,
+            principal,
+            keys.public_key().to_string(),
+            "wss://chat.example.test/Room",
+            None,
+            Utc::now(),
+            Duration::minutes(1),
+        );
+        assert_eq!(
+            challenge.verify_and_consume(
+                tenant,
+                principal,
+                &proof_for_relay(&keys, &challenge.nonce, "wss://chat.example.test/room"),
+                Utc::now(),
+            ),
+            Err(BindingError::RelayMismatch)
+        );
     }
 
     #[test]

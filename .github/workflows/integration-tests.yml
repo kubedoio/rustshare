@@ -140,3 +140,11 @@ jobs:
         # integration tables, so running them concurrently would race on the
         # shared fixture state.
         run: cargo test --workspace --all-features -j 1 -- --ignored
+
+      - name: Ask Workspace security matrix (repeated)
+        # Keep this explicit: the recording-provider matrix is the security
+        # gate for source authorization and must pass twice, independently of
+        # the broad ignored-test sweep above.
+        run: |
+          cargo test -p rustshare-server --test unified_search_test --features test-recording-provider -- --ignored --test-threads=1
+          cargo test -p rustshare-server --test unified_search_test --features test-recording-provider -- --ignored --test-threads=1

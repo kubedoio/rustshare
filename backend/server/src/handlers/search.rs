@@ -9,7 +9,9 @@ use rustshare_resource_auth::PrincipalContext;
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::{AppError, AuthenticatedUser};
-use crate::services::unified_search::{SearchProvenance, SearchSource, UnifiedSearchError};
+use crate::services::unified_search::{
+    parse_source_filter, SearchProvenance, UnifiedSearchError, MAX_QUERY_CHARS,
+};
 use crate::AppState;
 
 /// Unified search request.
@@ -85,27 +87,12 @@ pub async fn unified_search(
     if query.is_empty() {
         return Err(AppError::bad_request("Query cannot be empty"));
     }
-    if query.chars().count() > 1000 {
+    if query.chars().count() > MAX_QUERY_CHARS {
         return Err(AppError::bad_request("Query too long (max 1000 chars)"));
     }
 
     // Parse the requested sources; omitted or empty means both.
-    let sources = match request.sources.as_deref() {
-        None | Some([]) => vec![SearchSource::Files, SearchSource::Chat],
-        Some(names) => {
-            let mut parsed = Vec::with_capacity(names.len());
-            for name in names {
-                match name.as_str() {
-                    "files" => parsed.push(SearchSource::Files),
-                    "chat" => parsed.push(SearchSource::Chat),
-                    other => {
-                        return Err(AppError::bad_request(format!("Unknown source '{other}'")));
-                    }
-                }
-            }
-            parsed
-        }
-    };
+    let sources = parse_source_filter(request.sources.as_deref()).map_err(AppError::bad_request)?;
 
     // The 1:1 tenant/workspace mapping: WorkspaceId == TenantId today.
     let ctx = PrincipalContext::user(

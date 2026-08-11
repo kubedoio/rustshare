@@ -202,6 +202,9 @@ pub async fn create_challenge(
         .map_err(internal_db)?
         .filter(|mapping| mapping.active)
         .ok_or_else(|| AppError::not_found("active Chat workspace mapping not found"))?;
+    // Older rows may predate relay URL validation. Do not persist or return
+    // credentials from such a mapping through a new challenge response.
+    validate_relay_url(&mapping.relay_url).await?;
     if !db
         .chat_identity_store
         .chat_access(

@@ -1222,10 +1222,26 @@ async fn chat_identity_projection_policy_reads_configuration() {
     assert!(enabled.memory_projection);
     assert!(enabled.content_indexing);
 
+    sqlx::query(
+        "UPDATE application_enablements
+         SET enabled = false,
+             configuration = '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb
+         WHERE tenant_id = $1 AND workspace_id = $2 AND application_id = 'io.elembra.chat'",
+    )
+    .bind(tenant.0)
+    .bind(workspace.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let disabled = store.projection_policy(tenant, workspace).await.unwrap();
+    assert!(!disabled.memory_projection);
+    assert!(!disabled.content_indexing);
+
     // Non-boolean flag values fail closed to false.
     sqlx::query(
         "UPDATE application_enablements
-         SET configuration = '{\"memory_projection\": \"yes\"}'::jsonb
+         SET enabled = true,
+             configuration = '{\"memory_projection\": \"yes\"}'::jsonb
          WHERE tenant_id = $1 AND workspace_id = $2 AND application_id = 'io.elembra.chat'",
     )
     .bind(tenant.0)

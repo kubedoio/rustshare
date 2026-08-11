@@ -48,6 +48,7 @@ pub struct MemoryChatProjectionConsumer {
     chat_identity: ChatIdentityStore,
     observations: ChatObservationStore,
     catalog: MemoryCatalogStore,
+    consumer_id: String,
 }
 
 impl MemoryChatProjectionConsumer {
@@ -62,6 +63,28 @@ impl MemoryChatProjectionConsumer {
             chat_identity,
             observations,
             catalog,
+            consumer_id: MEMORY_CHAT_PROJECTION_CONSUMER_ID.to_string(),
+        }
+    }
+
+    /// Build a consumer with an isolated identity for integration-test
+    /// binaries. Production always uses [`Self::new`] and the stable manifest
+    /// identity; test binaries must not share global receipt rows.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn new_for_test(
+        pool: PgPool,
+        chat_identity: ChatIdentityStore,
+        observations: ChatObservationStore,
+        catalog: MemoryCatalogStore,
+        consumer_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            pool,
+            chat_identity,
+            observations,
+            catalog,
+            consumer_id: consumer_id.into(),
         }
     }
 }
@@ -69,7 +92,7 @@ impl MemoryChatProjectionConsumer {
 #[async_trait::async_trait]
 impl OutboxConsumer for MemoryChatProjectionConsumer {
     fn consumer_id(&self) -> &str {
-        MEMORY_CHAT_PROJECTION_CONSUMER_ID
+        &self.consumer_id
     }
 
     fn subscriptions(&self) -> Vec<String> {

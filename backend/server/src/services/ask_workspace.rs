@@ -1,10 +1,11 @@
 //! Source-grounded Ask Workspace orchestration and provider boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -12,7 +13,7 @@ use rustshare_resource_auth::PrincipalContext;
 
 use super::unified_search::{RagSource, SearchSource, UnifiedSearchService};
 
-pub const MAX_QUESTION_CHARS: usize = 2_000;
+pub const MAX_QUESTION_CHARS: usize = super::unified_search::MAX_QUERY_CHARS;
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
 pub const MAX_SOURCES: usize = 8;
 pub const MAX_SOURCE_CHARS: usize = 12_000;
@@ -21,6 +22,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_OUTPUT_TOKENS: usize = 1_500;
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const MAX_PROVIDER_RESPONSE_BYTES: usize = 128 * 1024;
 
 /// This is the only policy text passed to a provider. Source content is
 /// supplied separately as data and is never interpolated into this policy.
@@ -192,7 +194,8 @@ impl LlmProvider for OpenAiCompatibleProvider {
             if !response.status().is_success() {
                 return Err(LlmError::Failed);
             }
-            let body: ChatResponse = response.json().await.map_err(|_| LlmError::Failed)?;
+            let body = read_bounded_response(response).await?;
+            let body: ChatResponse = serde_json::from_slice(&body).map_err(|_| LlmError::Failed)?;
             let content = body
                 .choices
                 .into_iter()
@@ -225,6 +228,25 @@ impl LlmProvider for OpenAiCompatibleProvider {
             temperature: self.temperature.map(|value| value.to_string()),
         }
     }
+}
+
+async fn read_bounded_response(response: reqwest::Response) -> Result<Vec<u8>, LlmError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PROVIDER_RESPONSE_BYTES as u64)
+    {
+        return Err(LlmError::Failed);
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| LlmError::Failed)?;
+        if body.len().saturating_add(chunk.len()) > MAX_PROVIDER_RESPONSE_BYTES {
+            return Err(LlmError::Failed);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn render_user_prompt(prompt: &LlmPrompt) -> String {
@@ -346,13 +368,19 @@ impl AskWorkspaceService {
             metadata,
         };
         let generated = provider.generate(prompt).await?;
+        if generated.answer.trim().is_empty() {
+            return Ok(insufficient(run_id));
+        }
         let by_id: HashMap<String, &RagSource> = materialized
             .iter()
             .enumerate()
             .map(|(index, source)| (source_id(index), source))
             .collect();
         let citation_ids = validated_citations(&generated.citations, &by_id);
-        if citation_ids.len() != generated.citations.len() || citation_ids.is_empty() {
+        if citation_ids.len() != generated.citations.len()
+            || citation_ids.is_empty()
+            || citation_ids.iter().collect::<HashSet<_>>().len() != citation_ids.len()
+        {
             return Ok(insufficient(run_id));
         }
         let citations = citation_ids
@@ -691,6 +719,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_provider_rejects_oversized_response_body() {
+        let server = MockHttpServer::start(
+            StatusCode::OK,
+            "x".repeat(MAX_PROVIDER_RESPONSE_BYTES + 1),
+            Duration::ZERO,
+        )
+        .await;
+        let provider = provider(&server.endpoint, Duration::from_secs(1), 10);
+        let error = provider
+            .generate(prompt())
+            .await
+            .expect_err("oversized provider response");
+        server.stop().await;
+        assert!(matches!(error, LlmError::Failed));
+    }
+
+    #[tokio::test]
     async fn openai_provider_timeout_covers_the_full_http_exchange() {
         let server = MockHttpServer::start(
             StatusCode::OK,
@@ -758,5 +803,34 @@ mod tests {
         };
         let allowed = [("src-001".into(), &source)].into_iter().collect();
         assert!(validated_citations(&["src-999".into()], &allowed).is_empty());
+    }
+
+    #[test]
+    fn duplicate_source_ids_are_not_a_valid_grounded_citation_set() {
+        let source = RagSource {
+            resource: rustshare_resource_auth::ResourceRef::new(
+                rustshare_core::domain::ApplicationId::new("io.elembra.files"),
+                "file",
+                "one",
+            ),
+            title: "one".into(),
+            location: None,
+            provenance: super::super::unified_search::SearchProvenance {
+                file_id: None,
+                note_id: None,
+                mime_type: None,
+                message_id: None,
+                community_id: None,
+                channel_id: None,
+                channel_kind: None,
+                author_pubkey: None,
+            },
+            text: "authorized".into(),
+        };
+        let allowed = [("src-001".into(), &source)].into_iter().collect();
+        let duplicate_ids = ["src-001".into(), "src-001".into()];
+        let citations = validated_citations(&duplicate_ids, &allowed);
+        assert_eq!(citations.len(), 2);
+        assert!(citations.windows(2).any(|window| window[0] == window[1]));
     }
 }

@@ -159,7 +159,7 @@ impl BuzzGatewayClient {
     /// Build a client for local relay test doubles. Production callers must
     /// use [`Self::new`] or [`Self::with_timeout`], which always enforce the
     /// public-target SSRF policy.
-    #[cfg(feature = "test-recording-provider")]
+    #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn new_for_test(
         keys: Keys,

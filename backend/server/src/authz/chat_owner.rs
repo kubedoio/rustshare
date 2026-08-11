@@ -255,17 +255,58 @@ impl ChatResourceOwner {
         // authority failure fails closed to Deny.
         let request = BuzzReadRequest {
             tenant_id: ctx.tenant_id,
-            community_id: mapping.community_id,
-            relay_url: mapping.relay_url,
-            relay_pubkey: mapping.relay_pubkey,
+            community_id: mapping.community_id.clone(),
+            relay_url: mapping.relay_url.clone(),
+            relay_pubkey: mapping.relay_pubkey.clone(),
             channel_id: row.channel_id.clone(),
             channel_kind: buzz_channel_kind(row.channel_kind),
             message_id: Some(resource.resource_id.clone()),
-            pubkey: binding.buzz_pubkey,
+            pubkey: binding.buzz_pubkey.clone(),
             event_created_at: row.event_created_at,
         };
         gate_authority(&*self.authority, &request, resource).await?;
-        Ok(row)
+
+        // Re-read Elembra's local admission state after the external
+        // authority decision. This gives revocations a final linearization
+        // point before any caller can materialize the row body.
+        if !self.current_chat_enabled(ctx).await {
+            return Err(Decision::Deny);
+        }
+        let Some(final_binding) = self.current_binding(ctx).await else {
+            return Err(Decision::Deny);
+        };
+        if final_binding.buzz_pubkey != binding.buzz_pubkey
+            || !self
+                .current_admission(ctx, &row.community_id, &final_binding.buzz_pubkey)
+                .await
+        {
+            return Err(Decision::Deny);
+        }
+        let Some(final_row) = self.lookup_observation(ctx, resource).await? else {
+            return Err(Decision::Deny);
+        };
+        if !final_row.active || final_row.event_type == ObservedEventType::Deleted {
+            return Err(Decision::Deny);
+        }
+        if self
+            .observations
+            .has_tombstone_since(ctx.tenant_id, message_id, final_row.event_created_at)
+            .await
+            .map_err(|_| Decision::Deny)?
+        {
+            return Err(Decision::Deny);
+        }
+        let Some(final_mapping) = self.current_mapping(ctx).await else {
+            return Err(Decision::Deny);
+        };
+        if !final_mapping.active
+            || final_mapping.community_id != mapping.community_id
+            || final_mapping.relay_url != mapping.relay_url
+            || final_mapping.relay_pubkey != mapping.relay_pubkey
+        {
+            return Err(Decision::Deny);
+        }
+        Ok(final_row)
     }
 
     async fn lookup_observation(

@@ -15,44 +15,6 @@ use uuid::Uuid;
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::AppState;
 
-// ============================================================================
-// Request/Response Types
-// ============================================================================
-
-/// Semantic search request.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct SemanticSearchRequest {
-    /// The search query
-    pub query: String,
-    /// Maximum number of results (default: 10, max: 50)
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-}
-
-fn default_limit() -> usize {
-    10
-}
-
-/// Semantic search result item.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct SemanticSearchResultItem {
-    pub file_id: String,
-    pub file_name: String,
-    pub file_path: String,
-    pub relevance_score: f32,
-    pub snippet: String,
-    pub mime_type: String,
-    pub owner_id: String,
-    pub can_edit: bool,
-}
-
-/// Semantic search response.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct SemanticSearchResponse {
-    pub results: Vec<SemanticSearchResultItem>,
-    pub total_found: usize,
-}
-
 /// File summary request.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SummarizeRequest {
@@ -70,7 +32,7 @@ pub struct SummarizeResponse {
     pub citation: SourceCitation,
 }
 
-/// Source citation.
+/// Source citation for the legacy Files summarization endpoint.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SourceCitation {
     pub file_id: String,
@@ -78,78 +40,6 @@ pub struct SourceCitation {
     pub file_path: String,
     pub relevance_score: f32,
     pub excerpt: String,
-}
-
-// ============================================================================
-// Handlers
-// ============================================================================
-
-/// POST /api/v1/ai/search
-///
-/// Perform permission-filtered semantic search.
-///
-/// Contract A-01: Results are filtered by user permissions.
-/// Contract A-04: Rate limited.
-#[utoipa::path(
-    post,
-    path = "/api/v1/ai/search",
-    tag = "AI",
-    request_body = SemanticSearchRequest,
-    responses(
-        (status = 200, description = "Search results", body = SemanticSearchResponse),
-        (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
-        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
-        (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
-    ),
-)]
-pub async fn semantic_search(
-    State(state): State<AppState>,
-    auth: AuthenticatedUser,
-    Json(request): Json<SemanticSearchRequest>,
-) -> Result<(StatusCode, Json<SemanticSearchResponse>), AppError> {
-    // Contract A-04: Rate limiting enforced by middleware
-
-    // Contract A-05: Input validation
-    let query = request.query.trim();
-    if query.is_empty() {
-        return Err(AppError::bad_request("Query cannot be empty"));
-    }
-
-    let limit = request.limit.clamp(1, 50);
-
-    // Get AI service from state or return not implemented
-    // Note: AI service needs to be added to AppState
-    let results = if let Some(ref ai_service) = state.ai_service {
-        ai_service
-            .semantic_search(query, auth.user_id, auth.tenant_id, limit)
-            .await?
-    } else {
-        // AI service not configured - return empty results for now
-        Vec::new()
-    };
-
-    let total_found = results.len();
-    let response_results: Vec<SemanticSearchResultItem> = results
-        .into_iter()
-        .map(|r| SemanticSearchResultItem {
-            file_id: r.file_id.to_string(),
-            file_name: r.file_name,
-            file_path: r.file_path,
-            relevance_score: r.relevance_score,
-            snippet: r.snippet,
-            mime_type: r.mime_type,
-            owner_id: r.owner_id.to_string(),
-            can_edit: r.can_edit,
-        })
-        .collect();
-
-    Ok((
-        StatusCode::OK,
-        Json(SemanticSearchResponse {
-            results: response_results,
-            total_found,
-        }),
-    ))
 }
 
 /// POST /api/v1/ai/summarize

@@ -9,7 +9,7 @@ use rustshare_resource_auth::{PrincipalContext, Purpose, ResourceRef, SourceErro
 
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::services::ask_workspace::{AskWorkspaceResponse, LlmError};
-use crate::services::unified_search::SearchSource;
+use crate::services::unified_search::parse_source_filter;
 use crate::AppState;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -64,17 +64,7 @@ pub async fn ask_workspace(
             "workspace is outside the authenticated scope",
         ));
     }
-    let sources = match request.sources.as_deref() {
-        None | Some([]) => Vec::new(),
-        Some(names) => names
-            .iter()
-            .map(|name| match name.as_str() {
-                "files" => Ok(SearchSource::Files),
-                "chat" => Ok(SearchSource::Chat),
-                other => Err(AppError::bad_request(format!("Unknown source '{other}'"))),
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-    };
+    let sources = parse_source_filter(request.sources.as_deref()).map_err(AppError::bad_request)?;
     let ctx = PrincipalContext::user(
         rustshare_core::domain::PrincipalId(auth.user_id),
         rustshare_core::domain::TenantId(auth.tenant_id),

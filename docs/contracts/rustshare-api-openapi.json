@@ -1367,68 +1367,6 @@
         }
       }
     },
-    "/api/v1/ai/search": {
-      "post": {
-        "tags": [
-          "AI"
-        ],
-        "summary": "POST /api/v1/ai/search",
-        "description": "Perform permission-filtered semantic search.\n\nContract A-01: Results are filtered by user permissions.\nContract A-04: Rate limited.",
-        "operationId": "semantic_search",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SemanticSearchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Search results",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SemanticSearchResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/ai/summarize": {
       "post": {
         "tags": [
@@ -22340,85 +22278,6 @@
           }
         }
       },
-      "SemanticSearchRequest": {
-        "type": "object",
-        "description": "Semantic search request.",
-        "required": [
-          "query"
-        ],
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "description": "Maximum number of results (default: 10, max: 50)",
-            "minimum": 0
-          },
-          "query": {
-            "type": "string",
-            "description": "The search query"
-          }
-        }
-      },
-      "SemanticSearchResponse": {
-        "type": "object",
-        "description": "Semantic search response.",
-        "required": [
-          "results",
-          "total_found"
-        ],
-        "properties": {
-          "results": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SemanticSearchResultItem"
-            }
-          },
-          "total_found": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "SemanticSearchResultItem": {
-        "type": "object",
-        "description": "Semantic search result item.",
-        "required": [
-          "file_id",
-          "file_name",
-          "file_path",
-          "relevance_score",
-          "snippet",
-          "mime_type",
-          "owner_id",
-          "can_edit"
-        ],
-        "properties": {
-          "can_edit": {
-            "type": "boolean"
-          },
-          "file_id": {
-            "type": "string"
-          },
-          "file_name": {
-            "type": "string"
-          },
-          "file_path": {
-            "type": "string"
-          },
-          "mime_type": {
-            "type": "string"
-          },
-          "owner_id": {
-            "type": "string"
-          },
-          "relevance_score": {
-            "type": "number",
-            "format": "float"
-          },
-          "snippet": {
-            "type": "string"
-          }
-        }
-      },
       "SendMailMessageRequest": {
         "type": "object",
         "required": [
@@ -23305,7 +23164,7 @@
       },
       "SourceCitation": {
         "type": "object",
-        "description": "Source citation.",
+        "description": "Source citation for the legacy Files summarization endpoint.",
         "required": [
           "file_id",
           "file_name",

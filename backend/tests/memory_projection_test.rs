@@ -25,9 +25,7 @@ use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_server::buzz_observation::{
     BuzzEventPush, BuzzObservationService, BuzzPushContext, IngestOutcome,
 };
-use rustshare_server::memory_projection::{
-    MemoryChatProjectionConsumer, MEMORY_CHAT_PROJECTION_CONSUMER_ID,
-};
+use rustshare_server::memory_projection::MemoryChatProjectionConsumer;
 use rustshare_storage::{ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, OutboxStore};
 use sqlx::{PgPool, Row};
 use std::sync::{Arc, LazyLock};
@@ -40,6 +38,7 @@ static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::
 const WEBHOOK_SECRET: &str = "test-buzz-webhook-secret";
 const COMMUNITY_ID: &str = "community-1";
 const CHANNEL_ID: &str = "channel-1";
+const TEST_CONSUMER_ID: &str = "io.elembra.memory.chat-projection.memory-test.v1";
 
 /// Shared pool over `DATABASE_URL` with the same fallback the storage-layer
 /// tests use.
@@ -70,11 +69,12 @@ fn service(pool: PgPool) -> BuzzObservationService {
 /// observation index so the tombstone-before-create delivery guard is active.
 fn consumer(pool: PgPool) -> MemoryChatProjectionConsumer {
     let observations = ChatObservationStore::new(pool.clone());
-    MemoryChatProjectionConsumer::new(
+    MemoryChatProjectionConsumer::new_for_test(
         pool.clone(),
         ChatIdentityStore::new(pool.clone()),
         observations.clone(),
         MemoryCatalogStore::with_observation_store(pool, observations),
+        TEST_CONSUMER_ID,
     )
 }
 
@@ -98,7 +98,7 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
             .unwrap();
     }
     sqlx::query("DELETE FROM integration_consumer_receipts WHERE consumer_id = $1")
-        .bind(MEMORY_CHAT_PROJECTION_CONSUMER_ID)
+        .bind(TEST_CONSUMER_ID)
         .execute(pool)
         .await
         .unwrap();
@@ -318,7 +318,7 @@ async fn receipt_count(pool: &PgPool) -> i64 {
     sqlx::query_scalar(
         "SELECT count(*)::bigint FROM integration_consumer_receipts WHERE consumer_id = $1",
     )
-    .bind(MEMORY_CHAT_PROJECTION_CONSUMER_ID)
+    .bind(TEST_CONSUMER_ID)
     .fetch_one(pool)
     .await
     .unwrap()

@@ -116,7 +116,8 @@ impl ChatIdentityStore {
     ) -> Result<rustshare_memory::policy::ProjectionPolicy> {
         let configuration: Option<serde_json::Value> = sqlx::query_scalar(
             "SELECT configuration FROM application_enablements
-             WHERE tenant_id = $1 AND workspace_id = $2 AND application_id = 'io.elembra.chat'",
+             WHERE tenant_id = $1 AND workspace_id = $2
+               AND application_id = 'io.elembra.chat' AND enabled",
         )
         .bind(tenant_id.0)
         .bind(workspace_id.0)

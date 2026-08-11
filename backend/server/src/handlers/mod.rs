@@ -89,7 +89,7 @@ pub use sync::{get_sync_cursor, get_sync_delta, sync_handler};
 pub use trash::{empty_trash, get_trash_summary};
 pub use validated_json::ValidatedJson;
 
-pub use ai::{semantic_search, summarize_file};
+pub use ai::summarize_file;
 pub use applications::{
     create_from_template, get_application, get_application_summary, list_enabled_applications,
 };

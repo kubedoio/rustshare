@@ -1276,12 +1276,10 @@ pub fn invite_routes() -> Router<AppState> {
 
 pub fn ai_routes() -> Router<AppState> {
     use axum::routing::post;
-    Router::new()
-        .route("/api/v1/ai/search", post(crate::handlers::semantic_search))
-        .route(
-            "/api/v1/ai/summarize",
-            post(crate::handlers::summarize_file),
-        )
+    Router::new().route(
+        "/api/v1/ai/summarize",
+        post(crate::handlers::summarize_file),
+    )
 }
 
 pub fn search_routes() -> Router<AppState> {

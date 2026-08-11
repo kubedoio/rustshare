@@ -32,6 +32,10 @@ use crate::state::AppAiService;
 const FILES_APPLICATION: &str = "io.elembra.files";
 /// Canonical owning Application of Chat resources.
 const CHAT_APPLICATION: &str = "io.elembra.chat";
+/// Maximum number of source filter values accepted by the HTTP contracts.
+pub const MAX_SOURCE_FILTERS: usize = 2;
+/// Shared query bound used by Search and Ask Workspace.
+pub const MAX_QUERY_CHARS: usize = 1_000;
 /// Snippet length cap (in chars) applied to authorized `fetch` text.
 const SNIPPET_MAX_CHARS: usize = 240;
 /// Window (in chars) of context kept before the first query-term match.
@@ -598,12 +602,37 @@ fn validate_query(query: &str) -> Result<&str, UnifiedSearchError> {
             "Query cannot be empty".to_string(),
         ));
     }
-    if query.chars().count() > 1000 {
+    if query.chars().count() > MAX_QUERY_CHARS {
         return Err(UnifiedSearchError::InvalidQuery(
             "Query too long (max 1000 chars)".to_string(),
         ));
     }
     Ok(query)
+}
+
+/// Parse the bounded public source filter. An empty filter means all sources.
+pub fn parse_source_filter(names: Option<&[String]>) -> Result<Vec<SearchSource>, String> {
+    let Some(names) = names.filter(|names| !names.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    if names.len() > MAX_SOURCE_FILTERS {
+        return Err(format!(
+            "at most {MAX_SOURCE_FILTERS} source filters are allowed"
+        ));
+    }
+    let mut parsed = Vec::with_capacity(names.len());
+    for name in names {
+        let source = match name.as_str() {
+            "files" => SearchSource::Files,
+            "chat" => SearchSource::Chat,
+            other => return Err(format!("Unknown source '{other}'")),
+        };
+        if parsed.contains(&source) {
+            return Err(format!("duplicate source filter '{name}'"));
+        }
+        parsed.push(source);
+    }
+    Ok(parsed)
 }
 
 /// Deterministic name/path match score: exact-name 1.0, name-prefix 0.9,
@@ -1015,5 +1044,17 @@ mod tests {
             "hello world",
             "query is trimmed"
         );
+    }
+
+    #[test]
+    fn source_filter_is_bounded_and_rejects_duplicates() {
+        let both = vec!["files".to_string(), "chat".to_string()];
+        assert_eq!(parse_source_filter(Some(&both)).unwrap().len(), 2);
+
+        let duplicate = vec!["files".to_string(), "files".to_string()];
+        assert!(parse_source_filter(Some(&duplicate)).is_err());
+
+        let too_many = vec!["files".to_string(), "chat".to_string(), "files".to_string()];
+        assert!(parse_source_filter(Some(&too_many)).is_err());
     }
 }
