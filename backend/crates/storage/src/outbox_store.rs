@@ -1363,15 +1363,17 @@ impl OutboxStore {
     }
 
     /// Compact outbox rows older than `retention_hours` whose deliveries are
-    /// all `processed` (or gone). Returns the number of deleted outbox rows.
+    /// all `processed` and whose every entitled consumer has a processed
+    /// delivery row. Returns the number of deleted outbox rows.
     ///
     /// With eager fan-out, every event published while at least one consumer
     /// is registered carries an obligation row per entitled consumer: an
     /// event is compacted only when every consumer obligated at publication
-    /// has reached `processed`. Events with zero obligations (no registered
-    /// consumer at publish time) are compactable after the retention window,
-    /// and dead-lettered obligations block compaction so operators keep
-    /// visibility.
+    /// has reached `processed`. The entitlement check is repeated here so a
+    /// missing delivery row cannot be mistaken for successful delivery. Events
+    /// with zero obligations (no registered consumer at publish time) are
+    /// compactable after the retention window, and dead-lettered obligations
+    /// block compaction so operators keep visibility.
     ///
     /// The FK cascade removes the processed delivery rows; `integration_consumer_receipts`
     /// rows are deliberately not FK-linked and remain as harmless durable
@@ -1398,6 +1400,27 @@ impl OutboxStore {
               AND NOT EXISTS (
                   SELECT 1 FROM integration_deliveries d
                   WHERE d.source = o.source AND d.event_id = o.event_id AND d.state <> 'processed'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM integration_consumer_subscriptions s
+                  JOIN integration_consumers c ON c.consumer_id = s.consumer_id
+                  WHERE c.registered_at <= o.created_at
+                    AND (
+                        s.pattern = o.event_type
+                        OR (
+                            right(s.pattern, 2) = '.*'
+                            AND o.event_type LIKE left(s.pattern, length(s.pattern) - 1) || '%'
+                        )
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM integration_deliveries d2
+                        WHERE d2.consumer_id = s.consumer_id
+                          AND d2.source = o.source
+                          AND d2.event_id = o.event_id
+                          AND d2.state = 'processed'
+                    )
               )
             "#,
             retention_hours
