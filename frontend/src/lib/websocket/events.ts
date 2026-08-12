@@ -20,7 +20,8 @@ export type WebSocketEventType =
 	| 'DecisionModified'
 	| 'StandupModified'
 	| 'KanbanModified'
-	| 'NoteModified';
+	| 'NoteModified'
+	| 'ChatMessageObserved';
 
 export interface WebSocketEvent {
 	event_id?: string;

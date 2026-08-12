@@ -96,6 +96,7 @@ function registerEventHandlers(wsClient: ReturnType<typeof getWebSocketClient>):
 	wsClient.on('StandupModified', handleStandupModified);
 	wsClient.on('KanbanModified', handleKanbanModified);
 	wsClient.on('NoteModified', handleNoteModified);
+	wsClient.on('ChatMessageObserved', handleChatMessageObserved);
 }
 
 // Helper to check if event is from current user
@@ -488,6 +489,13 @@ function handleNoteModified(event: WebSocketEvent): void {
 	if (!isOwnEvent(event)) {
 		toastStore.show(`Note "${payload.title}" was updated`, 'info');
 	}
+}
+
+// The ChatMessageObserved envelope carries no payload, so invalidation is
+// prefix-wide — the chat view refetches the active channel.
+function handleChatMessageObserved(): void {
+	queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+	queryClient.invalidateQueries({ queryKey: ['chat-channels'] });
 }
 
 function handleNotificationCreated(event: WebSocketEvent): void {
