@@ -75,6 +75,10 @@ key's pubkey differs from the bound `buzz_pubkey`.
   batch endpoint is deferred upstream (ADR-0035).
 - Composer replies/thread writes are deferred until Buzz's thread tag wire
   format is confirmed; v1 renders `thread_root_id` grouping read-side.
+- Attachments are sender-side only in v1: the observation index does not
+  retain event tags, so recipients see the message body but not an attachment
+  link; surfacing `elembra-ref` tags for recipients requires a future
+  projection change.
 - `dm`/`private`/`excluded` channels are unreadable under the local gate by
   design until the upstream `access/check` capability ships.
 - Browser-held keys mean device loss without an export is unrecoverable; the UI
