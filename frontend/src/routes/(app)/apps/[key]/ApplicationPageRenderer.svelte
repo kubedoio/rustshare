@@ -8,6 +8,7 @@
 	import SharesApplicationView from '$lib/components/apps/SharesApplicationView.svelte';
 	import BrainstormingApplicationView from '$lib/components/apps/BrainstormingApplicationView.svelte';
 	import MailApplicationView from '$lib/components/apps/MailApplicationView.svelte';
+	import ChatApplicationView from '$lib/components/chat/ChatApplicationView.svelte';
 	import GenericApplicationView from '$lib/components/apps/GenericApplicationView.svelte';
 
 	let { module }: { module: ApplicationDefinition } = $props();
@@ -21,7 +22,8 @@
 		decisions: DecisionsApplicationView,
 		shares: SharesApplicationView,
 		brainstorming: BrainstormingApplicationView,
-		'mail-list': MailApplicationView
+		'mail-list': MailApplicationView,
+		chat: ChatApplicationView
 	};
 
 	let Renderer = $derived(rendererMap[module.ui.page.renderer] || GenericApplicationView);
