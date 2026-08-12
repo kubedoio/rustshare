@@ -108,6 +108,7 @@ export async function publishEvent(
 					secretKey
 				);
 				socket.send(JSON.stringify(['AUTH', auth]));
+				socket.send(JSON.stringify(['EVENT', signed]));
 			}
 			if (message[0] === 'OK' && message[1] === signed.id) {
 				finish(message[2] === true);
@@ -116,9 +117,4 @@ export async function publishEvent(
 		socket.onerror = () => finish(false);
 		socket.onclose = () => finish(false);
 	});
-}
-
-/** Derive the ws:// URL for a relay_url (ws/wss pass through unchanged). */
-export function relayWebSocketUrl(relayUrl: string): string {
-	return relayUrl;
 }
