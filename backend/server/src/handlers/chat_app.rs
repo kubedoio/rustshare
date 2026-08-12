@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 use super::{AppError, AuthenticatedUser};
 use crate::state::AppState;
 
-const CHAT_APPLICATION: &str = "io.elembra.chat";
-const CHAT_READ: &str = "chat.read";
-
 fn principal(auth: &AuthenticatedUser) -> PrincipalContext {
     PrincipalContext::user(
         PrincipalId(auth.user_id),
@@ -167,20 +164,7 @@ pub async fn list_channels(
         .map_err(|e| AppError::internal(format!("chat channel lookup failed: {e}")))?;
     let mut channels = Vec::new();
     for summary in summaries {
-        let kind = match summary.channel_kind {
-            rustshare_memory::event::ChatChannelKind::Workspace => {
-                rustshare_resource_auth::BuzzChannelKind::Workspace
-            }
-            rustshare_memory::event::ChatChannelKind::Dm => {
-                rustshare_resource_auth::BuzzChannelKind::Dm
-            }
-            rustshare_memory::event::ChatChannelKind::Private => {
-                rustshare_resource_auth::BuzzChannelKind::Private
-            }
-            rustshare_memory::event::ChatChannelKind::Excluded => {
-                rustshare_resource_auth::BuzzChannelKind::Excluded
-            }
-        };
+        let kind = crate::authz::chat_owner::buzz_channel_kind(summary.channel_kind);
         if state
             .chat_owner
             .can_read_channel(&ctx, &mapping.community_id, &summary.channel_id, kind)
@@ -230,7 +214,7 @@ pub async fn list_messages(
             next_before: None,
         }));
     }
-    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let limit = query.limit.unwrap_or(50).clamp(1, 64);
     let events = state
         .chat_observation_store
         .list_for_timeline(
@@ -256,12 +240,12 @@ pub async fn list_messages(
         .collect();
 
     // Per-message authorization through the existing Chat owner (fail closed).
-    let action = ActionCapability::new(CHAT_READ);
+    let action = ActionCapability::new(rustshare_resource_auth::CHAT_READ);
     let refs: Vec<ResourceRef> = visible
         .iter()
         .map(|event| {
             ResourceRef::new(
-                ApplicationId::new(CHAT_APPLICATION),
+                ApplicationId::new(crate::authz::chat_owner::CHAT_APPLICATION_ID),
                 "message",
                 event.message_id.clone(),
             )
@@ -339,13 +323,17 @@ pub async fn get_message(
         return Err(AppError::not_found("resource unavailable"));
     }
     let resource = ResourceRef::new(
-        ApplicationId::new(CHAT_APPLICATION),
+        ApplicationId::new(crate::authz::chat_owner::CHAT_APPLICATION_ID),
         "message",
         latest.message_id.clone(),
     );
     let decision = state
         .source_authorizer
-        .authorize(&ctx, &ActionCapability::new(CHAT_READ), &resource)
+        .authorize(
+            &ctx,
+            &ActionCapability::new(rustshare_resource_auth::CHAT_READ),
+            &resource,
+        )
         .await;
     if !decision.is_allow() {
         return Err(AppError::not_found("resource unavailable"));

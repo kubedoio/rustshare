@@ -231,10 +231,56 @@ impl ChatResourceOwner {
                 event_created_at: chrono::Utc::now(),
             })
             .await;
-        matches!(
+        if !matches!(
             decision,
             Ok(rustshare_resource_auth::BuzzReadDecision::Allow)
-        )
+        ) {
+            return false;
+        }
+        // Post-authority linearization (mirrors `gate`): a revocation racing
+        // the relay decision must not still list the channel.
+        let mapping = match self
+            .chat_identity
+            .mapping(ctx.tenant_id, ctx.workspace_id)
+            .await
+        {
+            Ok(Some(mapping)) => mapping,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check mapping lookup failed");
+                return false;
+            }
+        };
+        if !mapping.active || mapping.community_id != community_id {
+            return false;
+        }
+        let binding = match self
+            .chat_identity
+            .active_binding(ctx.tenant_id, ctx.principal_id)
+            .await
+        {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check binding lookup failed");
+                return false;
+            }
+        };
+        if binding.status != rustshare_resource_auth::BindingStatus::Active {
+            return false;
+        }
+        match self
+            .chat_identity
+            .active_admission(ctx.tenant_id, community_id, &binding.buzz_pubkey)
+            .await
+        {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check admission lookup failed");
+                false
+            }
+        }
     }
 }
 
@@ -251,8 +297,9 @@ fn is_message_id(value: &str) -> bool {
 /// Map the observed event's channel classification onto the authority
 /// contract's wire-identical enum (both are `workspace|dm|private|excluded`).
 /// A `From` impl is not possible here (both types are foreign to this
-/// crate), so the gate converts through this helper.
-fn buzz_channel_kind(kind: ChatChannelKind) -> BuzzChannelKind {
+/// crate), so the gate converts through this helper. Shared with the Chat
+/// app read surface (`handlers::chat_app::list_channels`).
+pub(crate) fn buzz_channel_kind(kind: ChatChannelKind) -> BuzzChannelKind {
     match kind {
         ChatChannelKind::Workspace => BuzzChannelKind::Workspace,
         ChatChannelKind::Dm => BuzzChannelKind::Dm,
