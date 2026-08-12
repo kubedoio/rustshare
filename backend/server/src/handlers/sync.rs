@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
 use rustshare_core::domain::{SharePermissions, UserId};
 use rustshare_core::events::{
-    Event, EventType, NotificationCreatedPayload, ReplicationStateChangedPayload,
-    ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
+    ChatMessageObservedPayload, Event, EventType, NotificationCreatedPayload,
+    ReplicationStateChangedPayload, ShareCreatedPayload, ShareRevokedPayload, ShareUpdatedPayload,
 };
 use rustshare_storage::repos::sync::{DeltaResult, SyncCursor, SyncDelta};
 use serde::{Deserialize, Serialize};
@@ -276,9 +276,9 @@ async fn should_send_event_to_client(
     metadata_store: &rustshare_storage::MetadataStore,
 ) -> Result<bool, String> {
     match client_identity {
-        ClientIdentity::User { user_id, .. } => {
+        ClientIdentity::User { user_id, tenant_id } => {
             // For authenticated users, use existing logic
-            should_send_event_to_user(event, *user_id, metadata_store).await
+            should_send_event_to_user(event, *user_id, *tenant_id, metadata_store).await
         }
         ClientIdentity::ShareViewer {
             share_id,
@@ -307,8 +307,15 @@ async fn should_send_event_to_client(
 async fn should_send_event_to_user(
     event: &Event,
     user_id: UserId,
+    tenant_id: Uuid,
     metadata_store: &rustshare_storage::MetadataStore,
 ) -> Result<bool, String> {
+    if event.event_type == EventType::ChatMessageObserved {
+        let payload: ChatMessageObservedPayload = serde_json::from_value(event.payload.clone())
+            .map_err(|e| format!("Failed to deserialize ChatMessageObservedPayload: {e}"))?;
+        return Ok(payload.tenant_id == tenant_id);
+    }
+
     // For most events, send to the user who triggered them
     if event.user_id == user_id {
         return Ok(true);
@@ -549,14 +556,14 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+        let should_send = should_send_event_to_user(&event, owner_id, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(should_send, "File owner should receive ShareCreated event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+        let should_send = should_send_event_to_user(&event, other_user, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(
@@ -610,14 +617,14 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+        let should_send = should_send_event_to_user(&event, owner_id, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(should_send, "File owner should receive ShareRevoked event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+        let should_send = should_send_event_to_user(&event, other_user, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(
@@ -674,14 +681,14 @@ mod tests {
         );
 
         // File owner should receive the event
-        let should_send = should_send_event_to_user(&event, owner_id, &metadata_store)
+        let should_send = should_send_event_to_user(&event, owner_id, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(should_send, "File owner should receive ShareUpdated event");
 
         // Other users should not receive the event
         let other_user = Uuid::new_v4();
-        let should_send = should_send_event_to_user(&event, other_user, &metadata_store)
+        let should_send = should_send_event_to_user(&event, other_user, tenant_id, &metadata_store)
             .await
             .unwrap();
         assert!(
