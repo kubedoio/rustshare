@@ -1789,6 +1789,154 @@
         }
       }
     },
+    "/api/v1/applications/chat/channels": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Channels of the mapped community the caller may currently read. Derived\nfrom the observation index and gated channel-by-channel.",
+        "operationId": "list_channels",
+        "responses": {
+          "200": {
+            "description": "Readable channels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChannelInfo"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/messages": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Timeline for one channel: folded latest-event-per-message, newest first,\nper-message authorization, deleted messages hidden.",
+        "operationId": "list_messages",
+        "responses": {
+          "200": {
+            "description": "Channel timeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/messages/{message_id}": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Single folded message, for citation focus/scroll. Existence-hiding 404.",
+        "operationId": "get_message",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "description": "Buzz message id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Single message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatMessageDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/status": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Own chat state: enablement, mapping, binding, admission. Only ever the\ncaller's own data.",
+        "operationId": "chat_status",
+        "responses": {
+          "200": {
+            "description": "Chat status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/applications/from-template": {
       "post": {
         "tags": [
@@ -13694,7 +13842,8 @@
           "share",
           "mail_message",
           "mail_account",
-          "mail_import_job"
+          "mail_import_job",
+          "chat_message"
         ]
       },
       "AiIndexingPolicy": {
@@ -14491,6 +14640,21 @@
           }
         }
       },
+      "BindingInfo": {
+        "type": "object",
+        "required": [
+          "status",
+          "buzz_pubkey"
+        ],
+        "properties": {
+          "buzz_pubkey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "BrainstormBoard": {
         "type": "object",
         "required": [
@@ -14560,6 +14724,109 @@
           }
         }
       },
+      "ChannelInfo": {
+        "type": "object",
+        "required": [
+          "channel_id",
+          "channel_kind",
+          "latest_event_at"
+        ],
+        "properties": {
+          "channel_id": {
+            "type": "string"
+          },
+          "channel_kind": {
+            "type": "string"
+          },
+          "latest_event_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ChatMessageDto": {
+        "type": "object",
+        "required": [
+          "message_id",
+          "event_id",
+          "community_id",
+          "channel_id",
+          "channel_kind",
+          "author_pubkey",
+          "event_created_at"
+        ],
+        "properties": {
+          "author_pubkey": {
+            "type": "string"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "channel_kind": {
+            "type": "string"
+          },
+          "community_id": {
+            "type": "string"
+          },
+          "event_created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "thread_root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChatStatusResponse": {
+        "type": "object",
+        "required": [
+          "chat_enabled",
+          "admission_active"
+        ],
+        "properties": {
+          "admission_active": {
+            "type": "boolean"
+          },
+          "binding": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BindingInfo"
+              }
+            ]
+          },
+          "chat_enabled": {
+            "type": "boolean"
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CommunityMappingInfo"
+              }
+            ]
+          }
+        }
+      },
       "CollabQuery": {
         "type": "object",
         "description": "Query parameters for collab WebSocket connection.",
@@ -14577,6 +14844,21 @@
               "null"
             ],
             "description": "Optional JWT token for authentication."
+          }
+        }
+      },
+      "CommunityMappingInfo": {
+        "type": "object",
+        "required": [
+          "community_id",
+          "relay_url"
+        ],
+        "properties": {
+          "community_id": {
+            "type": "string"
+          },
+          "relay_url": {
+            "type": "string"
           }
         }
       },
@@ -16879,6 +17161,20 @@
                 "type": "string",
                 "enum": [
                   "MailRemoteAction"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ChatMessageObserved"
                 ]
               }
             }
@@ -20491,6 +20787,27 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "MessagesResponse": {
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageDto"
+            }
+          },
+          "next_before": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -25905,6 +26222,10 @@
     {
       "name": "Chat Integration",
       "description": "RustChat and external chat integration"
+    },
+    {
+      "name": "Chat",
+      "description": "Chat application read surface (status, channels, messages)"
     },
     {
       "name": "Files",

@@ -142,6 +142,13 @@ impl ChatResourceOwner {
         vec![ResourceCapability::new(RESOURCE_TYPE_MESSAGE, &[CHAT_READ])]
     }
 
+    /// The identity store backing this owner, shared with the Chat app read
+    /// surface so it can surface the caller's own status (enablement, mapping,
+    /// binding, admission) through the same stores as the gate.
+    pub fn chat_identity_store(&self) -> &ChatIdentityStore {
+        &self.chat_identity
+    }
+
     /// Channel-level gate used by the Chat app's channel list: the same
     /// Elembra pre-filters as [`Self::gate`], then the authority's
     /// channel decision (message_id: None). Fail closed everywhere.

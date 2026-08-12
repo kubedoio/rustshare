@@ -685,6 +685,22 @@ pub fn chat_integration_routes() -> Router<AppState> {
     use axum::routing::{get, patch, post};
     Router::new()
         .route(
+            "/api/v1/applications/chat/status",
+            get(crate::handlers::chat_app::chat_status),
+        )
+        .route(
+            "/api/v1/applications/chat/channels",
+            get(crate::handlers::chat_app::list_channels),
+        )
+        .route(
+            "/api/v1/applications/chat/messages",
+            get(crate::handlers::chat_app::list_messages),
+        )
+        .route(
+            "/api/v1/applications/chat/messages/{message_id}",
+            get(crate::handlers::chat_app::get_message),
+        )
+        .route(
             "/api/v1/applications/chat/identity-binding/challenge",
             post(crate::handlers::chat_identity::create_challenge),
         )
