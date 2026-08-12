@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatApplicationView from './ChatApplicationView.svelte';
@@ -105,5 +105,34 @@ describe('ChatApplicationView', () => {
 		});
 		render(ChatApplicationView);
 		await waitFor(() => expect(mocks.getChatMessage).toHaveBeenCalledWith('m-1'));
+	});
+
+	it('loads earlier pages with the next_before cursor', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus());
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		mocks.getChatMessages.mockImplementation(async (channelId: string, before?: string | null) =>
+			before === 't2'
+				? { messages: [], next_before: null }
+				: {
+						messages: [
+							{
+								message_id: 'm-1',
+								event_id: 'e-1',
+								community_id: 'community-1',
+								channel_id: 'general',
+								channel_kind: 'topic',
+								author_pubkey: 'pk-a',
+								event_created_at: '2026-08-12T10:00:00Z',
+								thread_root_id: null,
+								body: 'first page message'
+							}
+						],
+						next_before: 't2'
+					}
+		);
+		render(ChatApplicationView);
+		await waitFor(() => expect(screen.getByText('Load earlier')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }));
+		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', 't2'));
 	});
 });

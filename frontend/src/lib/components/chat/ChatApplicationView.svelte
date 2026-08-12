@@ -27,6 +27,7 @@
 
 	let selectedChannelId = $state<string | null>(null);
 	let focusedMessageId = $state<string | null>(null);
+	let cursor = $state<string | null>(null);
 
 	// Deep links: /apps/chat?channel=<id>&message=<id>
 	$effect(() => {
@@ -62,8 +63,8 @@
 	});
 
 	const messagesQuery = createQuery({
-		queryKey: ['chat-messages', selectedChannelId],
-		queryFn: () => getChatMessages(selectedChannelId!),
+		queryKey: ['chat-messages', selectedChannelId, cursor],
+		queryFn: () => getChatMessages(selectedChannelId!, cursor),
 		enabled: false
 	});
 
@@ -75,8 +76,8 @@
 
 	$effect(() => {
 		messagesQuery.setOptions({
-			queryKey: ['chat-messages', selectedChannelId],
-			queryFn: () => getChatMessages(selectedChannelId!),
+			queryKey: ['chat-messages', selectedChannelId, cursor],
+			queryFn: () => getChatMessages(selectedChannelId!, cursor),
 			enabled: selectedChannelId != null
 		});
 	});
@@ -145,6 +146,7 @@
 			onSelect={(id: string) => {
 				selectedChannelId = id;
 				focusedMessageId = null;
+				cursor = null;
 			}}
 		/>
 		<div class="flex min-w-0 flex-1 flex-col">
@@ -158,8 +160,7 @@
 				loading={$messagesQuery.isLoading}
 				{focusTarget}
 				onLoadMore={() => {
-					const before = $messagesQuery.data?.next_before;
-					if (before) messagesQuery.refetch();
+					cursor = $messagesQuery.data?.next_before ?? null;
 				}}
 			/>
 			<MessageComposer
