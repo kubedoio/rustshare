@@ -583,7 +583,7 @@ impl ChatIdentityStore {
         .await?;
         sqlx::query(
             "UPDATE chat_buzz_admissions a
-             SET active = false, revoked_at = COALESCE(revoked_at, now())
+             SET active = false, revoked_at = COALESCE(a.revoked_at, now())
              FROM chat_identity_bindings b
              WHERE a.tenant_id = $1 AND a.binding_id = b.binding_id
                AND b.tenant_id = $1 AND b.principal_id = $2 AND a.active",
