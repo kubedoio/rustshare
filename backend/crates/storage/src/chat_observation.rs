@@ -19,6 +19,14 @@ pub struct ChatObservationStore {
     pool: PgPool,
 }
 
+/// Distinct channel derived from the observation index for one community.
+#[derive(Debug, Clone)]
+pub struct ChannelSummary {
+    pub channel_id: String,
+    pub channel_kind: ChatChannelKind,
+    pub latest_event_at: DateTime<Utc>,
+}
+
 impl ChatObservationStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -220,6 +228,74 @@ impl ChatObservationStore {
             }
         };
         rows.iter().map(row_to_event).collect()
+    }
+
+    /// Distinct observed channels for a community, newest activity first.
+    /// Derived projection only — Buzz owns channel identity.
+    pub async fn distinct_channels(
+        &self,
+        tenant_id: TenantId,
+        community_id: &str,
+    ) -> Result<Vec<ChannelSummary>> {
+        let rows = sqlx::query(
+            "SELECT channel_id, channel_kind, MAX(event_created_at) AS latest_event_at
+             FROM chat_observed_events
+             WHERE tenant_id = $1 AND community_id = $2 AND active = true
+             GROUP BY channel_id, channel_kind
+             ORDER BY latest_event_at DESC",
+        )
+        .bind(tenant_id.0)
+        .bind(community_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(ChannelSummary {
+                    channel_id: row.try_get("channel_id")?,
+                    channel_kind: parse_channel_kind(row.try_get("channel_kind")?)?,
+                    latest_event_at: row.try_get("latest_event_at")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Timeline fold: the latest active event of each message in one channel,
+    /// `before` being an exclusive `event_created_at` watermark, newest first.
+    pub async fn list_for_timeline(
+        &self,
+        tenant_id: TenantId,
+        community_id: &str,
+        channel_id: &str,
+        before: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<ChatObservedEvent>> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (message_id)
+                    tenant_id, workspace_id, event_id, message_id, event_type,
+                    supersedes_event_id, community_id, channel_id, channel_kind,
+                    thread_root_id, author_pubkey, author_principal_id,
+                    event_created_at, observed_at, checksum, signature,
+                    signature_verified, body, active
+             FROM chat_observed_events
+             WHERE tenant_id = $1 AND community_id = $2 AND channel_id = $3
+               AND ($4::timestamptz IS NULL OR event_created_at < $4)
+             ORDER BY message_id, event_created_at DESC, event_id DESC",
+        )
+        .bind(tenant_id.0)
+        .bind(community_id)
+        .bind(channel_id)
+        .bind(before)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut events: Vec<ChatObservedEvent> =
+            rows.iter().map(row_to_event).collect::<Result<_>>()?;
+        events.sort_by(|a, b| {
+            b.event_created_at
+                .cmp(&a.event_created_at)
+                .then_with(|| b.event_id.cmp(&a.event_id))
+        });
+        events.truncate(limit as usize);
+        Ok(events)
     }
 }
 

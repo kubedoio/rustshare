@@ -393,6 +393,9 @@ pub async fn list_activity(
                     .unwrap_or(false),
                 AggregateType::MailAccount => false,
                 AggregateType::MailImportJob => false,
+                // Chat events have their own authorized read surface; they are
+                // never exposed through the generic activity feed.
+                AggregateType::ChatMessage => false,
             };
             (event, can_access)
         }
@@ -511,6 +514,7 @@ fn aggregate_type_to_resource_type(
             AggregateType::MailMessage => "mail_message",
             AggregateType::MailAccount => "mail_account",
             AggregateType::MailImportJob => "mail_import_job",
+            AggregateType::ChatMessage => "chat_message",
         },
     }
 }
