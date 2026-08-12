@@ -418,6 +418,7 @@ pub async fn list_user_security_events(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserProfile {
     pub id: String,
+    pub tenant_id: String,
     pub username: String,
     pub display_name: String,
     pub email: String,
@@ -447,6 +448,7 @@ pub async fn get_user_profile(
         Ok(Some(user)) => {
             let profile = UserProfile {
                 id: user.id.to_string(),
+                tenant_id: user.tenant_id.to_string(),
                 username: user.username,
                 display_name: user.display_name,
                 email: user.email,

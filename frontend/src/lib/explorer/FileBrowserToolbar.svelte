@@ -44,6 +44,7 @@
 		onClearSelection?: () => void;
 		onNewFolder?: () => void;
 		onUpload?: () => void;
+		onAsk?: () => void;
 		onBreadcrumbNavigate?: (event: CustomEvent<{ folderId: string | null }>) => void;
 		isUploading?: boolean;
 	}
@@ -73,6 +74,7 @@
 		onClearSelection = () => {},
 		onNewFolder = () => {},
 		onUpload = () => {},
+		onAsk,
 		onBreadcrumbNavigate = () => {},
 		isUploading = false
 	}: Props = $props();
@@ -208,6 +210,15 @@
 					</button>
 				</div>
 			{:else}
+				{#if onAsk}
+					<button
+						type="button"
+						class="flex items-center gap-2 rounded-lg border border-brand-500/30 px-2.5 py-1.5 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10"
+						onclick={onAsk}
+					>
+						<span aria-hidden="true">✦</span> Ask this folder
+					</button>
+				{/if}
 				<!-- Sort dropdown -->
 				<div class="relative">
 					<button

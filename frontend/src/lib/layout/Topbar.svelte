@@ -306,6 +306,13 @@
 			/>
 		</div>
 	</div>
+	<a
+		href="/ask"
+		class="hidden items-center gap-2 rounded-xl border border-brand-500/30 px-3 py-2 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10 lg:flex"
+		aria-label="Ask Elembra"
+	>
+		<span aria-hidden="true">✦</span> Ask Elembra
+	</a>
 
 	<!-- Right Side: User, Theme, Invite -->
 	<div class="flex min-w-[240px] items-center justify-end gap-2">

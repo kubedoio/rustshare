@@ -35,6 +35,7 @@
 		emptyTrash
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
+	import { askHref } from '$lib/api/ask';
 	import {
 		createFolder,
 		deleteFolder,
@@ -1802,6 +1803,15 @@
 			onBulkMove={handleBulkMove}
 			onNewFolder={() => (showCreateFolderModal = true)}
 			onUpload={() => document.getElementById('upload-file-input')?.click()}
+			onAsk={currentFolderId
+				? () =>
+						goto(
+							askHref({
+								type: 'folder',
+								resourceRef: `elembra://io.elembra.files/folder/${currentFolderId}`
+							})
+						)
+				: undefined}
 			onBreadcrumbNavigate={handleBreadcrumbNavigate}
 			{isUploading}
 		/>

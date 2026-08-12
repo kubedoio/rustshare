@@ -14,6 +14,7 @@
 	} from '$lib/api/notes';
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
+	import { askHref } from '$lib/api/ask';
 	import { standupsApi } from '$lib/api/standups';
 	import { uploadFile, deleteFile } from '$lib/api/files';
 	import { getFolderContents } from '$lib/api/folders';
@@ -737,6 +738,21 @@
 			}}
 		>
 			<svelte:fragment slot="extraActions">
+				{#if key === 'notes'}
+					<button
+						class="btn gap-1.5 btn-ghost btn-sm"
+						onclick={() =>
+							goto(
+								askHref({
+									type: 'note',
+									resourceRef: `elembra://io.elembra.files/file/${id}`
+								})
+							)}
+					>
+						<span aria-hidden="true">✦</span>
+						<span>Ask this note</span>
+					</button>
+				{/if}
 				{#if key === 'notes'}
 					<button class="btn gap-1.5 btn-ghost btn-sm" onclick={() => (showShareModal = true)}>
 						<Share2 size={14} />
