@@ -122,20 +122,22 @@ fn auth(principal: PrincipalId, tenant: TenantId) -> AuthenticatedUser {
     }
 }
 
-/// Insert an active mapping row for `community_id` under `tenant` (workspace
-/// == tenant, per the platform invariant). Returns the mapping id.
-async fn insert_mapping(pool: &PgPool, tenant: TenantId, community_id: &str) -> Uuid {
+/// Insert a mapping row for `community_id` under `tenant` (workspace ==
+/// tenant, per the platform invariant) with the given `active` flag. Returns
+/// the mapping id.
+async fn insert_mapping(pool: &PgPool, tenant: TenantId, community_id: &str, active: bool) -> Uuid {
     let mapping_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO chat_workspace_communities
             (mapping_id, tenant_id, workspace_id, community_id, relay_url, active)
-         VALUES ($1, $2, $3, $4, $5, true)",
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(mapping_id)
     .bind(tenant.0)
     .bind(tenant.0)
     .bind(community_id)
     .bind("wss://relay.example.test")
+    .bind(active)
     .execute(pool)
     .await
     .unwrap();
@@ -286,7 +288,7 @@ async fn setup_env(pool: &PgPool) -> ChatEnv {
     let principal = PrincipalId::from(Uuid::new_v4());
     let community_id = format!("community-{}", Uuid::new_v4());
 
-    let mapping_id = insert_mapping(pool, tenant, &community_id).await;
+    let mapping_id = insert_mapping(pool, tenant, &community_id, true).await;
     let binding_id = insert_binding(pool, tenant, principal, &keys.public_key().to_hex()).await;
     insert_admission(
         pool,
@@ -628,6 +630,61 @@ async fn status_unconfigured_returns_empty_shape() {
     assert!(
         !body.admission_active,
         "no admission must be reported as active"
+    );
+
+    cleanup(&pool, tenant, principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Inactive mapping: status must not disclose community/relay details
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_hides_inactive_mapping_details() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    let principal = PrincipalId::from(Uuid::new_v4());
+    let community_id = format!("community-{}", Uuid::new_v4());
+
+    // Full setup EXCEPT the mapping is inactive: the caller has a live
+    // binding and an admission row, but the community mapping is off.
+    let mapping_id = insert_mapping(&pool, tenant, &community_id, false).await;
+    let binding_id = insert_binding(&pool, tenant, principal, &keys.public_key().to_hex()).await;
+    insert_admission(
+        &pool,
+        tenant,
+        mapping_id,
+        binding_id,
+        &keys.public_key().to_hex(),
+    )
+    .await;
+    set_chat_enablement(&pool, tenant, true).await;
+    insert_user(&pool, tenant, principal).await;
+
+    let response = chat_status(State(state), auth(principal, tenant))
+        .await
+        .expect("status must succeed with an inactive mapping");
+    let body = response.0;
+    assert!(
+        body.chat_enabled,
+        "the tenant-level chat enablement is still the caller's own state"
+    );
+    assert!(
+        body.mapping.is_none(),
+        "an inactive mapping must not disclose community/relay configuration"
+    );
+    assert!(
+        body.binding.is_some(),
+        "the caller's own binding remains the caller's own data"
+    );
+    assert!(
+        !body.admission_active,
+        "an inactive mapping cannot yield an active admission"
     );
 
     cleanup(&pool, tenant, principal).await;

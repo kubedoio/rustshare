@@ -114,10 +114,13 @@ pub async fn chat_status(
                 .await
                 .map_err(|e| AppError::internal(format!("chat admission lookup failed: {e}")))?;
         }
-        mapping_info = Some(CommunityMappingInfo {
-            community_id: mapping.community_id.clone(),
-            relay_url: mapping.relay_url.clone(),
-        });
+        // An inactive mapping must not disclose community/relay configuration.
+        if mapping.active {
+            mapping_info = Some(CommunityMappingInfo {
+                community_id: mapping.community_id.clone(),
+                relay_url: mapping.relay_url.clone(),
+            });
+        }
     }
     Ok(Json(ChatStatusResponse {
         chat_enabled,
