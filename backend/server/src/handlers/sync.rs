@@ -1234,6 +1234,80 @@ mod tests {
             "Share viewer should not receive UserCreated event"
         );
     }
+
+    /// A `ChatMessageObserved` event scoped to `payload_tenant`; the event's
+    /// own `user_id` is the ingest actor and is deliberately independent of
+    /// the tenant-scoping decision.
+    fn chat_observed_event(payload_tenant: Uuid) -> Event {
+        Event::new(
+            EventType::ChatMessageObserved,
+            Uuid::new_v4(),
+            AggregateType::ChatMessage,
+            serde_json::json!(ChatMessageObservedPayload {
+                tenant_id: payload_tenant,
+                workspace_id: Uuid::new_v4(),
+                community_id: "community-1".to_string(),
+                channel_id: "channel-1".to_string(),
+                channel_kind: "workspace".to_string(),
+                message_id: "a".repeat(64),
+                event_id: "b".repeat(64),
+            }),
+            Uuid::new_v4(),
+        )
+    }
+
+    /// A metadata store over a lazy pool that is never queried: the chat arm
+    /// and the triggering-user early return both exit before any store use.
+    fn unreachable_metadata_store() -> MetadataStore {
+        MetadataStore::new(
+            PgPool::connect_lazy("postgres://localhost/never_queried").expect("lazy pool"),
+        )
+    }
+
+    #[tokio::test]
+    async fn chat_observed_event_reaches_other_users_in_the_same_tenant() {
+        let tenant = Uuid::new_v4();
+        // The event was ingested by a different user (event.user_id != caller).
+        let event = chat_observed_event(tenant);
+        let store = unreachable_metadata_store();
+        assert!(
+            should_send_event_to_user(&event, Uuid::new_v4(), tenant, &store)
+                .await
+                .expect("relevance decision must succeed"),
+            "a ChatMessageObserved event must reach every user of its tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_observed_event_never_reaches_other_tenants() {
+        let event = chat_observed_event(Uuid::new_v4());
+        let store = unreachable_metadata_store();
+        assert!(
+            !should_send_event_to_user(&event, Uuid::new_v4(), Uuid::new_v4(), &store)
+                .await
+                .expect("relevance decision must succeed"),
+            "a ChatMessageObserved event must never reach users of another tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_chat_event_still_reaches_the_triggering_user() {
+        let user_id = Uuid::new_v4();
+        let event = Event::new(
+            EventType::FileUploaded,
+            Uuid::new_v4(),
+            AggregateType::File,
+            serde_json::json!({"file_id": Uuid::new_v4().to_string()}),
+            user_id,
+        );
+        let store = unreachable_metadata_store();
+        assert!(
+            should_send_event_to_user(&event, user_id, Uuid::new_v4(), &store)
+                .await
+                .expect("relevance decision must succeed"),
+            "the chat arm must not disturb the existing triggering-user behavior"
+        );
+    }
 }
 
 // ============================================================================
