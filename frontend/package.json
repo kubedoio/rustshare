@@ -50,6 +50,7 @@
 	},
 	"dependencies": {
 		"@excalidraw/excalidraw": "^0.18.1",
+		"@noble/curves": "^2.3.0",
 		"@tanstack/svelte-query": "^6.1.38",
 		"@tiptap/core": "^3.29.2",
 		"@tiptap/extension-image": "^3.29.2",
