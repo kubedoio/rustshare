@@ -40,6 +40,10 @@
 		requestGeneration += 1;
 		response = null;
 		error = '';
+		// A stale in-flight request skips its own finally (generation mismatch),
+		// so reset these here or the form stays stuck in loading.
+		loading = false;
+		openingCitation = null;
 	});
 
 	function errorMessage(value: unknown): string {
@@ -157,7 +161,11 @@
 		<article class="mt-8" aria-live="polite">
 			<div class="mb-4 flex items-center gap-2 text-sm font-medium text-base-content/60">
 				<BookOpen size={16} />
-				{response.grounded ? 'Grounded answer' : 'Insufficient evidence'}
+				{response.grounded
+					? 'Grounded answer'
+					: response.insufficient_evidence
+						? 'Insufficient evidence'
+						: 'Answer not grounded'}
 			</div>
 			<p class="whitespace-pre-wrap text-lg leading-8 text-base-content">{response.answer}</p>
 			{#if response.citations.length}

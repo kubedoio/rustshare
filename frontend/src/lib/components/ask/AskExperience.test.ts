@@ -158,4 +158,35 @@ describe('AskExperience', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(screen.queryByText('First answer')).toBeNull();
 	});
+
+	it('recovers from a scope switch while a question is in flight', async () => {
+		let resolveFirst!: (value: unknown) => void;
+		mocks.askWorkspace.mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)));
+		const view = render(AskExperience);
+		const input = screen.getByLabelText('Your question');
+		const form = screen.getByRole('button', { name: 'Ask' }).closest('form')!;
+		await fireEvent.input(input, { target: { value: 'First' } });
+		await fireEvent.submit(form);
+		expect((screen.getByRole('button', { name: 'Generating' }) as HTMLButtonElement).disabled).toBe(
+			true
+		);
+
+		await view.rerender({
+			scope: { type: 'folder', resourceRef: 'elembra://io.elembra.files/folder/f-2' },
+			scopeLabel: 'Folder'
+		});
+		resolveFirst({
+			answer: 'First answer',
+			citations: [],
+			source_count: 0,
+			grounded: false,
+			insufficient_evidence: true,
+			run_id: '1'
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// The stale request's finally must not leave the form stuck disabled.
+		const askButton = screen.getByRole('button', { name: 'Ask' }) as HTMLButtonElement;
+		expect(askButton.disabled).toBe(false);
+	});
 });
