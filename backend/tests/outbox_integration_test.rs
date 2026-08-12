@@ -1544,6 +1544,68 @@ async fn long_offline_consumer_survives_retention() {
 }
 
 // ---------------------------------------------------------------------------
+// 16b. Retention does not treat a missing entitled delivery row as success
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn missing_entitled_delivery_survives_retention_and_recovers() {
+    let _guard = SERIAL.lock().await;
+    let ctx = setup_test_env().await;
+    clean_slate(&ctx.pool).await;
+    let store = setup_store(&ctx).await;
+    register_ref_consumer(&store, &ctx.pool).await;
+    let event = files_created_event(ctx.tenant_id);
+    publish(&store, &event).await;
+
+    // Simulate a damaged/missing ledger row. Retention must consult durable
+    // registration as well as the ledger, so this cannot be treated as
+    // successful delivery.
+    sqlx::query(
+        "DELETE FROM integration_deliveries WHERE consumer_id = $1 AND source = $2 AND event_id = $3",
+    )
+    .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE integration_outbox SET created_at = now() - interval '10 days' WHERE source = $1 AND event_id = $2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE integration_consumers SET registered_at = now() - interval '11 days' WHERE consumer_id = $1",
+    )
+    .bind(REFERENCE_MEMORY_PROJECTION_CONSUMER_ID)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(store.maintenance(1).await.unwrap(), 0);
+
+    // The durable registration lets the returning consumer recreate and
+    // process the obligation through the normal first-delivery safety net.
+    let claimed = store
+        .claim_batch(
+            REFERENCE_MEMORY_PROJECTION_CONSUMER_ID,
+            &OutboxConfig::default(),
+            "recovered-worker",
+        )
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].event.id, event.id);
+
+    cleanup_events(&ctx.pool, &[&event]).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
 // 17. A newly registered consumer gets no historical backlog
 // ---------------------------------------------------------------------------
 
