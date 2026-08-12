@@ -29,14 +29,7 @@ export function publicKeyOf(secretKey: string): string {
 }
 
 function serializeForId(event: Omit<NostrEvent, 'id' | 'sig'>): string {
-	return JSON.stringify([
-		0,
-		event.pubkey,
-		event.created_at,
-		event.kind,
-		event.tags,
-		event.content
-	]);
+	return JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
 }
 
 async function sha256Hex(input: string): Promise<string> {

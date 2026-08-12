@@ -28,7 +28,7 @@ export function storedKeyPubkey(): string | null {
 	}
 }
 
-async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
 	const material = await crypto.subtle.importKey(
 		'raw',
 		new TextEncoder().encode(passphrase),

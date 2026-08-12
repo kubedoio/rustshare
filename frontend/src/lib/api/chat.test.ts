@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from './client';
-import {
-	getChatMessages,
-	getChatMessage,
-	chatMessageRef,
-	chatMessageIdFromRef
-} from './chat';
+import { getChatMessages, getChatMessage, chatMessageRef, chatMessageIdFromRef } from './chat';
 
 vi.mock('./client', () => ({
 	apiClient: { get: vi.fn() }

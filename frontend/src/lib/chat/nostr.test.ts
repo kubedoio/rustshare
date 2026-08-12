@@ -22,9 +22,9 @@ describe('nostr signing', () => {
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello', [], pk);
 		const signed = await signEvent(unsigned, sk);
-		expect(
-			schnorr.verify(hexToBytes(signed.sig), hexToBytes(signed.id), hexToBytes(pk))
-		).toBe(true);
+		expect(schnorr.verify(hexToBytes(signed.sig), hexToBytes(signed.id), hexToBytes(pk))).toBe(
+			true
+		);
 	});
 
 	it('is deterministic: same input gives the same event id', async () => {
