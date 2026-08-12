@@ -21,7 +21,7 @@ use rustshare_core::domain::ApplicationRegistry;
 use rustshare_core::services::PermissionResolver;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_resource_auth::{
-    BuzzAuthority, RegistrationError, ResourceOwnerRegistry, SourceAuthorizer,
+    BuzzAuthority, RegistrationError, ResourceOwner, ResourceOwnerRegistry, SourceAuthorizer,
 };
 use rustshare_storage::{ChatIdentityStore, ChatObservationStore, MetadataStore, ObjectStore};
 use std::sync::Arc;
@@ -47,7 +47,7 @@ pub fn build_source_authorizer(
     chat_identity_store: ChatIdentityStore,
     chat_observation_store: ChatObservationStore,
     buzz_authority: Box<dyn BuzzAuthority>,
-) -> Result<SourceAuthorizer, RegistrationError> {
+) -> Result<(SourceAuthorizer, Arc<ChatResourceOwner>), RegistrationError> {
     let mut registry = ResourceOwnerRegistry::new();
     registry.register(
         Arc::new(FilesResourceOwner::new(
@@ -62,14 +62,16 @@ pub fn build_source_authorizer(
     // state only, then defers the FINAL channel/message decision to the
     // configured Buzz authority; the observation store supplies routing
     // context and message existence, never an allow, and Memory-owned state
-    // is never consulted.
-    registry.register(
-        Arc::new(ChatResourceOwner::with_authority(
-            chat_identity_store,
-            chat_observation_store,
-            buzz_authority,
-        )),
-        &application_registry,
-    )?;
-    Ok(SourceAuthorizer::new(registry))
+    // is never consulted. The same instance is returned so `AppState` can
+    // expose it to the Chat app read surface without constructing a second
+    // owner.
+    let chat_owner = Arc::new(ChatResourceOwner::with_authority(
+        chat_identity_store,
+        chat_observation_store,
+        buzz_authority,
+    ));
+    let chat_owner_arc: Arc<ChatResourceOwner> = Arc::clone(&chat_owner);
+    let chat_owner_registered: Arc<dyn ResourceOwner> = chat_owner_arc;
+    registry.register(chat_owner_registered, &application_registry)?;
+    Ok((SourceAuthorizer::new(registry), chat_owner))
 }
