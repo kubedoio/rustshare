@@ -19,6 +19,7 @@ pub enum AggregateType {
     MailMessage,
     MailAccount,
     MailImportJob,
+    ChatMessage,
 }
 
 /// Event types in the system
@@ -93,6 +94,7 @@ pub enum EventType {
     MailMessageDraftCreated,
     MailMessageDraftDeleted,
     MailRemoteAction,
+    ChatMessageObserved,
 }
 
 // ponytail: Debug prints unit-variant names verbatim, same as the 54-arm match
@@ -573,6 +575,19 @@ pub struct MailRemoteActionPayload {
     pub folder: String,
     pub uid: u32,
     pub action: String,
+}
+
+/// Payload of `EventType::ChatMessageObserved`, published after a signed Buzz
+/// event is first ingested into the observation index.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ChatMessageObservedPayload {
+    pub tenant_id: Uuid,
+    pub workspace_id: Uuid,
+    pub community_id: String,
+    pub channel_id: String,
+    pub channel_kind: String,
+    pub message_id: String,
+    pub event_id: String,
 }
 
 #[cfg(test)]
