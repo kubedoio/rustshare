@@ -85,8 +85,10 @@ use rustshare_server::buzz_gateway::{
 use rustshare_server::services::ask_workspace::{
     AskWorkspaceService, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
 };
+#[cfg(feature = "test-recording-provider")]
+use rustshare_server::services::unified_search::SearchScope;
 use rustshare_server::services::unified_search::{
-    SearchScope, SearchSource, UnifiedSearchResponse, UnifiedSearchService,
+    SearchSource, UnifiedSearchResponse, UnifiedSearchService,
 };
 use rustshare_server::state::AppAiService;
 use rustshare_storage::{
