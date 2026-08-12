@@ -159,7 +159,11 @@ impl ChatResourceOwner {
         channel_id: &str,
         channel_kind: rustshare_resource_auth::BuzzChannelKind,
     ) -> bool {
-        let mapping = match self.chat_identity.mapping(ctx.tenant_id, ctx.workspace_id).await {
+        let mapping = match self
+            .chat_identity
+            .mapping(ctx.tenant_id, ctx.workspace_id)
+            .await
+        {
             Ok(Some(mapping)) => mapping,
             Ok(None) => return false,
             Err(error) => {
@@ -184,7 +188,11 @@ impl ChatResourceOwner {
         if !access {
             return false;
         }
-        let binding = match self.chat_identity.active_binding(ctx.tenant_id, ctx.principal_id).await {
+        let binding = match self
+            .chat_identity
+            .active_binding(ctx.tenant_id, ctx.principal_id)
+            .await
+        {
             Ok(Some(binding)) => binding,
             Ok(None) => return false,
             Err(error) => {
@@ -223,7 +231,10 @@ impl ChatResourceOwner {
                 event_created_at: chrono::Utc::now(),
             })
             .await;
-        matches!(decision, Ok(rustshare_resource_auth::BuzzReadDecision::Allow))
+        matches!(
+            decision,
+            Ok(rustshare_resource_auth::BuzzReadDecision::Allow)
+        )
     }
 }
 

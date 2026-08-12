@@ -219,22 +219,21 @@ impl BuzzObservationService {
         // The durable path is the outbox event above; a publish failure must
         // never fail the ingest.
         let author_user_id = data.principal.principal_id.0;
-        self.broadcaster
-            .publish(rustshare_core::events::Event::new(
-                rustshare_core::events::EventType::ChatMessageObserved,
-                uuid::Uuid::new_v4(),
-                rustshare_core::events::AggregateType::ChatMessage,
-                serde_json::json!(rustshare_core::events::ChatMessageObservedPayload {
-                    tenant_id: tenant.0,
-                    workspace_id: workspace.0,
-                    community_id: data.context.community_id.clone(),
-                    channel_id: data.context.channel_id.clone(),
-                    channel_kind: data.context.channel_kind.as_str().to_string(),
-                    message_id: data.buzz.message_id.clone(),
-                    event_id: data.buzz.event_id.clone(),
-                }),
-                author_user_id,
-            ));
+        self.broadcaster.publish(rustshare_core::events::Event::new(
+            rustshare_core::events::EventType::ChatMessageObserved,
+            uuid::Uuid::new_v4(),
+            rustshare_core::events::AggregateType::ChatMessage,
+            serde_json::json!(rustshare_core::events::ChatMessageObservedPayload {
+                tenant_id: tenant.0,
+                workspace_id: workspace.0,
+                community_id: data.context.community_id.clone(),
+                channel_id: data.context.channel_id.clone(),
+                channel_kind: data.context.channel_kind.as_str().to_string(),
+                message_id: data.buzz.message_id.clone(),
+                event_id: data.buzz.event_id.clone(),
+            }),
+            author_user_id,
+        ));
         Ok(IngestOutcome::FirstObservation)
     }
 
