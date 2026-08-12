@@ -24904,6 +24904,7 @@
         "description": "Get the authenticated user's profile information.\n\n# Endpoint\n`GET /api/users/me`\n\n# Authentication\nRequires valid JWT token.\n\n# Response\n- 200 OK: Returns user profile\n- 401 Unauthorized: Missing or invalid token\n- 404 Not Found: User not found\n- 500 Internal Server Error: Database error",
         "required": [
           "id",
+          "tenant_id",
           "username",
           "display_name",
           "email",
@@ -24939,6 +24940,9 @@
             "type": "integer",
             "format": "int64"
           },
+          "tenant_id": {
+            "type": "string"
+          },
           "theme": {
             "$ref": "#/components/schemas/Theme"
           },
@@ -24954,6 +24958,7 @@
         "type": "object",
         "required": [
           "id",
+          "tenant_id",
           "email",
           "display_name",
           "is_admin",
@@ -24977,6 +24982,9 @@
           },
           "is_admin": {
             "type": "boolean"
+          },
+          "tenant_id": {
+            "type": "string"
           },
           "theme": {
             "type": "string"
