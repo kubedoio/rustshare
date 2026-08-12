@@ -105,6 +105,11 @@
 
 	const status = $derived($statusQuery.data);
 	const bindingActive = $derived(status?.binding != null && status.binding.status === 'Active');
+	const askChannelHref = $derived(
+		selectedChannelId && status?.mapping
+			? `/ask?scope=chat&communityId=${encodeURIComponent(status.mapping.community_id)}&channelId=${encodeURIComponent(selectedChannelId)}`
+			: null
+	);
 	const focusTarget: ChatMessageDto | null = $derived(
 		$focusedMessageQuery.data && $focusedMessageQuery.data.channel_id === selectedChannelId
 			? $focusedMessageQuery.data
@@ -143,6 +148,11 @@
 			}}
 		/>
 		<div class="flex min-w-0 flex-1 flex-col">
+			{#if askChannelHref}
+				<div class="px-4 pt-2">
+					<a class="text-sm text-primary" href={askChannelHref}>Ask this channel</a>
+				</div>
+			{/if}
 			<MessageTimeline
 				messages={$messagesQuery.data?.messages ?? []}
 				loading={$messagesQuery.isLoading}

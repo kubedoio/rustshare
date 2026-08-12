@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import AskExperience from '$lib/components/ask/AskExperience.svelte';
-	import type { AskScope } from '$lib/api/ask';
+	import type { AskScope, OpenCitationResponse } from '$lib/api/ask';
+	import { chatMessageIdFromRef } from '$lib/api/chat';
 
 	let scope = $derived.by((): AskScope => {
 		const type = $page.url.searchParams.get('scope');
@@ -26,6 +28,12 @@
 					? 'Chat channel'
 					: 'Workspace'
 	);
+
+	function handleChatCitationOpen(opened: OpenCitationResponse): void {
+		const messageId = chatMessageIdFromRef(opened.resource_ref);
+		if (!messageId) return;
+		goto(`/apps/chat?message=${encodeURIComponent(messageId)}`);
+	}
 </script>
 
-<AskExperience {scope} {scopeLabel} />
+<AskExperience {scope} {scopeLabel} onChatCitationOpen={handleChatCitationOpen} />
