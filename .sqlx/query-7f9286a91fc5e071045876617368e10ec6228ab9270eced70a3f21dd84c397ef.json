@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM integration_outbox o\n            WHERE o.created_at < now() - ($1::int8 * interval '1 hour')\n              AND NOT EXISTS (\n                  SELECT 1 FROM integration_deliveries d\n                  WHERE d.source = o.source AND d.event_id = o.event_id AND d.state <> 'processed'\n              )\n              AND NOT EXISTS (\n                  SELECT 1\n                  FROM integration_consumer_subscriptions s\n                  JOIN integration_consumers c ON c.consumer_id = s.consumer_id\n                  WHERE c.registered_at <= o.created_at\n                    AND (\n                        s.pattern = o.event_type\n                        OR (\n                            right(s.pattern, 2) = '.*'\n                            AND o.event_type LIKE left(s.pattern, length(s.pattern) - 1) || '%'\n                        )\n                    )\n                    AND NOT EXISTS (\n                        SELECT 1\n                        FROM integration_deliveries d2\n                        WHERE d2.consumer_id = s.consumer_id\n                          AND d2.source = o.source\n                          AND d2.event_id = o.event_id\n                          AND d2.state = 'processed'\n                    )\n              )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7f9286a91fc5e071045876617368e10ec6228ab9270eced70a3f21dd84c397ef"
+}
