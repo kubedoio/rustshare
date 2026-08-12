@@ -32,9 +32,11 @@
 		uploadFile,
 		listAllFiles,
 		getTrashSummary,
-		emptyTrash
+		emptyTrash,
+		getFile
 	} from '$lib/api/files';
 	import { createNote } from '$lib/api/notes';
+	import { askHref } from '$lib/api/ask';
 	import {
 		createFolder,
 		deleteFolder,
@@ -878,6 +880,43 @@
 		previewTarget = file;
 		showFilePreviewModal = true;
 	}
+
+	// Deep-link support: ?preview=<id> (Ask citations, dashboard, activity,
+	// Topbar search). Resolve the file and open it the same way an in-page click
+	// would. The param is stripped so the note editor's return link and later
+	// in-page navigation don't re-trigger this; the guard compares against the
+	// cleaned URL so re-clicking the same result still re-opens it.
+	let lastHandledPreviewUrl: string | null = null;
+
+	$effect(() => {
+		const url = $page.url;
+		const previewId = url.searchParams.get('preview');
+		if (!previewId) return;
+		const rawUrl = url.pathname + url.search;
+		if (rawUrl === lastHandledPreviewUrl) return;
+
+		const params = new URLSearchParams(url.search);
+		params.delete('preview');
+		const cleanUrl = `${url.pathname}${params.size ? `?${params.toString()}` : ''}`;
+		lastHandledPreviewUrl = cleanUrl;
+		if (cleanUrl !== rawUrl) goto(cleanUrl, { replaceState: true });
+		if (!isValidUuid(previewId)) return;
+
+		getFile(previewId)
+			.then((file) => {
+				if (detectEditorType(file.name, file.mime_type) === 'markdown') {
+					navigateToNote(file.id, cleanUrl);
+				} else {
+					previewTarget = file;
+					showFilePreviewModal = true;
+				}
+			})
+			.catch(() => {
+				toastMessage = 'That file could not be opened.';
+				showToast = true;
+				toastType = 'error';
+			});
+	});
 
 	// ============================================================================
 	// OTHER HANDLERS (unchanged from original)
@@ -1802,6 +1841,15 @@
 			onBulkMove={handleBulkMove}
 			onNewFolder={() => (showCreateFolderModal = true)}
 			onUpload={() => document.getElementById('upload-file-input')?.click()}
+			onAsk={currentFolderId && activeRoot === 'my-files'
+				? () =>
+						goto(
+							askHref({
+								type: 'folder',
+								resourceRef: `elembra://io.elembra.files/folder/${currentFolderId}`
+							})
+						)
+				: undefined}
 			onBreadcrumbNavigate={handleBreadcrumbNavigate}
 			{isUploading}
 		/>

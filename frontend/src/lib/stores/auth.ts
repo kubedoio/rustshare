@@ -30,6 +30,7 @@ function clearLegacyWebSocketToken(): void {
 function toAuthUser(profile: Awaited<ReturnType<typeof getUserProfile>>): User {
 	return {
 		id: profile.id,
+		tenant_id: profile.tenant_id,
 		email: profile.email,
 		display_name: profile.display_name,
 		is_admin: profile.is_admin,

@@ -1,5 +1,6 @@
 export interface User {
 	id: string;
+	tenant_id?: string;
 	email: string;
 	display_name: string;
 	is_admin: boolean;

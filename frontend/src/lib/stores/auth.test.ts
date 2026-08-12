@@ -77,6 +77,7 @@ describe('Auth Store Race Condition', () => {
 		// Also set up getUserProfile for the login flow to return User B
 		mockGetUserProfile.mockResolvedValueOnce({
 			id: 'user-b',
+			tenant_id: 'tenant-b',
 			email: 'user-b@example.com',
 			display_name: 'User B',
 			is_admin: false,
@@ -154,6 +155,7 @@ describe('Auth Store Race Condition', () => {
 		// Also need getUserProfile to resolve for the login flow
 		mockGetUserProfile.mockResolvedValue({
 			id: 'user-x',
+			tenant_id: 'tenant-x',
 			email: 'user@example.com',
 			display_name: 'User X',
 			is_admin: false,

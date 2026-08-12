@@ -50,6 +50,7 @@ pub struct LoginResponse {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: String,
+    pub tenant_id: String,
     pub email: String,
     pub display_name: String,
     pub is_admin: bool,
@@ -161,6 +162,7 @@ fn build_login_response(token: String, user: User) -> LoginResponse {
         token,
         user: UserResponse {
             id: user.id.to_string(),
+            tenant_id: user.tenant_id.to_string(),
             email: user.email,
             display_name: user.display_name,
             is_admin: user.is_admin,

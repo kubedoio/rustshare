@@ -3,6 +3,7 @@ import type { Theme } from '$lib/stores/theme';
 
 export interface UserProfile {
 	id: string;
+	tenant_id: string;
 	username: string;
 	display_name: string;
 	email: string;
