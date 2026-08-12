@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rustshare_resource_auth::PrincipalContext;
 
-use super::unified_search::{RagSource, SearchSource, UnifiedSearchService};
+use super::unified_search::{RagSource, SearchScope, SearchSource, UnifiedSearchService};
 
 pub const MAX_QUESTION_CHARS: usize = super::unified_search::MAX_QUERY_CHARS;
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
@@ -321,6 +321,24 @@ impl AskWorkspaceService {
         sources: &[SearchSource],
         result_limit: usize,
     ) -> Result<AskWorkspaceResponse, LlmError> {
+        self.ask_scoped(
+            ctx,
+            question,
+            sources,
+            result_limit,
+            &SearchScope::Workspace,
+        )
+        .await
+    }
+
+    pub async fn ask_scoped(
+        &self,
+        ctx: &PrincipalContext,
+        question: &str,
+        sources: &[SearchSource],
+        result_limit: usize,
+        scope: &SearchScope,
+    ) -> Result<AskWorkspaceResponse, LlmError> {
         let run_id = Uuid::new_v4();
         let question = question.trim();
         if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
@@ -331,14 +349,21 @@ impl AskWorkspaceService {
         };
         let search = self
             .search
-            .search(ctx, question, sources, result_limit.clamp(1, MAX_SOURCES))
+            .search_scoped(
+                ctx,
+                question,
+                sources,
+                result_limit.clamp(1, MAX_SOURCES),
+                scope,
+            )
             .await
             .map_err(|_| LlmError::Failed)?;
         let materialized = self
             .search
-            .materialize_for_rag(
+            .materialize_for_rag_scoped(
                 ctx,
                 &search.results,
+                scope,
                 MAX_SOURCES,
                 MAX_SOURCE_CHARS,
                 MAX_CONTEXT_CHARS,
