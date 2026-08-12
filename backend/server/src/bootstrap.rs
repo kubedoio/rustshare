@@ -660,6 +660,7 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&services.outbox_store),
         WebhookSigner::new(config.rustshare_chat_webhook_secret.clone()),
         chat_webhook_max_age_seconds(),
+        Arc::clone(&broadcaster),
     ));
 
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());

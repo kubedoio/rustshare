@@ -540,6 +540,7 @@ fn service(pool: PgPool) -> BuzzObservationService {
         Arc::new(OutboxStore::new(pool.clone(), registry)),
         WebhookSigner::new(WEBHOOK_SECRET),
         300,
+        Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
     )
 }
 
