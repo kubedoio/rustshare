@@ -265,3 +265,45 @@ Elembra Chat reaches Alpha when all of the following hold:
 ## Recommended next GOAL
 
 **Elembra Chat Alpha hardening** — implement the six new issues from §11 (observability first, then revocation endpoint, then sent-vs-observed), stand up a real-relay dogfooding deployment, and run the Alpha contract A1–A20 checklist for one week with at least two people. Do NOT start Chat v2 (threads UI, DM surfaces, Slack parity) until the Alpha exit criteria hold.
+
+---
+
+## 13. Dogfooding deployment findings (this goal)
+
+A reproducible Alpha deployment was built and exercised against a real Buzz
+relay (this goal, PR in review). Findings that update the picture above:
+
+### New runtime component: observation bridge
+
+The upstream Buzz relay has **no webhook delivery** — nothing pushes events to
+Elembra's observation endpoint. A real dogfooding deployment therefore needs a
+small relay→Elembra forwarder:
+`frontend/scripts/buzz-observer.mjs` (NIP-42 AUTH as the bridge identity, NIP-01
+REQ for kind-1, HMAC push to `POST /api/v1/integrations/buzz/events`). Elembra's
+webhook remains the authoritative verifier; the bridge only relays. This is the
+missing runtime half of the "push-only observation" contract (§1) — track its
+hardening (durable cursor, retries, supervision) in the operator-observability
+issue (#239-adjacent).
+
+### Local-relay mapping was impossible (fixed)
+
+`validate_relay_url` applied the SSRF guard unconditionally, so a relay on
+`localhost`/private addresses could not be mapped via the admin API, and the
+binding challenge re-validated the stored URL — blocking local dogfooding
+entirely. Fixed with `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` (default `false`),
+mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
+
+### Other observed behaviors
+
+- The mapping is **existence-hidden** until a binding exists (`chat_status`
+  returns `mapping: null` without a binding) — provisioning flows must PATCH
+  first, not rely on the status field.
+- Channel attribution is bridge-side (client publishes no channel tag): the
+  observer routes on a `channel` tag when present, else a configured default.
+- Revocation works end-to-end: admin disable denies Elembra reads immediately;
+  relay-side 9031 denies further publishes. The admin *endpoint* (#240) remains
+  a UX/automation follow-up.
+- Ask without an LLM provider returns 503 "LLM provider not configured" — the
+  L32/#244 trap is real on a fresh deployment.
+- CSRF (double-submit cookie) applies to all authenticated mutating API calls;
+  API tooling must echo `X-Rustshare-Csrf` (browsers do automatically).

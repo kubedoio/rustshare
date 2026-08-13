@@ -1,0 +1,123 @@
+# Alpha dogfooding Docker Compose override.
+# =============================================================================
+# Adds the Buzz relay runtime on top of the base stack so a clean operator can
+# bring up the complete Elembra Alpha stack with one command:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
+#
+# Services added: buzz-postgres, buzz-redis, buzz-minio(+init) — the relay's
+# backing services — and buzz-relay (the authoritative Chat engine). The
+# observation bridge (relay -> Elembra webhook) is a host-side Node process
+# started separately (scripts/start-buzz-observer.sh); it must connect to the
+# relay through the SAME host the browsers use because Buzz resolves the
+# community from the connection host (ADR-0034), which is unreachable from an
+# internal container network with an identical Host value.
+#
+# Required .env additions (see .env.example):
+#   BUZZ_RELAY_OWNER_PUBKEY  relay owner / Elembra bridge public key (64 hex)
+#   BUZZ_RELAY_PRIVATE_KEY   the relay's own identity private key (64 hex)
+# Optional: BUZZ_RELAY_IMAGE, BUZZ_POSTGRES_PASSWORD, BUZZ_MINIO_USER/PASSWORD,
+# BUZZ_RELAY_URL (advertised relay URL, default ws://localhost:7447).
+#
+# Teardown:
+#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v
+#   (the -v flag also removes the buzz-* volumes; omit it to keep relay state)
+# =============================================================================
+
+services:
+  buzz-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: ${BUZZ_POSTGRES_PASSWORD:-buzz_dev}
+      POSTGRES_DB: buzz
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - buzz_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buzz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  buzz-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  buzz-minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BUZZ_MINIO_USER:-buzz_dev}
+      MINIO_ROOT_PASSWORD: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+    volumes:
+      - buzz_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  buzz-minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      buzz-minio:
+        condition: service_healthy
+    environment:
+      BUZZ_MINIO_USER: ${BUZZ_MINIO_USER:-buzz_dev}
+      BUZZ_MINIO_PASSWORD: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        mc alias set local http://buzz-minio:9000
+        $${BUZZ_MINIO_USER:-buzz_dev} $${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+        && mc mb --ignore-existing local/buzz-media
+
+  buzz-relay:
+    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
+    restart: unless-stopped
+    ports:
+      # All relay listeners are host-local: single-host dogfooding, and
+      # BUZZ_REQUIRE_AUTH_TOKEN=false must not be reachable network-wide.
+      - "127.0.0.1:7447:7447"
+      # Relay health/metrics listeners are operator surfaces, not product traffic.
+      - "127.0.0.1:8088:8088"
+      - "127.0.0.1:9102:9102"
+    environment:
+      DATABASE_URL: postgres://buzz:${BUZZ_POSTGRES_PASSWORD:-buzz_dev}@buzz-postgres:5432/buzz
+      REDIS_URL: redis://buzz-redis:6379
+      RELAY_URL: ${BUZZ_RELAY_URL:-ws://localhost:7447}
+      BUZZ_BIND_ADDR: 0.0.0.0:7447
+      BUZZ_HEALTH_PORT: "8088"
+      BUZZ_METRICS_PORT: "9102"
+      BUZZ_AUTO_MIGRATE: "true"
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
+      BUZZ_REQUIRE_AUTH_TOKEN: "false"
+      RELAY_OWNER_PUBKEY: ${BUZZ_RELAY_OWNER_PUBKEY:?set BUZZ_RELAY_OWNER_PUBKEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set BUZZ_RELAY_PRIVATE_KEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
+      BUZZ_S3_ENDPOINT: http://buzz-minio:9000
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_MINIO_USER:-buzz_dev}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+      BUZZ_S3_BUCKET: buzz-media
+    depends_on:
+      buzz-postgres:
+        condition: service_healthy
+      buzz-redis:
+        condition: service_healthy
+      buzz-minio:
+        condition: service_healthy
+      buzz-minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  buzz_postgres_data:
+  buzz_minio_data:

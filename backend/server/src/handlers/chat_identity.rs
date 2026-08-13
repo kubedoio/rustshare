@@ -397,9 +397,9 @@ async fn validate_relay_url(value: &str) -> Result<(), AppError> {
     let port = url
         .port_or_known_default()
         .ok_or_else(|| AppError::bad_request("relay_url must include a valid port"))?;
-    rustshare_core::validation::resolve_public_socket_addrs(host, port)
+    rustshare_core::validation::resolve_chat_relay_socket_addrs(host, port)
         .await
-        .map_err(|_| AppError::bad_request("relay_url must resolve to a public address"))?;
+        .map_err(|_| AppError::bad_request("relay_url must resolve to an allowed address"))?;
     Ok(())
 }
 
