@@ -46,15 +46,22 @@
 		importing = true;
 		importError = '';
 		try {
-			await importChatKey(backupJson.trim(), importPassphrase);
+			const secretKey = await importChatKey(backupJson.trim(), importPassphrase);
 			keyMissing = false;
 			// The passphrase that just decrypted the backup is the key
 			// passphrase — seed it so the first send does not re-prompt.
 			passphrase = importPassphrase;
 			backupJson = '';
 			importPassphrase = '';
-			importNotice = 'Key imported — you can send as your bound identity.';
-			onSendFailure('');
+			if (publicKeyOf(secretKey) !== boundPubkey) {
+				// The key is stored (import replaced the envelope), but it does
+				// not match the identity bound to this account, so sends would
+				// be rejected. Surface that instead of the success notice.
+				importError = 'Key imported, but it does not match the identity bound to this account.';
+			} else {
+				importNotice = 'Key imported — you can send as your bound identity.';
+				onSendFailure('');
+			}
 		} catch (err) {
 			importError =
 				err instanceof Error ? err.message : 'import failed — check the backup and passphrase';
@@ -63,9 +70,9 @@
 		}
 	}
 
-	function exportBackup(): void {
+	async function exportBackup(): Promise<void> {
 		try {
-			navigator.clipboard.writeText(exportChatKey());
+			await navigator.clipboard.writeText(exportChatKey());
 			importNotice = 'Backup copied to clipboard.';
 			importError = '';
 		} catch {
@@ -120,6 +127,9 @@
 
 	async function unlockKey(): Promise<string | null> {
 		if (!hasChatKey()) {
+			// Vault emptied after mount (storage cleared, scope dropped) — the
+			// import UI is the recovery path, same as the corrupt-key case.
+			keyMissing = true;
 			onSendFailure('no chat key on this device — import your backup to send');
 			return null;
 		}
@@ -128,10 +138,17 @@
 		} catch (err) {
 			const message = err instanceof Error ? err.message : '';
 			if (message === 'no stored chat key') {
-				onSendFailure('no local chat key — bind your identity first');
+				// The vault scope or entry vanished after mount (logged out,
+				// storage cleared, or a stale hasChatKey snapshot) — surface the
+				// import UI so the user can recover instead of being stuck.
+				keyMissing = true;
+				onSendFailure('no chat key on this device — import your backup to send');
 				return null;
 			}
 			if (message === 'unsupported chat key format') {
+				// Stored envelope is corrupt or from a newer format: no local
+				// key is usable, so re-importing the backup is the only path.
+				keyMissing = true;
 				onSendFailure('stored chat key format is unsupported — re-import your backup');
 				return null;
 			}
@@ -174,10 +191,10 @@
 					{importing ? 'Importing…' : 'Import key'}
 				</button>
 			</div>
-			{#if importError}<p class="mt-1 text-sm text-error">{importError}</p>{/if}
-			{#if importNotice}<p class="mt-1 text-sm text-success">{importNotice}</p>{/if}
 		</div>
 	{/if}
+	{#if importError}<p class="mb-1 text-sm text-error">{importError}</p>{/if}
+	{#if importNotice}<p class="mb-1 text-sm text-success">{importNotice}</p>{/if}
 	{#if attachmentTag}
 		<div class="mb-1 text-xs text-base-content/60">
 			Attachment: {attachmentTag[1]}

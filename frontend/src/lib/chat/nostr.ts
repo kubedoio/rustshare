@@ -64,7 +64,7 @@ export async function signEvent(
 
 export type PublishResult =
 	| { ok: true }
-	| { ok: false; reason: 'transport'; detail?: string } // socket error/timeout before an OK frame
+	| { ok: false; reason: 'transport' } // socket error/timeout before an OK frame
 	| { ok: false; reason: 'rejected'; detail?: string }; // relay answered OK false (NIP-20 message)
 
 /** Sign and publish one event over a NIP-42 relay session. Never throws: a

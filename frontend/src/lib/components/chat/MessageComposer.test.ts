@@ -98,6 +98,9 @@ describe('MessageComposer', () => {
 
 		await waitFor(() => expect(mocks.importChatKey).toHaveBeenCalledWith(backup, 'pass'));
 		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText('Key imported — you can send as your bound identity.')).toBeTruthy()
+		);
 
 		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
 			target: { value: 'hello from the second device' }
@@ -129,6 +132,45 @@ describe('MessageComposer', () => {
 		await waitFor(() => expect(screen.getByText('decrypt failed')).toBeTruthy());
 		expect(mocks.publishEvent).not.toHaveBeenCalled();
 		expect(onSendFailure).not.toHaveBeenCalled();
+	});
+
+	it('warns when the imported key does not match the bound identity', async () => {
+		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-other');
+		const { onSendFailure } = renderComposer();
+		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
+
+		const backup = '{"v":1,"salt":"aa","iv":"bb","ciphertext":"cc","pubkey":"pk-other"}';
+		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: backup } });
+		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
+			target: { value: 'pass' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
+
+		await waitFor(() =>
+			expect(
+				screen.getByText('Key imported, but it does not match the identity bound to this account.')
+			).toBeTruthy()
+		);
+		expect(screen.queryByText('Key imported — you can send as your bound identity.')).toBeNull();
+		expect(onSendFailure).not.toHaveBeenCalled();
+	});
+
+	it('surfaces the import UI when the stored key is corrupt or unsupported', async () => {
+		mocks.hasChatKey.mockReturnValue(true);
+		vi.mocked(mocks.loadChatKey).mockRejectedValue(new Error('unsupported chat key format'));
+		const { onSendFailure } = renderComposer();
+		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+
+		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+			target: { value: 'hello' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
+		expect(onSendFailure).toHaveBeenCalledWith(
+			'stored chat key format is unsupported — re-import your backup'
+		);
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
 	});
 
 	it('reports a relay rejection with the relay reason', async () => {
@@ -196,6 +238,7 @@ describe('MessageComposer', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Export key backup' }));
 		await waitFor(() => expect(mocks.exportChatKey).toHaveBeenCalled());
 		await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
+		await waitFor(() => expect(screen.getByText('Backup copied to clipboard.')).toBeTruthy());
 		expect(onSendFailure).not.toHaveBeenCalled();
 	});
 });

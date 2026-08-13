@@ -133,7 +133,14 @@ export async function loadChatKey(passphrase: string): Promise<string> {
 		raw = null;
 	}
 	if (!raw) throw new Error('no stored chat key');
-	const envelope = JSON.parse(raw) as EncryptedChatKey;
+	let envelope: EncryptedChatKey;
+	try {
+		envelope = JSON.parse(raw) as EncryptedChatKey;
+	} catch {
+		// Corrupt/truncated envelope: there is no usable key, and the caller's
+		// only recovery is re-importing the backup.
+		throw new Error('unsupported chat key format');
+	}
 	if (envelope.v !== 1) throw new Error('unsupported chat key format');
 	return decryptEnvelope(envelope, passphrase);
 }

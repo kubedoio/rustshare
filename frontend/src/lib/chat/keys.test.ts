@@ -47,6 +47,12 @@ describe('chat key custody', () => {
 		await expect(loadChatKey('correct horse')).rejects.toThrow();
 	});
 
+	it('reports a corrupt envelope as an unsupported format, not a raw parse error', async () => {
+		setChatKeyUser('user-1');
+		localStorage.setItem(`${LEGACY_KEY}.user-1`, '{"v":1,"ciphertext":"garbage');
+		await expect(loadChatKey('pass')).rejects.toThrow('unsupported chat key format');
+	});
+
 	it('imports a backup and clears on demand', async () => {
 		setChatKeyUser('user-1');
 		const sk = generateSecretKey();
