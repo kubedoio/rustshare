@@ -100,9 +100,15 @@
 	});
 
 	// Polling fallback: 15 s while mounted, regardless of websocket state.
+	// Messages keep the open timeline current; channels need the same fallback
+	// or a dead websocket freezes the channel list forever (channels are only
+	// invalidated over WS). The guard mirrors channelsQuery's enabled
+	// condition, so the poll never fetches while Chat is unbound.
 	onMount(() => {
 		const interval = setInterval(() => {
 			if (selectedChannelId) messagesQuery.refetch();
+			const status = $statusQuery.data;
+			if (status?.mapping != null && status?.binding != null) channelsQuery.refetch();
 		}, 15_000);
 		return () => clearInterval(interval);
 	});
@@ -183,6 +189,7 @@
 			<MessageComposer
 				relayUrl={status.mapping.relay_url}
 				channelId={selectedChannelId ?? ''}
+				boundPubkey={status.binding?.buzz_pubkey ?? null}
 				onSendFailure={handleSendFailure}
 			/>
 			{#if relayError}

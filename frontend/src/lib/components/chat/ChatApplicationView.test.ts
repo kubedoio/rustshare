@@ -178,4 +178,24 @@ describe('ChatApplicationView', () => {
 		await fireEvent.click(screen.getByRole('button', { name: /random/ }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('random', null));
 	});
+
+	it('refetches channels on the polling fallback so a dead websocket cannot freeze the channel list', async () => {
+		vi.useFakeTimers();
+		try {
+			mocks.getChatStatus.mockResolvedValue(activeStatus());
+			mocks.getChatChannels.mockResolvedValue(CHANNELS);
+			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+			render(ChatApplicationView);
+			await waitFor(() => expect(screen.getByText(/general/)).toBeTruthy());
+			const channelsCalls = mocks.getChatChannels.mock.calls.length;
+			const messagesCalls = mocks.getChatMessages.mock.calls.length;
+			await vi.advanceTimersByTimeAsync(16_000);
+			await waitFor(() =>
+				expect(mocks.getChatChannels.mock.calls.length).toBeGreaterThan(channelsCalls)
+			);
+			expect(mocks.getChatMessages.mock.calls.length).toBeGreaterThan(messagesCalls);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

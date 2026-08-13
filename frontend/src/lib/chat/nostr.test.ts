@@ -46,6 +46,7 @@ describe('nostr signing', () => {
 class FakeWebSocket {
 	static instances: FakeWebSocket[] = [];
 	static okValue = true;
+	static okMessage = '';
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -68,7 +69,7 @@ class FakeWebSocket {
 			this.reply(['AUTH', 'challenge-1']);
 		} else if (frame[0] === 'EVENT') {
 			const event = frame[1] as { id: string };
-			this.reply(['OK', event.id, FakeWebSocket.okValue, '']);
+			this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]);
 		}
 	}
 
@@ -81,10 +82,19 @@ class FakeWebSocket {
 	}
 }
 
+/** A socket that errors before it can answer, like a refused connection. */
+class ErroringSocket extends FakeWebSocket {
+	constructor() {
+		super();
+		queueMicrotask(() => this.onerror?.());
+	}
+}
+
 describe('publishEvent', () => {
 	beforeEach(() => {
 		FakeWebSocket.instances = [];
 		FakeWebSocket.okValue = true;
+		FakeWebSocket.okMessage = '';
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 	});
 
@@ -92,15 +102,15 @@ describe('publishEvent', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('sends the EVENT frame after AUTH and resolves true on OK', async () => {
+	it('sends the EVENT frame after AUTH and resolves ok on OK true', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
 		const expected = await signEvent(unsigned, sk);
 
-		const ok = await publishEvent('wss://relay.test', unsigned, sk);
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
-		expect(ok).toBe(true);
+		expect(result).toEqual({ ok: true });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent[0][0]).toBe('REQ');
 		const eventFrame = ws.sent.find((frame) => frame[0] === 'EVENT');
@@ -108,15 +118,27 @@ describe('publishEvent', () => {
 		expect((eventFrame![1] as { id: string }).id).toBe(expected.id);
 	});
 
-	it('resolves false when the relay rejects with OK false', async () => {
+	it('resolves rejected with the relay message when the relay answers OK false', async () => {
 		FakeWebSocket.okValue = false;
+		FakeWebSocket.okMessage = 'blocked: not admitted';
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
 
-		const ok = await publishEvent('wss://relay.test', unsigned, sk);
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
-		expect(ok).toBe(false);
+		expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'blocked: not admitted' });
+	});
+
+	it('resolves transport on a socket error before any OK frame', async () => {
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+
+		vi.stubGlobal('WebSocket', ErroringSocket);
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(result).toEqual({ ok: false, reason: 'transport' });
 	});
 });
 
@@ -146,9 +168,9 @@ describe('publishEvent without an AUTH challenge', () => {
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
 
-		const ok = await publishEvent('wss://relay.test', unsigned, sk);
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
-		expect(ok).toBe(true);
+		expect(result).toEqual({ ok: true });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
 	});
