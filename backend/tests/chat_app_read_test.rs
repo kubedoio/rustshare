@@ -1127,3 +1127,177 @@ async fn revoked_binding_denies_reads() {
 
     cleanup(&pool, env.tenant, env.principal).await;
 }
+
+// ---------------------------------------------------------------------------
+// 7. revoke_principal: exact revocation semantics (regression guard for the
+//    ambiguous `revoked_at` qualification fix — the admission's own timestamp
+//    must be preserved, and revocation must be exactly tenant/principal
+//    scoped and idempotent)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn revoke_principal_scope_and_timestamp_semantics() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let chat_identity = ChatIdentityStore::new(pool.clone());
+
+    // Tenant A: the revoked principal plus an unrelated principal in the same
+    // tenant who must stay untouched.
+    let env_a = setup_env(&pool).await;
+    let (mapping_a,): (Uuid,) =
+        sqlx::query_as("SELECT mapping_id FROM chat_workspace_communities WHERE tenant_id = $1")
+            .bind(env_a.tenant.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let other_keys = Keys::generate();
+    let other = PrincipalId::from(Uuid::new_v4());
+    let other_binding = insert_binding(
+        &pool,
+        env_a.tenant,
+        other,
+        &other_keys.public_key().to_hex(),
+    )
+    .await;
+    insert_admission(
+        &pool,
+        env_a.tenant,
+        mapping_a,
+        other_binding,
+        &other_keys.public_key().to_hex(),
+    )
+    .await;
+
+    // Tenant B: a fully configured foreign tenant that must stay untouched.
+    let env_b = setup_env(&pool).await;
+
+    let revoked = chat_identity
+        .revoke_principal(env_a.tenant, env_a.principal)
+        .await
+        .expect("first revocation must succeed");
+    assert_eq!(revoked, 1, "exactly one live binding is revoked");
+
+    // The principal's own binding is revoked and timestamped.
+    let (binding_status, binding_revoked_at): (String, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, revoked_at FROM chat_identity_bindings
+         WHERE tenant_id = $1 AND principal_id = $2",
+    )
+    .bind(env_a.tenant.0)
+    .bind(env_a.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(binding_status, "revoked");
+    let first_binding_revoked_at =
+        binding_revoked_at.expect("revocation must stamp the binding's revoked_at");
+
+    // The matching admission is inactive and timestamped.
+    let (pubkey,): (String,) = sqlx::query_as(
+        "SELECT buzz_pubkey FROM chat_identity_bindings
+         WHERE tenant_id = $1 AND principal_id = $2",
+    )
+    .bind(env_a.tenant.0)
+    .bind(env_a.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (admission_active, admission_revoked_at): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT a.active, a.revoked_at FROM chat_buzz_admissions a
+         JOIN chat_identity_bindings b
+           ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
+         WHERE a.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(env_a.tenant.0)
+    .bind(env_a.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!admission_active, "the admission must be deactivated");
+    let first_admission_revoked_at =
+        admission_revoked_at.expect("revocation must stamp the admission's revoked_at");
+    assert!(
+        !chat_identity
+            .active_admission(env_a.tenant, &env_a.community_id, &pubkey)
+            .await
+            .unwrap(),
+        "active_admission must report false after revocation"
+    );
+
+    // Idempotent: a second revocation touches nothing and preserves the
+    // original timestamps (the COALESCE reads the admission's own column).
+    let revoked_again = chat_identity
+        .revoke_principal(env_a.tenant, env_a.principal)
+        .await
+        .expect("second revocation must succeed");
+    assert_eq!(revoked_again, 0, "a second revocation is a no-op");
+    let (binding_revoked_at_again, admission_revoked_at_again): (
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "SELECT b.revoked_at, a.revoked_at FROM chat_identity_bindings b
+         JOIN chat_buzz_admissions a
+           ON a.tenant_id = b.tenant_id AND a.binding_id = b.binding_id
+         WHERE b.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(env_a.tenant.0)
+    .bind(env_a.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        binding_revoked_at_again,
+        Some(first_binding_revoked_at),
+        "the binding's original revoked_at is preserved"
+    );
+    assert_eq!(
+        admission_revoked_at_again,
+        Some(first_admission_revoked_at),
+        "the admission's original revoked_at is preserved"
+    );
+
+    // The unrelated principal in the same tenant is untouched.
+    let (other_status, other_revoked_at): (String, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, revoked_at FROM chat_identity_bindings
+         WHERE tenant_id = $1 AND principal_id = $2",
+    )
+    .bind(env_a.tenant.0)
+    .bind(other.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(other_status, "active");
+    assert!(other_revoked_at.is_none());
+    let (other_admission_active, other_admission_revoked_at): (bool, Option<DateTime<Utc>>) =
+        sqlx::query_as(
+            "SELECT a.active, a.revoked_at FROM chat_buzz_admissions a
+             JOIN chat_identity_bindings b
+               ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
+             WHERE a.tenant_id = $1 AND b.principal_id = $2",
+        )
+        .bind(env_a.tenant.0)
+        .bind(other.0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(other_admission_active);
+    assert!(other_admission_revoked_at.is_none());
+
+    // The foreign tenant is untouched.
+    let (tenant_b_status, tenant_b_admission_active): (String, bool) = sqlx::query_as(
+        "SELECT b.status, a.active FROM chat_identity_bindings b
+         JOIN chat_buzz_admissions a
+           ON a.tenant_id = b.tenant_id AND a.binding_id = b.binding_id
+         WHERE b.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(env_b.tenant.0)
+    .bind(env_b.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tenant_b_status, "active");
+    assert!(tenant_b_admission_active);
+
+    cleanup(&pool, env_a.tenant, env_a.principal).await;
+    cleanup(&pool, env_b.tenant, env_b.principal).await;
+}
