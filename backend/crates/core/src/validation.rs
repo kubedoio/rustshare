@@ -47,6 +47,14 @@ pub fn allow_internal_mail_servers() -> bool {
     std::env::var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS").as_deref() == Ok("true")
 }
 
+/// Returns true when the operator has explicitly opted into allowing Chat
+/// relay URLs pointing at loopback/internal destinations (dev/dogfooding
+/// deployments that run the Buzz relay on the same host). Off by default to
+/// mitigate SSRF — the same posture as `allow_internal_mail_servers`.
+pub fn allow_internal_chat_relay() -> bool {
+    std::env::var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY").as_deref() == Ok("true")
+}
+
 /// Parse the `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` setting. Anything other
 /// than `never` keeps the default of accepting invalid certificates for
 /// internal mail servers; `never` enforces strict verification everywhere
@@ -139,6 +147,24 @@ pub async fn resolve_mail_server_socket_addrs(
     port: u16,
 ) -> Result<Vec<SocketAddr>, String> {
     resolve_socket_addrs_internal(host, port, allow_internal_mail_servers()).await
+}
+
+/// Resolve socket addresses for a Chat relay URL. Honors the public-only SSRF
+/// guard unless `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is set (dev/dogfooding
+/// deployments that run the relay on the same host). Unlike the mail path, the
+/// literal `localhost` host is allowed under the flag so a same-host relay can
+/// be mapped through the API.
+pub async fn resolve_chat_relay_socket_addrs(
+    host: &str,
+    port: u16,
+) -> Result<Vec<SocketAddr>, String> {
+    if allow_internal_chat_relay() && host.eq_ignore_ascii_case("localhost") {
+        return Ok(vec![SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            port,
+        )]);
+    }
+    resolve_socket_addrs_internal(host, port, allow_internal_chat_relay()).await
 }
 
 /// Validate a file or folder name.
@@ -261,6 +287,37 @@ mod tests {
         let result = resolve_mail_server_socket_addrs("localhost", 993).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("localhost"));
+    }
+
+    #[tokio::test]
+    async fn chat_relay_rejects_localhost_by_default() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        std::env::remove_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        let result = resolve_chat_relay_socket_addrs("localhost", 7447).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_relay_allows_localhost_when_flag_set() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
+        let result = resolve_chat_relay_socket_addrs("localhost", 7447).await;
+        assert!(result.is_ok());
+        let addrs = result.unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert!(addrs[0].ip().is_loopback());
+        assert_eq!(addrs[0].port(), 7447);
+    }
+
+    #[tokio::test]
+    async fn chat_relay_allows_private_ip_when_flag_set() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
+        let result = resolve_chat_relay_socket_addrs("10.0.0.7", 7447).await;
+        assert!(result.is_ok());
     }
 
     #[test]
