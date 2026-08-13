@@ -58,8 +58,10 @@ the chat view additionally polls every 15 s as a fallback.
 
 The signing key lives only in the browser (`frontend/src/lib/chat/keys.ts`); the backend
 never sees it. The key is generated with `crypto.getRandomValues`, encrypted at rest with
-WebCrypto PBKDF2 (100k iterations, SHA-256) + AES-GCM under a user passphrase, and stored
-in `localStorage` (`elembra.chat.key.v1`) together with its x-only pubkey. Export/import is
+WebCrypto PBKDF2 (600k iterations, SHA-256; legacy envelopes record their own
+iterations and still decrypt) + AES-GCM under a user passphrase, and stored in
+`localStorage` (scoped per user, migrated from `elembra.chat.key.v1`) together
+with its x-only pubkey. Export/import is
 the only recovery path (encrypted-envelope or plaintext-key backup formats); there is no
 server custody (ADR-0034). Signing is BIP-340 Schnorr (`@noble/curves`); publishing goes
 client-direct over a NIP-42 relay session (`frontend/src/lib/chat/nostr.ts`), with an AUTH

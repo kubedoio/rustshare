@@ -156,10 +156,11 @@ Wiring:
 - `ApplicationPageRenderer.svelte` gains a `chat` renderer entry; the
   `message-circle` icon joins `iconRegistry.ts`/`ApplicationIcon.svelte`; an
   `io.elembra.chat` entry joins `getApplicationObjectHref` (deep link
-  `/apps/chat?channel=<id>&message=<id>`).
+  `/apps/chat?message=<id>`; the owning channel resolves via the authorized
+  single-message fetch).
 - `websocket/manager.ts` + `events.ts` gain the `ChatMessageObserved` handler
   (invalidate `['chat-messages', ...]` keys); polling fallback refetches every
-  15 s while the chat view is mounted and the websocket is disconnected.
+  15 s while the chat view is mounted, regardless of websocket state.
 - The composer's attachment flow: picker (existing Files list APIs) →
   `attachments/prepare` → `elembra-ref` tag appended to the signed event;
   rendered attachments call `attachments/preview`/`attachments/open`.
@@ -167,7 +168,7 @@ Wiring:
   `askHref({ type: 'chatChannel', communityId, channelId })`; the `/ask` route
   supplies `onChatCitationOpen` to `AskExperience`, which parses
   `elembra://io.elembra.chat/message/<id>` and navigates to the Chat app deep
-  link `/apps/chat?channel=<id>&message=<id>`, where the chat view fetches the
+  link `/apps/chat?message=<id>`, where the chat view fetches the
   single message (when outside the loaded window) and focuses/scrolls to it.
 
 States: loading skeletons, empty channel/message states, relay-offline banner
@@ -211,7 +212,7 @@ channel_id }` (existing handler; scope enforced server-side) → cited answer �
 user clicks a chat citation → `POST /memory/citations/open` reauthorizes
 against Chat authority (existing handler) → `onChatCitationOpen` receives the
 `OpenCitationResponse` → the Chat app navigates to
-`/apps/chat?channel=<id>&message=<message_id>` and focuses/scrolls to the exact
+`/apps/chat?message=<message_id>` and focuses/scrolls to the exact
 message. The Ask backend never escapes the selected channel (existing search
 scope enforcement); the frontend adds no retrieval logic.
 

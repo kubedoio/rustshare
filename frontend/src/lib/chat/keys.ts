@@ -2,6 +2,7 @@
 // PBKDF2 + AES-GCM). The raw key never leaves the browser; export/import is
 // the only recovery path (ADR-0034: no silent server custody).
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
+import { publicKeyOf } from './nostr';
 
 const LEGACY_STORAGE_KEY = 'elembra.chat.key.v1';
 /** PBKDF2-HMAC-SHA256 iterations for NEW envelopes (OWASP-recommended for
@@ -22,12 +23,19 @@ export function setChatKeyUser(userId: string | null): void {
 	if (storageScope === userId) return;
 	storageScope = userId;
 	if (userId === null) return;
-	const scoped = `${LEGACY_STORAGE_KEY}.${userId}`;
-	if (localStorage.getItem(scoped) !== null) return;
-	const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-	if (legacy !== null) {
-		localStorage.setItem(scoped, legacy);
-		localStorage.removeItem(LEGACY_STORAGE_KEY);
+	// This runs on every login/bootstrap; a storage failure (private mode,
+	// quota) must never break auth. Degrade to "no scope" — Chat then reports
+	// no local key, which is the correct optional-feature behavior.
+	try {
+		const scoped = `${LEGACY_STORAGE_KEY}.${userId}`;
+		if (localStorage.getItem(scoped) !== null) return;
+		const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+		if (legacy !== null) {
+			localStorage.setItem(scoped, legacy);
+			localStorage.removeItem(LEGACY_STORAGE_KEY);
+		}
+	} catch {
+		storageScope = null;
 	}
 }
 
@@ -44,8 +52,12 @@ export interface EncryptedChatKey {
 }
 
 export function hasChatKey(): boolean {
-	const key = storageKey();
-	return key !== null && localStorage.getItem(key) !== null;
+	try {
+		const key = storageKey();
+		return key !== null && localStorage.getItem(key) !== null;
+	} catch {
+		return false;
+	}
 }
 
 export function storedKeyPubkey(): string | null {
@@ -104,13 +116,22 @@ export async function saveChatKey(
 		ciphertext: bytesToHex(new Uint8Array(ciphertext)),
 		iter: PBKDF2_ITERATIONS
 	};
-	localStorage.setItem(key, JSON.stringify({ ...envelope, pubkey }));
+	try {
+		localStorage.setItem(key, JSON.stringify({ ...envelope, pubkey }));
+	} catch {
+		throw new Error('could not store the chat key (storage unavailable)');
+	}
 }
 
 export async function loadChatKey(passphrase: string): Promise<string> {
 	const key = storageKey();
 	if (key === null) throw new Error('no stored chat key');
-	const raw = localStorage.getItem(key);
+	let raw: string | null;
+	try {
+		raw = localStorage.getItem(key);
+	} catch {
+		raw = null;
+	}
 	if (!raw) throw new Error('no stored chat key');
 	const envelope = JSON.parse(raw) as EncryptedChatKey;
 	if (envelope.v !== 1) throw new Error('unsupported chat key format');
@@ -156,12 +177,16 @@ export async function importChatKey(json: string, passphrase: string): Promise<s
 	} else {
 		throw new Error('backup does not contain a key');
 	}
-	const pubkey = parsed.pubkey ?? storedKeyPubkey() ?? '';
+	const pubkey = parsed.pubkey ?? publicKeyOf(secretKey);
 	await saveChatKey(secretKey, pubkey, passphrase);
 	return secretKey;
 }
 
 export function clearChatKey(): void {
-	const key = storageKey();
-	if (key !== null) localStorage.removeItem(key);
+	try {
+		const key = storageKey();
+		if (key !== null) localStorage.removeItem(key);
+	} catch {
+		// Storage unavailable — nothing to clear.
+	}
 }

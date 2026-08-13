@@ -76,15 +76,22 @@ export async function publishEvent(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			clearTimeout(authGrace);
 			socket.close();
 			resolve(ok);
 		};
 		const timer = setTimeout(() => finish(false), 10_000);
 		const socket = new WebSocket(relayUrl);
+		let authGrace: ReturnType<typeof setTimeout> | undefined;
 
 		socket.onopen = () => {
 			// Ask for the AUTH challenge by sending an empty subscription.
 			socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
+			// Some relays never challenge; give them a short grace, then
+			// publish anyway so a challenge-less relay still works.
+			authGrace = setTimeout(() => {
+				socket.send(JSON.stringify(['EVENT', signed]));
+			}, 1500);
 		};
 		socket.onmessage = async (raw) => {
 			let message: unknown;
@@ -95,6 +102,7 @@ export async function publishEvent(
 			}
 			if (!Array.isArray(message)) return;
 			if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+				clearTimeout(authGrace);
 				const auth = await signEvent(
 					await buildUnsignedEvent(
 						NOSTR_KIND_AUTH,

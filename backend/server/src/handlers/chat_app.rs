@@ -66,13 +66,16 @@ pub struct ChatMessageDto {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MessagesResponse {
     pub messages: Vec<ChatMessageDto>,
-    pub next_before: Option<DateTime<Utc>>,
+    /// Opaque pagination cursor (`"<unix_secs>:<event_id>"`); pass it back as
+    /// the `before` query parameter to fetch the next page.
+    pub next_before: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ListMessagesQuery {
     pub channel_id: String,
-    pub before: Option<DateTime<Utc>>,
+    /// Opaque pagination cursor returned by `next_before`.
+    pub before: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -191,7 +194,7 @@ pub async fn list_channels(
     tag = "Chat",
     params(
         ("channel_id" = String, Query, description = "Channel id"),
-        ("before" = Option<chrono::DateTime<chrono::Utc>>, Query, description = "Return messages older than this timestamp (pagination cursor)"),
+        ("before" = Option<String>, Query, description = "Opaque pagination cursor from `next_before` (\u{201c}<unix_secs>:<event_id>\u{201d})"),
         ("limit" = Option<i64>, Query, description = "Maximum number of messages to return (clamped to 1..=64)"),
     ),
     responses(
@@ -223,13 +226,30 @@ pub async fn list_messages(
         }));
     }
     let limit = query.limit.unwrap_or(50).clamp(1, 64);
+    // The opaque cursor is "<unix_secs>:<event_id>" — the (created_at,
+    // event_id) keyset the store pages with. Reject malformed cursors.
+    let before = query
+        .before
+        .as_deref()
+        .map(|raw| -> Result<(DateTime<Utc>, String), AppError> {
+            let (ts, event_id) = raw
+                .split_once(':')
+                .ok_or_else(|| AppError::bad_request("invalid pagination cursor"))?;
+            let secs: i64 = ts
+                .parse()
+                .map_err(|_| AppError::bad_request("invalid pagination cursor"))?;
+            let created_at = DateTime::<Utc>::from_timestamp(secs, 0)
+                .ok_or_else(|| AppError::bad_request("invalid pagination cursor"))?;
+            Ok((created_at, event_id.to_string()))
+        })
+        .transpose()?;
     let events = state
         .chat_observation_store
         .list_for_timeline(
             ctx.tenant_id,
             &mapping.community_id,
             &query.channel_id,
-            query.before,
+            before,
             limit,
         )
         .await
@@ -237,8 +257,11 @@ pub async fn list_messages(
 
     // The cursor comes from the last *fetched* row, not the last visible one:
     // if a whole page is tombstoned or denied, pagination must still advance
-    // so older authorized messages stay reachable.
-    let next_before = events.last().map(|event| event.event_created_at);
+    // so older authorized messages stay reachable. The event_id tiebreak
+    // guarantees same-second messages are never skipped.
+    let next_before = events
+        .last()
+        .map(|event| format!("{}:{}", event.event_created_at.timestamp(), event.event_id));
 
     // Fold: drop tombstones (latest event deleted) and inactive rows.
     let visible: Vec<_> = events

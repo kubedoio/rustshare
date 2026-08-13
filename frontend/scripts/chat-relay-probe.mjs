@@ -44,7 +44,13 @@ const accepted = await new Promise((resolve) => {
 		socket.close();
 		resolve(false);
 	}, 10_000);
-	socket.onopen = () => socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
+	// Some relays never send an AUTH challenge; give them a short grace, then
+	// publish anyway so a challenge-less relay still works.
+	let authGrace;
+	socket.onopen = () => {
+		socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
+		authGrace = setTimeout(() => socket.send(JSON.stringify(['EVENT', signed])), 1500);
+	};
 	socket.onmessage = async (raw) => {
 		let message;
 		try {
@@ -52,12 +58,14 @@ const accepted = await new Promise((resolve) => {
 		} catch {
 			// Malformed relay frame: treat as a failed publish, not a crash.
 			clearTimeout(timer);
+			clearTimeout(authGrace);
 			socket.close();
 			resolve(false);
 			return;
 		}
 		if (!Array.isArray(message)) return;
 		if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+			clearTimeout(authGrace);
 			const auth = await sign(
 				22242,
 				[
@@ -71,19 +79,22 @@ const accepted = await new Promise((resolve) => {
 		}
 		if (message[0] === 'OK' && message[1] === signed.id) {
 			clearTimeout(timer);
+			clearTimeout(authGrace);
 			socket.close();
 			resolve(message[2] === true);
 		}
 	};
 	socket.onerror = () => {
 		clearTimeout(timer);
+		clearTimeout(authGrace);
+		socket.close();
 		resolve(false);
 	};
 	socket.onclose = () => {
 		clearTimeout(timer);
+		clearTimeout(authGrace);
 		resolve(false);
 	};
 });
-
-console.log(accepted ? `OK published ${signed.id}` : 'FAILED: relay rejected or unreachable');
+console.log(accepted ? 'PUBLISH_OK' : 'PUBLISH_FAILED');
 process.exit(accepted ? 0 : 1);

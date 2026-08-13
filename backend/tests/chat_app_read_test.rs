@@ -1390,11 +1390,10 @@ async fn pagination_advances_past_a_fully_tombstoned_page() {
         .next_before
         .expect("pagination must advance past a fully filtered page");
 
-    // Page 2: the fold within the window still yields the tombstoned message's
-    // pre-delete `created` row (denied by the gate), so this page is empty too —
-    // but the cursor keeps advancing, which is the guarantee under test.
+    // Page 2: folding the full history never re-emits the tombstoned message's
+    // pre-delete row, so the older authorized message is reachable immediately.
     let page2 = list_messages(
-        State(state.clone()),
+        State(state),
         auth(env.principal, env.tenant),
         Query(ListMessagesQuery {
             channel_id: "channel-1".to_string(),
@@ -1404,34 +1403,13 @@ async fn pagination_advances_past_a_fully_tombstoned_page() {
     )
     .await
     .expect("second page must succeed");
-    assert!(
-        page2.0.messages.is_empty(),
-        "the pre-delete fold row is still gated"
-    );
-    let cursor2 = page2
-        .0
-        .next_before
-        .expect("pagination must keep advancing past gated rows");
-
-    // Page 3: the older authorized message is finally reachable.
-    let page3 = list_messages(
-        State(state),
-        auth(env.principal, env.tenant),
-        Query(ListMessagesQuery {
-            channel_id: "channel-1".to_string(),
-            before: Some(cursor2),
-            limit: Some(1),
-        }),
-    )
-    .await
-    .expect("third page must succeed");
     assert_eq!(
-        page3.0.messages.len(),
+        page2.0.messages.len(),
         1,
         "the older authorized message must be reachable past the tombstone"
     );
     assert_eq!(
-        page3.0.messages[0].message_id, older_id,
+        page2.0.messages[0].message_id, older_id,
         "the reachable message is the older one"
     );
 

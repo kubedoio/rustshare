@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import {
 	saveChatKey,
 	loadChatKey,
@@ -146,5 +146,57 @@ describe('chat key custody', () => {
 		await saveChatKey(sk, publicKeyOf(sk), 'pass');
 		const envelope = JSON.parse(localStorage.getItem(`${LEGACY_KEY}.user-1`)!);
 		expect(envelope.iter).toBe(600_000);
+	});
+
+	it('derives the pubkey when importing a pubkey-less backup', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		// A legacy envelope without the `pubkey` field.
+		const salt = new Uint8Array(16).fill(1);
+		const iv = new Uint8Array(12).fill(2);
+		const material = await crypto.subtle.importKey(
+			'raw',
+			new TextEncoder().encode('pass'),
+			'PBKDF2',
+			false,
+			['deriveKey']
+		);
+		const derived = await crypto.subtle.deriveKey(
+			{ name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+			material,
+			{ name: 'AES-GCM', length: 256 },
+			false,
+			['encrypt', 'decrypt']
+		);
+		const ciphertext = await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv },
+			derived,
+			hexToBytes(sk)
+		);
+		localStorage.setItem(
+			`${LEGACY_KEY}.user-1`,
+			JSON.stringify({
+				v: 1,
+				salt: bytesToHex(salt),
+				iv: bytesToHex(iv),
+				ciphertext: bytesToHex(new Uint8Array(ciphertext)),
+				iter: 100_000
+			})
+		);
+		await importChatKey(localStorage.getItem(`${LEGACY_KEY}.user-1`)!, 'pass');
+		expect(storedKeyPubkey()).toBe(publicKeyOf(sk));
+	});
+
+	it('degrades gracefully when localStorage is unavailable', () => {
+		const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('storage denied');
+		});
+		try {
+			setChatKeyUser('user-1');
+			expect(hasChatKey()).toBe(false);
+			expect(storedKeyPubkey()).toBeNull();
+		} finally {
+			getItem.mockRestore();
+		}
 	});
 });

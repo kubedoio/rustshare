@@ -37,31 +37,36 @@
 		if (!content && !attachmentTag) return;
 		const status = $statusQuery.data;
 		if (!status?.binding) return;
-		const secretKey = await unlockKey();
-		if (!secretKey) return;
-		if (publicKeyOf(secretKey) !== status.binding.buzz_pubkey) {
-			onSendFailure('local key does not match your bound Buzz identity');
-			return;
-		}
-		// No channel tag is added here: channel attribution is determined by
-		// the Buzz bridge under the current contract, and a client channel-tag
-		// wire format is deferred upstream until confirmed (spec §10, same
-		// status as thread tags).
-		const tags: NostrTag[] = [];
-		if (attachmentTag) tags.push(attachmentTag);
+		// Latch BEFORE the first await: unlockKey runs the full PBKDF2 (hundreds
+		// of ms) and two rapid Enters must not both reach publishEvent.
 		sending = true;
-		const ok = await publishEvent(
-			relayUrl,
-			await buildUnsignedEvent(NOSTR_KIND_TEXT, content, tags, status.binding.buzz_pubkey),
-			secretKey
-		);
-		sending = false;
-		if (ok) {
-			draft = '';
-			attachmentTag = null;
-			onSendFailure('');
-		} else {
-			onSendFailure('relay unreachable');
+		try {
+			const secretKey = await unlockKey();
+			if (!secretKey) return;
+			if (publicKeyOf(secretKey) !== status.binding.buzz_pubkey) {
+				onSendFailure('local key does not match your bound Buzz identity');
+				return;
+			}
+			// No channel tag is added here: channel attribution is determined by
+			// the Buzz bridge under the current contract, and a client channel-tag
+			// wire format is deferred upstream until confirmed (spec §10, same
+			// status as thread tags).
+			const tags: NostrTag[] = [];
+			if (attachmentTag) tags.push(attachmentTag);
+			const ok = await publishEvent(
+				relayUrl,
+				await buildUnsignedEvent(NOSTR_KIND_TEXT, content, tags, status.binding.buzz_pubkey),
+				secretKey
+			);
+			if (ok) {
+				draft = '';
+				attachmentTag = null;
+				onSendFailure('');
+			} else {
+				onSendFailure('relay unreachable');
+			}
+		} finally {
+			sending = false;
 		}
 	}
 
@@ -72,7 +77,17 @@
 		}
 		try {
 			return await loadChatKey(passphrase || '');
-		} catch {
+		} catch (err) {
+			const message = err instanceof Error ? err.message : '';
+			if (message === 'no stored chat key') {
+				onSendFailure('no local chat key — bind your identity first');
+				return null;
+			}
+			if (message === 'unsupported chat key format') {
+				onSendFailure('stored chat key format is unsupported — re-import your backup');
+				return null;
+			}
+			// Decrypt failure: most likely a wrong passphrase.
 			needsPassphrase = true;
 			return null;
 		}

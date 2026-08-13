@@ -119,3 +119,37 @@ describe('publishEvent', () => {
 		expect(ok).toBe(false);
 	});
 });
+
+class NoChallengeSocket extends FakeWebSocket {
+	send(data: string) {
+		const frame = JSON.parse(data) as unknown[];
+		this.sent.push(frame);
+		if (frame[0] === 'EVENT') {
+			const event = frame[1] as { id: string };
+			this.reply(['OK', event.id, true, '']);
+		}
+	}
+}
+
+describe('publishEvent without an AUTH challenge', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		vi.stubGlobal('WebSocket', NoChallengeSocket);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('publishes via the grace timer when the relay never challenges', async () => {
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+
+		const ok = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(ok).toBe(true);
+		const ws = FakeWebSocket.instances[0];
+		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
+	});
+});

@@ -13,6 +13,9 @@
 	let container = $state<HTMLDivElement | null>(null);
 	$effect(() => {
 		if (!focusTarget || !container) return;
+		// The focus query can resolve before the channel's page fetch lands;
+		// depend on `messages` so this re-runs once the target row renders.
+		if (!messages.some((m) => m.message_id === focusTarget.message_id)) return;
 		container
 			.querySelector(`[data-message-id="${focusTarget.message_id}"]`)
 			?.scrollIntoView({ behavior: 'smooth', block: 'center' });

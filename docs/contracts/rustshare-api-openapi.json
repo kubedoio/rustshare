@@ -1843,11 +1843,10 @@
           {
             "name": "before",
             "in": "query",
-            "description": "Return messages older than this timestamp (pagination cursor)",
+            "description": "Opaque pagination cursor from `next_before` (“<unix_secs>:<event_id>”)",
             "required": false,
             "schema": {
-              "type": "string",
-              "format": "date-time"
+              "type": "string"
             }
           },
           {
@@ -20838,7 +20837,7 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "description": "Opaque pagination cursor (`\"<unix_secs>:<event_id>\"`); pass it back as\nthe `before` query parameter to fetch the next page."
           }
         }
       },

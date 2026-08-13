@@ -11,6 +11,7 @@
 #   BUZZ_RELAY_WS      wss:// or ws:// URL of the started relay
 #   BUZZ_SERVICE_SK    hex service/bridge key with relay admin authority
 # Optional:
+#   BUZZ_RELAY_PORT    host port mapped to the relay's 7447 (default 7447)
 #   ELEMBRA_API        Elembra API base (default http://localhost:8080/api/v1)
 #   ADMIN_EMAIL / ADMIN_PASSWORD   for the Elembra-side binding steps
 set -euo pipefail
@@ -24,6 +25,9 @@ cd "$(dirname "$0")/.."
 ELEMBRA_API="${ELEMBRA_API:-http://localhost:8080/api/v1}"
 
 echo "== 1. start disposable relay =="
+# Clear a leftover container from a previous interrupted run (SIGKILL before
+# the EXIT trap) so `docker run --name` does not fail.
+docker rm -f rustshare-buzz-proof >/dev/null 2>&1 || true
 docker run -d --rm --name rustshare-buzz-proof \
   -e BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
   -p "${BUZZ_RELAY_PORT:-7447}:7447" \

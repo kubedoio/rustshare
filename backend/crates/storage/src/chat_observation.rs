@@ -238,10 +238,18 @@ impl ChatObservationStore {
         community_id: &str,
     ) -> Result<Vec<ChannelSummary>> {
         let rows = sqlx::query(
-            "SELECT channel_id, channel_kind, MAX(event_created_at) AS latest_event_at
-             FROM chat_observed_events
-             WHERE tenant_id = $1 AND community_id = $2 AND active = true
-             GROUP BY channel_id, channel_kind
+            "SELECT channel_id, channel_kind, latest_event_at
+             FROM (
+                 SELECT channel_id, channel_kind,
+                        event_created_at AS latest_event_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY channel_id
+                            ORDER BY event_created_at DESC, event_id DESC
+                        ) AS rn
+                 FROM chat_observed_events
+                 WHERE tenant_id = $1 AND community_id = $2 AND active = true
+             ) ranked
+             WHERE rn = 1
              ORDER BY latest_event_at DESC",
         )
         .bind(tenant_id.0)
@@ -268,9 +276,15 @@ impl ChatObservationStore {
         tenant_id: TenantId,
         community_id: &str,
         channel_id: &str,
-        before: Option<DateTime<Utc>>,
+        before: Option<(DateTime<Utc>, String)>,
         limit: i64,
     ) -> Result<Vec<ChatObservedEvent>> {
+        // Fold the FULL channel history (DISTINCT ON picks the latest event
+        // per message), then apply the keyset cursor after the fold. Filtering
+        // before the fold would re-emit a superseded event as "latest" on the
+        // next page (stale bodies, duplicates). The (event_created_at,
+        // event_id) keyset — not a timestamp alone — guarantees same-second
+        // messages are never skipped or revisited.
         let rows = sqlx::query(
             "SELECT * FROM (
                  SELECT DISTINCT ON (message_id)
@@ -281,16 +295,18 @@ impl ChatObservationStore {
                         signature_verified, body, active
                  FROM chat_observed_events
                  WHERE tenant_id = $1 AND community_id = $2 AND channel_id = $3
-                   AND ($4::timestamptz IS NULL OR event_created_at < $4)
                  ORDER BY message_id, event_created_at DESC, event_id DESC
              ) folded
+             WHERE ($4::timestamptz IS NULL
+                    OR (event_created_at, event_id) < ($4, $5))
              ORDER BY event_created_at DESC, event_id DESC
-             LIMIT $5",
+             LIMIT $6",
         )
         .bind(tenant_id.0)
         .bind(community_id)
         .bind(channel_id)
-        .bind(before)
+        .bind(before.as_ref().map(|(created_at, _)| *created_at))
+        .bind(before.as_ref().map(|(_, event_id)| event_id.clone()))
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;

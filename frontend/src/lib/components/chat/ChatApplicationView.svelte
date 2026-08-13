@@ -61,6 +61,9 @@
 		const message = $focusedMessageQuery.data;
 		if (message && message.channel_id !== selectedChannelId) {
 			selectedChannelId = message.channel_id;
+			// A channel-scoped cursor from the previous channel must not leak
+			// into the focus target's channel.
+			cursor = null;
 		}
 	});
 
