@@ -57,36 +57,48 @@ same community; an internal container network cannot present that Host value.
 cp .env.example .env
 ./scripts/pre-flight.sh
 
-# 2. Generate the Buzz identity keys (prints values; paste into .env)
+# 2. Frontend deps (required for the key generator, observer, and E2E driver)
+npm install --prefix frontend
+
+# 3. Generate the Buzz identity keys (prints values; paste into .env)
 node frontend/scripts/alpha-gen-buzz-keys.mjs
 #    -> BUZZ_RELAY_OWNER_PUBKEY, BUZZ_RELAY_PRIVATE_KEY,
 #       RUSTSHARE_CHAT_BRIDGE_SECRET_KEY (== BUZZ_SERVICE_SK)
 
-# 3. Configure chat in .env (see §3)
+# 4. Configure chat in .env (see §3)
 #    RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true   (only when the relay runs on this host)
+#    RUSTSHARE_ADMIN_PASSWORD=<strong-password>  (set BEFORE first start, see §4)
 
-# 4. Base stack
+# 5. Base stack
 docker compose up -d
 
-# 5. Relay runtime
+# 6. Relay runtime
 docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
 
-# 6. Observation bridge (foreground; supervise for dogfooding)
-npm install --prefix frontend
+# 7. Observation bridge (foreground; supervise for dogfooding)
 BUZZ_SERVICE_SK=<bridge sk> BUZZ_COMMUNITY_ID=alpha-community \
-  nohup ./scripts/start-buzz-observer.sh >> /var/log/buzz-observer.log 2>&1 &
+  nohup ./scripts/start-buzz-observer.sh >> buzz-observer.log 2>&1 &
 
-# 7. Provision the workspace mapping (public relay URL):
-curl -s -b <admin-cookies> -X POST \
-  http://localhost/api/v1/admin/applications/chat/workspaces/<workspace_id>/community \
+# 8. Provision the workspace mapping. Mutating API calls require CSRF
+#    double-submit (cookie + X-Rustshare-Csrf header, see §6); <workspace_id>
+#    equals the admin tenant id. For a relay on this host (flag from step 4):
+curl -s -c /tmp/admin.jar -X POST http://localhost/api/v1/auth/login \
   -H 'content-type: application/json' \
-  -d '{"community_id":"alpha-community","relay_url":"wss://relay.example.com"}'
-#    or use scripts/run-alpha-dogfood.sh, which provisions everything and
+  -d '{"email":"admin@localhost","password":"<admin-password>"}'
+CSRF="$(awk '$6 == "rustshare_csrf_token" { print $7 }' /tmp/admin.jar)"
+curl -s -b /tmp/admin.jar -X POST \
+  http://localhost/api/v1/admin/applications/chat/workspaces/<tenant_id>/community \
+  -H 'content-type: application/json' -H "X-Rustshare-Csrf: ${CSRF}" \
+  -d '{"community_id":"alpha-community","relay_url":"ws://localhost:7447"}'
+#    (a PUBLIC relay: same command with its wss:// URL. The SSRF guard
+#    resolves the host, so placeholder hosts fail — "wss://relay.example.com"
+#    in older copies of this runbook is not a real address.)
+#    Or use scripts/run-alpha-dogfood.sh, which provisions everything and
 #    runs the full dogfood matrix.
 
-# 8. Verify
+# 9. Verify
 curl -s http://localhost/health/ready
-tail -f /var/log/buzz-observer.log     # expect "authenticated ... EOSE"
+tail -f buzz-observer.log     # expect "authenticated ... EOSE"
 ```
 
 ### 2.3 Local-relay note (dev/dogfooding on one host)
@@ -95,9 +107,13 @@ The admin mapping API and the binding challenge both validate the relay URL
 against the SSRF guard (`resolve_public_socket_addrs`). A relay on
 `localhost`/private addresses is rejected **unless**
 `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is set (mirrors
-`RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). With the flag set,
-`ws://localhost:7447` is accepted and the API path works end to end. Without
-it, operators of a same-host relay must pre-provision the mapping row via SQL:
+`RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The flag is
+required for any localhost relay** — the binding challenge re-validates the
+stored URL, so an SQL row alone cannot bypass it. With the flag set,
+`ws://localhost:7447` is accepted and the API path works end to end.
+
+Operators who prefer to skip the admin-API/CSRF dance may insert the mapping
+row directly (it only replaces the API call; the flag is still required):
 
 ```sql
 INSERT INTO chat_workspace_communities
@@ -112,10 +128,21 @@ VALUES (gen_random_uuid(), '<tenant_id>', '<tenant_id>', 'alpha-community',
 
 ### 2.4 Memory projection + content indexing (required)
 
-There is **no admin API** for the chat Application configuration. Without
+The Chat application must be **enabled** first (admin API, with the CSRF
+header from §2.2 step 8):
+
+```bash
+curl -s -b /tmp/admin.jar -X POST \
+  http://localhost/api/v1/admin/applications/io.elembra.chat/enable \
+  -H "X-Rustshare-Csrf: ${CSRF}"
+```
+
+There is **no admin API** for the chat Application *configuration*. Without
 `memory_projection` and `content_indexing`, message bodies are not stored and
 the Memory/Ask pipeline stays empty (the company-memory loop is dead). Enable
-them once per tenant via SQL:
+them once per tenant via SQL — the UPDATE must match a row; if it matches 0
+rows the Chat application is not enabled for this tenant (run the enable call
+above first):
 
 ```sql
 UPDATE application_enablements
@@ -131,7 +158,7 @@ WHERE application_id = 'io.elembra.chat'
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v   # relay volumes removed
 docker compose down -v                                                     # base stack + volumes
-pkill -f buzz-observer.mjs                                                  # stop the bridge
+pkill -f start-buzz-observer.sh                                             # supervisor INT/TERM trap stops the node child
 ```
 
 `down -v` also drops the Elembra database — for a real dogfooding period keep
@@ -167,6 +194,14 @@ observer/E2E.
 
 ## 4. User onboarding
 
+0. **Admin password**: `pre-flight.sh` warns that the admin password is NOT
+   stored in `.env`. Set `RUSTSHARE_ADMIN_PASSWORD` in `.env` **before the
+   first start** for a durable password; otherwise the backend generates a
+   random one-time password at first boot and writes it to
+   `/tmp/rustshare-bootstrap-password.txt` inside the backend container
+   (`docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt`).
+   It does not survive container recreation.
+
 1. **Account**: admin creates the user (API: `POST /api/v1/admin/users`, or the
    admin UI). The user logs in.
 2. **Chat key**: the browser generates a Buzz key on first Chat use and encrypts
@@ -189,8 +224,8 @@ observer/E2E.
 | Check | Command | Healthy |
 |---|---|---|
 | Backend | `curl -s http://localhost/health/ready` | `"status":"ready"` |
-| Relay TCP | `nc -z localhost 7447` | exit 0 |
-| Observer | `tail -n 5 /var/log/buzz-observer.log` | recent `EOSE` and no reconnect spam |
+| Relay TCP | `nc -z localhost 7447` (or `bash -c 'exec 3<>/dev/tcp/localhost/7447'` if netcat is missing) | exit 0 |
+| Observer | `tail -n 5 buzz-observer.log` | recent `EOSE` and no reconnect spam |
 | Ingestion | `docker logs rustshare-backend-1 | grep "buzz event rejected"` | none (or understood) |
 | E2E matrix | `ADMIN_EMAIL=... ADMIN_PASSWORD=... BUZZ_SERVICE_SK=... BUZZ_COMMUNITY_ID=alpha-community ./scripts/run-alpha-dogfood.sh` | all PASS |
 
@@ -207,7 +242,7 @@ observer/E2E.
 | Ask 503 | LLM provider not configured | configure provider; status surface `ask_available` (issue #244) |
 | Channel list frozen | observer dead or WS exhaustion (fixed: 15s poll covers channels) | restart observer |
 | Binding challenge 400 "relay_url must resolve to an allowed address" | local relay without `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` | set flag + restart backend |
-| 401 on mutating calls | missing CSRF header (browser clients get it automatically) | API tooling: send `X-Rustshare-Csrf` matching the cookie |
+| 403 on mutating calls | missing CSRF header (browser clients get it automatically) | API tooling: send `X-Rustshare-Csrf` matching the cookie |
 
 ---
 
@@ -215,9 +250,10 @@ observer/E2E.
 
 - Elembra data: `scripts/backup-stack.sh` (postgres dump + RustFS + config).
 - Relay state: `buzz_postgres_data` / `buzz_minio_data` volumes — back these up
-  for message-history continuity (events are signed; a relay reset only loses
-  the *observation* history, which Elembra re-projects from the webhook replay
-  on reconnect).
+  for message-history continuity. A relay reset loses the **relay's** event
+  history; Elembra's observation index (its own Postgres) survives, and on
+  observer reconnect the relay replays whatever events it still holds (deduped
+  by event id). Events the relay no longer holds are not re-projected.
 - Keys: the bridge keys live in `.env` (not in the backup bundle — store in a
   secrets manager). User Buzz keys never leave the browser; backup is the user's
   encrypted envelope.
@@ -244,7 +280,7 @@ Full classification: Alpha readiness doc §8. Relevant here:
 ```bash
 # Stop the dogfood additions, keep Elembra:
 docker compose -f docker-compose.yml -f docker-compose.alpha.yml stop buzz-relay buzz-postgres buzz-redis buzz-minio
-pkill -f buzz-observer.mjs
+pkill -f start-buzz-observer.sh
 
 # Full reset (nuclear):
 docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v

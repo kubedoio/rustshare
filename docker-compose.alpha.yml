@@ -86,9 +86,10 @@ services:
     image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
     restart: unless-stopped
     ports:
-      - "7447:7447"
-      # Relay health/metrics listeners are host-local: they are operator
-      # surfaces, not part of the product traffic path.
+      # All relay listeners are host-local: single-host dogfooding, and
+      # BUZZ_REQUIRE_AUTH_TOKEN=false must not be reachable network-wide.
+      - "127.0.0.1:7447:7447"
+      # Relay health/metrics listeners are operator surfaces, not product traffic.
       - "127.0.0.1:8088:8088"
       - "127.0.0.1:9102:9102"
     environment:
@@ -101,8 +102,8 @@ services:
       BUZZ_AUTO_MIGRATE: "true"
       BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
       BUZZ_REQUIRE_AUTH_TOKEN: "false"
-      RELAY_OWNER_PUBKEY: ${BUZZ_RELAY_OWNER_PUBKEY}
-      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY}
+      RELAY_OWNER_PUBKEY: ${BUZZ_RELAY_OWNER_PUBKEY:?set BUZZ_RELAY_OWNER_PUBKEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set BUZZ_RELAY_PRIVATE_KEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
       BUZZ_S3_ENDPOINT: http://buzz-minio:9000
       BUZZ_S3_ACCESS_KEY: ${BUZZ_MINIO_USER:-buzz_dev}
       BUZZ_S3_SECRET_KEY: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
@@ -114,6 +115,8 @@ services:
         condition: service_healthy
       buzz-minio:
         condition: service_healthy
+      buzz-minio-init:
+        condition: service_completed_successfully
 
 volumes:
   buzz_postgres_data:

@@ -8,7 +8,7 @@
 # plus a wire-level Buzz client (frontend/scripts/alpha-buzz-ops.mjs) using the
 # same NIP-42/NIP-43 contracts as the product clients.
 #
-# Prerequisites (see docs/operations/elembra-alpha-runbook.md):
+# Prerequisites (see docs/runbooks/elembra-alpha.md):
 #   - base stack up:   docker compose up -d
 #   - relay stack up:  docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
 #   - observer up:     ./scripts/start-buzz-observer.sh
@@ -19,7 +19,7 @@
 #   BUZZ_RELAY_WS      relay ws url (default ws://localhost:7447)
 #   BUZZ_COMMUNITY_ID  community id (must match the observer + mapping)
 #   ADMIN_EMAIL / ADMIN_PASSWORD  admin creds (default RUSTSHARE_ADMIN_*)
-# Optional: BUZZ_CHANNEL_ID, BUZZ_CHANNEL2_ID, ELEMBRA_API, RELAY_CONTAINER
+# Optional: BUZZ_CHANNEL_ID, BUZZ_CHANNEL2_ID, ELEMBRA_API, RELAY_CONTAINER, POSTGRES_CONTAINER
 #
 # Per-check PASS/FAIL output; exits 1 if any check failed.
 # =============================================================================
@@ -39,12 +39,13 @@ BUZZ_RELAY_WS="${BUZZ_RELAY_WS:-ws://localhost:7447}"
 : "${BUZZ_COMMUNITY_ID:?BUZZ_COMMUNITY_ID must be set}"
 BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-alpha-channel}"
 BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-alpha-ops}"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-rustshare-postgres-1}"
 ELEMBRA_API="${ELEMBRA_API:-http://localhost/api/v1}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
 OPS="node scripts/alpha-buzz-ops.mjs"
 TMP="$(mktemp -d)"
-trap '[[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
+trap 'if [[ "${relay_stopped:-0}" == "1" ]]; then docker start "${RELAY_CONTAINER:-rustshare-buzz-relay-1}" >/dev/null 2>&1 || true; fi; [[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
 
 PASS=0
 FAIL=0
@@ -107,22 +108,6 @@ sess() { # name -> jar path (login once, reuse; verifies and retries on failure)
 	echo "${SESSION[$name]}"
 }
 
-# http_call method path [data-file] [cookie-file] -> $http_code, $TMP/body
-http_call() {
-	local method="$1" path="$2" data="${3:-}" cookie="${4:-}"
-	local url="$path"
-	[[ "$path" != http* ]] && url="http://localhost${path}"
-	local args=(-s -o "$TMP/body" -w '%{http_code}' -X "$method" "$url")
-	if [[ -n "$cookie" ]]; then
-		# read and refresh the same jar so the session persists
-		args+=(-b "$cookie" -c "$cookie")
-	fi
-	if [[ -n "$data" ]]; then
-		args+=(-H 'content-type: application/json' --data-binary "@$data")
-	fi
-	http_code="$(curl "${args[@]}")"
-}
-
 http_call_csrf() { # method path data-file cookie-file
 	local method="$1" path="$2" data="$3" cookie="$4"
 	local csrf
@@ -138,8 +123,10 @@ http_call_csrf() { # method path data-file cookie-file
 	if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
 		{
 			echo "=== $http_code on $method $path ==="
-			echo "cookie: $cookie"
-			grep -E "session|csrf" "$cookie" 2>/dev/null | head -3
+			echo "cookie jar: $cookie"
+			# Log cookie NAMES only — never values: session/csrf tokens are live
+			# bearer credentials and this log is copied out of the 0700 tmpdir.
+			echo "cookie names: $(awk '!/^#/ && NF >= 7 { print $6 }' "$cookie" | tr '\n' ' ')"
 			echo "body: $(head -c 150 "$TMP/body")"
 		} >> "$TMP/401-debug.log"
 	fi
@@ -165,7 +152,6 @@ http_call_csrf POST /api/v1/admin/applications/io.elembra.chat/enable '' "$(sess
 check "P02b chat application enabled" "$([[ "$http_code" == "200" || "$http_code" == "201" ]] && echo true || echo false)" "enable -> $http_code"
 
 # workspace id = tenant id for the admin session
-tenant_id="$(jq_get 'd["user"]["tenant_id"]' "$TMP/login.admin.json")"
 curl -s -b "$(sess admin)" -o "$TMP/body" "$ELEMBRA_API/users/me"
 tenant_id="$(jq_get 'd["tenant_id"]' "$TMP/body")"
 
@@ -193,11 +179,14 @@ fi
 # Without it, bodies are not stored and the Memory/Ask pipeline stays empty.
 if [[ "${ALPHA_ENABLE_MEMORY_PROJECTION:-1}" == "1" ]]; then
 	mp_status=0
+	# RETURNING makes a 0-row UPDATE (wrong tenant/app id) visible as empty
+	# output instead of a silent success.
 	PGPASSWORD="${POSTGRES_PASSWORD:-}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" \
-		rustshare-postgres-1 psql -U rustshare -d rustshare -v ON_ERROR_STOP=1 -t -A -c \
-		"UPDATE application_enablements SET configuration = configuration || '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb WHERE application_id='io.elembra.chat' AND tenant_id='${tenant_id}' AND workspace_id='${tenant_id}';" \
+		"${POSTGRES_CONTAINER:-rustshare-postgres-1}" psql -U rustshare -d rustshare -v ON_ERROR_STOP=1 -t -A -c \
+		"UPDATE application_enablements SET configuration = configuration || '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb WHERE application_id='io.elembra.chat' AND tenant_id='${tenant_id}' AND workspace_id='${tenant_id}' RETURNING application_id;" \
 		> "$TMP/mp.json" 2>&1 || mp_status=$?
-	check "P02d memory projection + content indexing enabled" "$([[ "$mp_status" == "0" ]] && echo true || echo false)" "$(head -c 80 "$TMP/mp.json")"
+	mp_rows="$(cat "$TMP/mp.json")"
+	check "P02d memory projection + content indexing enabled" "$([[ "$mp_status" == "0" && "$mp_rows" != "" ]] && echo true || echo false)" "rows=$mp_rows"
 fi
 
 # --- P03 create users --------------------------------------------------------
@@ -270,7 +259,8 @@ check "P04 bindings + admission" \
 # --- P05 relay admission (NIP-43 9030, owner authority) ----------------------
 echo "== admitting users at the relay =="
 for u in alpha_alice alpha_bob alpha_mallory; do
-	if relay_ok admit "$BUZZ_RELAY_WS" "$BUZZ_SERVICE_SK" "${USER_PK[$u]}"; then
+	# owner-sk comes from BUZZ_SERVICE_SK in the environment, never argv
+	if relay_ok admit "$BUZZ_RELAY_WS" "${USER_PK[$u]}"; then
 		check "P05 relay admit $u" true "9030 accepted"
 	else
 		check "P05 relay admit $u" false "9030 failed: $(cat "$TMP/op.json")"
@@ -285,12 +275,17 @@ pub_msg() { # username channel content
 	local ok event_id
 	ok="$(jq_get 'd["accepted"]' "$TMP/pub.json")"
 	event_id="$(jq_get 'd["eventId"]' "$TMP/pub.json")"
-	PUBLISHED_EVENTS+=("$event_id")
-	if [[ "$ok" == "True" ]]; then echo "    [$1/$2] $event_id"; else echo "    [$1/$2] FAILED: $(cat "$TMP/pub.json")"; fi
+	# Count only relay-accepted publishes: alpha-buzz-ops prints an eventId even
+	# when the relay rejects, so P06 must not measure attempts as acceptances.
+	if [[ "$ok" == "True" ]]; then
+		PUBLISHED_EVENTS+=("$event_id")
+		echo "    [$1/$2] $event_id"
+	else
+		echo "    [$1/$2] FAILED: $(cat "$TMP/pub.json")"
+	fi
 }
 
 declare -a PUBLISHED_EVENTS
-t0=$(date +%s%3N)
 pub_msg alpha_alice "$BUZZ_CHANNEL_ID" "alpha dogfood: hello from alice 1"
 pub_msg alpha_alice "$BUZZ_CHANNEL_ID" "alpha dogfood: hello from alice 2"
 pub_msg alpha_bob "$BUZZ_CHANNEL_ID" "alpha dogfood: hello from bob 1"
@@ -335,19 +330,32 @@ bob_attributed="$(jq_get 'any(m["author_pubkey"] == "'${USER_PK[alpha_bob]}'" fo
 check "P08b author mapping correct" "$([[ "$bob_attributed" == "True" ]] && echo true || echo false)" "bob's msg attributed to his key"
 
 # --- P09 pagination ----------------------------------------------------------
-next_before="$(jq_get 'd["next_before"]' "$TMP/body")"
-page2=""
+# Fetch a small page (limit=3) so the cursor must actually advance across
+# pages; assert page 2 is non-empty and disjoint from page 1 (no overlap).
+curl -s -b "$(sess alpha_alice)" -o "$TMP/pg1.json" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}&limit=3" >/dev/null
+page1_n="$(jq_get 'len(d["messages"])' "$TMP/pg1.json")"
+next_before="$(jq_get 'd["next_before"]' "$TMP/pg1.json")"
+page2_n=""
+overlap=""
 if [[ "$next_before" != "None" && "$next_before" != "" ]]; then
-	code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}&before=${next_before}")
-	page2="$(jq_get 'len(d["messages"])' "$TMP/body")"
+	curl -s -b "$(sess alpha_alice)" -o "$TMP/pg2.json" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}&limit=3&before=${next_before}" >/dev/null
+	page2_n="$(jq_get 'len(d["messages"])' "$TMP/pg2.json")"
+	overlap="$(python3 -c "import json,sys; a={m['message_id'] for m in json.load(open(sys.argv[1]))['messages']}; b={m['message_id'] for m in json.load(open(sys.argv[2]))['messages']}; print(len(a & b))" "$TMP/pg1.json" "$TMP/pg2.json" 2>/dev/null || echo '')"
 fi
-check "P09 pagination cursor advances" "$([[ "$next_before" != "None" && "$next_before" != "" ]] && echo true || echo false)" "page2=$page2 msgs"
+check "P09 pagination cursor advances" \
+	"$([[ "${page2_n:-0}" != "0" && "${page2_n:-}" != "" && "$overlap" == "0" ]] && echo true || echo false)" \
+	"page1=$page1_n page2=$page2_n overlap=$overlap"
 
 # --- P10 channel switching ---------------------------------------------------
 pub_msg alpha_alice "$BUZZ_CHANNEL2_ID" "alpha dogfood: ops channel message"
-sleep 3
-code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/channels")
-ch2="$(jq_get '[c for c in d if c["channel_id"] == "'$BUZZ_CHANNEL2_ID'"]' "$TMP/body")"
+# Wait for the ops channel to appear (observation-driven), like P07/P08.
+ch2=""
+for i in $(seq 1 20); do
+	code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/channels")
+	ch2="$(jq_get '[c for c in d if c["channel_id"] == "'$BUZZ_CHANNEL2_ID'"]' "$TMP/body")"
+	[[ "$ch2" != "[]" && "$ch2" != "" ]] && break
+	sleep 1
+done
 curl -s -b "$(sess alpha_alice)" -o "$TMP/body2" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL2_ID}"
 ch2_msgs="$(jq_get 'len(d["messages"])' "$TMP/body2")"
 curl -s -b "$(sess alpha_alice)" -o "$TMP/body1b" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}"
@@ -407,26 +415,29 @@ EOF
 http_call_csrf POST "$ELEMBRA_API/memory/ask" "$TMP/ask.json" "$(sess alpha_alice)"
 ask_code="$http_code"
 ask_body="$(head -c 150 "$TMP/body")"
-# A 503 "LLM provider not configured" is the documented Alpha limitation
-# (L32 / issue #244): the pipeline is provider-gated, not broken.
+# The response serializes snake_case (`resource_ref`). A 503 "LLM provider not
+# configured" is the documented Alpha limitation (L32 / issue #244): the
+# pipeline is provider-gated, not broken — but a 200 MUST carry a grounded
+# citation, or the pipeline is broken, not "configured-but-quiet".
+citation="$(jq_get 'd["citations"][0]["resource_ref"] if "citations" in d and d["citations"] else ""' "$TMP/body")"
 if [[ "$ask_code" == "200" ]]; then
-	check "P13 Ask this channel" true "grounded answer ($ask_code)"
-elif [[ "$ask_code" == "503" ]]; then
-	check "P13 Ask this channel" true "503 provider not configured — documented L32/#244"
-else
-	check "P13 Ask this channel" false "ask -> $ask_code $ask_body"
-fi
-
-# --- P14 citation open -------------------------------------------------------
-citation="$(jq_get 'd["citations"][0]["resourceRef"] if "citations" in d and d["citations"] else ""' "$TMP/body")"
-if [[ "$ask_code" == "200" && "$citation" != "" ]]; then
-	cat > "$TMP/cit.json" <<EOF
+	if [[ "$citation" != "" ]]; then
+		check "P13 Ask this channel" true "grounded answer with citation"
+		cat > "$TMP/cit.json" <<EOF
 {"resource_ref":"${citation}"}
 EOF
-	http_call_csrf POST "$ELEMBRA_API/memory/citations/open" "$TMP/cit.json" "$(sess alpha_alice)"
-	check "P14 citation open reauthorizes" "$([[ "$http_code" == "200" ]] && echo true || echo false)" "citation -> $http_code"
-else
+		http_call_csrf POST "$ELEMBRA_API/memory/citations/open" "$TMP/cit.json" "$(sess alpha_alice)"
+		check "P14 citation open reauthorizes" "$([[ "$http_code" == "200" ]] && echo true || echo false)" "citation -> $http_code"
+	else
+		check "P13 Ask this channel" false "200 without grounded citations: $ask_body"
+		check "P14 citation open reauthorizes" false "no citation to reauthorize"
+	fi
+elif [[ "$ask_code" == "503" ]]; then
+	check "P13 Ask this channel" true "503 provider not configured — documented L32/#244"
 	check "P14 citation open reauthorizes" true "not exercised: Ask provider not configured (L32/#244)"
+else
+	check "P13 Ask this channel" false "ask -> $ask_code $ask_body"
+	check "P14 citation open reauthorizes" false "ask failed ($ask_code)"
 fi
 
 # --- P15 revocation ----------------------------------------------------------
@@ -437,7 +448,7 @@ check "P15a admin disabled mallory" "$([[ "$http_code" == "200" || "$http_code" 
 sleep 2
 code=$(curl -s -b "$(sess alpha_mallory)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
 check "P15b revoked user cannot read" "$([[ "$code" == "401" || "$code" == "403" || "$code" == "404" ]] && echo true || echo false)" "mallory messages -> $code"
-if relay_ok revoke "$BUZZ_RELAY_WS" "$BUZZ_SERVICE_SK" "${USER_PK[alpha_mallory]}"; then
+if relay_ok revoke "$BUZZ_RELAY_WS" "${USER_PK[alpha_mallory]}"; then
 	check "P15c relay revoked (9031)" true "9031 accepted"
 else
 	check "P15c relay revoked (9031)" false "9031 failed: $(cat "$TMP/op.json")"
@@ -453,7 +464,8 @@ check "P15e unaffected user still reads" "$([[ "$code" == "200" ]] && echo true 
 # --- P16 relay outage --------------------------------------------------------
 echo "== relay outage =="
 RELAY_CONTAINER="${RELAY_CONTAINER:-rustshare-buzz-relay-1}"
-docker stop "$RELAY_CONTAINER" >/dev/null 2>&1 || true
+relay_stopped=0
+docker stop "$RELAY_CONTAINER" >/dev/null 2>&1 && relay_stopped=1 || true
 sleep 2
 if relay_ok publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "outage test" "$BUZZ_CHANNEL_ID"; then
 	check "P16a publish fails during outage" false "publish unexpectedly accepted"
@@ -462,7 +474,8 @@ else
 fi
 code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
 check "P16b reads stay available (local gate)" "$([[ "$code" == "200" ]] && echo true || echo false)" "messages -> $code"
-docker start "$RELAY_CONTAINER" >/dev/null 2>&1 || true
+# Restore immediately; the EXIT trap also restores it if this run is interrupted.
+docker start "$RELAY_CONTAINER" >/dev/null 2>&1 && relay_stopped=0 || true
 recovered=""
 for i in $(seq 1 20); do
 	sleep 2
@@ -474,8 +487,15 @@ done
 check "P16c publish recovers after restart" "$([[ "$recovered" == "yes" ]] && echo true || echo false)" "publish accepted within 40s"
 
 # --- P17 session isolation / logout-login ------------------------------------
-code=$(curl -s -b "$(sess alpha_bob)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/users/me")
-check "P17 fresh login works" "$([[ "$code" == "200" ]] && echo true || echo false)" "bob /users/me -> $code"
+# Drop bob's cached session and force a REAL fresh login; assert the new jar
+# actually holds a session cookie before trusting the /users/me 200.
+unset 'SESSION[alpha_bob]'
+rm -f "$TMP/sess.alpha_bob"
+jar="$(sess alpha_bob)"
+fresh_cookie="false"
+grep -q "rustshare_session" "$jar" 2>/dev/null && fresh_cookie="true"
+code=$(curl -s -b "$jar" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/users/me")
+check "P17 fresh login works" "$([[ "$code" == "200" && "$fresh_cookie" == "true" ]] && echo true || echo false)" "bob re-login /users/me -> $code"
 
 # --- summary -----------------------------------------------------------------
 echo

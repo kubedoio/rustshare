@@ -86,7 +86,16 @@ const sendCommand = (relayUrl, event, authSk) =>
 				resolve({ accepted: false, reason });
 			}
 		};
-		ws.onerror = () => resolve({ accepted: false, reason: 'transport' });
+		ws.onerror = () => {
+			clearTimeout(timer);
+			resolve({ accepted: false, reason: 'transport' });
+		};
+		ws.onclose = () => {
+			clearTimeout(timer);
+			// No OK arrived before the connection closed; resolve so the caller
+			// never hangs (idempotent if an OK already resolved).
+			resolve({ accepted: false, reason: 'connection closed' });
+		};
 	});
 
 if (command === 'keygen') {
@@ -125,9 +134,18 @@ if (command === 'bind-proof') {
 }
 
 if (command === 'admit' || command === 'revoke') {
-	const [relayUrl, ownerSk, targetPk] = args;
+	// The owner/bridge key is a durable service secret: prefer the environment
+	// (BUZZ_SERVICE_SK — same key as RUSTSHARE_CHAT_BRIDGE_SECRET_KEY) so it
+	// does not appear on argv, in `ps`, or in shell history. Two forms are
+	// accepted: <relay-url> <pk> (owner-sk from BUZZ_SERVICE_SK) or the fully
+	// explicit <relay-url> <owner-sk> <pk>.
+	const [relayUrl, a, b] = args;
+	const ownerSk = args.length === 3 ? a : process.env.BUZZ_SERVICE_SK;
+	const targetPk = args.length === 3 ? b : a;
 	if (!relayUrl || !ownerSk || !targetPk) {
-		console.error(`usage: alpha-buzz-ops.mjs ${command} <relay-url> <owner-sk> <pk>`);
+		console.error(
+			`usage: alpha-buzz-ops.mjs ${command} <relay-url> [owner-sk] <pk>  (owner-sk defaults to BUZZ_SERVICE_SK)`
+		);
 		process.exit(2);
 	}
 	const kind = command === 'admit' ? 9030 : 9031;

@@ -12,7 +12,7 @@
 #   ./scripts/start-buzz-observer.sh
 # Run in the foreground (Ctrl-C stops it); or background it with a supervisor
 # for the dogfooding period:
-#   nohup ./scripts/start-buzz-observer.sh >> /var/log/buzz-observer.log 2>&1 &
+#   nohup ./scripts/start-buzz-observer.sh >> buzz-observer.log 2>&1 &
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,7 +54,7 @@ while true; do
 	child_pid=$!
 	# `set -e` would abort the supervisor on a crashing child; `|| status=$?`
 	# captures the exit status without letting it terminate the loop.
-	wait "$child_pid" || status=$?
+	if wait "$child_pid"; then status=0; else status=$?; fi
 	child_pid=""
 	echo "buzz-observer exited (status $status); restarting in 3s…" >&2
 	sleep 3

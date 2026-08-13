@@ -43,9 +43,18 @@ const communityId = process.env.BUZZ_COMMUNITY_ID;
 const channelId = process.env.BUZZ_CHANNEL_ID || 'alpha-channel';
 const webhookUrl =
 	process.env.ELEMBRA_WEBHOOK_URL || 'http://localhost/api/v1/integrations/buzz/events';
-const since = process.env.BUZZ_SINCE ? Number(process.env.BUZZ_SINCE) : undefined;
-const maxBackoffS = Number(process.env.BUZZ_MAX_RECONNECT_BACKOFF_S || 30);
-const httpTimeoutMs = Number(process.env.BUZZ_HTTP_TIMEOUT_MS || 10000);
+const sinceRaw = process.env.BUZZ_SINCE ? Number(process.env.BUZZ_SINCE) : undefined;
+if (sinceRaw !== undefined && !Number.isFinite(sinceRaw)) {
+	console.error('buzz-observer: BUZZ_SINCE must be a unix-seconds number');
+	process.exit(2);
+}
+const since = sinceRaw;
+const parsedMaxBackoff = Number(process.env.BUZZ_MAX_RECONNECT_BACKOFF_S || 30);
+const maxBackoffS =
+	Number.isFinite(parsedMaxBackoff) && parsedMaxBackoff > 0 ? parsedMaxBackoff : 30;
+const parsedHttpTimeout = Number(process.env.BUZZ_HTTP_TIMEOUT_MS || 10000);
+const httpTimeoutMs =
+	Number.isFinite(parsedHttpTimeout) && parsedHttpTimeout > 0 ? parsedHttpTimeout : 10000;
 
 let missing = [];
 if (!relayUrl) missing.push('BUZZ_RELAY_WS');
@@ -115,12 +124,22 @@ async function deliver(event) {
 		supersedes_event_id: null
 	};
 	const body = JSON.stringify({ event, context });
-	const timestamp = Math.floor(Date.now() / 1000);
-	// WebhookSigner::sign_with_timestamp: HMAC-SHA256 over `<ts>.<hex(body)>`
-	const signed = `${timestamp}.${Buffer.from(body, 'utf8').toString('hex')}`;
-	const signature = createHmac('sha256', webhookSecret).update(signed).digest('hex');
 
-	for (let attempt = 1; ; attempt++) {
+	// Attempts are capped so a single undeliverable event cannot stall the
+	// forward chain (and grow memory) forever; the relay replays history on a
+	// reconnect and Elembra dedupes by event id, so a dropped event is
+	// recoverable that way.
+	const MAX_FORWARD_ATTEMPTS = 10;
+	for (let attempt = 1; attempt <= MAX_FORWARD_ATTEMPTS; attempt++) {
+		// Re-sign on every attempt: the backend rejects signatures older than
+		// its replay window (RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS, default 300s),
+		// so a retry that waited out a backend outage must carry a fresh
+		// timestamp — otherwise the retry machinery would drop the events it
+		// exists to deliver.
+		// WebhookSigner::sign_with_timestamp: HMAC-SHA256 over `<ts>.<hex(body)>`
+		const timestamp = Math.floor(Date.now() / 1000);
+		const signed = `${timestamp}.${Buffer.from(body, 'utf8').toString('hex')}`;
+		const signature = createHmac('sha256', webhookSecret).update(signed).digest('hex');
 		let controller;
 		try {
 			controller = new AbortController();
@@ -158,6 +177,12 @@ async function deliver(event) {
 				`forward failed ${event.id.slice(0, 12)} (transport: ${error.message}), retry ${attempt}`
 			);
 		}
+		if (attempt === MAX_FORWARD_ATTEMPTS) {
+			console.error(
+				`forward failed ${event.id.slice(0, 12)} (dropping after ${MAX_FORWARD_ATTEMPTS} attempts); reconnect replay recovers relay history`
+			);
+			return;
+		}
 		const backoff = Math.min(2 ** attempt, 15) * 1000;
 		await sleep(backoff);
 	}
@@ -184,12 +209,16 @@ process.on('unhandledRejection', (reason) => {
 	);
 });
 process.on('uncaughtException', (error) => {
-	console.error(`uncaught exception (continuing): ${error.stack}`);
+	// Node state may be corrupt after an uncaught exception; exit and let the
+	// supervisor restart (which reconnects and replays relay history).
+	console.error(`uncaught exception: ${error.stack}`);
+	process.exit(1);
 });
 
 function connect() {
 	const socket = new WebSocket(relayUrl);
 	let subscribed = false;
+	let eoseSeen = false;
 	let closing = shuttingDown;
 	const reqId = `buzz-observer-${randomUUID().slice(0, 8)}`;
 
@@ -209,9 +238,13 @@ function connect() {
 
 	socket.onmessage = async (raw) => {
 		try {
+			if (typeof raw.data !== 'string') {
+				console.warn(`relay sent non-text frame (${typeof raw.data}); ignoring`);
+				return;
+			}
 			let message;
 			try {
-				message = JSON.parse(String(raw.data));
+				message = JSON.parse(raw.data);
 			} catch {
 				return;
 			}
@@ -228,6 +261,7 @@ function connect() {
 				);
 				try {
 					socket.send(JSON.stringify(['AUTH', auth]));
+					console.log('authenticated with relay challenge (NIP-42)');
 					// The pre-auth REQ was rejected (NOTICE + CLOSED for the
 					// subscription); re-issue it now that this connection is
 					// authenticated (same pattern as the Buzz bridge re-sending
@@ -237,7 +271,6 @@ function connect() {
 				} catch (error) {
 					console.error(`AUTH send failed: ${error.message}`);
 				}
-				console.log('authenticated with relay challenge (NIP-42)');
 			} else if (kind === 'EVENT') {
 				// NIP-01 frame shape: ["EVENT", <subscription-id>, <event>]
 				const event = message[2];
@@ -247,8 +280,27 @@ function connect() {
 						console.error(`unexpected forward error: ${error.message}`);
 					});
 				}
-			} else if (kind === 'NOTICE' || kind === 'OK' || kind === 'EOSE' || kind === 'CLOSED') {
+			} else if (kind === 'NOTICE' || kind === 'OK') {
 				console.log(`relay ${kind}: ${JSON.stringify(message).slice(0, 300)}`);
+			} else if (kind === 'EOSE') {
+				if (message[1] === reqId) eoseSeen = true;
+				console.log(`relay EOSE for ${message[1]}`);
+			} else if (kind === 'CLOSED') {
+				// A CLOSED before EOSE is the normal pre-auth REQ rejection that
+				// the AUTH + re-subscribe flow resolves — ignoring it keeps the
+				// handshake from looping. A CLOSED for the live subscription
+				// (post-EOSE) means the relay killed it: force a reconnect,
+				// which re-subscribes and replays history.
+				if (message[1] === reqId && eoseSeen) {
+					console.error(`relay closed live subscription ${reqId}; reconnecting to recover`);
+					try {
+						socket.close();
+					} catch {
+						// already closed
+					}
+				} else {
+					console.log(`relay CLOSED: ${JSON.stringify(message).slice(0, 300)}`);
+				}
 			}
 		} catch (error) {
 			console.error(`relay frame handler error: ${error.message}`);
@@ -300,6 +352,6 @@ function connect() {
 }
 
 console.log(
-	`buzz-observer starting: relay=${relayUrl} community=${communityId} channel=${channelId} webhook=${webhookUrl}`
+	`buzz-observer starting: relay=${relayUrl} community=${communityId} channel=${channelId} webhook=${webhookUrl.split('?')[0]}`
 );
 connect();
