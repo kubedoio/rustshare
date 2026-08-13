@@ -62,25 +62,33 @@ export async function signEvent(
 	return { ...unsigned, id, sig };
 }
 
-/** Sign and publish one event over a NIP-42 relay session. Returns false on
- * any failure (timeout, rejected auth, relay error) — never throws. */
+export type PublishResult =
+	| { ok: true }
+	| { ok: false; reason: 'transport' } // socket error/timeout before an OK frame
+	| { ok: false; reason: 'rejected'; detail?: string }; // relay answered OK false (NIP-20 message)
+
+/** Sign and publish one event over a NIP-42 relay session. Never throws: a
+ * transport failure (timeout, socket error) resolves `{ok:false,
+ * reason:'transport'}` and an explicit relay rejection resolves
+ * `{ok:false, reason:'rejected'}` so callers can tell "relay down" from
+ * "not admitted / blocked". */
 export async function publishEvent(
 	relayUrl: string,
 	unsigned: Omit<NostrEvent, 'id' | 'sig'>,
 	secretKey: string
-): Promise<boolean> {
+): Promise<PublishResult> {
 	const signed = await signEvent(unsigned, secretKey);
-	return await new Promise<boolean>((resolve) => {
+	return await new Promise<PublishResult>((resolve) => {
 		let settled = false;
-		const finish = (ok: boolean) => {
+		const finish = (result: PublishResult) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
 			clearTimeout(authGrace);
 			socket.close();
-			resolve(ok);
+			resolve(result);
 		};
-		const timer = setTimeout(() => finish(false), 10_000);
+		const timer = setTimeout(() => finish({ ok: false, reason: 'transport' }), 10_000);
 		const socket = new WebSocket(relayUrl);
 		let authGrace: ReturnType<typeof setTimeout> | undefined;
 
@@ -119,10 +127,18 @@ export async function publishEvent(
 				socket.send(JSON.stringify(['EVENT', signed]));
 			}
 			if (message[0] === 'OK' && message[1] === signed.id) {
-				finish(message[2] === true);
+				finish(
+					message[2] === true
+						? { ok: true }
+						: {
+								ok: false,
+								reason: 'rejected',
+								detail: typeof message[3] === 'string' ? message[3] : undefined
+							}
+				);
 			}
 		};
-		socket.onerror = () => finish(false);
-		socket.onclose = () => finish(false);
+		socket.onerror = () => finish({ ok: false, reason: 'transport' });
+		socket.onclose = () => finish({ ok: false, reason: 'transport' });
 	});
 }

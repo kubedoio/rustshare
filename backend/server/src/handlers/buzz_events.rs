@@ -15,7 +15,7 @@ use axum::{
 };
 use bytes::Bytes;
 use serde_json::{json, Value};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::buzz_observation::{BuzzPushError, IngestOutcome};
 use crate::AppState;
@@ -53,29 +53,42 @@ pub async fn receive_buzz_event(
             StatusCode::ACCEPTED,
             Json(json!({ "status": "observed", "duplicate": true })),
         ),
-        Err(BuzzPushError::Unauthorized) => error_response(
-            StatusCode::UNAUTHORIZED,
-            "Unauthorized",
-            &format!("{SIGNATURE_HEADER} is missing, invalid, or outside the replay window"),
-        ),
+        Err(BuzzPushError::Unauthorized) => {
+            warn!("buzz event rejected: invalid HMAC or outside replay window");
+            error_response(
+                StatusCode::UNAUTHORIZED,
+                "Unauthorized",
+                &format!("{SIGNATURE_HEADER} is missing, invalid, or outside the replay window"),
+            )
+        }
         Err(BuzzPushError::Malformed(reason)) => {
+            warn!("buzz event rejected: malformed payload ({reason})");
             error_response(StatusCode::BAD_REQUEST, "Malformed request", &reason)
         }
-        Err(BuzzPushError::VerificationFailed) => error_response(
-            StatusCode::FORBIDDEN,
-            "Event verification failed",
-            "The Nostr event failed id or signature verification, or is not a text note",
-        ),
-        Err(BuzzPushError::UnknownCommunity) => error_response(
-            StatusCode::FORBIDDEN,
-            "Unknown community",
-            "community_id has no active workspace mapping",
-        ),
-        Err(BuzzPushError::UnboundAuthor) => error_response(
-            StatusCode::FORBIDDEN,
-            "Unbound author",
-            "The event author pubkey has no active binding in the mapped tenant",
-        ),
+        Err(BuzzPushError::VerificationFailed) => {
+            warn!("buzz event rejected: id or signature verification failed, or not a text note");
+            error_response(
+                StatusCode::FORBIDDEN,
+                "Event verification failed",
+                "The Nostr event failed id or signature verification, or is not a text note",
+            )
+        }
+        Err(BuzzPushError::UnknownCommunity) => {
+            warn!("buzz event rejected: community has no active workspace mapping");
+            error_response(
+                StatusCode::FORBIDDEN,
+                "Unknown community",
+                "community_id has no active workspace mapping",
+            )
+        }
+        Err(BuzzPushError::UnboundAuthor) => {
+            warn!("buzz event rejected: event author has no active binding in the mapped tenant");
+            error_response(
+                StatusCode::FORBIDDEN,
+                "Unbound author",
+                "The event author pubkey has no active binding in the mapped tenant",
+            )
+        }
         Err(BuzzPushError::AmbiguousCommunity {
             community_id,
             row_count,
