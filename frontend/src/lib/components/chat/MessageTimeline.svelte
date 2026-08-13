@@ -43,8 +43,9 @@
 				{/if}
 				<a
 					class="text-xs text-primary"
-					href="/ask?scope=chat&communityId={message.community_id}&channelId={message.channel_id}"
-					>Ask</a
+					href="/ask?scope=chat&communityId={encodeURIComponent(
+						message.community_id
+					)}&channelId={encodeURIComponent(message.channel_id)}">Ask</a
 				>
 			</div>
 		{/each}

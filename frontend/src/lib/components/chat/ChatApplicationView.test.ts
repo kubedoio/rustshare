@@ -136,6 +136,39 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', 't2'));
 	});
 
+	it('shows a Back to latest control after paging and returns to the newest page', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus());
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		mocks.getChatMessages.mockImplementation(async (channelId: string, before?: string | null) =>
+			before === 't2'
+				? { messages: [], next_before: null }
+				: {
+						messages: [
+							{
+								message_id: 'm-1',
+								event_id: 'e-1',
+								community_id: 'community-1',
+								channel_id: 'general',
+								channel_kind: 'topic',
+								author_pubkey: 'pk-a',
+								event_created_at: '2026-08-12T10:00:00Z',
+								thread_root_id: null,
+								body: 'first page message'
+							}
+						],
+						next_before: 't2'
+					}
+		);
+		render(ChatApplicationView);
+		await waitFor(() => expect(screen.getByText('Load earlier')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Back to latest' })).toBeTruthy()
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Back to latest' }));
+		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', null));
+	});
+
 	it('switching channels refetches messages for the new channel', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus());
 		mocks.getChatChannels.mockResolvedValue(CHANNELS);

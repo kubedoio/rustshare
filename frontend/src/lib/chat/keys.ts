@@ -3,23 +3,56 @@
 // the only recovery path (ADR-0034: no silent server custody).
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
 
-const STORAGE_KEY = 'elembra.chat.key.v1';
-const PBKDF2_ITERATIONS = 100_000;
+const LEGACY_STORAGE_KEY = 'elembra.chat.key.v1';
+/** PBKDF2-HMAC-SHA256 iterations for NEW envelopes (OWASP-recommended for
+ * offline-crackable localStorage blobs). Old envelopes record their own
+ * iterations in `iter` and keep working. */
+const PBKDF2_ITERATIONS = 600_000;
+const LEGACY_PBKDF2_ITERATIONS = 100_000;
+
+/** The user the key vault is scoped to (set by the auth store on
+ * login/bootstrap/logout) so a second user on the same browser never inherits
+ * the previous user's envelope. */
+let storageScope: string | null = null;
+
+/** Scope the key vault to `userId`, migrating a pre-scoping legacy envelope
+ * on first use so existing users keep their key. `null` (logged out) hides
+ * the vault entirely. */
+export function setChatKeyUser(userId: string | null): void {
+	if (storageScope === userId) return;
+	storageScope = userId;
+	if (userId === null) return;
+	const scoped = `${LEGACY_STORAGE_KEY}.${userId}`;
+	if (localStorage.getItem(scoped) !== null) return;
+	const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+	if (legacy !== null) {
+		localStorage.setItem(scoped, legacy);
+		localStorage.removeItem(LEGACY_STORAGE_KEY);
+	}
+}
+
+function storageKey(): string | null {
+	return storageScope === null ? null : `${LEGACY_STORAGE_KEY}.${storageScope}`;
+}
 
 export interface EncryptedChatKey {
 	v: 1;
 	salt: string; // hex
 	iv: string; // hex
 	ciphertext: string; // hex
+	iter?: number; // PBKDF2 iterations used for this envelope (defaults to legacy 100k)
 }
 
 export function hasChatKey(): boolean {
-	return localStorage.getItem(STORAGE_KEY) !== null;
+	const key = storageKey();
+	return key !== null && localStorage.getItem(key) !== null;
 }
 
 export function storedKeyPubkey(): string | null {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const key = storageKey();
+		if (key === null) return null;
+		const raw = localStorage.getItem(key);
 		if (!raw) return null;
 		const envelope: { pubkey?: string } = JSON.parse(raw);
 		return envelope.pubkey ?? null;
@@ -28,7 +61,11 @@ export function storedKeyPubkey(): string | null {
 	}
 }
 
-async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+async function deriveKey(
+	passphrase: string,
+	salt: Uint8Array<ArrayBuffer>,
+	iterations: number
+): Promise<CryptoKey> {
 	const material = await crypto.subtle.importKey(
 		'raw',
 		new TextEncoder().encode(passphrase),
@@ -37,7 +74,7 @@ async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Pro
 		['deriveKey']
 	);
 	return crypto.subtle.deriveKey(
-		{ name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+		{ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
 		material,
 		{ name: 'AES-GCM', length: 256 },
 		false,
@@ -50,25 +87,30 @@ export async function saveChatKey(
 	pubkey: string,
 	passphrase: string
 ): Promise<void> {
+	const key = storageKey();
+	if (key === null) throw new Error('no chat key scope — sign in first');
 	const salt = crypto.getRandomValues(new Uint8Array(16));
 	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const key = await deriveKey(passphrase, salt);
+	const derived = await deriveKey(passphrase, salt, PBKDF2_ITERATIONS);
 	const ciphertext = await crypto.subtle.encrypt(
 		{ name: 'AES-GCM', iv },
-		key,
+		derived,
 		hexToBytes(secretKey)
 	);
 	const envelope: EncryptedChatKey = {
 		v: 1,
 		salt: bytesToHex(salt),
 		iv: bytesToHex(iv),
-		ciphertext: bytesToHex(new Uint8Array(ciphertext))
+		ciphertext: bytesToHex(new Uint8Array(ciphertext)),
+		iter: PBKDF2_ITERATIONS
 	};
-	localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...envelope, pubkey }));
+	localStorage.setItem(key, JSON.stringify({ ...envelope, pubkey }));
 }
 
 export async function loadChatKey(passphrase: string): Promise<string> {
-	const raw = localStorage.getItem(STORAGE_KEY);
+	const key = storageKey();
+	if (key === null) throw new Error('no stored chat key');
+	const raw = localStorage.getItem(key);
 	if (!raw) throw new Error('no stored chat key');
 	const envelope = JSON.parse(raw) as EncryptedChatKey;
 	if (envelope.v !== 1) throw new Error('unsupported chat key format');
@@ -76,7 +118,11 @@ export async function loadChatKey(passphrase: string): Promise<string> {
 }
 
 async function decryptEnvelope(envelope: EncryptedChatKey, passphrase: string): Promise<string> {
-	const key = await deriveKey(passphrase, hexToBytes(envelope.salt));
+	const key = await deriveKey(
+		passphrase,
+		hexToBytes(envelope.salt),
+		envelope.iter ?? LEGACY_PBKDF2_ITERATIONS
+	);
 	const plaintext = await crypto.subtle.decrypt(
 		{ name: 'AES-GCM', iv: hexToBytes(envelope.iv) },
 		key,
@@ -86,7 +132,9 @@ async function decryptEnvelope(envelope: EncryptedChatKey, passphrase: string): 
 }
 
 export function exportChatKey(): string {
-	const raw = localStorage.getItem(STORAGE_KEY);
+	const key = storageKey();
+	if (key === null) throw new Error('no stored chat key');
+	const raw = localStorage.getItem(key);
 	if (!raw) throw new Error('no stored chat key');
 	return raw;
 }
@@ -114,5 +162,6 @@ export async function importChatKey(json: string, passphrase: string): Promise<s
 }
 
 export function clearChatKey(): void {
-	localStorage.removeItem(STORAGE_KEY);
+	const key = storageKey();
+	if (key !== null) localStorage.removeItem(key);
 }

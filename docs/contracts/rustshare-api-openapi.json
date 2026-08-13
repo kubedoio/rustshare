@@ -1830,6 +1830,37 @@
         ],
         "summary": "Timeline for one channel: folded latest-event-per-message, newest first,\nper-message authorization, deleted messages hidden.",
         "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "query",
+            "description": "Channel id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Return messages older than this timestamp (pagination cursor)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of messages to return (clamped to 1..=64)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Channel timeline",

@@ -34,9 +34,10 @@
 use std::sync::{Arc, LazyLock};
 
 use axum::extract::{Path, Query, State};
+use axum::Json;
 use chrono::{DateTime, Duration, Utc};
 use nostr::Keys;
-use rustshare_core::domain::{PrincipalId, TenantId};
+use rustshare_core::domain::{ApplicationId, PrincipalId, TenantId};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
     ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
@@ -46,11 +47,14 @@ use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
+use rustshare_resource_auth::ResourceRef;
 use rustshare_server::authz::ChatResourceOwner;
 use rustshare_server::handlers::chat_app::{
     chat_status, get_message, list_channels, list_messages, ListMessagesQuery,
 };
-use rustshare_server::handlers::{AppError, AuthenticatedUser};
+use rustshare_server::handlers::{
+    open_attachment, prepare_attachment, preview_attachment, AppError, AuthenticatedUser,
+};
 use rustshare_server::AppState;
 use rustshare_storage::repos::ShareNotificationRepoImpl;
 use rustshare_storage::{
@@ -1300,4 +1304,195 @@ async fn revoke_principal_scope_and_timestamp_semantics() {
 
     cleanup(&pool, env_a.tenant, env_a.principal).await;
     cleanup(&pool, env_b.tenant, env_b.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Pagination advances past a fully filtered page: when a whole page is
+//    tombstoned/denied, `next_before` comes from the last *fetched* row so
+//    older authorized messages stay reachable
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn pagination_advances_past_a_fully_tombstoned_page() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    let base = Utc::now() - Duration::seconds(120);
+    // A tombstoned message whose latest (deleted) event is the newest row.
+    let deleted_id = unique_hex64();
+    insert_observation(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &deleted_id,
+        &deleted_id,
+        "workspace",
+        "created",
+        true,
+        Some("soon deleted"),
+        base,
+    )
+    .await;
+    insert_observation(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &deleted_id,
+        &unique_hex64(),
+        "workspace",
+        "deleted",
+        false,
+        None,
+        base + Duration::seconds(30),
+    )
+    .await;
+    // An older authorized message that the tombstone page must not hide.
+    let older_id = unique_hex64();
+    insert_observation(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &older_id,
+        &older_id,
+        "workspace",
+        "created",
+        true,
+        Some("still readable"),
+        base - Duration::seconds(10),
+    )
+    .await;
+
+    // Page 1 (limit 1): the newest folded row is the tombstone — filtered out,
+    // but the cursor must still advance.
+    let page1 = list_messages(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .expect("first page must succeed");
+    assert!(
+        page1.0.messages.is_empty(),
+        "the tombstone page must be hidden from the timeline"
+    );
+    let cursor = page1
+        .0
+        .next_before
+        .expect("pagination must advance past a fully filtered page");
+
+    // Page 2: the fold within the window still yields the tombstoned message's
+    // pre-delete `created` row (denied by the gate), so this page is empty too —
+    // but the cursor keeps advancing, which is the guarantee under test.
+    let page2 = list_messages(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: Some(cursor),
+            limit: Some(1),
+        }),
+    )
+    .await
+    .expect("second page must succeed");
+    assert!(
+        page2.0.messages.is_empty(),
+        "the pre-delete fold row is still gated"
+    );
+    let cursor2 = page2
+        .0
+        .next_before
+        .expect("pagination must keep advancing past gated rows");
+
+    // Page 3: the older authorized message is finally reachable.
+    let page3 = list_messages(
+        State(state),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: Some(cursor2),
+            limit: Some(1),
+        }),
+    )
+    .await
+    .expect("third page must succeed");
+    assert_eq!(
+        page3.0.messages.len(),
+        1,
+        "the older authorized message must be reachable past the tombstone"
+    );
+    assert_eq!(
+        page3.0.messages[0].message_id, older_id,
+        "the reachable message is the older one"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 9. Attachments fail closed at the endpoint: an inaccessible Files ref is an
+//    existence-hiding 404 across prepare/preview/open. (Authorizer-level
+//    denial for existing-but-denied files is covered by
+//    source_authorization_test.rs; this proves the endpoint mapping.)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn attachment_endpoints_deny_inaccessible_files() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    // A ref to a file that does not exist (and, being random, cannot belong to
+    // this principal either): every attachment endpoint must 404 without
+    // revealing existence or ownership.
+    let request = || {
+        Json(rustshare_server::handlers::chat_resource::ResourceRequest {
+            resource: ResourceRef::new(
+                ApplicationId::new("io.elembra.files"),
+                "file",
+                Uuid::new_v4().to_string(),
+            ),
+        })
+    };
+
+    let prepare = prepare_attachment(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        request(),
+    )
+    .await;
+    assert!(
+        matches!(prepare, Err(AppError::NotFound(_))),
+        "prepare must hide inaccessible files, got {prepare:?}"
+    );
+
+    let preview = preview_attachment(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        request(),
+    )
+    .await;
+    assert!(
+        matches!(preview, Err(AppError::NotFound(_))),
+        "preview must hide inaccessible files, got {preview:?}"
+    );
+
+    let open = open_attachment(State(state), auth(env.principal, env.tenant), request()).await;
+    assert!(
+        matches!(open, Err(AppError::NotFound(_))),
+        "open must hide inaccessible files, got {open:?}"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
 }

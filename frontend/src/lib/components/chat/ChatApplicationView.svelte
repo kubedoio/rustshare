@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { keepPreviousData } from '@tanstack/query-core';
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
 	import {
@@ -79,7 +80,11 @@
 		messagesQuery.setOptions({
 			queryKey: ['chat-messages', selectedChannelId, cursor],
 			queryFn: () => getChatMessages(selectedChannelId!, cursor),
-			enabled: selectedChannelId != null
+			enabled: selectedChannelId != null,
+			// Keep the current page visible while an older page loads, so
+			// pagination never flashes an empty timeline or hides recent
+			// messages.
+			placeholderData: keepPreviousData
 		});
 	});
 
@@ -156,11 +161,19 @@
 					<a class="text-sm text-primary" href={askChannelHref}>Ask this channel</a>
 				</div>
 			{/if}
+			{#if cursor}
+				<div class="px-4 pt-2">
+					<button type="button" class="text-sm text-primary" onclick={() => (cursor = null)}>
+						Back to latest
+					</button>
+				</div>
+			{/if}
 			<MessageTimeline
 				messages={$messagesQuery.data?.messages ?? []}
 				loading={$messagesQuery.isLoading}
 				{focusTarget}
 				onLoadMore={() => {
+					if ($messagesQuery.isFetching) return;
 					cursor = $messagesQuery.data?.next_before ?? null;
 				}}
 			/>
@@ -171,7 +184,7 @@
 			/>
 			{#if relayError}
 				<div class="px-4 py-2 text-sm text-error">
-					Relay unreachable — message not sent. Reads are unaffected.
+					{relayError}
 				</div>
 			{/if}
 		</div>

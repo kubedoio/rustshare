@@ -25,7 +25,7 @@ export function getApplicationObjectHref(
 		'io.elembra.brainstorming': `/apps/brainstorming/${objectId}`,
 		'io.elembra.shares': `/apps/shares/${objectId}`,
 		'io.elembra.mail': `/apps/mail/messages/${objectId}`,
-		'io.elembra.chat': `/apps/chat?message=${objectId}`
+		'io.elembra.chat': `/apps/chat?message=${encodeURIComponent(objectId)}`
 	};
 
 	if (applicationRouteMap[applicationId]) {

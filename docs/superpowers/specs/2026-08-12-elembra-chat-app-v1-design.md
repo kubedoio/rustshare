@@ -104,16 +104,22 @@ New endpoints under the existing authenticated chat route group:
 
 | Endpoint | Contract |
 | --- | --- |
-| `GET /api/v1/applications/chat/status` | Chat enablement, mapping (`community_id`, `relay_url`), binding status, admission status, own `pubkey`, and the effective channel policy. Safe summary only — never other users' data. |
+| `GET /api/v1/applications/chat/status` | Chat enablement, mapping (`community_id`, `relay_url`), binding status, admission status, own `pubkey`. Safe summary only — never other users' data. |
 | `GET /api/v1/applications/chat/channels` | Distinct observed channels for the mapped community (id, kind, latest activity), derived from the observation index. |
 | `GET /api/v1/applications/chat/messages?channel_id=&before=&limit=` | Folded timeline for one channel: newest-active message rows (created/edited/deleted resolved to the latest event), `thread_root_id` grouping, `body` when an indexing copy exists, otherwise `body: null`. Paginated by `event_created_at`. |
 | `GET /api/v1/applications/chat/messages/{message_id}` | Single folded message (used for citation focus/scroll and thread expansion). |
 
 Authorization:
 
-- All four endpoints start from `PrincipalContext`, verify the Chat application
-  is enabled for the tenant, then resolve the tenant's active
+- `status` starts from `PrincipalContext`, verifies the Chat application is
+  enabled for the tenant, then resolves the tenant's active
   `WorkspaceCommunityMapping` (missing/inactive → safe empty response).
+- `channels` and `messages` additionally gate per-channel/per-message through
+  the existing `SourceAuthorizer`/`ChatResourceOwner` path (existence-hiding,
+  tombstone-aware); `get_message` relies on that per-message gate alone. In
+  `local` mode this admits `workspace` channels only; in `buzz` mode each
+  message is a live relay decision. A denied message is omitted from list
+  responses and 404 from the single-message endpoint.
 - Message rows are gated through the existing `SourceAuthorizer`/`ChatResourceOwner`
   path (per-message, existence-hiding, tombstone-aware). In `local` mode this
   admits `workspace` channels only; in `buzz` mode each message is a live relay
@@ -218,9 +224,9 @@ scope enforcement); the frontend adds no retrieval logic.
 | 3 | live/new message appears | Ingest → broadcast → invalidation test + polling test |
 | 4 | cross-workspace/community forgery fails | Endpoint authz tests (tenant A rows never visible to tenant B) |
 | 5 | restricted channel access follows Buzz | Local gate denies dm/private/excluded; buzz-mode fake-relay decision tests (existing harness) |
-| 6 | revoked user cannot publish/read | Revocation → read endpoints deny (tests); publish denied by relay membership (real-relay script) |
-| 7 | Files attachment uses Files authorization | Existing `chat_resource` tests + endpoint-level attach/open tests |
-| 8 | unauthorized attachment fails | Denied-share prepare/open tests |
+| 6 | revoked user cannot publish/read | Read: revocation → read endpoints deny (automated tests). Publish: relay membership revocation (kind 9031) is verified manually via the disposable-relay checklist in `scripts/run-chat-e2e.sh` — the 9030/9031 orchestration needs the relay's own admin CLI |
+| 7 | Files attachment uses Files authorization | Endpoint-level prepare/preview/open denial tests (`chat_app_read_test.rs`) + existing `source_authorization_test.rs` authorizer coverage |
+| 8 | unauthorized attachment fails | Denied/inaccessible prepare/open tests (`chat_app_read_test.rs`) |
 | 9 | Ask Channel cannot escape selected channel | Existing `unified_search_test` Ask security matrix + citation cross-channel test |
 | 10 | citation opens exact authorized message | Single-message endpoint + frontend focus/scroll test |
 | 11 | no private Buzz DB reads | Architectural: no new code path outside the existing gateway/observation contracts |
@@ -237,8 +243,9 @@ scope enforcement); the frontend adds no retrieval logic.
   (round-trip, wrong passphrase), the chat components (timeline folding,
   composer states, attachment tag inclusion, citation focus), and the
   websocket invalidation handler.
-- Real relay: a `scripts/run-chat-e2e.sh` following the ADR-0034 disposable-relay
-  recipe for the critical paths (publish signed message, revoke → deny).
+- Real relay: `scripts/run-chat-e2e.sh` automates the signed publish probe
+  against a disposable relay (ADR-0034 recipe); the relay-side revocation
+  check (kind 9031) is a documented manual step using the relay's admin CLI.
 
 ## 10. Limitations (documented, intentional)
 
@@ -253,6 +260,10 @@ scope enforcement); the frontend adds no retrieval logic.
   retain event tags, so recipients see the message body but not an attachment
   link; surfacing `elembra-ref` tags for recipients requires a future
   projection change.
+- On publish the client does not tag a target channel: channel attribution is
+  determined by the Buzz bridge under the current contract, and a client
+  channel-tag wire format is deferred upstream until confirmed (same status as
+  thread tags above).
 - `dm`/`private`/`excluded` channels are unreadable under the local gate by
   design until the upstream `access/check` capability ships.
 - Browser-held keys mean device loss without an export is unrecoverable; the UI

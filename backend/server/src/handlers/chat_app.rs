@@ -189,6 +189,11 @@ pub async fn list_channels(
     get,
     path = "/api/v1/applications/chat/messages",
     tag = "Chat",
+    params(
+        ("channel_id" = String, Query, description = "Channel id"),
+        ("before" = Option<chrono::DateTime<chrono::Utc>>, Query, description = "Return messages older than this timestamp (pagination cursor)"),
+        ("limit" = Option<i64>, Query, description = "Maximum number of messages to return (clamped to 1..=64)"),
+    ),
     responses(
         (status = 200, description = "Channel timeline", body = MessagesResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -229,6 +234,11 @@ pub async fn list_messages(
         )
         .await
         .map_err(|e| AppError::internal(format!("chat timeline lookup failed: {e}")))?;
+
+    // The cursor comes from the last *fetched* row, not the last visible one:
+    // if a whole page is tombstoned or denied, pagination must still advance
+    // so older authorized messages stay reachable.
+    let next_before = events.last().map(|event| event.event_created_at);
 
     // Fold: drop tombstones (latest event deleted) and inactive rows.
     let visible: Vec<_> = events
@@ -284,7 +294,6 @@ pub async fn list_messages(
             body: event.body.clone(),
         });
     }
-    let next_before = messages.last().map(|m| m.event_created_at);
     Ok(Json(MessagesResponse {
         messages,
         next_before,

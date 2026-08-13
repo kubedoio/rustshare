@@ -46,7 +46,16 @@ const accepted = await new Promise((resolve) => {
 	}, 10_000);
 	socket.onopen = () => socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
 	socket.onmessage = async (raw) => {
-		const message = JSON.parse(String(raw.data));
+		let message;
+		try {
+			message = JSON.parse(String(raw.data));
+		} catch {
+			// Malformed relay frame: treat as a failed publish, not a crash.
+			clearTimeout(timer);
+			socket.close();
+			resolve(false);
+			return;
+		}
 		if (!Array.isArray(message)) return;
 		if (message[0] === 'AUTH' && typeof message[1] === 'string') {
 			const auth = await sign(

@@ -32,6 +32,7 @@
 	let attachmentTag = $state<NostrTag | null>(null);
 
 	async function send(): Promise<void> {
+		if (sending) return; // guard against double-publish via Enter during an in-flight send
 		const content = draft.trim();
 		if (!content && !attachmentTag) return;
 		const status = $statusQuery.data;
@@ -42,6 +43,10 @@
 			onSendFailure('local key does not match your bound Buzz identity');
 			return;
 		}
+		// No channel tag is added here: channel attribution is determined by
+		// the Buzz bridge under the current contract, and a client channel-tag
+		// wire format is deferred upstream until confirmed (spec §10, same
+		// status as thread tags).
 		const tags: NostrTag[] = [];
 		if (attachmentTag) tags.push(attachmentTag);
 		sending = true;

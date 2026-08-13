@@ -44,6 +44,10 @@ use rustshare_storage::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Maximum acceptable future skew for a pushed event's author-chosen
+/// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
+const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
+
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
 /// was observed.
@@ -281,6 +285,21 @@ impl BuzzObservationService {
         event
             .verify()
             .map_err(|_| BuzzPushError::VerificationFailed)?;
+
+        // A future-dated `created_at` is author-controlled inside the signed
+        // event and `Event::verify` does not bound it. Accepting one would let
+        // a bound author pin a message above any later delete/edit — the
+        // timeline fold orders by `event_created_at DESC` and the tombstone
+        // window is `>= since` — so reject anything beyond a small clock-skew
+        // window. Past timestamps stay valid: relay reconciliation legitimately
+        // replays history. Reported as `Malformed` so the webhook answers 400
+        // (permanent; the bridge must not retry a bad event).
+        let created_secs = event.created_at.as_secs() as i64;
+        if created_secs.saturating_sub(Utc::now().timestamp()) > MAX_CREATED_AT_FUTURE_SKEW_SECS {
+            return Err(BuzzPushError::Malformed(
+                "Buzz event created_at is too far in the future".to_string(),
+            ));
+        }
 
         // 5. Community → Workspace mapping (workspace == tenant invariant).
         let mapping = match self
