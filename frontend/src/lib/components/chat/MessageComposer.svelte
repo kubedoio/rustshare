@@ -6,7 +6,13 @@
 		NOSTR_KIND_TEXT,
 		type NostrTag
 	} from '$lib/chat/nostr';
-	import { hasChatKey, loadChatKey, importChatKey, exportChatKey } from '$lib/chat/keys';
+	import {
+		hasChatKey,
+		loadChatKey,
+		importChatKey,
+		exportChatKey,
+		clearChatKey
+	} from '$lib/chat/keys';
 	import AttachmentPicker from './AttachmentPicker.svelte';
 
 	interface Props {
@@ -45,20 +51,22 @@
 		}
 		importing = true;
 		importError = '';
+		importNotice = '';
 		try {
 			const secretKey = await importChatKey(backupJson.trim(), importPassphrase);
-			keyMissing = false;
-			// The passphrase that just decrypted the backup is the key
-			// passphrase — seed it so the first send does not re-prompt.
 			passphrase = importPassphrase;
 			backupJson = '';
 			importPassphrase = '';
 			if (publicKeyOf(secretKey) !== boundPubkey) {
-				// The key is stored (import replaced the envelope), but it does
-				// not match the identity bound to this account, so sends would
-				// be rejected. Surface that instead of the success notice.
-				importError = 'Key imported, but it does not match the identity bound to this account.';
+				// Wrong-identity backup: discard the just-imported envelope and
+				// keep the panel open, so the user can paste the correct backup
+				// instead of being stranded with a stored key that never sends.
+				clearChatKey();
+				keyMissing = true;
+				importError =
+					'That backup is not the identity bound to this account, so it was not saved. Paste the backup from your original device, or ask an administrator to rotate the binding.';
 			} else {
+				keyMissing = false;
 				importNotice = 'Key imported — you can send as your bound identity.';
 				onSendFailure('');
 			}
@@ -84,6 +92,8 @@
 		if (sending) return; // guard against double-publish via Enter during an in-flight send
 		const content = draft.trim();
 		if (!content && !attachmentTag) return;
+		// A send attempt means the user has moved past the import flow.
+		importNotice = '';
 		if (keyMissing) {
 			onSendFailure('no chat key on this device — import your backup to send');
 			return;
@@ -120,6 +130,11 @@
 			} else {
 				onSendFailure('relay unreachable');
 			}
+		} catch (err) {
+			// Defensive: publishEvent never throws, but a malformed stored key
+			// can make publicKeyOf throw — surface it instead of an unhandled
+			// rejection with no feedback.
+			onSendFailure(err instanceof Error ? err.message : 'send failed — try again');
 		} finally {
 			sending = false;
 		}

@@ -168,7 +168,12 @@ export function exportChatKey(): string {
 }
 
 export async function importChatKey(json: string, passphrase: string): Promise<string> {
-	const parsed = JSON.parse(json) as EncryptedChatKey & { secret_key?: string; pubkey?: string };
+	let parsed: EncryptedChatKey & { secret_key?: string; pubkey?: string };
+	try {
+		parsed = JSON.parse(json);
+	} catch {
+		throw new Error('invalid backup format');
+	}
 	if (parsed.v !== 1) throw new Error('unsupported chat key format');
 	let secretKey: string;
 	if (typeof parsed.secret_key === 'string') {
@@ -180,10 +185,17 @@ export async function importChatKey(json: string, passphrase: string): Promise<s
 		typeof parsed.ciphertext === 'string'
 	) {
 		// Encrypted-envelope backup: verify it decrypts, then restore it.
-		secretKey = await decryptEnvelope(parsed, passphrase);
+		try {
+			secretKey = await decryptEnvelope(parsed, passphrase);
+		} catch {
+			throw new Error('wrong passphrase or corrupt backup');
+		}
 	} else {
 		throw new Error('backup does not contain a key');
 	}
+	// Secret keys are 32 bytes of hex; reject anything else (npub/pubkey,
+	// truncated text) before it is stored and later breaks every send.
+	if (!/^[0-9a-f]{64}$/i.test(secretKey)) throw new Error('invalid backup format');
 	const pubkey = parsed.pubkey ?? publicKeyOf(secretKey);
 	await saveChatKey(secretKey, pubkey, passphrase);
 	return secretKey;

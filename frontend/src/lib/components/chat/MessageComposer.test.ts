@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => {
 			return 'sk-imported';
 		}),
 		exportChatKey: vi.fn(() => stored?.raw ?? ''),
+		clearChatKey: vi.fn(() => {
+			stored = null;
+		}),
 		publishEvent: vi.fn(),
 		publicKeyOf: vi.fn(() => 'pk-1'),
 		buildUnsignedEvent: vi.fn(
@@ -39,7 +42,8 @@ vi.mock('$lib/chat/keys', () => ({
 	hasChatKey: mocks.hasChatKey,
 	loadChatKey: mocks.loadChatKey,
 	importChatKey: mocks.importChatKey,
-	exportChatKey: mocks.exportChatKey
+	exportChatKey: mocks.exportChatKey,
+	clearChatKey: mocks.clearChatKey
 }));
 
 vi.mock('$lib/chat/nostr', () => ({
@@ -82,6 +86,7 @@ describe('MessageComposer', () => {
 		vi.mocked(mocks.loadChatKey).mockClear();
 		vi.mocked(mocks.importChatKey).mockClear();
 		vi.mocked(mocks.exportChatKey).mockClear();
+		vi.mocked(mocks.clearChatKey).mockClear();
 		mocks.clear();
 	});
 
@@ -134,25 +139,57 @@ describe('MessageComposer', () => {
 		expect(onSendFailure).not.toHaveBeenCalled();
 	});
 
-	it('warns when the imported key does not match the bound identity', async () => {
+	it('discards a mismatched import and lets the user re-import the correct backup', async () => {
 		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-other');
 		const { onSendFailure } = renderComposer();
 		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
 
-		const backup = '{"v":1,"salt":"aa","iv":"bb","ciphertext":"cc","pubkey":"pk-other"}';
-		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: backup } });
+		const badBackup = '{"v":1,"salt":"aa","iv":"bb","ciphertext":"cc","pubkey":"pk-other"}';
+		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: badBackup } });
 		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
 			target: { value: 'pass' }
 		});
 		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
 
+		// The wrong envelope is discarded and the panel stays open.
+		await waitFor(() => expect(mocks.clearChatKey).toHaveBeenCalled());
 		await waitFor(() =>
-			expect(
-				screen.getByText('Key imported, but it does not match the identity bound to this account.')
-			).toBeTruthy()
+			expect(screen.getByText(/That backup is not the identity bound to this account/)).toBeTruthy()
 		);
+		expect(screen.getByText(/No chat key on this device/)).toBeTruthy();
 		expect(screen.queryByText('Key imported — you can send as your bound identity.')).toBeNull();
-		expect(onSendFailure).not.toHaveBeenCalled();
+
+		// Re-importing the correct backup then succeeds and unlocks the composer.
+		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-1');
+		await fireEvent.input(screen.getByLabelText('Key backup'), {
+			target: { value: 'good-backup' }
+		});
+		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
+			target: { value: 'pass' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
+
+		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith(''));
+		expect(screen.queryByText(/That backup is not the identity bound/)).toBeNull();
+	});
+
+	it('surfaces a malformed stored key as a send failure, not an unhandled rejection', async () => {
+		mocks.hasChatKey.mockReturnValue(true);
+		vi.mocked(mocks.loadChatKey).mockResolvedValue('not-a-valid-secret');
+		vi.mocked(mocks.publicKeyOf).mockImplementation(() => {
+			throw new Error('invalid secret key');
+		});
+		const { onSendFailure } = renderComposer();
+		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+
+		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+			target: { value: 'hello' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith('invalid secret key'));
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
 	});
 
 	it('surfaces the import UI when the stored key is corrupt or unsupported', async () => {

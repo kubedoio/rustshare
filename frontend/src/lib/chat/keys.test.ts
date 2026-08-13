@@ -53,6 +53,28 @@ describe('chat key custody', () => {
 		await expect(loadChatKey('pass')).rejects.toThrow('unsupported chat key format');
 	});
 
+	it('reports a friendly error for a non-JSON backup', async () => {
+		setChatKeyUser('user-1');
+		await expect(importChatKey('not json', 'pass')).rejects.toThrow('invalid backup format');
+	});
+
+	it('reports a friendly error for a wrong passphrase on an envelope backup', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'correct horse');
+		const backup = exportChatKey();
+		await expect(importChatKey(backup, 'wrong')).rejects.toThrow(
+			'wrong passphrase or corrupt backup'
+		);
+	});
+
+	it('rejects a backup whose secret key is not a 32-byte hex key', async () => {
+		setChatKeyUser('user-1');
+		await expect(importChatKey('{"v":1,"secret_key":"zzzz"}', 'pass')).rejects.toThrow(
+			'invalid backup format'
+		);
+	});
+
 	it('imports a backup and clears on demand', async () => {
 		setChatKeyUser('user-1');
 		const sk = generateSecretKey();
