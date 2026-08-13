@@ -49,7 +49,14 @@ const accepted = await new Promise((resolve) => {
 		const message = JSON.parse(String(raw.data));
 		if (!Array.isArray(message)) return;
 		if (message[0] === 'AUTH' && typeof message[1] === 'string') {
-			const auth = await sign(22242, [['relay', relayUrl], ['challenge', message[1]]], '');
+			const auth = await sign(
+				22242,
+				[
+					['relay', relayUrl],
+					['challenge', message[1]]
+				],
+				''
+			);
 			socket.send(JSON.stringify(['AUTH', auth]));
 			socket.send(JSON.stringify(['EVENT', signed]));
 		}

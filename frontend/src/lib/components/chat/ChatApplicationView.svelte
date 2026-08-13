@@ -7,7 +7,8 @@
 		getChatChannels,
 		getChatMessages,
 		getChatMessage,
-		type ChatMessageDto
+		type ChatMessageDto,
+		type ChatMessagesPage
 	} from '$lib/api/chat';
 	import BindingPanel from './BindingPanel.svelte';
 	import ChannelList from './ChannelList.svelte';
@@ -62,15 +63,15 @@
 		}
 	});
 
-	const messagesQuery = createQuery({
-		queryKey: ['chat-messages', selectedChannelId, cursor],
-		queryFn: () => getChatMessages(selectedChannelId!, cursor),
+	const messagesQuery = createQuery<ChatMessagesPage>({
+		queryKey: ['chat-messages', null, null],
+		queryFn: () => Promise.resolve({ messages: [], next_before: null }),
 		enabled: false
 	});
 
-	const focusedMessageQuery = createQuery({
-		queryKey: ['chat-message', focusedMessageId],
-		queryFn: () => getChatMessage(focusedMessageId!),
+	const focusedMessageQuery = createQuery<ChatMessageDto | null>({
+		queryKey: ['chat-message', null],
+		queryFn: () => Promise.resolve(null),
 		enabled: false
 	});
 

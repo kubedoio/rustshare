@@ -135,4 +135,14 @@ describe('ChatApplicationView', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', 't2'));
 	});
+
+	it('switching channels refetches messages for the new channel', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus());
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		render(ChatApplicationView);
+		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', null));
+		await fireEvent.click(screen.getByRole('button', { name: /random/ }));
+		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('random', null));
+	});
 });

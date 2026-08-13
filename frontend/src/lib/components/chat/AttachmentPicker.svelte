@@ -4,6 +4,7 @@
 	import type { File } from '$lib/api/types';
 	import { apiClient } from '$lib/api/client';
 	import type { NostrTag } from '$lib/chat/nostr';
+	import ModalBase from '$lib/components/common/ModalBase.svelte';
 
 	interface Props {
 		onSelect: (tag: NostrTag) => void;
@@ -52,37 +53,26 @@
 
 <button type="button" class="btn btn-sm" onclick={() => (open = true)}>Attach file</button>
 
-{#if open}
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-		onclick={() => (open = false)}
-	>
-		<div
-			class="max-h-[70vh] w-96 overflow-y-auto rounded bg-base-100 p-4"
-			onclick={(e) => e.stopPropagation()}
-		>
-			<h3 class="mb-2 font-semibold">Attach a file</h3>
-			{#if loading}
-				<div class="text-sm text-base-content/60">Loading files…</div>
-			{:else if files.length === 0}
-				<div class="text-sm text-base-content/60">No files yet.</div>
-			{:else}
-				<ul>
-					{#each files as file (file.id)}
-						<li>
-							<button
-								type="button"
-								class="w-full rounded px-2 py-1 text-left text-sm hover:bg-base-200"
-								onclick={() => pick(file)}
-							>
-								{file.name}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			{#if error}<p class="mt-2 text-sm text-error">{error}</p>{/if}
-			<button type="button" class="btn btn-sm mt-2" onclick={() => (open = false)}>Cancel</button>
-		</div>
-	</div>
-{/if}
+<ModalBase {open} title="Attach a file" onClose={() => (open = false)} showCloseButton={false}>
+	{#if loading}
+		<div class="text-sm text-base-content/60">Loading files…</div>
+	{:else if files.length === 0}
+		<div class="text-sm text-base-content/60">No files yet.</div>
+	{:else}
+		<ul class="max-h-[50vh] overflow-y-auto">
+			{#each files as file (file.id)}
+				<li>
+					<button
+						type="button"
+						class="w-full rounded px-2 py-1 text-left text-sm hover:bg-base-200"
+						onclick={() => pick(file)}
+					>
+						{file.name}
+					</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if error}<p class="mt-2 text-sm text-error">{error}</p>{/if}
+	<button type="button" class="btn btn-sm mt-2" onclick={() => (open = false)}>Cancel</button>
+</ModalBase>
