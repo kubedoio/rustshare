@@ -43,10 +43,19 @@ fi
 
 cd frontend
 # Supervise: the observation bridge must not stay down after a crash. Restart
-# with a short delay; stop cleanly on SIGINT/SIGTERM.
+# with a short delay. Stop cleanly on SIGINT/SIGTERM: bash defers traps while
+# a foreground child runs, so run the child in the background + `wait` (which
+# IS interruptible) and forward the signal to the child in the trap.
+child_pid=""
+status=0
+trap 'echo "buzz-observer supervisor: stopping"; [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null; exit 0' INT TERM
 while true; do
-	node scripts/buzz-observer.mjs
-	status=$?
+	node scripts/buzz-observer.mjs &
+	child_pid=$!
+	# `set -e` would abort the supervisor on a crashing child; `|| status=$?`
+	# captures the exit status without letting it terminate the loop.
+	wait "$child_pid" || status=$?
+	child_pid=""
 	echo "buzz-observer exited (status $status); restarting in 3s…" >&2
 	sleep 3
 done

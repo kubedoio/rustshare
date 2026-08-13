@@ -206,7 +206,7 @@ observer/E2E.
 | Publish "relay rejected: …" | not admitted at the relay; revoked | check relay membership (9030 delivered); run the E2E admit step |
 | Ask 503 | LLM provider not configured | configure provider; status surface `ask_available` (issue #244) |
 | Channel list frozen | observer dead or WS exhaustion (fixed: 15s poll covers channels) | restart observer |
-| Binding challenge 400 "public address" | local relay without `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` | set flag + restart backend |
+| Binding challenge 400 "relay_url must resolve to an allowed address" | local relay without `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` | set flag + restart backend |
 | 401 on mutating calls | missing CSRF header (browser clients get it automatically) | API tooling: send `X-Rustshare-Csrf` matching the cookie |
 
 ---

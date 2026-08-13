@@ -44,7 +44,7 @@ ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
 OPS="node scripts/alpha-buzz-ops.mjs"
 TMP="$(mktemp -d)"
-trap 'cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log 2>/dev/null; true 2>/dev/null; rm -rf "$TMP"' EXIT
+trap '[[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
 
 PASS=0
 FAIL=0
@@ -192,11 +192,12 @@ fi
 # no admin API — the operator enables it via SQL (documented in the runbook).
 # Without it, bodies are not stored and the Memory/Ask pipeline stays empty.
 if [[ "${ALPHA_ENABLE_MEMORY_PROJECTION:-1}" == "1" ]]; then
+	mp_status=0
 	PGPASSWORD="${POSTGRES_PASSWORD:-}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" \
 		rustshare-postgres-1 psql -U rustshare -d rustshare -v ON_ERROR_STOP=1 -t -A -c \
 		"UPDATE application_enablements SET configuration = configuration || '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb WHERE application_id='io.elembra.chat' AND tenant_id='${tenant_id}' AND workspace_id='${tenant_id}';" \
-		> "$TMP/mp.json" 2>&1
-	check "P02d memory projection + content indexing enabled" "$([[ "$?" == "0" ]] && echo true || echo false)" "$(head -c 80 "$TMP/mp.json")"
+		> "$TMP/mp.json" 2>&1 || mp_status=$?
+	check "P02d memory projection + content indexing enabled" "$([[ "$mp_status" == "0" ]] && echo true || echo false)" "$(head -c 80 "$TMP/mp.json")"
 fi
 
 # --- P03 create users --------------------------------------------------------
@@ -377,8 +378,6 @@ upload=$(
 		-F "file=@AGENTS.md;filename=alpha-e2e.md" -F "name=alpha-e2e.md" \
 		-o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/files/upload"
 )
-file_id="$(jq_get 'd["id"]' "$TMP/body")"
-check "P12a file uploaded" "$([[ "$file_id" != "" ]] && echo true || echo false)" "file=$file_id (upload=$upload)"
 file_id="$(jq_get 'd["id"]' "$TMP/body")"
 check "P12a file uploaded" "$([[ "$file_id" != "" ]] && echo true || echo false)" "file=$file_id (upload=$upload)"
 cat > "$TMP/prep.json" <<EOF
