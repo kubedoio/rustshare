@@ -44,6 +44,10 @@ use rustshare_storage::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Maximum acceptable future skew for a pushed event's author-chosen
+/// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
+const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
+
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
 /// was observed.
@@ -142,6 +146,7 @@ pub struct BuzzObservationService {
     outbox: Arc<OutboxStore>,
     signer: WebhookSigner,
     max_age_seconds: u64,
+    broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
 }
 
 impl BuzzObservationService {
@@ -153,6 +158,7 @@ impl BuzzObservationService {
         outbox: Arc<OutboxStore>,
         signer: WebhookSigner,
         max_age_seconds: u64,
+        broadcaster: Arc<rustshare_core::events::EventBroadcaster>,
     ) -> Self {
         Self {
             pool,
@@ -161,6 +167,7 @@ impl BuzzObservationService {
             outbox,
             signer,
             max_age_seconds,
+            broadcaster,
         }
     }
 
@@ -212,6 +219,25 @@ impl BuzzObservationService {
         tx.commit()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        // Best-effort realtime fan-out (ADR-0031: ephemeral, lossy by design).
+        // The durable path is the outbox event above; a publish failure must
+        // never fail the ingest.
+        let author_user_id = data.principal.principal_id.0;
+        self.broadcaster.publish(rustshare_core::events::Event::new(
+            rustshare_core::events::EventType::ChatMessageObserved,
+            uuid::Uuid::new_v4(),
+            rustshare_core::events::AggregateType::ChatMessage,
+            serde_json::json!(rustshare_core::events::ChatMessageObservedPayload {
+                tenant_id: tenant.0,
+                workspace_id: workspace.0,
+                community_id: data.context.community_id.clone(),
+                channel_id: data.context.channel_id.clone(),
+                channel_kind: data.context.channel_kind.as_str().to_string(),
+                message_id: data.buzz.message_id.clone(),
+                event_id: data.buzz.event_id.clone(),
+            }),
+            author_user_id,
+        ));
         Ok(IngestOutcome::FirstObservation)
     }
 
@@ -259,6 +285,21 @@ impl BuzzObservationService {
         event
             .verify()
             .map_err(|_| BuzzPushError::VerificationFailed)?;
+
+        // A future-dated `created_at` is author-controlled inside the signed
+        // event and `Event::verify` does not bound it. Accepting one would let
+        // a bound author pin a message above any later delete/edit — the
+        // timeline fold orders by `event_created_at DESC` and the tombstone
+        // window is `>= since` — so reject anything beyond a small clock-skew
+        // window. Past timestamps stay valid: relay reconciliation legitimately
+        // replays history. Reported as `Malformed` so the webhook answers 400
+        // (permanent; the bridge must not retry a bad event).
+        let created_secs = event.created_at.as_secs() as i64;
+        if created_secs.saturating_sub(Utc::now().timestamp()) > MAX_CREATED_AT_FUTURE_SKEW_SECS {
+            return Err(BuzzPushError::Malformed(
+                "Buzz event created_at is too far in the future".to_string(),
+            ));
+        }
 
         // 5. Community → Workspace mapping (workspace == tenant invariant).
         let mapping = match self

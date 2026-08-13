@@ -55,6 +55,7 @@ fn service(pool: PgPool) -> BuzzObservationService {
         Arc::new(OutboxStore::new(pool.clone(), registry)),
         WebhookSigner::new(WEBHOOK_SECRET),
         300,
+        Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
     )
 }
 
@@ -970,6 +971,91 @@ async fn push_rejects_mapping_violating_workspace_tenant_invariant() {
             .await
             .unwrap();
     assert_eq!(outbox_count, 0, "no outbox row may be written");
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1d. Author-controlled `created_at` is bounded: a future-dated event would
+//     pin itself above any later delete/edit (the fold orders by
+//     `event_created_at DESC`; the tombstone window is `>= since`), so pushes
+//     beyond the clock-skew allowance are rejected as malformed while
+//     within-skew events are accepted
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn future_dated_event_is_rejected_within_skew_accepted() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+
+    let signed_with_created_at = |content: &str, created_at: nostr::Timestamp| {
+        let event = EventBuilder::text_note(content)
+            .custom_created_at(created_at)
+            .sign_with_keys(&keys)
+            .expect("sign text note");
+        BuzzEventPush {
+            event: serde_json::to_value(&event).unwrap(),
+            context: BuzzPushContext {
+                community_id: COMMUNITY_ID.to_string(),
+                channel_id: "channel-1".to_string(),
+                channel_kind: ChatChannelKind::Workspace,
+                thread_root_id: None,
+                message_id: event.id.to_hex(),
+                event_type: ObservedEventType::Created,
+                supersedes_event_id: None,
+            },
+        }
+    };
+
+    // +1 hour: far beyond the 15-minute skew — permanent rejection (400-class
+    // malformed), and nothing is persisted.
+    let future = nostr::Timestamp::from_secs((Utc::now().timestamp() + 3600) as u64);
+    let push = signed_with_created_at("future pin", future);
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    let err = service
+        .verify_and_ingest(&payload, &signature)
+        .await
+        .expect_err("a future-dated event must be rejected");
+    assert!(
+        matches!(err, BuzzPushError::Malformed(_)),
+        "rejection must be permanent (malformed), got {err:?}"
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM chat_observed_events WHERE tenant_id = $1",
+    )
+    .bind(tenant.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 0,
+        "no observation row may be written for a future event"
+    );
+
+    // +5 minutes: inside the skew allowance (clock drift) — accepted.
+    let skew = nostr::Timestamp::from_secs((Utc::now().timestamp() + 300) as u64);
+    let push = signed_with_created_at("within skew", skew);
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    let outcome = service
+        .verify_and_ingest(&payload, &signature)
+        .await
+        .expect("an event within the skew allowance must be accepted");
+    assert_eq!(outcome, IngestOutcome::FirstObservation);
 
     cleanup(&pool, tenant).await;
 }

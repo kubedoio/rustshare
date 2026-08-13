@@ -19,6 +19,14 @@ pub struct ChatObservationStore {
     pool: PgPool,
 }
 
+/// Distinct channel derived from the observation index for one community.
+#[derive(Debug, Clone)]
+pub struct ChannelSummary {
+    pub channel_id: String,
+    pub channel_kind: ChatChannelKind,
+    pub latest_event_at: DateTime<Utc>,
+}
+
 impl ChatObservationStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -219,6 +227,89 @@ impl ChatObservationStore {
                 .await?
             }
         };
+        rows.iter().map(row_to_event).collect()
+    }
+
+    /// Distinct observed channels for a community, newest activity first.
+    /// Derived projection only — Buzz owns channel identity.
+    pub async fn distinct_channels(
+        &self,
+        tenant_id: TenantId,
+        community_id: &str,
+    ) -> Result<Vec<ChannelSummary>> {
+        let rows = sqlx::query(
+            "SELECT channel_id, channel_kind, latest_event_at
+             FROM (
+                 SELECT channel_id, channel_kind,
+                        event_created_at AS latest_event_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY channel_id
+                            ORDER BY event_created_at DESC, event_id DESC
+                        ) AS rn
+                 FROM chat_observed_events
+                 WHERE tenant_id = $1 AND community_id = $2 AND active = true
+             ) ranked
+             WHERE rn = 1
+             ORDER BY latest_event_at DESC",
+        )
+        .bind(tenant_id.0)
+        .bind(community_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(ChannelSummary {
+                    channel_id: row.try_get("channel_id")?,
+                    channel_kind: parse_channel_kind(row.try_get("channel_kind")?)?,
+                    latest_event_at: row.try_get("latest_event_at")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Timeline fold: the latest active event of each message in one channel,
+    /// `before` being an exclusive `event_created_at` watermark, newest first.
+    /// The limit is pushed into SQL so large channels never materialize more
+    /// than `limit` folded rows.
+    pub async fn list_for_timeline(
+        &self,
+        tenant_id: TenantId,
+        community_id: &str,
+        channel_id: &str,
+        before: Option<(DateTime<Utc>, String)>,
+        limit: i64,
+    ) -> Result<Vec<ChatObservedEvent>> {
+        // Fold the FULL channel history (DISTINCT ON picks the latest event
+        // per message), then apply the keyset cursor after the fold. Filtering
+        // before the fold would re-emit a superseded event as "latest" on the
+        // next page (stale bodies, duplicates). The (event_created_at,
+        // event_id) keyset — not a timestamp alone — guarantees same-second
+        // messages are never skipped or revisited.
+        let rows = sqlx::query(
+            "SELECT * FROM (
+                 SELECT DISTINCT ON (message_id)
+                        tenant_id, workspace_id, event_id, message_id, event_type,
+                        supersedes_event_id, community_id, channel_id, channel_kind,
+                        thread_root_id, author_pubkey, author_principal_id,
+                        event_created_at, observed_at, checksum, signature,
+                        signature_verified, body, active
+                 FROM chat_observed_events
+                 WHERE tenant_id = $1 AND community_id = $2 AND channel_id = $3
+                 ORDER BY message_id, event_created_at DESC, event_id DESC
+             ) folded
+             WHERE ($4::timestamptz IS NULL
+                    OR (event_created_at, event_id) < ($4, $5))
+             ORDER BY event_created_at DESC, event_id DESC
+             LIMIT $6",
+        )
+        .bind(tenant_id.0)
+        .bind(community_id)
+        .bind(channel_id)
+        .bind(before.as_ref().map(|(created_at, _)| *created_at))
+        .bind(before.as_ref().map(|(_, event_id)| event_id.clone()))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
         rows.iter().map(row_to_event).collect()
     }
 }

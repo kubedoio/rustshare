@@ -660,6 +660,7 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&services.outbox_store),
         WebhookSigner::new(config.rustshare_chat_webhook_secret.clone()),
         chat_webhook_max_age_seconds(),
+        Arc::clone(&broadcaster),
     ));
 
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
@@ -883,19 +884,18 @@ pub async fn init_app() -> Result<AppState> {
         (None, Box::new(LocalFallbackAuthority))
     };
 
-    let source_authorizer = Arc::new(
-        authz::build_source_authorizer(
-            Arc::clone(&services.application_registry),
-            Arc::clone(&permission_resolver),
-            Arc::clone(&permission_resolver_repository),
-            Arc::clone(&metadata_store),
-            Arc::clone(&object_store),
-            (*chat_identity_store).clone(),
-            (*chat_observation_store).clone(),
-            chat_buzz_authority,
-        )
-        .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?,
-    );
+    let (source_authorizer, chat_owner) = authz::build_source_authorizer(
+        Arc::clone(&services.application_registry),
+        Arc::clone(&permission_resolver),
+        Arc::clone(&permission_resolver_repository),
+        Arc::clone(&metadata_store),
+        Arc::clone(&object_store),
+        (*chat_identity_store).clone(),
+        (*chat_observation_store).clone(),
+        chat_buzz_authority,
+    )
+    .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?;
+    let source_authorizer = Arc::new(source_authorizer);
 
     // Permission-aware unified search: candidates come from Files metadata,
     // the note index and the Memory catalog; final inclusion is gated by the
@@ -956,6 +956,7 @@ pub async fn init_app() -> Result<AppState> {
         unified_search_service,
         ask_workspace_service,
         buzz_observation_service,
+        chat_owner,
         buzz_gateway,
         outbox_status,
         outbox_worker_enabled: outbox_worker_config.enabled,

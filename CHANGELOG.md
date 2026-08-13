@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Elembra Chat Application v1: read surface for Buzz communities/channels/messages
+  (authorized per message through the Chat owner → Buzz authority), browser-held
+  signing keys with client-direct NIP-42 publish, live updates via the event
+  broadcaster, sender-side Files attachments via `elembra-ref` tags (recipient
+  attachment surfacing is a documented future projection change), and
+  Ask-this-channel with exact-message citation focus.
+
 - A shared frontend Ask experience at `/ask`, with Workspace, Folder, Note, and
   Chat Channel scopes, grounded citations, and permission-aware citation opening.
 

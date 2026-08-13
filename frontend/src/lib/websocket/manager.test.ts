@@ -171,4 +171,12 @@ describe('WebSocket Manager - Application Invalidations', () => {
 			queryKey: ['enabled-applications']
 		});
 	});
+
+	it('invalidates chat queries on ChatMessageObserved', async () => {
+		await initializeWebSocket('token', 'user-1');
+		handlers['ChatMessageObserved']({});
+
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['chat-messages'] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['chat-channels'] });
+	});
 });

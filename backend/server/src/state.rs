@@ -229,6 +229,9 @@ pub struct AppState {
     /// Authenticated ingestion of signed Buzz events (observation half of the
     /// Buzz → Elembra Memory projection).
     pub buzz_observation_service: Arc<BuzzObservationService>,
+    /// Final Chat authorization owner (binding/admission/mapping pre-filters
+    /// + Buzz authority), also used by the Chat app read surface.
+    pub chat_owner: Arc<crate::authz::chat_owner::ChatResourceOwner>,
     /// NIP-98-authenticated client for the authoritative Buzz relay,
     /// configured only in `buzz` chat-authority mode. `None` in local mode.
     pub buzz_gateway: Option<Arc<BuzzGatewayClient>>,

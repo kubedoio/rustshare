@@ -6,6 +6,7 @@ import { replicationStore } from './replication';
 import { themeStore } from './theme';
 import { initializeWebSocket, cleanupWebSocket } from '../websocket/manager';
 import { queryClient } from '../query-client';
+import { setChatKeyUser } from '../chat/keys';
 
 interface AuthState {
 	user: User | null;
@@ -61,6 +62,7 @@ function createAuthStore() {
 
 			const user = toAuthUser(profile);
 
+			setChatKeyUser(profile.id);
 			set({
 				user,
 				isAuthenticated: true,
@@ -82,6 +84,7 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			setChatKeyUser(null);
 			if (myGeneration !== sessionGeneration) return;
 			set({
 				user: null,
@@ -115,6 +118,7 @@ function createAuthStore() {
 				});
 
 				queryClient.invalidateQueries();
+				setChatKeyUser(user.id);
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -146,6 +150,7 @@ function createAuthStore() {
 			clearLegacyWebSocketToken();
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
+			setChatKeyUser(null);
 			set({
 				user: null,
 				isAuthenticated: false,

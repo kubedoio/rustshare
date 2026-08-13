@@ -230,6 +230,7 @@ pub async fn setup_test_server() -> (AppState, String) {
             outbox_store.clone(),
             rustshare_crypto::WebhookSigner::new("test-secret"),
             300,
+            Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
         ),
     );
 
@@ -244,6 +245,11 @@ pub async fn setup_test_server() -> (AppState, String) {
             memory_catalog_store.clone(),
         ),
     );
+
+    let chat_owner = Arc::new(rustshare_server::authz::ChatResourceOwner::new(
+        rustshare_storage::ChatIdentityStore::new(pool.clone()),
+        (*chat_observation_store).clone(),
+    ));
 
     let state = AppState {
         db_pool: pool,
@@ -289,6 +295,7 @@ pub async fn setup_test_server() -> (AppState, String) {
             ),
         ),
         buzz_observation_service,
+        chat_owner,
         buzz_gateway: None,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),

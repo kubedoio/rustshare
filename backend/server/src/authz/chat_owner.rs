@@ -141,6 +141,147 @@ impl ChatResourceOwner {
     pub fn declared_capabilities() -> Vec<ResourceCapability> {
         vec![ResourceCapability::new(RESOURCE_TYPE_MESSAGE, &[CHAT_READ])]
     }
+
+    /// The identity store backing this owner, shared with the Chat app read
+    /// surface so it can surface the caller's own status (enablement, mapping,
+    /// binding, admission) through the same stores as the gate.
+    pub fn chat_identity_store(&self) -> &ChatIdentityStore {
+        &self.chat_identity
+    }
+
+    /// Channel-level gate used by the Chat app's channel list: the same
+    /// Elembra pre-filters as [`Self::gate`], then the authority's
+    /// channel decision (message_id: None). Fail closed everywhere.
+    pub async fn can_read_channel(
+        &self,
+        ctx: &PrincipalContext,
+        community_id: &str,
+        channel_id: &str,
+        channel_kind: rustshare_resource_auth::BuzzChannelKind,
+    ) -> bool {
+        let mapping = match self
+            .chat_identity
+            .mapping(ctx.tenant_id, ctx.workspace_id)
+            .await
+        {
+            Ok(Some(mapping)) => mapping,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: mapping lookup failed");
+                return false;
+            }
+        };
+        if !mapping.active || mapping.community_id != community_id {
+            return false;
+        }
+        let access = match self
+            .chat_identity
+            .chat_access(ctx.tenant_id, ctx.workspace_id, ctx.principal_id)
+            .await
+        {
+            Ok(access) => access,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: access lookup failed");
+                return false;
+            }
+        };
+        if !access {
+            return false;
+        }
+        let binding = match self
+            .chat_identity
+            .active_binding(ctx.tenant_id, ctx.principal_id)
+            .await
+        {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: binding lookup failed");
+                return false;
+            }
+        };
+        if binding.status != rustshare_resource_auth::BindingStatus::Active {
+            return false;
+        }
+        let admitted = match self
+            .chat_identity
+            .active_admission(ctx.tenant_id, community_id, &binding.buzz_pubkey)
+            .await
+        {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: admission lookup failed");
+                return false;
+            }
+        };
+        if !admitted {
+            return false;
+        }
+        let decision = self
+            .authority
+            .can_read(&rustshare_resource_auth::BuzzReadRequest {
+                tenant_id: ctx.tenant_id,
+                community_id: community_id.to_string(),
+                relay_url: mapping.relay_url.clone(),
+                relay_pubkey: mapping.relay_pubkey.clone(),
+                channel_id: channel_id.to_string(),
+                channel_kind,
+                message_id: None,
+                pubkey: binding.buzz_pubkey.clone(),
+                event_created_at: chrono::Utc::now(),
+            })
+            .await;
+        if !matches!(
+            decision,
+            Ok(rustshare_resource_auth::BuzzReadDecision::Allow)
+        ) {
+            return false;
+        }
+        // Post-authority linearization (mirrors `gate`): a revocation racing
+        // the relay decision must not still list the channel.
+        let mapping = match self
+            .chat_identity
+            .mapping(ctx.tenant_id, ctx.workspace_id)
+            .await
+        {
+            Ok(Some(mapping)) => mapping,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check mapping lookup failed");
+                return false;
+            }
+        };
+        if !mapping.active || mapping.community_id != community_id {
+            return false;
+        }
+        let binding = match self
+            .chat_identity
+            .active_binding(ctx.tenant_id, ctx.principal_id)
+            .await
+        {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check binding lookup failed");
+                return false;
+            }
+        };
+        if binding.status != rustshare_resource_auth::BindingStatus::Active {
+            return false;
+        }
+        match self
+            .chat_identity
+            .active_admission(ctx.tenant_id, community_id, &binding.buzz_pubkey)
+            .await
+        {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(error) => {
+                tracing::warn!(%error, "chat channel gate: post-check admission lookup failed");
+                false
+            }
+        }
+    }
 }
 
 /// The message id shape: 64 lowercase hex characters (the content-addressed
@@ -156,8 +297,9 @@ fn is_message_id(value: &str) -> bool {
 /// Map the observed event's channel classification onto the authority
 /// contract's wire-identical enum (both are `workspace|dm|private|excluded`).
 /// A `From` impl is not possible here (both types are foreign to this
-/// crate), so the gate converts through this helper.
-fn buzz_channel_kind(kind: ChatChannelKind) -> BuzzChannelKind {
+/// crate), so the gate converts through this helper. Shared with the Chat
+/// app read surface (`handlers::chat_app::list_channels`).
+pub(crate) fn buzz_channel_kind(kind: ChatChannelKind) -> BuzzChannelKind {
     match kind {
         ChatChannelKind::Workspace => BuzzChannelKind::Workspace,
         ChatChannelKind::Dm => BuzzChannelKind::Dm,
