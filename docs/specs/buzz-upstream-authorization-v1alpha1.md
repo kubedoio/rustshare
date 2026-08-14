@@ -1,6 +1,6 @@
 # Specification: Buzz Upstream Source Authorization & State v1alpha1
 
-Status: Draft — v1alpha1; amended 2026-08-14 (batch checks, channel registry, canonical publish tags)  
+Status: Draft — v1alpha1; amended 2026-08-14 (batch checks, channel registry, canonical publish tags and kinds, stream-message wire format)  
 Date: 2026-08-11 (amended 2026-08-14)  
 Related: `resource-ref-authorization-v1alpha1.md`, Elembra Chat identity/admission contracts
 
@@ -300,10 +300,13 @@ Semantics:
 
 ### `GET /api/v1/relay/state/events?since=<unix>&limit=<n>&cursor=<opaque>`
 
-Page the community's signed event state for reconciliation.
+Page the community's channel-scoped chat messages — Buzz stream kinds 9
+(`KIND_STREAM_MESSAGE`) and 40002 (`KIND_STREAM_MESSAGE_V2`) — for
+reconciliation. Kind-1 text notes are global-only in Buzz (never
+channel-scoped) and are out of scope for the chat state export.
 
 - `since` — optional; only events whose **own `created_at`** (the unix
-  seconds of the kind-1 event, not the entry's observation time) is at or
+  seconds of the event, not the entry's observation time) is at or
   after this timestamp.
 - `limit` — optional maximum page size.
 - `cursor` — opaque continuation token returned by a previous page.
@@ -314,7 +317,7 @@ Response `content`:
 {
   "entries": [
     {
-      "event": "<raw signed kind-1 event JSON>",
+      "event": "<raw signed chat-message event JSON>",
       "context": {
         "community_id": "<str>",
         "channel_id": "<str>",
@@ -343,13 +346,17 @@ Rules:
 - `cursor: null` with `complete: false` is malformed; the client must treat it
   as an invalid response (deny/fail closed).
 
-## Canonical publish tags (kind-1 wire format)
+## Canonical publish tags and kinds (chat wire format)
 
 The canonical wire format for channel scoping and thread identity on
-published kind-1 events, confirmed against the Buzz relay's ingest
+published chat messages, confirmed against the Buzz relay's ingest
 implementation. **This is the canonical thread root/reply contract that
 Elembra issue #243 was waiting on; it is resolved upstream.**
 
+- **Message kind:** Elembra chat messages are published as **kind 9
+  (`KIND_STREAM_MESSAGE`)** — Buzz's channel-scoped stream message kind —
+  tagged with `["h", "<channel-uuid>"]` (NIP-29) as the **canonical channel
+  identity**.
 - **Channel scoping:** `["h", "<channel-uuid>"]` — the NIP-29 group tag
   carrying the channel's UUID. An event without an `h` tag is not
   channel-scoped.
@@ -365,6 +372,11 @@ Elembra issue #243 was waiting on; it is resolved upstream.**
     tag, or the parent itself when it starts the thread);
   - thread depth is capped at 100.
 - **Optional:** `["broadcast", "1"]` — marks the event as a broadcast.
+- **Legacy:** kind-1 text notes remain accepted on Elembra ingestion during
+  the transition, but they are **not channel-scoped in Buzz** — the relay
+  treats them as global.
+- **Context mapping:** the `channel_kind` and `thread_root_id` context fields
+  map from the relay's stream-message metadata as before.
 
 ## HTTP base derivation
 

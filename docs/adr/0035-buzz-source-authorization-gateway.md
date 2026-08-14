@@ -1,6 +1,6 @@
 # ADR-0035: Buzz Source Authorization Gateway
 
-Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified)  
+Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified; stream-message wire format adopted)  
 Date: 2026-08-11 (amended 2026-08-14)
 
 ## Context
@@ -70,6 +70,11 @@ repairs Chat projections from the relay's public signed state.**
    never re-writes a tombstoned conflict row (`WHERE indexing_status <>
    'tombstoned'`), so a backdated relay delete cannot un-tombstone a Memory
    record.
+
+6. **Elembra Chat adopts the Buzz stream-message wire format.** Chat
+   messages are published as kind 9 (`KIND_STREAM_MESSAGE`) with an
+   `["h", "<channel-uuid>"]` tag; kind-1 remains accepted on Elembra
+   ingestion as legacy during the transition.
 
 ## Consequences
 
