@@ -6,6 +6,7 @@
 		disableAdminUser,
 		enableAdminUser,
 		deleteAdminUser,
+		revokeChatPrincipal,
 		type AdminUserDetail
 	} from '$lib/api/admin';
 
@@ -44,6 +45,8 @@
 
 	let confirmDisable = $state(false);
 	let confirmDelete = $state(false);
+	let confirmChatRevoke = $state(false);
+	let chatRevokeNotice = $state('');
 
 	function validate(): boolean {
 		errors = {};
@@ -99,6 +102,11 @@
 			confirmDelete = false;
 			goto('/admin/users');
 		}
+	});
+
+	const revokeChatMutation = createMutation({
+		mutationFn: () => revokeChatPrincipal(user.id),
+		onSuccess: () => (chatRevokeNotice = 'Chat access revoked.')
 	});
 
 	function handleSubmit() {
@@ -262,6 +270,32 @@
 	<div class="card border border-error/30 bg-base-100 shadow">
 		<div class="card-body">
 			<h3 class="card-title text-base text-error">Danger Zone</h3>
+			<div class="flex flex-wrap items-center gap-3">
+				{#if confirmChatRevoke}
+					<button
+						class="btn btn-error btn-sm"
+						onclick={() => {
+							$revokeChatMutation.mutate();
+							confirmChatRevoke = false;
+						}}
+						disabled={$revokeChatMutation.isPending}
+					>
+						Confirm Chat revocation
+					</button>
+					<button class="btn btn-ghost btn-sm" onclick={() => (confirmChatRevoke = false)}>
+						Cancel
+					</button>
+				{:else}
+					<button
+						class="btn btn-outline btn-sm btn-warning"
+						onclick={() => (confirmChatRevoke = true)}
+						disabled={$revokeChatMutation.isPending}
+					>
+						{$revokeChatMutation.isPending ? 'Revoking Chat...' : 'Revoke Chat access'}
+					</button>
+				{/if}
+				{#if chatRevokeNotice}<span class="text-sm text-success">{chatRevokeNotice}</span>{/if}
+			</div>
 			<div class="mt-2 flex flex-wrap gap-3">
 				{#if user.disabled_at}
 					<button

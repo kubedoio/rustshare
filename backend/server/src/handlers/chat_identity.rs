@@ -67,6 +67,28 @@ pub struct MappingRequest {
     pub relay_pubkey: Option<String>,
 }
 
+/// Revoke a user's Chat binding and active admissions in the admin's tenant.
+pub async fn revoke_principal(
+    AdminUser { user_id: admin_id }: AdminUser,
+    State(db): State<DatabaseState>,
+    Path(principal_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let tenant_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id = $1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&db.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    let revoked = db
+        .chat_identity_store
+        .revoke_principal(TenantId(tenant_id), PrincipalId(principal_id))
+        .await
+        .map_err(internal_db)?;
+    Ok(Json(serde_json::json!({ "revoked": revoked > 0 })))
+}
+
 /// Configure an explicit tenant/workspace → Buzz community mapping.
 pub async fn configure_mapping(
     AdminUser { user_id: admin_id }: AdminUser,

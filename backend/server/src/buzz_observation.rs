@@ -211,6 +211,25 @@ impl BuzzObservationService {
                 .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
             return Ok(IngestOutcome::DuplicateObservation);
         }
+        let latest_created_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT MAX(event_created_at) FROM chat_observed_events
+             WHERE tenant_id = $1 AND community_id = $2",
+        )
+        .bind(tenant.0)
+        .bind(&data.context.community_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+        metrics::gauge!(
+            "chat_observation_lag_seconds",
+            "community_id" => data.context.community_id.clone()
+        )
+        .set(
+            (Utc::now() - latest_created_at.unwrap_or(data.buzz.created_at))
+                .num_milliseconds()
+                .max(0) as f64
+                / 1000.0,
+        );
         let envelope = build_envelope(tenant, workspace, &data, data.principal.principal_id)?;
         self.outbox
             .insert_in_tx(&mut tx, &envelope)

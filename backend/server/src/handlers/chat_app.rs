@@ -41,6 +41,7 @@ pub struct ChatStatusResponse {
     pub mapping: Option<CommunityMappingInfo>,
     pub binding: Option<BindingInfo>,
     pub admission_active: bool,
+    pub ask_available: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -133,6 +134,7 @@ pub async fn chat_status(
             buzz_pubkey: b.buzz_pubkey,
         }),
         admission_active,
+        ask_available: state.ask_workspace_service.is_available(),
     }))
 }
 
@@ -303,6 +305,11 @@ pub async fn list_messages(
     let mut messages = Vec::new();
     for (event, decision) in visible.iter().zip(&decisions) {
         if !decision.decision.is_allow() {
+            metrics::counter!(
+                "chat_authorization_denials_total",
+                "tenant_id" => ctx.tenant_id.0.to_string()
+            )
+            .increment(1);
             continue;
         }
         messages.push(ChatMessageDto {
@@ -371,6 +378,11 @@ pub async fn get_message(
         )
         .await;
     if !decision.is_allow() {
+        metrics::counter!(
+            "chat_authorization_denials_total",
+            "tenant_id" => ctx.tenant_id.0.to_string()
+        )
+        .increment(1);
         return Err(AppError::not_found("resource unavailable"));
     }
     Ok(Json(ChatMessageDto {

@@ -270,7 +270,7 @@ Full classification: Alpha readiness doc §8. Relevant here:
   upstream (L7/L9/L12).
 - Sender-side attachment tags only (L5).
 - Observation relay→Elembra push is the host-side bridge (this deployment);
-  upstream relay has no webhook delivery yet — hardening is issue #239.
+  upstream relay has no webhook delivery yet.
 - Reload/logout clears nothing client-side; keys are per-browser vault.
 
 ---
@@ -302,10 +302,35 @@ The following are operator-visible today (proven during this goal):
   observer `forward failed ... (permanent <status>)`.
 - Relay-side auth/membership decisions: relay logs (`NIP-42 auth successful`,
   `auth failed`, `restricted: not a relay member`).
-- Observation lag: the E2E driver measures publish→channels-visible lag.
+- Observation lag: `chat_observation_lag_seconds{community_id}` measures the
+  latest observed event age; alert when it exceeds 120 seconds for 5 minutes.
+- Webhook outcomes: `chat_webhook_outcomes_total{outcome}` counts observed,
+  duplicate, and category-safe rejection outcomes; alert on a rejection rate
+  above 10% for 10 minutes.
+- Authorization denials: `chat_authorization_denials_total{tenant_id}` is
+  bounded to tenant identifiers and contains no user or message data.
+- Bridge delivery: `chat_bridge_delivery_state{kind,state}` reports 9030/9031
+  acked, retry-queued, or DLQ state; alert on any non-zero DLQ count.
 - Relay outage: publish fails with a distinct transport error; reads stay
   available under the `local` gate; recovery is automatic (observer reconnect).
 
-Missing visibility (tracked): ingestion metrics/lag gauges (#239), publish
-telemetry aggregation, bridge delivery state (9030/9031 acks), authorization
-denial counters.
+## 11. Alpha blocker disposition
+
+- #240 is complete: the tenant-scoped admin revoke action calls the existing
+  atomic `revoke_principal` path and queues kind-9031.
+- #239 is complete: webhook outcomes, latest observation lag, authorization
+  denials, and 9030/9031 delivery state are exposed through the existing
+  Prometheus surface. Metrics contain bounded labels only; bodies, signatures,
+  HMACs, keys, and PII are excluded.
+- #241 is complete: relay acceptance shows “Sent — waiting for Elembra sync”;
+  the existing 15-second observation poll resolves it, otherwise a warning is
+  shown without claiming success.
+- #244 is complete: Chat status exposes only `ask_available`; unavailable Ask
+  is not advertised as an active control.
+- #242 is deferred: recipient-side tags require an observation projection
+  schema/migration and timeline DTO change; the current sender-side tag path
+  remains secure and usable for the sender, so this is a separate Alpha
+  follow-up rather than a broad projection redesign in this closure.
+- #243 remains blocked on Buzz's thread-tag wire format. #245 remains blocked
+  on Buzz ADR-0035 relay capability and live conformance tests; Elembra does
+  not emulate either upstream dependency.

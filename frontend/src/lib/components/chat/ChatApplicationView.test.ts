@@ -39,6 +39,7 @@ function activeStatus(overrides: Partial<ChatStatus> = {}): ChatStatus {
 		mapping: { community_id: 'community-1', relay_url: 'wss://relay.example' },
 		binding: { status: 'Active', buzz_pubkey: 'pk-1' },
 		admission_active: true,
+		ask_available: true,
 		...overrides
 	};
 }

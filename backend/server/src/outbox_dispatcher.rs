@@ -80,6 +80,18 @@ use crate::config::OutboxWorkerConfig;
 /// `integration_deliveries.state` CHECK constraint).
 const DELIVERY_STATES: [&str; 4] = ["pending", "claimed", "processed", "dead_lettered"];
 
+fn bridge_kind_for(event_type: &str) -> Option<&'static str> {
+    let prefix = "io.elembra.chat.buzz.admission.";
+    if !event_type.starts_with(prefix) {
+        return None;
+    }
+    Some(if event_type.ends_with("revoked.v1") {
+        "9031"
+    } else {
+        "9030"
+    })
+}
+
 /// A spawned task handle that aborts the task when dropped without the task
 /// having completed.
 ///
@@ -352,6 +364,16 @@ impl OutboxDispatcher {
         }
         metrics::counter!("outbox_dispatched_total", "consumer" => consumer_id.clone())
             .increment(batch.len() as u64);
+        for delivery in &batch.deliveries {
+            if let Some(kind) = bridge_kind_for(&delivery.event.r#type) {
+                metrics::gauge!(
+                    "chat_bridge_delivery_state",
+                    "kind" => kind,
+                    "state" => "queued"
+                )
+                .set(1.0);
+            }
+        }
         let batch_len = batch.deliveries.len();
         // Saturating budget: `Duration::saturating_mul` cannot panic on
         // overflow, and an absurd batch length saturates to `Duration::MAX`.
@@ -497,6 +519,7 @@ impl OutboxDispatcher {
         )
         .record(started.elapsed().as_secs_f64());
         let event_type = claimed.event.r#type.clone();
+        let bridge_kind = bridge_kind_for(&event_type);
         match outcome {
             ConsumerOutcome::Processed => {
                 match self
@@ -510,6 +533,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "acked").set(1.0);
+                        }
                         metrics::counter!(
                             "outbox_processed_total",
                             "consumer" => consumer_id.to_string(),
@@ -551,6 +577,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "queued").set(1.0);
+                        }
                         metrics::counter!(
                             "outbox_retry_total",
                             "consumer" => consumer_id.to_string(),
@@ -591,6 +620,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "dlq").set(1.0);
+                        }
                         metrics::counter!(
                             "outbox_dead_lettered_total",
                             "consumer" => consumer_id.to_string(),

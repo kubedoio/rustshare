@@ -733,6 +733,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
             patch(crate::handlers::chat_identity::update_community_mapping),
         )
         .route(
+            "/api/v1/admin/applications/chat/principals/{principal_id}/revoke",
+            post(crate::handlers::chat_identity::revoke_principal),
+        )
+        .route(
             "/api/v1/admin/applications/memory/chat/reconcile",
             post(crate::handlers::memory_reconcile::reconcile_chat_memory),
         )
