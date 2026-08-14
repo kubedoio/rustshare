@@ -59,7 +59,8 @@ describe('ChatApplicationView', () => {
 			chat_enabled: false,
 			mapping: null,
 			binding: null,
-			admission_active: false
+			admission_active: false,
+			ask_available: false
 		});
 		render(ChatApplicationView);
 		await waitFor(() =>
@@ -86,6 +87,15 @@ describe('ChatApplicationView', () => {
 		render(ChatApplicationView);
 		await waitFor(() => expect(screen.getByText(/general/)).toBeTruthy());
 		expect(screen.getByText(/random/)).toBeTruthy();
+	});
+
+	it('does not advertise Ask when the provider is unavailable', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus({ ask_available: false }));
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		render(ChatApplicationView);
+		await waitFor(() => expect(screen.getByText(/Ask this channel is unavailable/)).toBeTruthy());
+		expect(screen.queryByRole('link', { name: 'Ask this channel' })).toBeNull();
 	});
 
 	it('fetches the deep-linked message', async () => {
@@ -190,11 +200,13 @@ describe('ChatApplicationView', () => {
 			await waitFor(() => expect(screen.getByText(/general/)).toBeTruthy());
 			const channelsCalls = mocks.getChatChannels.mock.calls.length;
 			const messagesCalls = mocks.getChatMessages.mock.calls.length;
+			const statusCalls = mocks.getChatStatus.mock.calls.length;
 			await vi.advanceTimersByTimeAsync(16_000);
 			await waitFor(() =>
 				expect(mocks.getChatChannels.mock.calls.length).toBeGreaterThan(channelsCalls)
 			);
 			expect(mocks.getChatMessages.mock.calls.length).toBeGreaterThan(messagesCalls);
+			expect(mocks.getChatStatus.mock.calls.length).toBeGreaterThan(statusCalls);
 		} finally {
 			vi.useRealTimers();
 		}

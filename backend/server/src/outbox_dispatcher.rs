@@ -81,15 +81,43 @@ use crate::config::OutboxWorkerConfig;
 const DELIVERY_STATES: [&str; 4] = ["pending", "claimed", "processed", "dead_lettered"];
 
 fn bridge_kind_for(event_type: &str) -> Option<&'static str> {
-    let prefix = "io.elembra.chat.buzz.admission.";
-    if !event_type.starts_with(prefix) {
-        return None;
+    match event_type {
+        "io.elembra.chat.buzz.admission.created.v1" => Some("9030"),
+        "io.elembra.chat.buzz.admission.revoked.v1" => Some("9031"),
+        _ => None,
     }
-    Some(if event_type.ends_with("revoked.v1") {
-        "9031"
-    } else {
-        "9030"
-    })
+}
+
+fn record_chat_bridge_state(kind: &str, state: &str) {
+    for current_state in ["queued", "acked", "dlq"] {
+        metrics::gauge!(
+            "chat_bridge_delivery_state",
+            "kind" => kind.to_string(),
+            "state" => current_state
+        )
+        .set(if current_state == state { 1.0 } else { 0.0 });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bridge_kind_for;
+
+    #[test]
+    fn bridge_kind_only_maps_known_admission_events() {
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.created.v1"),
+            Some("9030")
+        );
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.revoked.v1"),
+            Some("9031")
+        );
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.future.v1"),
+            None
+        );
+    }
 }
 
 /// A spawned task handle that aborts the task when dropped without the task
@@ -366,12 +394,7 @@ impl OutboxDispatcher {
             .increment(batch.len() as u64);
         for delivery in &batch.deliveries {
             if let Some(kind) = bridge_kind_for(&delivery.event.r#type) {
-                metrics::gauge!(
-                    "chat_bridge_delivery_state",
-                    "kind" => kind,
-                    "state" => "queued"
-                )
-                .set(1.0);
+                record_chat_bridge_state(kind, "queued");
             }
         }
         let batch_len = batch.deliveries.len();
@@ -534,7 +557,7 @@ impl OutboxDispatcher {
                 {
                     Ok(true) => {
                         if let Some(kind) = bridge_kind {
-                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "acked").set(1.0);
+                            record_chat_bridge_state(kind, "acked");
                         }
                         metrics::counter!(
                             "outbox_processed_total",
@@ -578,7 +601,7 @@ impl OutboxDispatcher {
                 {
                     Ok(true) => {
                         if let Some(kind) = bridge_kind {
-                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "queued").set(1.0);
+                            record_chat_bridge_state(kind, "queued");
                         }
                         metrics::counter!(
                             "outbox_retry_total",
@@ -621,7 +644,7 @@ impl OutboxDispatcher {
                 {
                     Ok(true) => {
                         if let Some(kind) = bridge_kind {
-                            metrics::gauge!("chat_bridge_delivery_state", "kind" => kind, "state" => "dlq").set(1.0);
+                            record_chat_bridge_state(kind, "dlq");
                         }
                         metrics::counter!(
                             "outbox_dead_lettered_total",

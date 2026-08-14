@@ -106,7 +106,8 @@
 
 	const revokeChatMutation = createMutation({
 		mutationFn: () => revokeChatPrincipal(user.id),
-		onSuccess: () => (chatRevokeNotice = 'Chat access revoked.')
+		onSuccess: () => (chatRevokeNotice = 'Chat access revoked.'),
+		onError: () => (chatRevokeNotice = 'Failed to revoke Chat access.')
 	});
 
 	function handleSubmit() {
@@ -275,6 +276,7 @@
 					<button
 						class="btn btn-error btn-sm"
 						onclick={() => {
+							chatRevokeNotice = '';
 							$revokeChatMutation.mutate();
 							confirmChatRevoke = false;
 						}}

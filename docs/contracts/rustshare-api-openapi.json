@@ -64,6 +64,59 @@
         }
       }
     },
+    "/api/v1/admin/applications/chat/principals/{principal_id}/revoke": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Revoke a user's Chat binding and active admissions in the admin's tenant.",
+        "operationId": "revoke_principal",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "User principal id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chat access revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokePrincipalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/applications/{key}": {
       "get": {
         "tags": [
@@ -22372,6 +22425,17 @@
           "version": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "RevokePrincipalResponse": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "boolean"
           }
         }
       },

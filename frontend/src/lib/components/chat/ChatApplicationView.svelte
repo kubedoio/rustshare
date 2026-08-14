@@ -106,6 +106,7 @@
 	// condition, so the poll never fetches while Chat is unbound.
 	onMount(() => {
 		const interval = setInterval(() => {
+			statusQuery.refetch();
 			if (selectedChannelId) messagesQuery.refetch();
 			const status = $statusQuery.data;
 			if (status?.mapping != null && status?.binding != null) channelsQuery.refetch();
@@ -225,6 +226,7 @@
 				boundPubkey={status.binding?.buzz_pubkey ?? null}
 				onSendFailure={handleSendFailure}
 				onSent={(eventId: string) => {
+					cursor = null;
 					pendingEventId = eventId;
 					syncState = 'waiting';
 				}}
