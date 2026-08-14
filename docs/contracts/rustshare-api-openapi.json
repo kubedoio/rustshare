@@ -14826,10 +14826,14 @@
         "type": "object",
         "required": [
           "chat_enabled",
-          "admission_active"
+          "admission_active",
+          "ask_available"
         ],
         "properties": {
           "admission_active": {
+            "type": "boolean"
+          },
+          "ask_available": {
             "type": "boolean"
           },
           "binding": {
