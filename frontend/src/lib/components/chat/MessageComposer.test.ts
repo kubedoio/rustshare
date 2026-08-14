@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => {
 			async (_kind: number, content: string, _tags: unknown[], _pubkey: string) => ({
 				pubkey: 'pk-1',
 				created_at: 0,
-				kind: 1,
+				kind: 9,
 				tags: [],
 				content
 			})
@@ -50,7 +50,7 @@ vi.mock('$lib/chat/nostr', () => ({
 	publishEvent: mocks.publishEvent,
 	publicKeyOf: mocks.publicKeyOf,
 	buildUnsignedEvent: mocks.buildUnsignedEvent,
-	NOSTR_KIND_TEXT: 1
+	NOSTR_KIND_STREAM_MESSAGE: 9
 }));
 
 vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn(async () => []) }));
@@ -77,7 +77,7 @@ describe('MessageComposer', () => {
 				async (_kind: number, content: string, _tags: unknown[], _pubkey: string) => ({
 					pubkey: 'pk-1',
 					created_at: 0,
-					kind: 1,
+					kind: 9,
 					tags: [],
 					content
 				})
@@ -118,6 +118,14 @@ describe('MessageComposer', () => {
 				expect.objectContaining({ pubkey: 'pk-1', content: 'hello from the second device' }),
 				'sk-imported'
 			)
+		);
+		// Canonical wire format: kind-9 stream message scoped to the active
+		// channel by the NIP-29 `h` tag.
+		expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
+			9,
+			'hello from the second device',
+			[['h', 'general']],
+			'pk-1'
 		);
 		expect(onSendFailure).toHaveBeenCalledWith('');
 	});

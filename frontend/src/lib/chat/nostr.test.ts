@@ -7,7 +7,7 @@ import {
 	signEvent,
 	buildUnsignedEvent,
 	publishEvent,
-	NOSTR_KIND_TEXT
+	NOSTR_KIND_STREAM_MESSAGE
 } from './nostr';
 
 describe('nostr signing', () => {
@@ -21,7 +21,7 @@ describe('nostr signing', () => {
 	it('produces a verifiable BIP-340 signature over the event id', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello', [], pk);
 		const signed = await signEvent(unsigned, sk);
 		expect(schnorr.verify(hexToBytes(signed.sig), hexToBytes(signed.id), hexToBytes(pk))).toBe(
 			true
@@ -31,7 +31,7 @@ describe('nostr signing', () => {
 	it('is deterministic: same input gives the same event id', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello', [], pk);
 		const a = await signEvent(unsigned, sk);
 		const b = await signEvent(unsigned, sk);
 		expect(a.id).toBe(b.id);
@@ -105,7 +105,7 @@ describe('publishEvent', () => {
 	it('sends the EVENT frame after AUTH and resolves ok on OK true', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 		const expected = await signEvent(unsigned, sk);
 
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
@@ -123,7 +123,7 @@ describe('publishEvent', () => {
 		FakeWebSocket.okMessage = 'blocked: not admitted';
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
@@ -133,7 +133,7 @@ describe('publishEvent', () => {
 	it('resolves transport on a socket error before any OK frame', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 
 		vi.stubGlobal('WebSocket', ErroringSocket);
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
@@ -166,7 +166,7 @@ describe('publishEvent without an AUTH challenge', () => {
 	it('publishes via the grace timer when the relay never challenges', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
-		const unsigned = await buildUnsignedEvent(NOSTR_KIND_TEXT, 'hello relay', [], pk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 

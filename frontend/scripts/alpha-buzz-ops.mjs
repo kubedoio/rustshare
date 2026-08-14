@@ -10,7 +10,10 @@
 //   admit <relay-url> <owner-sk> <pk>         kind-9030 add member (owner authority)
 //   revoke <relay-url> <owner-sk> <pk>        kind-9031 remove member (owner authority)
 //   publish <relay-url> <sk> <content> [channel] [elembra-ref]
-//                                             signed kind-1 publish; prints event id
+//                                             signed kind-9 stream-message publish
+//                                             scoped by ["h", <channel>] (kind-1
+//                                             legacy note without a channel);
+//                                             prints event id
 //
 // Every command prints JSON to stdout; exit 0 on success, 1 on relay
 // rejection, 2 on usage errors.
@@ -168,12 +171,19 @@ if (command === 'publish') {
 		);
 		process.exit(2);
 	}
+	// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
+	// kind 9 with the NIP-29 `h` tag scoping the message to the channel.
+	// Without a channel there is no channel identity to scope to, so the
+	// publish falls back to a legacy kind-1 note (still accepted by the relay
+	// and Elembra, but global-only in Buzz).
 	const tags = [];
-	if (channel) tags.push(['channel', channel]);
+	if (channel) tags.push(['h', channel]);
 	if (ref) tags.push(['elembra-ref', ref]);
-	const event = await mkEvent(1, tags, content, skHex);
+	const event = await mkEvent(channel ? 9 : 1, tags, content, skHex);
 	const result = await sendCommand(relayUrl, event, skHex);
-	console.log(JSON.stringify({ ...result, eventId: event.id, kind: 1, channel: channel || null }));
+	console.log(
+		JSON.stringify({ ...result, eventId: event.id, kind: event.kind, channel: channel || null })
+	);
 	process.exit(result.accepted ? 0 : 1);
 }
 
