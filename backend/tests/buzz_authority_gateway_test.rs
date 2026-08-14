@@ -224,6 +224,16 @@ impl FakeBuzzState {
 
     /// The relay's decision for one check: `(decision, reason)` — message
     /// availability → channel visibility → membership.
+    ///
+    /// DELIBERATE DIVERGENCE from the real relay's `decide()`
+    /// (`crates/buzz-relay/src/api/relay_access.rs`): the real relay also
+    /// allows non-members on OPEN channels ("an active member, or an open
+    /// channel anyone may read"), while the fake is membership-only. The
+    /// fake has no visibility-aware access semantics and open channels are
+    /// exercised for LISTING only today ([`Self::accessible_channels`]);
+    /// member/open access semantics are proven by the conformance suite
+    /// against the real relay. Do not extend the fake into a second
+    /// authorization implementation.
     fn evaluate_check(&self, request: &BuzzAccessCheckRequest) -> (String, String) {
         if request.message_id.as_ref().is_some_and(|message_id| {
             !self.messages.contains_key(message_id) || self.deleted.contains(message_id)

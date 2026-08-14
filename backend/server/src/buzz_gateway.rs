@@ -719,31 +719,31 @@ impl BuzzGatewayClient {
         let raw = read_response_json(response)
             .await
             .map_err(|e| log_relay_error(relay_url, e))?;
-        let event = self
-            .verify_19030(&raw, relay_pubkey)
-            .map_err(|e| log_relay_error(relay_url, e))?;
+        self.registry_from_19030(&raw, relay_pubkey, pubkey)
+            .map_err(|e| log_relay_error(relay_url, e))
+    }
+
+    /// Verify a kind-19030 channel-registry response and parse the channel
+    /// list: envelope (kind, Schnorr signature, pinned pubkey), content
+    /// `pubkey` echo, and top-level `evaluated_at` freshness.
+    fn registry_from_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+        expected_pubkey: &str,
+    ) -> Result<Vec<BuzzChannelInfo>, BuzzAuthorityError> {
+        let event = self.verify_19030(raw, relay_pubkey)?;
         let registry: BuzzChannelRegistry = serde_json::from_str(&event.content).map_err(|e| {
-            log_relay_error(
-                relay_url,
-                BuzzAuthorityError::InvalidResponse(format!(
-                    "channel registry content is invalid: {e}"
-                )),
-            )
+            BuzzAuthorityError::InvalidResponse(format!("channel registry content is invalid: {e}"))
         })?;
-        if registry.pubkey != pubkey {
-            return Err(log_relay_error(
-                relay_url,
-                BuzzAuthorityError::InvalidResponse(
-                    "channel registry pubkey does not echo the requested pubkey".to_string(),
-                ),
+        if registry.pubkey != expected_pubkey {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "channel registry pubkey does not echo the requested pubkey".to_string(),
             ));
         }
         if !is_fresh(registry.evaluated_at) {
-            return Err(log_relay_error(
-                relay_url,
-                BuzzAuthorityError::InvalidResponse(
-                    "channel registry evaluated_at is stale".to_string(),
-                ),
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "channel registry evaluated_at is stale".to_string(),
             ));
         }
         Ok(registry.channels)
@@ -1266,6 +1266,58 @@ mod tests {
         let raw = serde_json::to_value(relay_19030(&relay, json!({ "nope": true }))).unwrap();
         assert!(matches!(
             service.batch_decision_from_19030(&raw, &relay_pubkey, &reqs),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn registry_from_19030_parses_channels_and_rejects_pubkey_echo_mismatch() {
+        let relay = Keys::generate();
+        let relay_pubkey = relay.public_key().to_hex();
+        let service = client(Keys::generate());
+        let now = Utc::now().timestamp();
+
+        fn registry_content(evaluated_at: i64, pubkey: &str) -> Value {
+            json!({
+                "channels": [
+                    { "channel_id": "channel-1", "name": "Announcements",
+                      "channel_type": "stream", "visibility": "private", "member": true },
+                    { "channel_id": "channel-2", "name": "Open Lounge",
+                      "channel_type": "forum", "visibility": "open", "member": false },
+                ],
+                "evaluated_at": evaluated_at,
+                "pubkey": pubkey,
+            })
+        }
+
+        // Correct echo: the registry parses with the member flags intact.
+        let raw = serde_json::to_value(relay_19030(&relay, registry_content(now, HEX64))).unwrap();
+        let channels = service
+            .registry_from_19030(&raw, &relay_pubkey, HEX64)
+            .expect("a correctly-echoed registry must parse");
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].channel_id, "channel-1");
+        assert!(channels[0].member);
+        assert_eq!(channels[1].channel_id, "channel-2");
+        assert!(!channels[1].member);
+
+        // The relay echoes a DIFFERENT pubkey than the one requested → the
+        // response is not for this request and fails closed.
+        let raw = serde_json::to_value(relay_19030(&relay, registry_content(now, &"f".repeat(64))))
+            .unwrap();
+        assert!(
+            matches!(
+                service.registry_from_19030(&raw, &relay_pubkey, HEX64),
+                Err(BuzzAuthorityError::InvalidResponse(_))
+            ),
+            "a pubkey echo mismatch must fail closed"
+        );
+
+        // Stale registry evaluated_at fails closed too.
+        let raw =
+            serde_json::to_value(relay_19030(&relay, registry_content(now - 120, HEX64))).unwrap();
+        assert!(matches!(
+            service.registry_from_19030(&raw, &relay_pubkey, HEX64),
             Err(BuzzAuthorityError::InvalidResponse(_))
         ));
     }
