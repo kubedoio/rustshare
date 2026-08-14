@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{ActionCapability, ApplicationId, PrincipalId, TenantId, WorkspaceId};
-use rustshare_resource_auth::{PrincipalContext, ResourceRef};
+use rustshare_resource_auth::{PrincipalContext, ResourceRef, WorkspaceCommunityMapping};
 use serde::{Deserialize, Serialize};
 
 use super::{AppError, AuthenticatedUser};
@@ -165,6 +165,13 @@ pub async fn list_channels(
     if !mapping.active {
         return Ok(Json(Vec::new()));
     }
+    // Buzz mode: channel discovery comes from the community's authoritative
+    // relay (the channel registry), never from the observation index.
+    if let Some(gateway) = &state.buzz_gateway {
+        return list_channels_from_registry(&state, &ctx, &mapping, gateway).await;
+    }
+    // Local mode: observation-derived discovery with per-channel gating
+    // (historical behavior, unchanged).
     let summaries = state
         .chat_observation_store
         .distinct_channels(ctx.tenant_id, &mapping.community_id)
@@ -186,6 +193,84 @@ pub async fn list_channels(
         }
     }
     Ok(Json(channels))
+}
+
+/// Buzz-mode channel discovery: the relay's authoritative channel registry
+/// (`GET /api/v1/relay/channels`) is the discovery source, already filtered
+/// by the relay to channels the caller's bound pubkey may read — no
+/// per-channel re-gating here (that would cost one relay round-trip per
+/// channel). Every failure is non-disclosing: a missing/inactive binding, an
+/// unpinned mapping, or a gateway error yields an empty list, never an
+/// error response.
+async fn list_channels_from_registry(
+    state: &AppState,
+    ctx: &PrincipalContext,
+    mapping: &WorkspaceCommunityMapping,
+    gateway: &crate::buzz_gateway::BuzzGatewayClient,
+) -> Result<Json<Vec<ChannelInfo>>, AppError> {
+    // The same binding lookup the authorization gate uses; no active binding
+    // → no channels (existence hiding).
+    let Some(binding) = state
+        .chat_owner
+        .chat_identity_store()
+        .active_binding(ctx.tenant_id, ctx.principal_id)
+        .await
+        .map_err(|e| AppError::internal(format!("chat binding lookup failed: {e}")))?
+    else {
+        return Ok(Json(Vec::new()));
+    };
+    let Some(relay_pubkey) = mapping.relay_pubkey.as_deref() else {
+        tracing::warn!(
+            application = crate::authz::chat_owner::CHAT_APPLICATION_ID,
+            tenant = %ctx.tenant_id,
+            "buzz-mode channel discovery: mapping has no pinned relay pubkey; returning an empty list"
+        );
+        return Ok(Json(Vec::new()));
+    };
+    let registry_channels = match gateway
+        .list_channels(&mapping.relay_url, relay_pubkey, &binding.buzz_pubkey)
+        .await
+    {
+        Ok(channels) => channels,
+        Err(error) => {
+            tracing::warn!(
+                application = crate::authz::chat_owner::CHAT_APPLICATION_ID,
+                tenant = %ctx.tenant_id,
+                %error,
+                "buzz-mode channel discovery failed; returning an empty list"
+            );
+            return Ok(Json(Vec::new()));
+        }
+    };
+    // The registry carries no per-channel event timestamp; `latest_event_at`
+    // is the response time (the client verified the response fresh, ≤60s).
+    let latest_event_at = Utc::now();
+    Ok(Json(
+        registry_channels
+            .into_iter()
+            .map(|channel| ChannelInfo {
+                channel_id: channel.channel_id,
+                channel_kind: registry_channel_kind(&channel.channel_type, &channel.visibility)
+                    .to_string(),
+                latest_event_at,
+            })
+            .collect(),
+    ))
+}
+
+/// Project a registry channel onto the Elembra channel-kind vocabulary —
+/// the SAME mapping the relay applies to its `channel_type`/`visibility`
+/// (`dm` → `"dm"`; anything else private → `"private"`; everything else →
+/// `"workspace"`). `"excluded"` is an Elembra-side concept the relay never
+/// emits.
+fn registry_channel_kind(channel_type: &str, visibility: &str) -> &'static str {
+    if channel_type == "dm" {
+        "dm"
+    } else if visibility == "private" {
+        "private"
+    } else {
+        "workspace"
+    }
 }
 
 /// Timeline for one channel: folded latest-event-per-message, newest first,
