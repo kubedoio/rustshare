@@ -171,7 +171,7 @@ Semantics:
   integration, so in practice the check is always message-level.
 - `allow` only when the pubkey is a **current member/participant** of the
   channel **and** the message is available (exists and is not deleted).
-- Deleted or unknown messages → `not_found`.
+- Unknown channels, and deleted or unknown messages, → `not_found`.
 - Non-member, removed, or otherwise excluded principals → `deny`.
 - **Existence hiding:** the relay must never return membership lists, and
   `reason` strings must never reveal whether other users exist or their
@@ -215,7 +215,8 @@ Response `content`:
       "channel_id": "<str>",
       "message_id": "<64hex>|null"
     }
-  ]
+  ],
+  "evaluated_at": "<unix secs>"
 }
 ```
 
@@ -223,22 +224,29 @@ Semantics:
 
 - The response is a **single kind-19030 event**; `results` is
   **order-preserving** — `results[i]` corresponds to `checks[i]`.
-- Each result item follows exactly the same shape, echo, and freshness rules
-  as the single check: its `pubkey`, `channel_id`, and `message_id` echo the
-  request item verbatim (`message_id: null` when the item had none), its
-  `decision`, `reason`, and `evaluated_at` fields must be present and
-  well-typed, and its `evaluated_at` must be within the 60-second freshness
-  window.
-- **Per-item failure isolation:** one bad item does not fail the others. An
-  item whose check cannot be evaluated (unknown channel, deleted or unknown
-  message, non-member principal) yields that item's `deny`/`not_found`
-  decision; an item whose echoed values do not match its request item is
-  treated as an `InvalidResponse` for that item only. The remaining items are
-  evaluated and verified normally.
+- **Envelope `evaluated_at` is the freshness authority for the whole
+  response** — the relay's evaluation time for the batch. If it is missing,
+  malformed, or older than 60 seconds relative to the client clock, every
+  item fails closed (`Deny`).
+- Each result item keeps the single check's shape: its `pubkey`,
+  `channel_id`, and `message_id` echo the request item verbatim
+  (`message_id: null` when the item had none), and its `decision`, `reason`,
+  and `evaluated_at` fields must be present and well-typed. The item-level
+  `evaluated_at` mirrors the envelope value (informational echo — shape
+  parity with the single check); item-level freshness is not an independent
+  failure class in batch mode.
+- **Per-item failure isolation:** one bad item does not fail the others.
+  Item-level outcomes are the single check's: unknown channel, deleted or
+  unknown message → `not_found`; non-member, removed, or otherwise excluded
+  principal → `deny`. A genuine evaluation failure for one item (e.g. a
+  relay-side error evaluating it) yields `deny` for that item only, and an
+  item whose echoed values do not match its request item is treated as an
+  `InvalidResponse` for that item only. The remaining items are evaluated
+  and verified normally.
 - **Envelope-level verification failure fails all:** if the response itself
   fails verification (wrong kind, invalid signature, wrong pinned pubkey,
-  stale `evaluated_at`, unparseable content), every item is `Deny` — fail
-  closed.
+  missing/malformed/stale envelope `evaluated_at`, unparseable content),
+  every item is `Deny` — fail closed.
 
 ### `GET /api/v1/relay/channels?pubkey=<64hex>`
 
@@ -394,7 +402,7 @@ observation.
 | `5xx`                                              | `Deny`           |
 | response signature mismatch / wrong kind / wrong pubkey | `Deny`    |
 | response content does not echo request `pubkey`/`channel_id`/`message_id` | `Deny` |
-| batch envelope failure (kind / signature / pubkey / stale / unparseable) | every item `Deny` |
+| batch envelope failure (kind / signature / pubkey / missing, malformed, or stale envelope `evaluated_at` / unparseable) | every item `Deny` |
 | batch item echo mismatch (single item)             | that item `Deny`   |
 | `evaluated_at` older than 60 seconds (stale response) | `Deny`        |
 | unparseable or malformed response                  | `Deny`           |
