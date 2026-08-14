@@ -788,6 +788,13 @@ impl BuzzAuthority for BuzzGatewayAuthority {
     ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
         self.0.can_read(req).await
     }
+
+    async fn can_read_batch(
+        &self,
+        reqs: &[BuzzReadRequest],
+    ) -> Vec<Result<BuzzReadDecision, BuzzAuthorityError>> {
+        self.0.can_read_batch(reqs).await
+    }
 }
 
 /// Map a non-2xx relay status to a fail-closed error; `None` for success.

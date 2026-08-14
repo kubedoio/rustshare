@@ -82,7 +82,7 @@ use rustshare_integration_events::OutboxConsumer;
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_resource_auth::{
     BuzzAuthority, BuzzAuthorityError, BuzzChannelInfo, BuzzChannelKind, BuzzReadDecision,
-    BuzzReadRequest, Candidate, Decision, PrincipalContext, Purpose, Representation,
+    BuzzReadRequest, Candidate, Decision, PrincipalContext, Purpose, Representation, ResourceOwner,
     ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError, WorkspaceCommunityMapping,
     CHAT_READ,
 };
@@ -3836,6 +3836,434 @@ async fn channels_registry_failures_fail_closed() {
         .expect_err("a stale registry must fail closed");
     assert!(matches!(err, BuzzAuthorityError::InvalidResponse(_)));
     fake.state.lock().unwrap().evaluated_at_override = None;
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 17. Batch authorization through the chat gate: ONE relay round-trip per
+//     page, per-ref pre-filter short-circuits, and the post-authority
+//     linearization re-reads
+// ---------------------------------------------------------------------------
+
+/// Seed `count` observed messages in `channel_id` (webhook-ingested so the
+/// gate's observation lookup passes, relay-registered so the fake can decide)
+/// and return their refs.
+async fn seed_messages(
+    service: &BuzzObservationService,
+    fake: &FakeBuzzServer,
+    keys: &Keys,
+    community: &str,
+    channel_id: &str,
+    count: usize,
+) -> Vec<ResourceRef> {
+    let mut refs = Vec::with_capacity(count);
+    for i in 0..count {
+        // A unique content per message: same keys + same created_at second
+        // would otherwise produce IDENTICAL event ids across seeds.
+        let (mut buzz_push, event) = created_push(
+            keys,
+            &format!("batch message {channel_id} {i} {}", Uuid::new_v4()),
+            community,
+            ChatChannelKind::Workspace,
+        );
+        buzz_push.context.channel_id = channel_id.to_string();
+        assert_eq!(
+            ingest_push(service, &buzz_push).await.unwrap(),
+            IngestOutcome::FirstObservation
+        );
+        {
+            let mut state = fake.state.lock().unwrap();
+            state.register_event(state_entry(
+                &event,
+                community,
+                channel_id,
+                ChatChannelKind::Workspace,
+                ObservedEventType::Created,
+            ));
+        }
+        refs.push(chat_ref(&event.id.to_hex()));
+    }
+    refs
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_authorization_64_message_page_is_one_relay_round_trip() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    let service = service(pool.clone());
+    let refs = seed_messages(&service, &fake, &keys, &community, CHANNEL_ID, 64).await;
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect("a 64-ref batch must be authorized");
+    assert_eq!(decisions.len(), 64);
+    for (i, decision) in decisions.iter().enumerate() {
+        assert_eq!(decision.resource, refs[i], "results align with input order");
+        assert!(
+            decision.decision.is_allow(),
+            "every seeded member message is allowed"
+        );
+    }
+
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.check_batch_requests, 1,
+            "a 64-message page must cost exactly ONE relay batch round-trip"
+        );
+        assert_eq!(state.check_batches[0].len(), 64);
+        assert!(
+            state.access_check_requests.is_empty(),
+            "the single-check endpoint must not be hit"
+        );
+    }
+
+    // Parity: the single-message path agrees with the batch path.
+    for decision in &decisions {
+        assert_eq!(
+            authorizer
+                .authorize(&ctx, &chat_read_action(), &decision.resource)
+                .await,
+            Decision::Allow
+        );
+    }
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_authorization_mixed_page_matches_single_checks() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let other = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+    {
+        let mut state = fake.state.lock().unwrap();
+        state.add_member(CHANNEL_ID, &keys.public_key().to_hex());
+        // channel-2 exists but is owned by someone else → the member is denied.
+        state.add_member("channel-2", &other.public_key().to_hex());
+    }
+
+    let service = service(pool.clone());
+    let mut refs = Vec::new();
+    for channel in [
+        CHANNEL_ID,
+        CHANNEL_ID,
+        "channel-2",
+        "channel-2",
+        "channel-3",
+        "channel-3",
+    ] {
+        refs.push(
+            seed_messages(&service, &fake, &keys, &community, channel, 1)
+                .await
+                .pop()
+                .expect("one ref per seeded message"),
+        );
+    }
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect("a mixed batch must be authorized");
+    let expected = [
+        Decision::Allow,
+        Decision::Allow,
+        Decision::Deny,
+        Decision::Deny,
+        Decision::NotFound,
+        Decision::NotFound,
+    ];
+    for (i, decision) in decisions.iter().enumerate() {
+        assert_eq!(
+            decision.decision, expected[i],
+            "batch decision {} must match the single-check outcome",
+            i
+        );
+        assert_eq!(
+            authorizer
+                .authorize(&ctx, &chat_read_action(), &decision.resource)
+                .await,
+            expected[i],
+            "batch/single parity for ref {}",
+            i
+        );
+    }
+
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.check_batch_requests, 1,
+            "a mixed page still costs ONE round-trip"
+        );
+        assert_eq!(
+            state.check_batches[0].len(),
+            6,
+            "every seeded ref reaches the relay; the relay decides"
+        );
+    }
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_authorization_revocation_denies_on_the_next_call() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    let service = service(pool.clone());
+    let refs = seed_messages(&service, &fake, &keys, &community, CHANNEL_ID, 3).await;
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect("the first batch must be authorized");
+    assert!(decisions.iter().all(|d| d.decision.is_allow()));
+    assert_eq!(fake.state.lock().unwrap().check_batch_requests, 1);
+
+    // Revoke the binding via the stores (the existing revocation machinery),
+    // then authorize the same page again: revoked messages deny on the very
+    // next call — no caching. The revocation is caught by the LOCAL
+    // pre-filter, so no new relay round-trip happens.
+    revoke_bindings(&pool, tenant).await;
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect("the second batch must be evaluated");
+    assert!(
+        decisions.iter().all(|d| d.decision == Decision::Deny),
+        "a revoked binding must deny every ref on the next batch call"
+    );
+    assert_eq!(
+        fake.state.lock().unwrap().check_batch_requests,
+        1,
+        "revoked refs are denied by the pre-filter without a new round-trip"
+    );
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &refs[0])
+            .await,
+        Decision::Deny,
+        "the single path agrees"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_authorization_prefilter_failures_never_reach_the_relay() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    let service = service(pool.clone());
+    let refs = seed_messages(&service, &fake, &keys, &community, CHANNEL_ID, 1).await;
+    // A well-formed message id with NO observation row: the gate's pre-filter
+    // short-circuits to NotFound before any authority request is built.
+    let unknown_ref = chat_ref(&"a".repeat(64));
+    let batch_refs = [refs[0].clone(), unknown_ref.clone()];
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &batch_refs)
+        .await
+        .expect("the mixed batch must be authorized");
+    assert!(decisions[0].decision.is_allow());
+    assert_eq!(decisions[1].decision, Decision::NotFound);
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.check_batches[0].len(),
+            1,
+            "only the observed ref reaches the relay"
+        );
+        assert_eq!(state.check_batch_requests, 1);
+    }
+
+    // Disable Chat access entirely: every observed ref is denied by the
+    // pre-filter and NOTHING reaches the relay (no new round-trip).
+    sqlx::query("UPDATE application_enablements SET enabled = false WHERE tenant_id = $1")
+        .bind(tenant.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let decisions = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &batch_refs)
+        .await
+        .expect("the disabled batch must be evaluated");
+    assert_eq!(decisions[0].decision, Decision::Deny);
+    assert_eq!(decisions[1].decision, Decision::NotFound);
+    assert_eq!(
+        fake.state.lock().unwrap().check_batch_requests,
+        1,
+        "no relay round-trip may happen for pre-filter refusals"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_authorization_oversized_batch_fails_closed_without_relay() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway.clone()).await;
+    let ctx = user_ctx(PrincipalId::from(Uuid::new_v4()), tenant);
+    let refs: Vec<ResourceRef> = (0..65).map(|i| chat_ref(&format!("{i:064x}"))).collect();
+
+    // The Platform-Core facade rejects an oversized batch outright (fail
+    // closed) — before any owner or relay involvement.
+    let err = authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect_err("an oversized batch must be rejected");
+    assert!(matches!(
+        err,
+        SourceError::BatchTooLarge {
+            actual: 65,
+            limit: 64
+        }
+    ));
+
+    // The owner's own defense-in-depth bound: all Deny, zero relay traffic.
+    let owner = ChatResourceOwner::with_authority(
+        ChatIdentityStore::new(pool.clone()),
+        ChatObservationStore::new(pool.clone()),
+        Box::new(BuzzGatewayAuthority(gateway)),
+    );
+    let decisions = ResourceOwner::authorize_batch(&owner, &ctx, &chat_read_action(), &refs).await;
+    assert_eq!(decisions.len(), 65);
+    assert!(
+        decisions.iter().all(|d| d.decision == Decision::Deny),
+        "an oversized batch must fail closed to Deny per ref"
+    );
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(state.check_batch_requests, 0);
+        assert!(state.check_batches.is_empty());
+        assert!(state.access_check_requests.is_empty());
+    }
 
     fake.stop().await;
     cleanup(&pool, tenant).await;
