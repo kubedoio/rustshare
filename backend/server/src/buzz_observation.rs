@@ -10,7 +10,8 @@
 //! 3. deserializes the signed Nostr event and cryptographically verifies it
 //!    ([`nostr::Event::verify`] checks both the id — sha256 of the canonical
 //!    NIP-01 serialization — and the Schnorr signature over the id), rejecting
-//!    non text-note kinds — fail closed;
+//!    non-chat-message kinds (TextNote legacy, stream kinds 9/40002) — fail
+//!    closed;
 //! 4. maps community → Workspace and author pubkey → Principal (active
 //!    binding only);
 //! 5. in ONE transaction records the observation row in `chat_observed_events`
@@ -81,7 +82,8 @@ pub enum BuzzPushError {
     Unauthorized,
     /// Unparseable body / invalid context fields / context mismatches event.
     Malformed(String),
-    /// Nostr id or Schnorr signature verification failed, or kind != 1.
+    /// Nostr id or Schnorr signature verification failed, or the kind is not
+    /// an accepted chat-message kind (TextNote legacy, stream kinds 9/40002).
     VerificationFailed,
     /// `community_id` maps to no active mapping.
     UnknownCommunity,
@@ -290,7 +292,7 @@ impl BuzzObservationService {
             .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
         let event: NostrEvent = serde_json::from_value(push.event.clone())
             .map_err(|e| BuzzPushError::Malformed(format!("invalid Nostr event: {e}")))?;
-        if event.kind != Kind::TextNote {
+        if !is_chat_message_kind(event.kind) {
             return Err(BuzzPushError::VerificationFailed);
         }
         // The raw JSON `id` must equal the parsed event id. `Event::verify`
@@ -527,6 +529,21 @@ fn build_envelope(
     envelope.id = id;
     envelope.time = data.buzz.created_at;
     Ok(envelope)
+}
+
+/// Whether `kind` is an accepted Buzz chat-message kind on ingestion.
+///
+/// Whitelist: kind 1 (`TextNote`, legacy during the transition) plus the Buzz
+/// stream-message kinds 9 (`KIND_STREAM_MESSAGE`) and 40002
+/// (`KIND_STREAM_MESSAGE_V2`) — the relay's channel-scoped chat kinds, named
+/// in the Buzz relay at `crates/buzz-core/src/kind.rs` and adopted by the
+/// amended contract in `docs/specs/buzz-upstream-authorization-v1alpha1.md`
+/// ("Canonical publish tags and kinds"). Every other kind fails closed.
+fn is_chat_message_kind(kind: Kind) -> bool {
+    // Compare by the numeric kind, not by enum variant: the `nostr` crate
+    // gives kind 9 the named variant `Kind::ChatMessage`, so a pattern like
+    // `Kind::Custom(9)` would silently reject every parsed kind-9 event.
+    matches!(kind.as_u16(), 1 | 9 | 40002)
 }
 
 /// Fail-closed Chat context sanity checks (step 3 of `verify_and_ingest`).
@@ -791,6 +808,61 @@ mod tests {
             128,
             "Schnorr signature is 128 hex"
         );
+    }
+
+    #[test]
+    fn chat_message_kind_whitelist_accepts_text_note_and_stream_kinds() {
+        // Kind 1 (TextNote) — legacy during the transition.
+        assert!(is_chat_message_kind(Kind::TextNote));
+        // Kind 9 (KIND_STREAM_MESSAGE) and 40002 (KIND_STREAM_MESSAGE_V2) —
+        // Buzz's channel-scoped chat kinds (see `is_chat_message_kind`).
+        // `Kind::ChatMessage` is the nostr crate's NAMED variant for 9 — the
+        // form a parsed kind-9 event actually carries — so the whitelist must
+        // match it too, not just the `Custom(9)` constructor form.
+        assert!(is_chat_message_kind(Kind::ChatMessage));
+        assert!(is_chat_message_kind(Kind::Custom(9)));
+        assert!(is_chat_message_kind(Kind::Custom(40002)));
+    }
+
+    #[test]
+    fn chat_message_kind_whitelist_rejects_every_other_kind() {
+        for kind in [
+            Kind::Metadata,
+            Kind::ContactList,
+            Kind::Reaction,
+            Kind::EventDeletion,
+            Kind::HttpAuth,
+            Kind::Custom(1000),
+            Kind::Custom(19_030),
+            Kind::Custom(u16::MAX),
+        ] {
+            assert!(!is_chat_message_kind(kind), "kind {kind} must fail closed");
+        }
+    }
+
+    #[test]
+    fn signed_stream_message_round_trips_and_verifies() {
+        // Stream-kind events (9/40002) must survive the same parse + verify
+        // path `validate_and_build` uses — and the PARSED kind must still pass
+        // the ingestion whitelist (kind 9 parses as the named
+        // `Kind::ChatMessage` variant, not `Kind::Custom(9)`).
+        for kind in [Kind::ChatMessage, Kind::Custom(40002)] {
+            let keys = Keys::generate();
+            let event = EventBuilder::new(kind, "hello stream")
+                .sign_with_keys(&keys)
+                .expect("sign stream message");
+            let json = serde_json::to_value(&event).unwrap();
+            let parsed: NostrEvent = serde_json::from_value(json).unwrap();
+            assert_eq!(parsed.kind, kind);
+            assert_eq!(parsed.id, event.id);
+            assert_eq!(parsed.sig, event.sig);
+            assert!(parsed.verify().is_ok(), "stream message must verify");
+            assert!(
+                is_chat_message_kind(parsed.kind),
+                "parsed stream kind {} must pass the ingestion whitelist",
+                parsed.kind.as_u16()
+            );
+        }
     }
 
     #[test]

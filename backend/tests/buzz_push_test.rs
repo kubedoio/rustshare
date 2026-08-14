@@ -158,12 +158,16 @@ async fn setup_tenant(
     enable_chat_application(pool, tenant_id, configuration).await;
 }
 
-/// Build a valid signed text-note push for `keys` (message_id == event id,
+/// Build a valid signed push of `kind` for `keys` (message_id == event id,
 /// since a created event IS the message root).
-fn signed_push(keys: &Keys, content: &str) -> (BuzzEventPush, nostr::Event) {
-    let event = EventBuilder::text_note(content)
+fn signed_push_with_kind(
+    keys: &Keys,
+    content: &str,
+    kind: nostr::Kind,
+) -> (BuzzEventPush, nostr::Event) {
+    let event = EventBuilder::new(kind, content)
         .sign_with_keys(keys)
-        .expect("sign text note");
+        .expect("sign event");
     let push = BuzzEventPush {
         event: serde_json::to_value(&event).unwrap(),
         context: BuzzPushContext {
@@ -177,6 +181,11 @@ fn signed_push(keys: &Keys, content: &str) -> (BuzzEventPush, nostr::Event) {
         },
     };
     (push, event)
+}
+
+/// Build a valid signed text-note push (kind 1, legacy) for `keys`.
+fn signed_push(keys: &Keys, content: &str) -> (BuzzEventPush, nostr::Event) {
+    signed_push_with_kind(keys, content, nostr::Kind::TextNote)
 }
 
 fn sign_payload(signer: &WebhookSigner, payload: &[u8], timestamp: i64) -> String {
@@ -336,6 +345,116 @@ async fn push_creates_observation_and_durable_event() {
         outbox_count, 1,
         "durable event must be published exactly once"
     );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1a. Chat-message kinds: stream kind 9 is accepted; every other kind fails
+//     closed at the kind gate (whitelist: TextNote legacy, 9, 40002)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn push_accepts_stream_message_kind_9() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+    // Kind 9 (KIND_STREAM_MESSAGE) is Buzz's channel-scoped chat kind; the
+    // push context carries the channel identity, so the existing context
+    // shape is unchanged.
+    let (push, event) = signed_push_with_kind(&keys, "stream message", nostr::Kind::Custom(9));
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+    let event_id = event.id.to_hex();
+
+    assert_eq!(
+        service
+            .verify_and_ingest(&payload, &signature)
+            .await
+            .expect("kind-9 push must succeed"),
+        IngestOutcome::FirstObservation
+    );
+
+    // The observation row is written like any chat message.
+    let row = observation_row(&pool, tenant, &event_id).await;
+    assert_eq!(
+        row.get::<String, _>("checksum"),
+        format!("sha256:{event_id}")
+    );
+    assert!(row.get::<bool, _>("signature_verified"));
+    assert_eq!(row.get::<String, _>("author_pubkey"), event.pubkey.to_hex());
+    let outbox_count: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM integration_outbox WHERE tenant_id = $1")
+            .bind(tenant.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(outbox_count, 1, "the durable event must be published");
+
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn push_rejects_non_chat_message_kind() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    setup_tenant(
+        &pool,
+        tenant,
+        &keys,
+        serde_json::json!({ "memory_projection": true, "content_indexing": false }),
+    )
+    .await;
+
+    let service = service(pool.clone());
+    let signer = WebhookSigner::new(WEBHOOK_SECRET);
+    // A validly signed event of an arbitrary kind (1000): id and signature
+    // are fine, but the kind is not in the chat-message whitelist
+    // (1, 9, 40002), so it must fail closed at the kind gate.
+    let (push, _) = signed_push_with_kind(&keys, "hello buzz", nostr::Kind::Custom(1000));
+    let payload = serde_json::to_vec(&push).unwrap();
+    let signature = sign_payload(&signer, &payload, Utc::now().timestamp());
+
+    let err = service
+        .verify_and_ingest(&payload, &signature)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, BuzzPushError::VerificationFailed),
+        "expected VerificationFailed, got {err:?}"
+    );
+
+    // Fail closed: nothing was written.
+    let observation_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM chat_observed_events WHERE tenant_id = $1",
+    )
+    .bind(tenant.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(observation_count, 0, "no observation row may be written");
+    let outbox_count: i64 =
+        sqlx::query_scalar("SELECT count(*)::bigint FROM integration_outbox WHERE tenant_id = $1")
+            .bind(tenant.0)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(outbox_count, 0, "no outbox row may be written");
 
     cleanup(&pool, tenant).await;
 }
