@@ -8,8 +8,13 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures_util::{stream, StreamExt};
 use rustshare_core::domain::TenantId;
 use serde::{Deserialize, Serialize};
+
+/// Maximum number of [`BuzzAuthority::can_read`] calls the default
+/// [`BuzzAuthority::can_read_batch`] keeps in flight at once.
+const AUTHORIZATION_BATCH_CONCURRENCY: usize = 16;
 
 /// Buzz channel classification, wire-identical to
 /// `rustshare_memory::event::ChatChannelKind` (`workspace|dm|private|excluded`).
@@ -71,6 +76,37 @@ pub enum BuzzAuthorityError {
 pub trait BuzzAuthority: Send + Sync {
     async fn can_read(&self, req: &BuzzReadRequest)
         -> Result<BuzzReadDecision, BuzzAuthorityError>;
+
+    /// Evaluate a batch of read requests in bounded parallel fan-out,
+    /// preserving input order.
+    ///
+    /// The default implementation calls [`Self::can_read`] for every request,
+    /// keeping at most [`AUTHORIZATION_BATCH_CONCURRENCY`] in flight at once,
+    /// and re-orders the results back to the input order. One result is
+    /// returned per input request: an error for one request is reported at
+    /// its own position and never aborts the other requests — each item
+    /// fails closed individually.
+    async fn can_read_batch(
+        &self,
+        reqs: &[BuzzReadRequest],
+    ) -> Vec<Result<BuzzReadDecision, BuzzAuthorityError>> {
+        // Fan out over owned indices (not per-item references): the closure's
+        // returned future captures `reqs` from the outer scope, so it stays
+        // valid for any stream item lifetime.
+        let mut decisions = stream::iter(0..reqs.len())
+            .map(|index| async move {
+                let decision = self.can_read(&reqs[index]).await;
+                (index, decision)
+            })
+            .buffer_unordered(AUTHORIZATION_BATCH_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        decisions.sort_unstable_by_key(|(index, _)| *index);
+        decisions
+            .into_iter()
+            .map(|(_, decision)| decision)
+            .collect()
+    }
 }
 
 /// Coarse community-level gate preserving today's behavior when no upstream
@@ -97,6 +133,8 @@ impl BuzzAuthority for LocalFallbackAuthority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::{oneshot, Notify};
     use uuid::Uuid;
 
     fn read_request(channel_kind: BuzzChannelKind) -> BuzzReadRequest {
@@ -156,5 +194,198 @@ mod tests {
         assert!(BuzzReadDecision::Allow.is_allow());
         assert!(!BuzzReadDecision::Deny.is_allow());
         assert!(!BuzzReadDecision::NotFound.is_allow());
+    }
+
+    /// Stub authority that records every `can_read` call and returns a
+    /// deterministic decision per channel kind (workspace → Allow, else Deny).
+    struct RecordingStub {
+        calls: Mutex<Vec<BuzzChannelKind>>,
+    }
+
+    impl RecordingStub {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn recorded(&self) -> Vec<BuzzChannelKind> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl BuzzAuthority for RecordingStub {
+        async fn can_read(
+            &self,
+            req: &BuzzReadRequest,
+        ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+            self.calls.lock().unwrap().push(req.channel_kind);
+            Ok(match req.channel_kind {
+                BuzzChannelKind::Workspace => BuzzReadDecision::Allow,
+                _ => BuzzReadDecision::Deny,
+            })
+        }
+    }
+
+    /// Stub authority whose workspace request blocks until released while its
+    /// other requests complete immediately — so the workspace request starts
+    /// first but finishes LAST, forcing the batch default to re-order.
+    struct GatedStub {
+        started: Mutex<Vec<BuzzChannelKind>>,
+        first_started: Mutex<Option<oneshot::Sender<()>>>,
+        release: Notify,
+    }
+
+    impl GatedStub {
+        fn new() -> (Arc<Self>, oneshot::Receiver<()>) {
+            let (first_started_tx, first_started_rx) = oneshot::channel();
+            (
+                Arc::new(Self {
+                    started: Mutex::new(Vec::new()),
+                    first_started: Mutex::new(Some(first_started_tx)),
+                    release: Notify::new(),
+                }),
+                first_started_rx,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl BuzzAuthority for GatedStub {
+        async fn can_read(
+            &self,
+            req: &BuzzReadRequest,
+        ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+            self.started.lock().unwrap().push(req.channel_kind);
+            match req.channel_kind {
+                BuzzChannelKind::Workspace => {
+                    if let Some(tx) = self.first_started.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    self.release.notified().await;
+                    Ok(BuzzReadDecision::Allow)
+                }
+                _ => Ok(BuzzReadDecision::Deny),
+            }
+        }
+    }
+
+    /// Stub authority that fails dm requests and returns a decision for
+    /// every other channel kind.
+    struct MixedStub {
+        calls: Mutex<usize>,
+    }
+
+    impl MixedStub {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BuzzAuthority for MixedStub {
+        async fn can_read(
+            &self,
+            req: &BuzzReadRequest,
+        ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
+            *self.calls.lock().unwrap() += 1;
+            match req.channel_kind {
+                BuzzChannelKind::Dm => Err(BuzzAuthorityError::Transport("boom".to_string())),
+                BuzzChannelKind::Workspace => Ok(BuzzReadDecision::Allow),
+                _ => Ok(BuzzReadDecision::NotFound),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn can_read_batch_fans_out_exactly_once_per_request_in_input_order() {
+        let stub = RecordingStub::new();
+        let reqs = [
+            read_request(BuzzChannelKind::Workspace),
+            read_request(BuzzChannelKind::Dm),
+            read_request(BuzzChannelKind::Private),
+        ];
+        let results = stub.can_read_batch(&reqs).await;
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], Ok(BuzzReadDecision::Allow)));
+        assert!(matches!(results[1], Ok(BuzzReadDecision::Deny)));
+        assert!(matches!(results[2], Ok(BuzzReadDecision::Deny)));
+        // Exactly one `can_read` per request, started in input order.
+        assert_eq!(
+            stub.recorded(),
+            vec![
+                BuzzChannelKind::Workspace,
+                BuzzChannelKind::Dm,
+                BuzzChannelKind::Private,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn can_read_batch_preserves_input_order_when_completions_are_out_of_order() {
+        let (stub, first_started) = GatedStub::new();
+        let reqs = [
+            read_request(BuzzChannelKind::Workspace), // slow: blocks until released
+            read_request(BuzzChannelKind::Dm),        // fast: completes immediately
+        ];
+        let stub_for_task = stub.clone();
+        let handle = tokio::spawn(async move { stub_for_task.can_read_batch(&reqs).await });
+
+        // Wait until the slow request is in flight, let the fast request
+        // complete first, then release the slow one: the results must still
+        // come back in input order.
+        first_started.await.expect("the slow request must start");
+        tokio::task::yield_now().await;
+        stub.release.notify_one();
+
+        let results = handle.await.expect("batch task must complete");
+        assert_eq!(results.len(), 2);
+        assert!(
+            matches!(results[0], Ok(BuzzReadDecision::Allow)),
+            "input index 0 must map to the slow request's decision"
+        );
+        assert!(
+            matches!(results[1], Ok(BuzzReadDecision::Deny)),
+            "input index 1 must map to the fast request's decision"
+        );
+        // Both requests were started, in input order.
+        assert_eq!(
+            *stub.started.lock().unwrap(),
+            vec![BuzzChannelKind::Workspace, BuzzChannelKind::Dm]
+        );
+    }
+
+    #[tokio::test]
+    async fn can_read_batch_propagates_errors_per_item_without_aborting_others() {
+        let stub = MixedStub::new();
+        let reqs = [
+            read_request(BuzzChannelKind::Workspace),
+            read_request(BuzzChannelKind::Dm), // → Err
+            read_request(BuzzChannelKind::Private),
+        ];
+        let results = stub.can_read_batch(&reqs).await;
+        assert_eq!(results.len(), 3);
+        assert!(matches!(&results[0], Ok(BuzzReadDecision::Allow)));
+        assert!(matches!(&results[1], Err(BuzzAuthorityError::Transport(_))));
+        assert!(matches!(&results[2], Ok(BuzzReadDecision::NotFound)));
+        assert_eq!(
+            *stub.calls.lock().unwrap(),
+            3,
+            "an error for one request must not skip the remaining requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn can_read_batch_with_empty_input_returns_empty() {
+        let stub = RecordingStub::new();
+        let results = stub.can_read_batch(&[]).await;
+        assert!(results.is_empty());
+        assert!(
+            stub.recorded().is_empty(),
+            "no can_read call may be made for empty input"
+        );
     }
 }
