@@ -1,7 +1,7 @@
 # Specification: Buzz Upstream Source Authorization & State v1alpha1
 
-Status: Draft  
-Date: 2026-08-11  
+Status: Draft — v1alpha1; amended 2026-08-14 (batch checks, channel registry, canonical publish tags)  
+Date: 2026-08-11 (amended 2026-08-14)  
 Related: `resource-ref-authorization-v1alpha1.md`, Elembra Chat identity/admission contracts
 
 ## Purpose
@@ -14,8 +14,10 @@ can implement so that a trusted server workload — which **never holds a human
 user's signing key** — can:
 
 1. ask the relay whether a given pubkey may currently read a given
-   channel/message, and
-2. page the community's signed event state for reconciliation,
+   channel/message, individually or in batch,
+2. enumerate the channels a given pubkey may currently read (the
+   authoritative channel registry), and
+3. page the community's signed event state for reconciliation,
 
 while:
 
@@ -175,6 +177,119 @@ Semantics:
   `reason` strings must never reveal whether other users exist or their
   membership/activity (e.g. prefer `"not a member"` over enumerating who is).
 
+### `POST /api/v1/relay/access/check-batch`
+
+Ask whether a pubkey may currently read multiple channels/messages in a
+single round-trip.
+
+Request body:
+
+```json
+{
+  "checks": [
+    {
+      "pubkey": "<64hex>",
+      "channel_id": "<str>",
+      "channel_kind": "workspace|dm|private|excluded",
+      "message_id": "<64hex>|null",
+      "event_created_at": "<unix secs>|null"
+    }
+  ]
+}
+```
+
+- Each item is exactly a single `access/check` request body, with the same
+  semantics for its optional `event_created_at`.
+- The request must contain **at most 64 checks**; more than 64 → `400`.
+
+Response `content`:
+
+```json
+{
+  "results": [
+    {
+      "decision": "allow|deny|not_found",
+      "reason": "<str>",
+      "evaluated_at": "<unix secs>",
+      "pubkey": "<64hex>",
+      "channel_id": "<str>",
+      "message_id": "<64hex>|null"
+    }
+  ]
+}
+```
+
+Semantics:
+
+- The response is a **single kind-19030 event**; `results` is
+  **order-preserving** — `results[i]` corresponds to `checks[i]`.
+- Each result item follows exactly the same shape, echo, and freshness rules
+  as the single check: its `pubkey`, `channel_id`, and `message_id` echo the
+  request item verbatim (`message_id: null` when the item had none), its
+  `decision`, `reason`, and `evaluated_at` fields must be present and
+  well-typed, and its `evaluated_at` must be within the 60-second freshness
+  window.
+- **Per-item failure isolation:** one bad item does not fail the others. An
+  item whose check cannot be evaluated (unknown channel, deleted or unknown
+  message, non-member principal) yields that item's `deny`/`not_found`
+  decision; an item whose echoed values do not match its request item is
+  treated as an `InvalidResponse` for that item only. The remaining items are
+  evaluated and verified normally.
+- **Envelope-level verification failure fails all:** if the response itself
+  fails verification (wrong kind, invalid signature, wrong pinned pubkey,
+  stale `evaluated_at`, unparseable content), every item is `Deny` — fail
+  closed.
+
+### `GET /api/v1/relay/channels?pubkey=<64hex>`
+
+List the channels a given pubkey may currently read — the **authoritative
+channel registry**. Channel discovery in Buzz production mode must come from
+this endpoint; observation-derived channel discovery is deprecated in Buzz
+production mode.
+
+- NIP-98 GET — the `u` tag covers the exact request URL **including the query
+  string**, so the `pubkey` parameter is bound by the signature (there is no
+  `payload` tag for GET requests).
+- `pubkey` — the 64-hex pubkey to list channels for.
+
+Response `content`:
+
+```json
+{
+  "channels": [
+    {
+      "channel_id": "<str>",
+      "name": "<str>",
+      "channel_type": "stream|forum|dm|workflow",
+      "visibility": "open|private",
+      "member": true
+    }
+  ],
+  "evaluated_at": "<unix secs>",
+  "pubkey": "<64hex>"
+}
+```
+
+Semantics:
+
+- The registry returns **only channels the given pubkey may read**: channels
+  the pubkey is a member of (including private ones) plus open channels.
+  `member` states whether the pubkey is a member of that channel — an open
+  channel the pubkey may read without being a member has `member: false`.
+- `channel_type` uses the upstream Buzz channel types
+  `stream|forum|dm|workflow` and `visibility` is `open|private` (the relay's
+  native vocabulary; Elembra's `workspace|dm|private|excluded` remains a
+  client-side projection concern).
+- The listing is **host-derived community only** — the relay host answers
+  only for its own community; another community's channels are never
+  included, and the client never routes community A's registry requests to
+  community B's relay host.
+- The response follows the same envelope rules as every other endpoint:
+  kind-19030 signed by the relay's key, `pubkey` echoes the query value
+  verbatim, `evaluated_at` within the 60-second freshness window.
+- **Existence hiding:** the registry never returns channels the pubkey may
+  not read and never returns another community's channels.
+
 ### `GET /api/v1/relay/state/events?since=<unix>&limit=<n>&cursor=<opaque>`
 
 Page the community's signed event state for reconciliation.
@@ -220,6 +335,29 @@ Rules:
 - `cursor: null` with `complete: false` is malformed; the client must treat it
   as an invalid response (deny/fail closed).
 
+## Canonical publish tags (kind-1 wire format)
+
+The canonical wire format for channel scoping and thread identity on
+published kind-1 events, confirmed against the Buzz relay's ingest
+implementation. **This is the canonical thread root/reply contract that
+Elembra issue #243 was waiting on; it is resolved upstream.**
+
+- **Channel scoping:** `["h", "<channel-uuid>"]` — the NIP-29 group tag
+  carrying the channel's UUID. An event without an `h` tag is not
+  channel-scoped.
+- **Thread root/reply identity:** `["e", "<64-hex-id>", "<relay-url?>",
+  "root"|"reply"]` — NIP-10; the relay URL element is optional (the relay
+  reads only the id and the marker).
+- **Server-validated ancestry** (enforced by the relay at ingest):
+  - the referenced parent must exist;
+  - the parent must belong to the same channel as the new event;
+  - a client-claimed `root` must match the stored thread ancestry — the root
+    recorded for the parent, or, when the parent has no stored thread
+    metadata, the root the parent itself declares (its own `root`/`reply`
+    tag, or the parent itself when it starts the thread);
+  - thread depth is capped at 100.
+- **Optional:** `["broadcast", "1"]` — marks the event as a broadcast.
+
 ## HTTP base derivation
 
 The Elembra client derives the HTTPS base URL from the stored community
@@ -227,14 +365,15 @@ The Elembra client derives the HTTPS base URL from the stored community
 
 - `ws://` → `http://`, `wss://` → `https://`, keeping host and port unchanged;
 - any **path** on the stored `relay_url` is NOT carried over — the
-  access-check and state endpoints live at the relay host root
-  (`/api/v1/relay/access/check`, `/api/v1/relay/state/events`); a relay
-  served under a subpath must expose them at the root.
+  access-check, channel-registry, and state endpoints live at the relay host
+  root (`/api/v1/relay/access/check`, `/api/v1/relay/access/check-batch`,
+  `/api/v1/relay/channels`, `/api/v1/relay/state/events`); a relay served
+  under a subpath must expose them at the root.
 
 **Host-derived community isolation:** each community's relay host answers only
-its own checks and state. The client never routes community A's checks to
-community B's relay host, and a response from an unexpected host/pinned key is
-rejected.
+its own checks, registry, and state. The client never routes community A's
+checks to community B's relay host, and a response from an unexpected
+host/pinned key is rejected.
 
 **Transport:** production MUST use `wss://` relay URLs (so the derived base is
 `https://`). Plaintext `ws://` is acceptable only for local development and
@@ -255,6 +394,8 @@ observation.
 | `5xx`                                              | `Deny`           |
 | response signature mismatch / wrong kind / wrong pubkey | `Deny`    |
 | response content does not echo request `pubkey`/`channel_id`/`message_id` | `Deny` |
+| batch envelope failure (kind / signature / pubkey / stale / unparseable) | every item `Deny` |
+| batch item echo mismatch (single item)             | that item `Deny`   |
 | `evaluated_at` older than 60 seconds (stale response) | `Deny`        |
 | unparseable or malformed response                  | `Deny`           |
 

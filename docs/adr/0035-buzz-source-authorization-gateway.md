@@ -1,7 +1,7 @@
 # ADR-0035: Buzz Source Authorization Gateway
 
-Status: Accepted (implemented v1alpha1)  
-Date: 2026-08-11
+Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified)  
+Date: 2026-08-11 (amended 2026-08-14)
 
 ## Context
 
@@ -43,6 +43,8 @@ repairs Chat projections from the relay's public signed state.**
 2. **A generic upstream capability** is proposed for the external Buzz
    repository (spec `docs/specs/buzz-upstream-authorization-v1alpha1.md`):
    NIP-98-authenticated `POST /api/v1/relay/access/check` and
+   `POST /api/v1/relay/access/check-batch` (≤64 checks per round-trip),
+   `GET /api/v1/relay/channels` (the authoritative channel registry), and
    `GET /api/v1/relay/state/events`. Responses are raw signed kind-19030
    events signed by the relay's key, pinned per-community mapping via
    `relay_pubkey` (admin-rotatable), echoing the request verbatim, and fresh
@@ -86,9 +88,12 @@ repairs Chat projections from the relay's public signed state.**
 
 - Buzz-mode reads fail closed when the relay is unreachable or the mapping is
   unpinned — read availability depends on the relay.
-- One relay access-check round-trip per message; a batch endpoint is deferred
-  (single-`authorize` consumers are unaffected; future batch consumers need
-  bounded concurrency client-side or a batch endpoint in the spec).
+- One relay access-check round-trip per message on single-check paths; batch
+  consumers use `POST /api/v1/relay/access/check-batch` (≤64 checks in one
+  round-trip), now specified in the v1alpha1 contract.
+- Channel discovery in buzz mode comes from the relay's authoritative channel
+  registry (`GET /api/v1/relay/channels`) instead of the observation-derived
+  listing — observation-derived discovery is deprecated in buzz mode.
 - No body backfill for never-eligible channels: bodies are captured only for
   channels with `content_indexing`.
 - The upstream endpoints must be implemented in the Buzz repository before
