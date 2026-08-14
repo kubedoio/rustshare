@@ -43,6 +43,21 @@ pub struct BuzzReadRequest {
     pub event_created_at: DateTime<Utc>,
 }
 
+/// A channel from the relay's authoritative channel registry
+/// (`GET /api/v1/relay/channels`): one the queried pubkey may currently read —
+/// member channels (including private ones) plus open channels — with the
+/// `member` flag stating active membership. Wire-identical to the relay's
+/// serialized channel shape (`channel_type` uses the relay's vocabulary
+/// `stream|forum|dm|workflow`, `visibility` is `open|private`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuzzChannelInfo {
+    pub channel_id: String,
+    pub name: String,
+    pub channel_type: String,
+    pub visibility: String,
+    pub member: bool,
+}
+
 /// Final read decision from the current Buzz authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuzzReadDecision {
@@ -57,7 +72,7 @@ impl BuzzReadDecision {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum BuzzAuthorityError {
     #[error("transport error: {0}")]
     Transport(String),

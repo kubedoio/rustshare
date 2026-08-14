@@ -24,7 +24,8 @@ use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::{Client, Response, StatusCode};
 use rustshare_core::validation::resolve_public_socket_addrs;
 use rustshare_resource_auth::{
-    BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
+    BuzzAuthority, BuzzAuthorityError, BuzzChannelInfo, BuzzChannelKind, BuzzReadDecision,
+    BuzzReadRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,9 @@ const MAX_EVALUATED_AT_AGE_SECS: u64 = 60;
 /// body (8 MiB covers the largest signed state page) is treated as hostile
 /// and fails closed instead of exhausting server memory.
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum checks per batch round-trip (the relay's contract cap; the client
+/// splits larger batches into sequential round-trips of at most this many).
+const MAX_BATCH_CHECKS: usize = 64;
 
 /// Access-check request sent to `POST /api/v1/relay/access/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +76,26 @@ pub struct BuzzAccessCheckResult {
     pub pubkey: String,
     pub channel_id: String,
     pub message_id: Option<String>,
+}
+
+/// Batch access-check response envelope (`POST /api/v1/relay/access/check-batch`):
+/// order-preserving `results` plus the envelope-level `evaluated_at` — the
+/// freshness authority for the whole response (each item's `evaluated_at`
+/// mirrors it and is informational).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BuzzAccessCheckBatchResponse {
+    results: Vec<BuzzAccessCheckResult>,
+    evaluated_at: i64,
+}
+
+/// Channel-registry response envelope (`GET /api/v1/relay/channels`): the
+/// channels the queried pubkey may read, the response `evaluated_at`, and the
+/// echoed query `pubkey`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BuzzChannelRegistry {
+    channels: Vec<BuzzChannelInfo>,
+    evaluated_at: i64,
+    pubkey: String,
 }
 
 /// One page of the relay's signed event state
@@ -427,6 +451,31 @@ impl BuzzGatewayClient {
                 "response content is not an access-check result: {e}"
             ))
         })?;
+        if !is_fresh(result.evaluated_at) {
+            let age = Utc::now()
+                .timestamp()
+                .saturating_sub(result.evaluated_at)
+                .unsigned_abs();
+            return Err(BuzzAuthorityError::InvalidResponse(format!(
+                "response evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
+            )));
+        }
+        Self::decision_from_result(&result, expected)
+    }
+
+    /// Map one access-check result item to a read decision, verifying the
+    /// echoed values against the request.
+    ///
+    /// Shared by the single-check path and the batch path: `pubkey`,
+    /// `channel_id`, and `message_id` must echo the request verbatim and the
+    /// decision string must be `allow`/`deny`/`not_found`. Freshness is NOT
+    /// checked here — the single-check path checks its own `evaluated_at`,
+    /// while batch mode relies on the envelope-level `evaluated_at` (the
+    /// item-level one is informational and never independently checked).
+    fn decision_from_result(
+        result: &BuzzAccessCheckResult,
+        expected: &BuzzAccessCheckRequest,
+    ) -> Result<BuzzReadDecision, BuzzAuthorityError> {
         if result.pubkey != expected.pubkey {
             return Err(BuzzAuthorityError::InvalidResponse(
                 "response pubkey does not echo the requested pubkey".to_string(),
@@ -442,17 +491,6 @@ impl BuzzGatewayClient {
                 "response message_id does not echo the requested message_id".to_string(),
             ));
         }
-        // Saturating arithmetic: `evaluated_at` is relay-controlled and may be
-        // `i64::MIN`, which would panic a plain subtraction/`abs()` pair.
-        let age = Utc::now()
-            .timestamp()
-            .saturating_sub(result.evaluated_at)
-            .unsigned_abs();
-        if age > MAX_EVALUATED_AT_AGE_SECS {
-            return Err(BuzzAuthorityError::InvalidResponse(format!(
-                "response evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
-            )));
-        }
         match result.decision.as_str() {
             "allow" => Ok(BuzzReadDecision::Allow),
             "deny" => Ok(BuzzReadDecision::Deny),
@@ -461,6 +499,254 @@ impl BuzzGatewayClient {
                 "response decision {other:?} is not allow/deny/not_found"
             ))),
         }
+    }
+
+    /// Ask the relay for access decisions on many channel/message checks in
+    /// as few round-trips as possible
+    /// (`POST /api/v1/relay/access/check-batch`).
+    ///
+    /// Requests are grouped by `(relay_url, relay_pubkey)` — one batch
+    /// round-trip per pinned relay — and a group larger than
+    /// [`MAX_BATCH_CHECKS`] is split into sequential round-trips. The
+    /// kind-19030 envelope is verified once per round-trip (kind, Schnorr
+    /// signature, pinned pubkey, top-level `evaluated_at` freshness); an
+    /// envelope failure fails every item of that round-trip closed. Per-item
+    /// failures (echo mismatch, unknown decision, unparseable item) are
+    /// isolated to that item. Results are aligned with the input order
+    /// across groups and round-trips.
+    pub async fn check_access_batch(
+        &self,
+        reqs: &[BuzzReadRequest],
+    ) -> Vec<Result<BuzzReadDecision, BuzzAuthorityError>> {
+        // One result slot per input; filled as groups and round-trips finish.
+        let mut results: Vec<Option<Result<BuzzReadDecision, BuzzAuthorityError>>> =
+            (0..reqs.len()).map(|_| None).collect();
+        // Group indices by (relay_url, relay_pubkey), first-seen order.
+        let mut groups: Vec<(String, String, Vec<usize>)> = Vec::new();
+        for (index, req) in reqs.iter().enumerate() {
+            let Some(relay_pubkey) = req.relay_pubkey.as_deref() else {
+                results[index] = Some(Err(BuzzAuthorityError::Config(
+                    "community mapping has no pinned relay_pubkey".to_string(),
+                )));
+                continue;
+            };
+            match groups
+                .iter_mut()
+                .find(|(url, pubkey, _)| url == &req.relay_url && pubkey == relay_pubkey)
+            {
+                Some((_, _, indices)) => indices.push(index),
+                None => groups.push((req.relay_url.clone(), relay_pubkey.to_string(), vec![index])),
+            }
+        }
+        for (relay_url, relay_pubkey, indices) in groups {
+            let group: Vec<&BuzzReadRequest> = indices.iter().map(|&index| &reqs[index]).collect();
+            let decisions = self
+                .check_access_batch_for_relay(&relay_url, &relay_pubkey, &group)
+                .await;
+            for (index, decision) in indices.into_iter().zip(decisions) {
+                results[index] = Some(decision);
+            }
+        }
+        results
+            .into_iter()
+            .map(|result| result.expect("every batch index is filled"))
+            .collect()
+    }
+
+    /// Drive one pinned relay's batch round-trips (≤ [`MAX_BATCH_CHECKS`] per
+    /// round-trip, issued sequentially).
+    async fn check_access_batch_for_relay(
+        &self,
+        relay_url: &str,
+        relay_pubkey: &str,
+        reqs: &[&BuzzReadRequest],
+    ) -> Vec<Result<BuzzReadDecision, BuzzAuthorityError>> {
+        if reqs.is_empty() {
+            return Vec::new();
+        }
+        let (base, http) = match self.validated_http(relay_url).await {
+            Ok(pair) => pair,
+            Err(error) => return vec![Err(error); reqs.len()],
+        };
+        let url = match base.join("/api/v1/relay/access/check-batch") {
+            Ok(url) => url,
+            Err(error) => {
+                return vec![
+                    Err(BuzzAuthorityError::Config(format!(
+                        "cannot build relay batch access-check URL: {error}"
+                    )));
+                    reqs.len()
+                ]
+            }
+        };
+        let mut results = Vec::with_capacity(reqs.len());
+        for chunk in reqs.chunks(MAX_BATCH_CHECKS) {
+            let checks: Vec<BuzzAccessCheckRequest> =
+                chunk.iter().map(|req| access_check_request(req)).collect();
+            let body = match serde_json::to_vec(&serde_json::json!({ "checks": checks })) {
+                Ok(body) => body,
+                Err(error) => {
+                    let error = BuzzAuthorityError::Config(format!(
+                        "cannot serialize batch access-check request: {error}"
+                    ));
+                    results.extend(chunk.iter().map(|_| Err(error.clone())));
+                    continue;
+                }
+            };
+            let header = match self.nip98_header("POST", &url, Some(&body)).await {
+                Ok(header) => header,
+                Err(error) => {
+                    results.extend(chunk.iter().map(|_| Err(error.clone())));
+                    continue;
+                }
+            };
+            let response = match http
+                .post(url.clone())
+                .timeout(self.timeout)
+                .header("Authorization", header)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = BuzzAuthorityError::Transport(error.to_string());
+                    results.extend(
+                        chunk
+                            .iter()
+                            .map(|_| Err(log_relay_error(relay_url, error.clone()))),
+                    );
+                    continue;
+                }
+            };
+            let raw = match read_response_json(response).await {
+                Ok(raw) => raw,
+                Err(error) => {
+                    results.extend(
+                        chunk
+                            .iter()
+                            .map(|_| Err(log_relay_error(relay_url, error.clone()))),
+                    );
+                    continue;
+                }
+            };
+            match self.batch_decision_from_19030(&raw, relay_pubkey, chunk) {
+                Ok(decisions) => results.extend(decisions),
+                Err(error) => results.extend(
+                    chunk
+                        .iter()
+                        .map(|_| Err(log_relay_error(relay_url, error.clone()))),
+                ),
+            }
+        }
+        results
+    }
+
+    /// Verify one batch round-trip's kind-19030 envelope and map every item.
+    ///
+    /// Envelope verification (kind, Schnorr signature, pinned pubkey,
+    /// top-level `evaluated_at` freshness, `results`/`checks` length parity)
+    /// applies once; any envelope failure fails EVERY item closed. Per-item
+    /// failures are isolated to that item.
+    fn batch_decision_from_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+        reqs: &[&BuzzReadRequest],
+    ) -> Result<Vec<Result<BuzzReadDecision, BuzzAuthorityError>>, BuzzAuthorityError> {
+        let event = self.verify_19030(raw, relay_pubkey)?;
+        let batch: BuzzAccessCheckBatchResponse =
+            serde_json::from_str(&event.content).map_err(|e| {
+                BuzzAuthorityError::InvalidResponse(format!(
+                    "response content is not a batch access-check result: {e}"
+                ))
+            })?;
+        if batch.results.len() != reqs.len() {
+            return Err(BuzzAuthorityError::InvalidResponse(format!(
+                "batch result count {} does not match request count {}",
+                batch.results.len(),
+                reqs.len()
+            )));
+        }
+        if !is_fresh(batch.evaluated_at) {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "batch evaluated_at is stale".to_string(),
+            ));
+        }
+        Ok(reqs
+            .iter()
+            .zip(batch.results)
+            .map(|(req, result)| {
+                let expected = access_check_request(req);
+                Self::decision_from_result(&result, &expected)
+            })
+            .collect())
+    }
+
+    /// Ask the relay which channels `pubkey` may currently read — the
+    /// authoritative channel registry
+    /// (`GET /api/v1/relay/channels?pubkey=<64hex>`).
+    ///
+    /// The NIP-98 GET binds the exact request URL including the `pubkey`
+    /// query string (no payload tag for GETs). The kind-19030 envelope is
+    /// verified (kind, Schnorr signature, pinned pubkey) and the content's
+    /// `pubkey` echo and top-level `evaluated_at` freshness are enforced. Only
+    /// channels the pubkey may read are ever listed (member channels,
+    /// including private ones, plus open channels), each with its `member`
+    /// flag.
+    pub async fn list_channels(
+        &self,
+        relay_url: &str,
+        relay_pubkey: &str,
+        pubkey: &str,
+    ) -> Result<Vec<BuzzChannelInfo>, BuzzAuthorityError> {
+        let (base, http) = self.validated_http(relay_url).await?;
+        let mut url = base.join("/api/v1/relay/channels").map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot build relay channels URL: {e}"))
+        })?;
+        url.query_pairs_mut().append_pair("pubkey", pubkey);
+        let header = self.nip98_header("GET", &url, None).await?;
+        let response = http
+            .get(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .send()
+            .await
+            .map_err(|e| {
+                log_relay_error(relay_url, BuzzAuthorityError::Transport(e.to_string()))
+            })?;
+        let raw = read_response_json(response)
+            .await
+            .map_err(|e| log_relay_error(relay_url, e))?;
+        let event = self
+            .verify_19030(&raw, relay_pubkey)
+            .map_err(|e| log_relay_error(relay_url, e))?;
+        let registry: BuzzChannelRegistry = serde_json::from_str(&event.content).map_err(|e| {
+            log_relay_error(
+                relay_url,
+                BuzzAuthorityError::InvalidResponse(format!(
+                    "channel registry content is invalid: {e}"
+                )),
+            )
+        })?;
+        if registry.pubkey != pubkey {
+            return Err(log_relay_error(
+                relay_url,
+                BuzzAuthorityError::InvalidResponse(
+                    "channel registry pubkey does not echo the requested pubkey".to_string(),
+                ),
+            ));
+        }
+        if !is_fresh(registry.evaluated_at) {
+            return Err(log_relay_error(
+                relay_url,
+                BuzzAuthorityError::InvalidResponse(
+                    "channel registry evaluated_at is stale".to_string(),
+                ),
+            ));
+        }
+        Ok(registry.channels)
     }
 }
 
@@ -473,15 +759,15 @@ impl BuzzAuthority for BuzzGatewayClient {
         let relay_pubkey = req.relay_pubkey.as_deref().ok_or_else(|| {
             BuzzAuthorityError::Config("community mapping has no pinned relay_pubkey".to_string())
         })?;
-        let access = BuzzAccessCheckRequest {
-            pubkey: req.pubkey.clone(),
-            channel_id: req.channel_id.clone(),
-            channel_kind: req.channel_kind,
-            message_id: req.message_id.clone(),
-            event_created_at: Some(req.event_created_at.timestamp()),
-        };
-        self.check_access(&req.relay_url, relay_pubkey, &access)
+        self.check_access(&req.relay_url, relay_pubkey, &access_check_request(req))
             .await
+    }
+
+    async fn can_read_batch(
+        &self,
+        reqs: &[BuzzReadRequest],
+    ) -> Vec<Result<BuzzReadDecision, BuzzAuthorityError>> {
+        self.check_access_batch(reqs).await
     }
 }
 
@@ -513,6 +799,29 @@ fn status_error(status: StatusCode) -> Option<BuzzAuthorityError> {
         ),
         _ => None,
     }
+}
+
+/// Convert a domain read request into the wire access-check shape.
+fn access_check_request(req: &BuzzReadRequest) -> BuzzAccessCheckRequest {
+    BuzzAccessCheckRequest {
+        pubkey: req.pubkey.clone(),
+        channel_id: req.channel_id.clone(),
+        channel_kind: req.channel_kind,
+        message_id: req.message_id.clone(),
+        event_created_at: Some(req.event_created_at.timestamp()),
+    }
+}
+
+/// Whether an `evaluated_at` timestamp is within the freshness window of the
+/// client clock. Saturating arithmetic: `evaluated_at` is relay-controlled
+/// and may be `i64::MIN`/`i64::MAX`, which would panic a plain
+/// subtraction/`abs()` pair — hostile extremes must fail closed, never panic.
+fn is_fresh(evaluated_at: i64) -> bool {
+    Utc::now()
+        .timestamp()
+        .saturating_sub(evaluated_at)
+        .unsigned_abs()
+        <= MAX_EVALUATED_AT_AGE_SECS
 }
 
 /// Ops visibility: log a fail-closed gateway outcome with the relay URL before
@@ -841,6 +1150,189 @@ mod tests {
             service.can_read(&request).await,
             Err(BuzzAuthorityError::Config(_))
         ));
+    }
+
+    /// A domain read request pinned to `relay_pubkey` and `relay_url`.
+    fn read_request(
+        relay_url: &str,
+        relay_pubkey: &str,
+        channel_id: &str,
+        pubkey: &str,
+    ) -> BuzzReadRequest {
+        BuzzReadRequest {
+            tenant_id: TenantId(Uuid::new_v4()),
+            community_id: "community-1".to_string(),
+            relay_url: relay_url.to_string(),
+            relay_pubkey: Some(relay_pubkey.to_string()),
+            channel_id: channel_id.to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            pubkey: pubkey.to_string(),
+            event_created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn batch_decision_from_19030_isolates_item_failures_and_fails_envelope_closed() {
+        let relay = Keys::generate();
+        let relay_pubkey = relay.public_key().to_hex();
+        let service = client(Keys::generate());
+        let now = Utc::now().timestamp();
+        let req1 = read_request("wss://chat.example.test", &relay_pubkey, "channel-1", HEX64);
+        let req2 = read_request("wss://chat.example.test", &relay_pubkey, "channel-2", HEX64);
+        let reqs = [&req1, &req2];
+
+        fn batch_content(now: i64, evaluated_at: i64) -> Value {
+            json!({
+                "results": [
+                    { "decision": "allow", "reason": "member", "evaluated_at": now,
+                      "pubkey": HEX64, "channel_id": "channel-1", "message_id": HEX64 },
+                    { "decision": "deny", "reason": "not a member", "evaluated_at": now,
+                      "pubkey": HEX64, "channel_id": "channel-2", "message_id": HEX64 },
+                ],
+                "evaluated_at": evaluated_at,
+            })
+        }
+
+        // Fresh envelope, correctly echoed items → decisions in input order.
+        let raw = serde_json::to_value(relay_19030(&relay, batch_content(now, now))).unwrap();
+        let decisions = service
+            .batch_decision_from_19030(&raw, &relay_pubkey, &reqs)
+            .expect("a valid batch response must map");
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].as_ref().unwrap(), &BuzzReadDecision::Allow);
+        assert_eq!(decisions[1].as_ref().unwrap(), &BuzzReadDecision::Deny);
+
+        // Item-level evaluated_at is informational: a stale ITEM timestamp on
+        // a fresh envelope does not fail that item.
+        let mut content = batch_content(now - 120, now);
+        content["results"][0]["evaluated_at"] = json!(now - 120);
+        let raw = serde_json::to_value(relay_19030(&relay, content)).unwrap();
+        let decisions = service
+            .batch_decision_from_19030(&raw, &relay_pubkey, &reqs)
+            .expect("stale item evaluated_at is informational");
+        assert_eq!(decisions[0].as_ref().unwrap(), &BuzzReadDecision::Allow);
+
+        // Per-item echo mismatch fails ONLY that item.
+        let mut content = batch_content(now, now);
+        content["results"][1]["channel_id"] = json!("channel-3");
+        let raw = serde_json::to_value(relay_19030(&relay, content)).unwrap();
+        let decisions = service
+            .batch_decision_from_19030(&raw, &relay_pubkey, &reqs)
+            .expect("an item echo mismatch must not fail the envelope");
+        assert_eq!(decisions[0].as_ref().unwrap(), &BuzzReadDecision::Allow);
+        assert!(matches!(
+            &decisions[1],
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+
+        // Envelope failures fail EVERY item closed:
+        // wrong pinned pubkey
+        let raw = serde_json::to_value(relay_19030(&relay, batch_content(now, now))).unwrap();
+        let wrong_pin = Keys::generate().public_key().to_hex();
+        assert!(matches!(
+            service.batch_decision_from_19030(&raw, &wrong_pin, &reqs),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        // wrong kind
+        let note = EventBuilder::text_note(batch_content(now, now).to_string())
+            .sign_with_keys(&relay)
+            .unwrap();
+        let raw = serde_json::to_value(&note).unwrap();
+        assert!(matches!(
+            service.batch_decision_from_19030(&raw, &relay_pubkey, &reqs),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        // stale top-level evaluated_at (past and future)
+        for stale in [now - 120, now + 120, i64::MIN, i64::MAX] {
+            let raw = serde_json::to_value(relay_19030(&relay, batch_content(now, stale))).unwrap();
+            assert!(
+                matches!(
+                    service.batch_decision_from_19030(&raw, &relay_pubkey, &reqs),
+                    Err(BuzzAuthorityError::InvalidResponse(_))
+                ),
+                "envelope evaluated_at {stale} must fail every item"
+            );
+        }
+        // result count mismatch
+        let mut content = batch_content(now, now);
+        content["results"] = json!([content["results"][0].clone()]);
+        let raw = serde_json::to_value(relay_19030(&relay, content)).unwrap();
+        assert!(matches!(
+            service.batch_decision_from_19030(&raw, &relay_pubkey, &reqs),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        // unparseable content
+        let raw = serde_json::to_value(relay_19030(&relay, json!({ "nope": true }))).unwrap();
+        assert!(matches!(
+            service.batch_decision_from_19030(&raw, &relay_pubkey, &reqs),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn decision_from_result_maps_decisions_and_rejects_echo_mismatch() {
+        let expected = BuzzAccessCheckRequest {
+            pubkey: HEX64.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            event_created_at: Some(1_750_000_000),
+        };
+        let result = |decision: &str| BuzzAccessCheckResult {
+            decision: decision.to_string(),
+            reason: "member".to_string(),
+            evaluated_at: 0,
+            pubkey: expected.pubkey.clone(),
+            channel_id: expected.channel_id.clone(),
+            message_id: expected.message_id.clone(),
+        };
+        for (decision, expected_decision) in [
+            ("allow", BuzzReadDecision::Allow),
+            ("deny", BuzzReadDecision::Deny),
+            ("not_found", BuzzReadDecision::NotFound),
+        ] {
+            assert_eq!(
+                BuzzGatewayClient::decision_from_result(&result(decision), &expected).unwrap(),
+                expected_decision
+            );
+        }
+        assert!(matches!(
+            BuzzGatewayClient::decision_from_result(&result("maybe"), &expected),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        // Echo mismatch on any of the three echoed fields fails closed.
+        for field in ["pubkey", "channel_id", "message_id"] {
+            let mut bad = result("allow");
+            match field {
+                "pubkey" => bad.pubkey = "f".repeat(64),
+                "channel_id" => bad.channel_id = "channel-2".to_string(),
+                _ => bad.message_id = None,
+            }
+            assert!(
+                matches!(
+                    BuzzGatewayClient::decision_from_result(&bad, &expected),
+                    Err(BuzzAuthorityError::InvalidResponse(_))
+                ),
+                "{field} echo mismatch must fail closed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn check_access_batch_unpinned_requests_fail_closed_without_network() {
+        // A request without a pinned relay pubkey fails closed as Config
+        // before any network I/O; empty input yields empty results.
+        let service = client(Keys::generate());
+        let pinned_key = Keys::generate().public_key().to_hex();
+        let unpinned = BuzzReadRequest {
+            relay_pubkey: None,
+            ..read_request("wss://chat.example.test", &pinned_key, "channel-1", HEX64)
+        };
+        let results = service.check_access_batch(&[unpinned]).await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Err(BuzzAuthorityError::Config(_))));
+        assert!(service.check_access_batch(&[]).await.is_empty());
     }
 
     #[tokio::test]

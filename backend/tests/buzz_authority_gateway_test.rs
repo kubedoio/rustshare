@@ -5,7 +5,8 @@
 //! (`axum::serve` on `127.0.0.1:0`) with **no database** — it implements the
 //! v1alpha1 upstream contract
 //! (`docs/specs/buzz-upstream-authorization-v1alpha1.md`): NIP-98 service
-//! authentication, `POST /api/v1/relay/access/check` and
+//! authentication, `POST /api/v1/relay/access/check`,
+//! `POST /api/v1/relay/access/check-batch`, `GET /api/v1/relay/channels` and
 //! `GET /api/v1/relay/state/events`, and kind-19030 responses signed by the
 //! relay key (echo + freshness enforced by the real client under test). Every
 //! production request path runs over this public HTTP contract: the real
@@ -80,9 +81,10 @@ use rustshare_integration_events::event_types::CHAT_BUZZ_EVENT_OBSERVED_V1;
 use rustshare_integration_events::OutboxConsumer;
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_resource_auth::{
-    BuzzChannelKind, BuzzReadDecision, Candidate, Decision, PrincipalContext, Purpose,
-    Representation, ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError,
-    WorkspaceCommunityMapping, CHAT_READ,
+    BuzzAuthority, BuzzAuthorityError, BuzzChannelInfo, BuzzChannelKind, BuzzReadDecision,
+    BuzzReadRequest, Candidate, Decision, PrincipalContext, Purpose, Representation,
+    ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError, WorkspaceCommunityMapping,
+    CHAT_READ,
 };
 use rustshare_server::authz::ChatResourceOwner;
 use rustshare_server::buzz_gateway::{
@@ -149,6 +151,28 @@ struct FakeBuzzState {
     access_check_requests: Vec<serde_json::Value>,
     /// How many state-paging requests the relay served.
     state_requests: u64,
+    /// How many batch access-check round-trips the relay served.
+    check_batch_requests: u64,
+    /// Every batch round-trip's checks, recorded for assertions.
+    check_batches: Vec<Vec<BuzzAccessCheckRequest>>,
+    /// How many channel-registry requests the relay served.
+    channels_requests: u64,
+    /// `channel_id → display name` for the channel registry.
+    channel_names: HashMap<String, String>,
+    /// `channel_id → visibility` (`"open"`|`"private"`); channels without an
+    /// entry are private (visible to members only).
+    channel_visibility: HashMap<String, String>,
+    /// When set, the relay answers as an UNBOUND host would: the real relay's
+    /// `bind_community` answers 404 ("no community is configured for this
+    /// host") — mirrored for the channels endpoint.
+    channels_unknown_host: bool,
+    /// Kind used for NEW endpoint responses (batch/channels); defaults to
+    /// 19030. Failure-injection knob: a wrong kind must fail the client's
+    /// envelope verification closed.
+    response_kind: u16,
+    /// When set, responses use this `evaluated_at` instead of now.
+    /// Failure-injection knob: a stale envelope must fail closed.
+    evaluated_at_override: Option<i64>,
 }
 
 impl FakeBuzzState {
@@ -186,6 +210,76 @@ impl FakeBuzzState {
 
     fn mark_deleted(&mut self, message_id: &str) {
         self.deleted.insert(message_id.to_string());
+    }
+
+    fn set_channel_name(&mut self, channel_id: &str, name: &str) {
+        self.channel_names
+            .insert(channel_id.to_string(), name.to_string());
+    }
+
+    fn set_channel_visibility(&mut self, channel_id: &str, visibility: &str) {
+        self.channel_visibility
+            .insert(channel_id.to_string(), visibility.to_string());
+    }
+
+    /// The relay's decision for one check: `(decision, reason)` — message
+    /// availability → channel visibility → membership.
+    fn evaluate_check(&self, request: &BuzzAccessCheckRequest) -> (String, String) {
+        if request.message_id.as_ref().is_some_and(|message_id| {
+            !self.messages.contains_key(message_id) || self.deleted.contains(message_id)
+        }) {
+            ("not_found".to_string(), "message unavailable".to_string())
+        } else if !self.channels.contains_key(&request.channel_id) {
+            ("not_found".to_string(), "unknown channel".to_string())
+        } else if !self
+            .channels
+            .get(&request.channel_id)
+            .is_some_and(|members| members.contains(&request.pubkey))
+        {
+            ("deny".to_string(), "not a member".to_string())
+        } else {
+            ("allow".to_string(), "member".to_string())
+        }
+    }
+
+    /// The channel registry for `pubkey` (the real relay's
+    /// `get_accessible_channels`): member channels (including private ones)
+    /// plus open channels, each with its `member` flag. Channels the pubkey
+    /// may not read are never included; the fake serves a single community.
+    fn accessible_channels(&self, pubkey: &str) -> Vec<serde_json::Value> {
+        let mut ids: Vec<String> = self
+            .channels
+            .keys()
+            .chain(self.channel_kinds.keys())
+            .chain(self.channel_names.keys())
+            .chain(self.channel_visibility.keys())
+            .cloned()
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|channel_id| {
+                let is_member = self
+                    .channels
+                    .get(&channel_id)
+                    .is_some_and(|members| members.contains(pubkey));
+                let visibility = self
+                    .channel_visibility
+                    .get(&channel_id)
+                    .map(String::as_str)
+                    .unwrap_or("private");
+                if !is_member && visibility != "open" {
+                    return None;
+                }
+                Some(serde_json::json!({
+                    "channel_id": channel_id,
+                    "name": self.channel_names.get(&channel_id).cloned().unwrap_or_else(|| channel_id.clone()),
+                    "channel_type": self.channel_kinds.get(&channel_id).cloned().unwrap_or_else(|| "stream".to_string()),
+                    "visibility": visibility,
+                    "member": is_member,
+                }))
+            })
+            .collect()
     }
 }
 
@@ -232,9 +326,19 @@ fn start_fake_buzz(relay_keys: Keys, service_pubkey: String) -> FakeBuzzServer {
         events: Vec::new(),
         access_check_requests: Vec::new(),
         state_requests: 0,
+        check_batch_requests: 0,
+        check_batches: Vec::new(),
+        channels_requests: 0,
+        channel_names: HashMap::new(),
+        channel_visibility: HashMap::new(),
+        channels_unknown_host: false,
+        response_kind: 19_030,
+        evaluated_at_override: None,
     }));
     let app = Router::new()
         .route("/api/v1/relay/access/check", post(access_check))
+        .route("/api/v1/relay/access/check-batch", post(access_check_batch))
+        .route("/api/v1/relay/channels", get(channels))
         .route("/api/v1/relay/state/events", get(state_events))
         .with_state(FakeServerHandle {
             state: state.clone(),
@@ -301,7 +405,13 @@ fn state_url(
 
 /// Sign a kind-19030 response event from the relay key.
 fn relay_19030(relay_keys: &Keys, content: serde_json::Value) -> NostrEvent {
-    EventBuilder::new(Kind::from(19_030), content.to_string())
+    relay_response(relay_keys, 19_030, content)
+}
+
+/// Sign a relay response event of an explicit kind (the batch/channels
+/// handlers use the state's `response_kind` failure-injection knob).
+fn relay_response(relay_keys: &Keys, kind: u16, content: serde_json::Value) -> NostrEvent {
+    EventBuilder::new(Kind::from(kind), content.to_string())
         .sign_with_keys(relay_keys)
         .expect("sign the relay response")
 }
@@ -358,26 +468,11 @@ async fn access_check(
         state
             .access_check_requests
             .push(serde_json::json!({ "auth_pubkey": signer.to_hex(), "request": &request }));
-        let decision = if request.message_id.as_ref().is_some_and(|message_id| {
-            !state.messages.contains_key(message_id) || state.deleted.contains(message_id)
-        }) {
-            ("not_found", "message unavailable")
-        } else if !state.channels.contains_key(&request.channel_id) {
-            ("not_found", "unknown channel")
-        } else if !state
-            .channels
-            .get(&request.channel_id)
-            .is_some_and(|members| members.contains(&request.pubkey))
-        {
-            ("deny", "not a member")
-        } else {
-            ("allow", "member")
-        };
-        (
-            decision.0.to_string(),
-            decision.1.to_string(),
-            Utc::now().timestamp(),
-        )
+        let (decision, reason) = state.evaluate_check(&request);
+        let evaluated_at = state
+            .evaluated_at_override
+            .unwrap_or_else(|| Utc::now().timestamp());
+        (decision, reason, evaluated_at)
     };
     let content = serde_json::json!({
         "decision": decision,
@@ -403,6 +498,176 @@ fn event_created_at(entry: &BuzzStateEntry) -> i64 {
         .get("created_at")
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(0)
+}
+
+/// Request body of `POST /api/v1/relay/access/check-batch`.
+#[derive(serde::Deserialize)]
+struct BatchChecksRequest {
+    checks: Vec<BuzzAccessCheckRequest>,
+}
+
+/// `POST /api/v1/relay/access/check-batch`: verify NIP-98 (service key only),
+/// evaluate every check with the single-check semantics, and answer with ONE
+/// kind-19030 event whose content is `{ results, evaluated_at }` — results
+/// order-preserving with per-item verbatim echo, and the top-level
+/// `evaluated_at` as the envelope freshness authority (each item's mirrors
+/// it).
+async fn access_check_batch(
+    State(handle): State<FakeServerHandle>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let body_bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("cannot read body: {e}")))?;
+    let url = request_url(&handle.host, &headers, "/api/v1/relay/access/check-batch");
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "missing NIP-98 Authorization header".to_string(),
+            )
+        })?;
+    let signer = verify_auth_header(
+        auth,
+        &url,
+        HttpMethod::POST,
+        Timestamp::now(),
+        Some(&body_bytes),
+    )
+    .map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "invalid NIP-98 authorization".to_string(),
+        )
+    })?;
+    let batch: BatchChecksRequest = serde_json::from_slice(&body_bytes).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid batch check request: {e}"),
+        )
+    })?;
+    let (results, evaluated_at) = {
+        let mut state = handle.state.lock().unwrap();
+        if signer.to_hex() != state.service_pubkey {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "untrusted NIP-98 signer".to_string(),
+            ));
+        }
+        state.check_batch_requests += 1;
+        state.check_batches.push(batch.checks.clone());
+        let evaluated_at = state
+            .evaluated_at_override
+            .unwrap_or_else(|| Utc::now().timestamp());
+        let results: Vec<serde_json::Value> = batch
+            .checks
+            .iter()
+            .map(|request| {
+                let (decision, reason) = state.evaluate_check(request);
+                serde_json::json!({
+                    "decision": decision,
+                    "reason": reason,
+                    "evaluated_at": evaluated_at,
+                    "pubkey": request.pubkey,
+                    "channel_id": request.channel_id,
+                    "message_id": request.message_id,
+                })
+            })
+            .collect();
+        (results, evaluated_at)
+    };
+    let content = serde_json::json!({
+        "results": results,
+        "evaluated_at": evaluated_at,
+    });
+    let event = {
+        let state = handle.state.lock().unwrap();
+        relay_response(&state.relay_keys, state.response_kind, content)
+    };
+    let raw: serde_json::Value = serde_json::from_str(&event.as_json())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(raw))
+}
+
+/// Rebuild the exact channels URL the client signed — path + `pubkey` query
+/// (hex needs no percent-encoding, so the serialization is byte-identical).
+fn channels_url(host: &str, headers: &HeaderMap, pubkey: &str) -> Url {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or(host);
+    Url::parse(&format!(
+        "http://{host}/api/v1/relay/channels?pubkey={pubkey}"
+    ))
+    .expect("fake relay channels URL parses")
+}
+
+/// `GET /api/v1/relay/channels?pubkey=<hex>`: verify NIP-98 (GET, no payload;
+/// the `u` tag covers path + query), then list the channels `pubkey` may read
+/// — member channels plus open channels, each with its `member` flag — and
+/// echo the query `pubkey` verbatim. When `channels_unknown_host` is set the
+/// relay answers like an unbound host: 404, mirroring the real relay's
+/// `bind_community`.
+async fn channels(
+    State(handle): State<FakeServerHandle>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let query = parse_query(uri.query());
+    let pubkey = query.get("pubkey").cloned().unwrap_or_default();
+    let url = channels_url(&handle.host, &headers, &pubkey);
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "missing NIP-98 Authorization header".to_string(),
+            )
+        })?;
+    let signer =
+        verify_auth_header(auth, &url, HttpMethod::GET, Timestamp::now(), None).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "invalid NIP-98 authorization".to_string(),
+            )
+        })?;
+    let (channels_json, evaluated_at) = {
+        let mut state = handle.state.lock().unwrap();
+        if signer.to_hex() != state.service_pubkey {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "untrusted NIP-98 signer".to_string(),
+            ));
+        }
+        if state.channels_unknown_host {
+            return Err((
+                StatusCode::NOT_FOUND,
+                "no community is configured for this host".to_string(),
+            ));
+        }
+        state.channels_requests += 1;
+        let channels_json = state.accessible_channels(&pubkey);
+        let evaluated_at = state
+            .evaluated_at_override
+            .unwrap_or_else(|| Utc::now().timestamp());
+        (channels_json, evaluated_at)
+    };
+    let content = serde_json::json!({
+        "channels": channels_json,
+        "evaluated_at": evaluated_at,
+        "pubkey": pubkey,
+    });
+    let event = {
+        let state = handle.state.lock().unwrap();
+        relay_response(&state.relay_keys, state.response_kind, content)
+    };
+    let raw: serde_json::Value = serde_json::from_str(&event.as_json())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(raw))
 }
 
 /// Parse a query string into a map (values are plain digits/cursors; no
@@ -3108,4 +3373,460 @@ async fn update_mapping_cross_tenant_returns_403() {
 
     cleanup(&pool, tenant).await;
     cleanup(&pool, foreign_tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 15. Batch access checks (POST /api/v1/relay/access/check-batch): one
+//     round-trip, chunking beyond 64, and fail-closed envelopes
+// ---------------------------------------------------------------------------
+
+/// A domain read request pinned to the fake relay (channel-level check:
+/// `message_id: None`).
+fn read_request(
+    relay_url: &str,
+    relay_pubkey: &str,
+    channel_id: &str,
+    pubkey: &str,
+) -> BuzzReadRequest {
+    BuzzReadRequest {
+        tenant_id: TenantId(Uuid::new_v4()),
+        community_id: "community-test".to_string(),
+        relay_url: relay_url.to_string(),
+        relay_pubkey: Some(relay_pubkey.to_string()),
+        channel_id: channel_id.to_string(),
+        channel_kind: BuzzChannelKind::Workspace,
+        message_id: None,
+        pubkey: pubkey.to_string(),
+        event_created_at: Utc::now(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_decisions_match_single_decisions_for_identical_inputs() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    let other = Keys::generate();
+    {
+        let mut state = fake.state.lock().unwrap();
+        state.add_member("channel-1", &member.public_key().to_hex());
+        state.add_member("channel-2", &other.public_key().to_hex());
+    }
+
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    // Mixed outcomes: member channel → allow; non-member channel → deny;
+    // unknown channel → not_found.
+    let reqs = [
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+        read_request(&relay_url, &relay_pubkey, "channel-2", &member_hex),
+        read_request(&relay_url, &relay_pubkey, "channel-3", &member_hex),
+    ];
+
+    let batch = gateway.check_access_batch(&reqs).await;
+    assert_eq!(batch.len(), 3);
+    for (req, batch_decision) in reqs.iter().zip(&batch) {
+        let wire = BuzzAccessCheckRequest {
+            pubkey: req.pubkey.clone(),
+            channel_id: req.channel_id.clone(),
+            channel_kind: req.channel_kind,
+            message_id: req.message_id.clone(),
+            event_created_at: Some(req.event_created_at.timestamp()),
+        };
+        let single = gateway.check_access(&relay_url, &relay_pubkey, &wire).await;
+        assert_eq!(
+            batch_decision.as_ref().unwrap(),
+            &single.unwrap(),
+            "batch decision must equal the single check for {}",
+            req.channel_id
+        );
+    }
+    assert!(matches!(batch[0], Ok(BuzzReadDecision::Allow)));
+    assert!(matches!(batch[1], Ok(BuzzReadDecision::Deny)));
+    assert!(matches!(batch[2], Ok(BuzzReadDecision::NotFound)));
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn can_read_batch_override_is_one_round_trip_and_single_endpoint_untouched() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &member.public_key().to_hex());
+
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    let reqs = [
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+    ];
+    let decisions = gateway.can_read_batch(&reqs).await;
+    assert_eq!(decisions.len(), 3);
+    assert!(decisions
+        .iter()
+        .all(|d| matches!(d, Ok(BuzzReadDecision::Allow))));
+
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.check_batch_requests, 1,
+            "the batch must be served as ONE round-trip"
+        );
+        assert_eq!(
+            state.check_batches.len(),
+            1,
+            "exactly one batch request body"
+        );
+        assert_eq!(state.check_batches[0].len(), 3);
+        assert!(
+            state.access_check_requests.is_empty(),
+            "the single-check endpoint must not be hit"
+        );
+    }
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_envelope_failures_fail_every_item_closed() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &member.public_key().to_hex());
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    let reqs = [
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex),
+    ];
+
+    // Wrong pinned pubkey: the envelope cannot verify → every item fails
+    // closed (Err, mapped to Deny at the decision layer).
+    let wrong_pin = Keys::generate().public_key().to_hex();
+    let wrong_pin_reqs = [
+        read_request(&relay_url, &wrong_pin, "channel-1", &member_hex),
+        read_request(&relay_url, &wrong_pin, "channel-1", &member_hex),
+    ];
+    let results = gateway.check_access_batch(&wrong_pin_reqs).await;
+    assert!(
+        results
+            .iter()
+            .all(|r| matches!(r, Err(BuzzAuthorityError::InvalidResponse(_)))),
+        "a wrong pin must fail every item closed"
+    );
+
+    // Wrong response kind: the fake answers with kind 1.
+    fake.state.lock().unwrap().response_kind = 1;
+    let results = gateway.check_access_batch(&reqs).await;
+    assert!(
+        results
+            .iter()
+            .all(|r| matches!(r, Err(BuzzAuthorityError::InvalidResponse(_)))),
+        "a wrong response kind must fail every item closed"
+    );
+    fake.state.lock().unwrap().response_kind = 19_030;
+
+    // Stale top-level evaluated_at (past and future): the envelope freshness
+    // authority fails → every item fails closed.
+    let now = Utc::now().timestamp();
+    for stale in [now - 120, now + 120] {
+        fake.state.lock().unwrap().evaluated_at_override = Some(stale);
+        let results = gateway.check_access_batch(&reqs).await;
+        assert!(
+            results
+                .iter()
+                .all(|r| matches!(r, Err(BuzzAuthorityError::InvalidResponse(_)))),
+            "a stale envelope evaluated_at ({stale}) must fail every item closed"
+        );
+    }
+    fake.state.lock().unwrap().evaluated_at_override = None;
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_one_bad_item_is_isolated_and_others_unaffected() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    let other = Keys::generate();
+    {
+        let mut state = fake.state.lock().unwrap();
+        state.add_member("channel-1", &member.public_key().to_hex());
+        state.add_member("channel-2", &other.public_key().to_hex());
+    }
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    let reqs = [
+        read_request(&relay_url, &relay_pubkey, "channel-1", &member_hex), // allow
+        read_request(&relay_url, &relay_pubkey, "channel-3", &member_hex), // unknown → not_found
+        read_request(&relay_url, &relay_pubkey, "channel-2", &member_hex), // deny
+    ];
+    let results = gateway.check_access_batch(&reqs).await;
+    assert!(matches!(results[0], Ok(BuzzReadDecision::Allow)));
+    assert!(
+        matches!(results[1], Ok(BuzzReadDecision::NotFound)),
+        "the unknown channel is not_found while the other items are unaffected"
+    );
+    assert!(matches!(results[2], Ok(BuzzReadDecision::Deny)));
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn batch_over_64_requests_is_chunked_into_two_round_trips() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &member.public_key().to_hex());
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    // 70 requests: 64 known-member + 6 unknown channels — the alignment is
+    // verifiable ACROSS the chunk boundary.
+    let mut reqs = Vec::new();
+    for _ in 0..64 {
+        reqs.push(read_request(
+            &relay_url,
+            &relay_pubkey,
+            "channel-1",
+            &member_hex,
+        ));
+    }
+    for _ in 0..6 {
+        reqs.push(read_request(
+            &relay_url,
+            &relay_pubkey,
+            "channel-3",
+            &member_hex,
+        ));
+    }
+
+    let results = gateway.check_access_batch(&reqs).await;
+    assert_eq!(results.len(), 70);
+    assert!(
+        results[..64]
+            .iter()
+            .all(|r| matches!(r, Ok(BuzzReadDecision::Allow))),
+        "chunk 1 results must align with chunk 1 inputs"
+    );
+    assert!(
+        results[64..]
+            .iter()
+            .all(|r| matches!(r, Ok(BuzzReadDecision::NotFound))),
+        "chunk 2 results must align with chunk 2 inputs"
+    );
+
+    {
+        let state = fake.state.lock().unwrap();
+        assert_eq!(
+            state.check_batch_requests, 2,
+            "70 checks must be chunked into two round-trips"
+        );
+        assert_eq!(state.check_batches[0].len(), 64);
+        assert_eq!(state.check_batches[1].len(), 6);
+    }
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 16. Authoritative channel registry (GET /api/v1/relay/channels)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn channels_registry_returns_only_channels_the_pubkey_may_read() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    let other = Keys::generate();
+    {
+        let mut state = fake.state.lock().unwrap();
+        // channel-1: private, member — readable, member=true.
+        state.add_member("channel-1", &member.public_key().to_hex());
+        state.set_channel_name("channel-1", "Announcements");
+        state.set_channel_visibility("channel-1", "private");
+        // channel-2: OPEN, non-member — readable, member=false.
+        state.add_member("channel-2", &other.public_key().to_hex());
+        state.set_channel_name("channel-2", "Open Lounge");
+        state.set_channel_visibility("channel-2", "open");
+        // channel-3: private, non-member — NOT readable.
+        state.add_member("channel-3", &other.public_key().to_hex());
+        state.set_channel_name("channel-3", "Secret");
+        state.set_channel_visibility("channel-3", "private");
+        // channel-4: open AND member — readable, member=true.
+        state.add_member("channel-4", &member.public_key().to_hex());
+        state.set_channel_name("channel-4", "Open Club");
+        state.set_channel_visibility("channel-4", "open");
+    }
+
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+    let channels = gateway
+        .list_channels(&relay_url, &relay_pubkey, &member_hex)
+        .await
+        .expect("the channel registry must be served");
+
+    assert_eq!(channels.len(), 3, "only member ∪ open channels are listed");
+    let by_id: HashMap<&str, &BuzzChannelInfo> = channels
+        .iter()
+        .map(|channel| (channel.channel_id.as_str(), channel))
+        .collect();
+    assert!(by_id.contains_key("channel-1"));
+    assert!(by_id.contains_key("channel-2"));
+    assert!(by_id.contains_key("channel-4"));
+    assert!(
+        !by_id.contains_key("channel-3"),
+        "a private non-member channel must never be listed"
+    );
+    let c1 = by_id["channel-1"];
+    assert_eq!(c1.name, "Announcements");
+    assert_eq!(c1.visibility, "private");
+    assert!(c1.member);
+    let c2 = by_id["channel-2"];
+    assert_eq!(c2.name, "Open Lounge");
+    assert_eq!(c2.visibility, "open");
+    assert!(!c2.member, "an open non-member channel has member=false");
+    let c4 = by_id["channel-4"];
+    assert_eq!(c4.visibility, "open");
+    assert!(c4.member);
+
+    assert_eq!(
+        fake.state.lock().unwrap().channels_requests,
+        1,
+        "the registry must be served in one round-trip"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn channels_registry_failures_fail_closed() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let relay_pubkey = relay_keys.public_key().to_hex();
+    let member = Keys::generate();
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &member.public_key().to_hex());
+    let gateway = BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap();
+    let member_hex = member.public_key().to_hex();
+
+    // Cross-community host: the real relay answers 404 for an unbound host
+    // (`bind_community`), and the client maps any non-2xx to Transport —
+    // fail closed.
+    fake.state.lock().unwrap().channels_unknown_host = true;
+    let err = gateway
+        .list_channels(&relay_url, &relay_pubkey, &member_hex)
+        .await
+        .expect_err("an unbound host must fail closed");
+    assert!(
+        matches!(err, BuzzAuthorityError::Transport(_)),
+        "a 404 from an unbound host maps to Transport, got {err:?}"
+    );
+    assert_eq!(
+        fake.state.lock().unwrap().channels_requests,
+        0,
+        "an unbound host never serves the registry"
+    );
+    fake.state.lock().unwrap().channels_unknown_host = false;
+
+    // Wrong pinned pubkey → envelope verification fails closed.
+    let wrong_pin = Keys::generate().public_key().to_hex();
+    let err = gateway
+        .list_channels(&relay_url, &wrong_pin, &member_hex)
+        .await
+        .expect_err("a wrong pin must fail closed");
+    assert!(matches!(err, BuzzAuthorityError::InvalidResponse(_)));
+
+    // Stale registry evaluated_at → freshness fails closed.
+    fake.state.lock().unwrap().evaluated_at_override = Some(Utc::now().timestamp() - 120);
+    let err = gateway
+        .list_channels(&relay_url, &relay_pubkey, &member_hex)
+        .await
+        .expect_err("a stale registry must fail closed");
+    assert!(matches!(err, BuzzAuthorityError::InvalidResponse(_)));
+    fake.state.lock().unwrap().evaluated_at_override = None;
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
 }
