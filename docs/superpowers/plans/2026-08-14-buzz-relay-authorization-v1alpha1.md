@@ -93,7 +93,7 @@ Errors: `api_error`/`internal_error` helpers (`api/mod.rs:19-26`); NIP-98/auth f
 **Files:** Modify `crates/buzz-relay/src/api/relay_access.rs`, `crates/buzz-relay/src/router.rs`
 
 **Request:** `{ checks: [ <single-check body>, … ] }`, cap 64 items (matches Elembra `MAX_BATCH_SIZE`); >64 → 400.
-**Response `content`:** `{ results: [ { decision, reason, evaluated_at, pubkey, channel_id, message_id }, … ] }` — same per-item shape and echo rules as single check, order-preserving.
+**Response `content`:** `{ results: [ { decision, reason, evaluated_at, pubkey, channel_id, message_id }, … ], evaluated_at }` — top-level `evaluated_at` is the freshness authority (missing/malformed/stale → every item Deny); per-item `evaluated_at` mirrors it (informational). Same per-item shape and echo rules as single check, order-preserving.
 
 - [ ] **Step 1: Failing tests:** N mixed items resolved in one call; per-item decisions equal the single-check decisions for identical inputs (conformance seed); order preserved; >64 → 400; one bad item → that item `deny`/`not_found`, others unaffected.
 - [ ] **Step 2: Implement** — same auth pipeline as Task 3; resolve membership in one statement via `Db::membership_pairs(community, channel_ids, pubkeys)` (`buzz-db/src/channel.rs:668`), then one `get_events_by_ids` (lib.rs:1876) for message availability; fold per item. Sign one kind-19030 event.
