@@ -50,17 +50,20 @@ vi.mock('$lib/chat/nostr', () => ({
 	publishEvent: mocks.publishEvent,
 	publicKeyOf: mocks.publicKeyOf,
 	buildUnsignedEvent: mocks.buildUnsignedEvent,
-	NOSTR_KIND_STREAM_MESSAGE: 9
+	isUuid: (value: string) =>
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),
+	NOSTR_KIND_STREAM_MESSAGE: 9,
+	NOSTR_KIND_TEXT: 1
 }));
 
 vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn(async () => []) }));
 
-function renderComposer(onSendFailure = vi.fn()) {
+function renderComposer(onSendFailure = vi.fn(), channelId = 'general') {
 	return {
 		onSendFailure,
 		...render(MessageComposer, {
 			relayUrl: 'wss://relay.example',
-			channelId: 'general',
+			channelId,
 			boundPubkey: 'pk-1',
 			onSendFailure
 		})
@@ -119,12 +122,13 @@ describe('MessageComposer', () => {
 				'sk-imported'
 			)
 		);
-		// Canonical wire format: kind-9 stream message scoped to the active
-		// channel by the NIP-29 `h` tag.
+		// Name-based channels (the current observation-derived ids) cannot
+		// publish kind 9 — the relay requires a UUID `h` tag — so the send
+		// falls back to a legacy kind-1 note with no h tag.
 		expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
-			9,
+			1,
 			'hello from the second device',
-			[['h', 'general']],
+			[],
 			'pk-1'
 		);
 		expect(onSendFailure).toHaveBeenCalledWith('');
@@ -180,6 +184,35 @@ describe('MessageComposer', () => {
 		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
 		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith(''));
 		expect(screen.queryByText(/That backup is not the identity bound/)).toBeNull();
+	});
+
+	it('publishes a kind-9 stream message with the h tag when the channel id is a UUID', async () => {
+		// Runs after the import-UI tests: hasChatKey stays mocked true from
+		// here on (mockReturnValue persists across tests in this file).
+		mocks.hasChatKey.mockReturnValue(true);
+		// The unlock flow itself is covered at the unit level (keys.test.ts);
+		// here the key is already unlocked so sends reach buildUnsignedEvent.
+		vi.mocked(mocks.loadChatKey).mockResolvedValue('sk-imported');
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const { onSendFailure } = renderComposer(vi.fn(), channelUuid);
+		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+
+		await fireEvent.input(screen.getByPlaceholderText(new RegExp(`Message #${channelUuid}`)), {
+			target: { value: 'scoped hello' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+		// Canonical wire format: kind-9 stream message scoped to the channel
+		// by the NIP-29 `h` tag carrying its UUID.
+		await waitFor(() =>
+			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
+				9,
+				'scoped hello',
+				[['h', channelUuid]],
+				'pk-1'
+			)
+		);
+		expect(onSendFailure).toHaveBeenCalledWith('');
 	});
 
 	it('surfaces a malformed stored key as a send failure, not an unhandled rejection', async () => {

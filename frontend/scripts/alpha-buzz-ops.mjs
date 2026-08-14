@@ -11,8 +11,8 @@
 //   revoke <relay-url> <owner-sk> <pk>        kind-9031 remove member (owner authority)
 //   publish <relay-url> <sk> <content> [channel] [elembra-ref]
 //                                             signed kind-9 stream-message publish
-//                                             scoped by ["h", <channel>] (kind-1
-//                                             legacy note without a channel);
+//                                             scoped by ["h", <channel-uuid>]
+//                                             (kind-1 legacy note otherwise);
 //                                             prints event id
 //
 // Every command prints JSON to stdout; exit 0 on success, 1 on relay
@@ -172,14 +172,19 @@ if (command === 'publish') {
 		process.exit(2);
 	}
 	// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
-	// kind 9 with the NIP-29 `h` tag scoping the message to the channel.
-	// Without a channel there is no channel identity to scope to, so the
-	// publish falls back to a legacy kind-1 note (still accepted by the relay
-	// and Elembra, but global-only in Buzz).
+	// kind 9 with the NIP-29 `h` tag scoping the message to the channel. The
+	// relay parses `h` strictly as a UUID, so a name-based channel falls back
+	// to a legacy kind-1 note carrying the `channel` attribution tag (served
+	// by the observation path until the authoritative registry supplies
+	// channel UUIDs).
+	const isUuid = (value) =>
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+	const streamScoped = !!channel && isUuid(channel);
 	const tags = [];
-	if (channel) tags.push(['h', channel]);
+	if (streamScoped) tags.push(['h', channel]);
+	if (!streamScoped && channel) tags.push(['channel', channel]);
 	if (ref) tags.push(['elembra-ref', ref]);
-	const event = await mkEvent(channel ? 9 : 1, tags, content, skHex);
+	const event = await mkEvent(streamScoped ? 9 : 1, tags, content, skHex);
 	const result = await sendCommand(relayUrl, event, skHex);
 	console.log(
 		JSON.stringify({ ...result, eventId: event.id, kind: event.kind, channel: channel || null })

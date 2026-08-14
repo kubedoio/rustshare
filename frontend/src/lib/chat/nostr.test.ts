@@ -7,6 +7,7 @@ import {
 	signEvent,
 	buildUnsignedEvent,
 	publishEvent,
+	isUuid,
 	NOSTR_KIND_STREAM_MESSAGE
 } from './nostr';
 
@@ -40,6 +41,19 @@ describe('nostr signing', () => {
 		expect(schnorr.verify(hexToBytes(a.sig), hexToBytes(a.id), hexToBytes(pk))).toBe(true);
 		expect(schnorr.verify(hexToBytes(b.sig), hexToBytes(b.id), hexToBytes(pk))).toBe(true);
 		expect(bytesToHex(schnorr.getPublicKey(hexToBytes(sk)))).toBe(pk);
+	});
+});
+
+describe('isUuid', () => {
+	it('accepts canonical UUIDs and rejects names and malformed forms', () => {
+		expect(isUuid('11111111-2222-4333-8444-555555555555')).toBe(true);
+		expect(isUuid('AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE')).toBe(true); // uppercase
+		expect(isUuid('general')).toBe(false);
+		expect(isUuid('alpha-channel')).toBe(false);
+		expect(isUuid('')).toBe(false);
+		expect(isUuid('11111111-2222-4333-8444-55555555555')).toBe(false); // 11 hex in last group
+		expect(isUuid('11111111222243338444555555555555')).toBe(false); // hyphenless
+		expect(isUuid('g1111111-2222-4333-8444-555555555555')).toBe(false); // non-hex
 	});
 });
 

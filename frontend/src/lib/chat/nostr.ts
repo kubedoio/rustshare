@@ -1,13 +1,24 @@
 // Minimal Nostr client for the Chat application: key generation, kind-9
-// stream-message / kind-22242 signing (BIP-340 Schnorr), and NIP-42 relay
-// publish. The private key never leaves the browser; the backend never sees it.
+// stream-message / kind-1 legacy note / kind-22242 signing (BIP-340 Schnorr),
+// and NIP-42 relay publish. The private key never leaves the browser; the
+// backend never sees it.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
 
+// Legacy global text note: the fallback publish kind while channels are
+// identified by names (the Buzz relay requires a UUID `h` tag for stream
+// kinds, so name-based channels cannot publish kind 9).
+export const NOSTR_KIND_TEXT = 1;
 // Buzz KIND_STREAM_MESSAGE: channel-scoped via the NIP-29 `["h", "<channel-uuid>"]`
 // tag — the canonical chat message kind (spec: "Canonical publish tags and kinds").
 export const NOSTR_KIND_STREAM_MESSAGE = 9;
 export const NOSTR_KIND_AUTH = 22242;
+
+/** Canonical UUID form (8-4-4-4-12 hex, case-insensitive) — the only form the
+ * Buzz relay accepts in `h` tags for stream kinds (it parses them as `Uuid`). */
+export function isUuid(value: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
 
 export type NostrTag = string[];
 

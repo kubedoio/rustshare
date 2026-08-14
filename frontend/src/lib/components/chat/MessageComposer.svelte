@@ -4,6 +4,8 @@
 		publishEvent,
 		publicKeyOf,
 		NOSTR_KIND_STREAM_MESSAGE,
+		NOSTR_KIND_TEXT,
+		isUuid,
 		type NostrTag
 	} from '$lib/chat/nostr';
 	import {
@@ -111,14 +113,26 @@
 				return;
 			}
 			// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
-			// kind-9 stream messages are channel-scoped by the NIP-29 `h` tag, which
-			// carries the active channel id. Thread/reply e-tags are a later feature
+			// kind-9 stream messages are channel-scoped by the NIP-29 `h` tag. The
+			// relay parses `h` strictly as a channel UUID, so the stream publish is
+			// gated on the active channel id being a canonical UUID — which it only
+			// is once the authoritative channel registry (relay /channels) supplies
+			// UUIDs. Name-based channels (the current observation-derived ids like
+			// 'general') fall back to a legacy kind-1 note with no h tag, served by
+			// the observation path. Thread/reply e-tags are a later feature
 			// (issue #243), so no thread tags are emitted here.
-			const tags: NostrTag[] = [['h', channelId]];
+			const streamScoped = isUuid(channelId);
+			const tags: NostrTag[] = [];
+			if (streamScoped) tags.push(['h', channelId]);
 			if (attachmentTag) tags.push(attachmentTag);
 			const result = await publishEvent(
 				relayUrl,
-				await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, content, tags, boundPubkey),
+				await buildUnsignedEvent(
+					streamScoped ? NOSTR_KIND_STREAM_MESSAGE : NOSTR_KIND_TEXT,
+					content,
+					tags,
+					boundPubkey
+				),
 				secretKey
 			);
 			if (result.ok) {
