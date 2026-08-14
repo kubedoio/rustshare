@@ -755,13 +755,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
-        info!(
-            "Processing incoming chat event: {} from {}",
-            event.event_type,
-            event.user_id.as_deref().unwrap_or("anonymous")
-        );
-
-        debug!("Received chat event: {:?}", event);
+        info!(event_type = %event.event_type, "Processing incoming chat event");
 
         Ok(())
     }

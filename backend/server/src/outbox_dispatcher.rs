@@ -80,6 +80,46 @@ use crate::config::OutboxWorkerConfig;
 /// `integration_deliveries.state` CHECK constraint).
 const DELIVERY_STATES: [&str; 4] = ["pending", "claimed", "processed", "dead_lettered"];
 
+fn bridge_kind_for(event_type: &str) -> Option<&'static str> {
+    match event_type {
+        "io.elembra.chat.buzz.admission.created.v1" => Some("9030"),
+        "io.elembra.chat.buzz.admission.revoked.v1" => Some("9031"),
+        _ => None,
+    }
+}
+
+fn record_chat_bridge_state(kind: &str, state: &str) {
+    for current_state in ["queued", "acked", "dlq"] {
+        metrics::gauge!(
+            "chat_bridge_delivery_state",
+            "kind" => kind.to_string(),
+            "state" => current_state
+        )
+        .set(if current_state == state { 1.0 } else { 0.0 });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bridge_kind_for;
+
+    #[test]
+    fn bridge_kind_only_maps_known_admission_events() {
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.created.v1"),
+            Some("9030")
+        );
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.revoked.v1"),
+            Some("9031")
+        );
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.future.v1"),
+            None
+        );
+    }
+}
+
 /// A spawned task handle that aborts the task when dropped without the task
 /// having completed.
 ///
@@ -352,6 +392,11 @@ impl OutboxDispatcher {
         }
         metrics::counter!("outbox_dispatched_total", "consumer" => consumer_id.clone())
             .increment(batch.len() as u64);
+        for delivery in &batch.deliveries {
+            if let Some(kind) = bridge_kind_for(&delivery.event.r#type) {
+                record_chat_bridge_state(kind, "queued");
+            }
+        }
         let batch_len = batch.deliveries.len();
         // Saturating budget: `Duration::saturating_mul` cannot panic on
         // overflow, and an absurd batch length saturates to `Duration::MAX`.
@@ -497,6 +542,7 @@ impl OutboxDispatcher {
         )
         .record(started.elapsed().as_secs_f64());
         let event_type = claimed.event.r#type.clone();
+        let bridge_kind = bridge_kind_for(&event_type);
         match outcome {
             ConsumerOutcome::Processed => {
                 match self
@@ -510,6 +556,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            record_chat_bridge_state(kind, "acked");
+                        }
                         metrics::counter!(
                             "outbox_processed_total",
                             "consumer" => consumer_id.to_string(),
@@ -551,6 +600,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            record_chat_bridge_state(kind, "queued");
+                        }
                         metrics::counter!(
                             "outbox_retry_total",
                             "consumer" => consumer_id.to_string(),
@@ -591,6 +643,9 @@ impl OutboxDispatcher {
                     .await
                 {
                     Ok(true) => {
+                        if let Some(kind) = bridge_kind {
+                            record_chat_bridge_state(kind, "dlq");
+                        }
                         metrics::counter!(
                             "outbox_dead_lettered_total",
                             "consumer" => consumer_id.to_string(),

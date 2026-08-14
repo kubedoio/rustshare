@@ -63,7 +63,7 @@ export async function signEvent(
 }
 
 export type PublishResult =
-	| { ok: true }
+	| { ok: true; event_id: string }
 	| { ok: false; reason: 'transport' } // socket error/timeout before an OK frame
 	| { ok: false; reason: 'rejected'; detail?: string }; // relay answered OK false (NIP-20 message)
 
@@ -129,7 +129,7 @@ export async function publishEvent(
 			if (message[0] === 'OK' && message[1] === signed.id) {
 				finish(
 					message[2] === true
-						? { ok: true }
+						? { ok: true, event_id: signed.id }
 						: {
 								ok: false,
 								reason: 'rejected',

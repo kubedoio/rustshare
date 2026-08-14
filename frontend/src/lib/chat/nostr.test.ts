@@ -110,7 +110,7 @@ describe('publishEvent', () => {
 
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
-		expect(result).toEqual({ ok: true });
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent[0][0]).toBe('REQ');
 		const eventFrame = ws.sent.find((frame) => frame[0] === 'EVENT');
@@ -170,7 +170,7 @@ describe('publishEvent without an AUTH challenge', () => {
 
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
-		expect(result).toEqual({ ok: true });
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
 	});

@@ -19,6 +19,8 @@ export const updateAdminUser = (id: string, data: UpdateUserRequest) =>
 export const disableAdminUser = (id: string) => apiClient.postVoid(`/admin/users/${id}/disable`);
 
 export const enableAdminUser = (id: string) => apiClient.postVoid(`/admin/users/${id}/enable`);
+export const revokeChatPrincipal = (id: string) =>
+	apiClient.post(`/admin/applications/chat/principals/${id}/revoke`, {});
 
 export const deleteAdminUser = (id: string) => apiClient.delete(`/admin/users/${id}`);
 

@@ -57,6 +57,11 @@ pub struct BindingResponse {
     pub status: BindingStatus,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RevokePrincipalResponse {
+    pub revoked: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MappingRequest {
     pub community_id: String,
@@ -65,6 +70,41 @@ pub struct MappingRequest {
     /// are trusted when asking the community's authoritative relay.
     #[serde(default)]
     pub relay_pubkey: Option<String>,
+}
+
+/// Revoke a user's Chat binding and active admissions in the admin's tenant.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/applications/chat/principals/{principal_id}/revoke",
+    tag = "Chat",
+    params(("principal_id" = Uuid, Path, description = "User principal id")),
+    responses(
+        (status = 200, description = "Chat access revoked", body = RevokePrincipalResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn revoke_principal(
+    AdminUser { user_id: admin_id }: AdminUser,
+    State(db): State<DatabaseState>,
+    Path(principal_id): Path<Uuid>,
+) -> Result<Json<RevokePrincipalResponse>, AppError> {
+    let tenant_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id = $1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&db.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    let revoked = db
+        .chat_identity_store
+        .revoke_principal(TenantId(tenant_id), PrincipalId(principal_id))
+        .await
+        .map_err(internal_db)?;
+    Ok(Json(RevokePrincipalResponse {
+        revoked: revoked > 0,
+    }))
 }
 
 /// Configure an explicit tenant/workspace → Buzz community mapping.

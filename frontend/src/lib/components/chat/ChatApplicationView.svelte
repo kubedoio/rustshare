@@ -106,11 +106,29 @@
 	// condition, so the poll never fetches while Chat is unbound.
 	onMount(() => {
 		const interval = setInterval(() => {
+			statusQuery.refetch();
 			if (selectedChannelId) messagesQuery.refetch();
 			const status = $statusQuery.data;
 			if (status?.mapping != null && status?.binding != null) channelsQuery.refetch();
 		}, 15_000);
 		return () => clearInterval(interval);
+	});
+
+	let pendingEventId = $state<string | null>(null);
+	let syncState = $state<'idle' | 'waiting' | 'observed' | 'warning'>('idle');
+	$effect(() => {
+		if (!pendingEventId) return;
+		if ($messagesQuery.data?.messages.some((m) => m.event_id === pendingEventId)) {
+			pendingEventId = null;
+			syncState = 'observed';
+		}
+	});
+	$effect(() => {
+		if (!pendingEventId) return;
+		const timer = setTimeout(() => {
+			if (pendingEventId) syncState = 'warning';
+		}, 15_000);
+		return () => clearTimeout(timer);
 	});
 
 	function handleSendFailure(message: string): void {
@@ -122,7 +140,7 @@
 	const status = $derived($statusQuery.data);
 	const bindingActive = $derived(status?.binding != null && status.binding.status === 'Active');
 	const askChannelHref = $derived(
-		selectedChannelId && status?.mapping
+		selectedChannelId && status?.mapping && status.ask_available
 			? `/ask?scope=chat&communityId=${encodeURIComponent(status.mapping.community_id)}&channelId=${encodeURIComponent(selectedChannelId)}`
 			: null
 	);
@@ -170,6 +188,22 @@
 					<a class="text-sm text-primary" href={askChannelHref}>Ask this channel</a>
 				</div>
 			{/if}
+			{#if status && !status.ask_available}
+				<div class="px-4 pt-2 text-sm text-base-content/60" role="status">
+					Ask this channel is unavailable right now.
+				</div>
+			{/if}
+			{#if syncState === 'waiting'}
+				<div class="px-4 pt-2 text-sm text-base-content/60" role="status">
+					Sent — waiting for Elembra sync…
+				</div>
+			{:else if syncState === 'warning'}
+				<div class="px-4 pt-2 text-sm text-warning" role="status">
+					Sent, but Elembra has not observed it yet. Check Chat diagnostics.
+				</div>
+			{:else if syncState === 'observed'}
+				<div class="px-4 pt-2 text-sm text-success" role="status">Observed by Elembra.</div>
+			{/if}
 			{#if cursor}
 				<div class="px-4 pt-2">
 					<button type="button" class="text-sm text-primary" onclick={() => (cursor = null)}>
@@ -191,6 +225,11 @@
 				channelId={selectedChannelId ?? ''}
 				boundPubkey={status.binding?.buzz_pubkey ?? null}
 				onSendFailure={handleSendFailure}
+				onSent={(eventId: string) => {
+					cursor = null;
+					pendingEventId = eventId;
+					syncState = 'waiting';
+				}}
 			/>
 			{#if relayError}
 				<div class="px-4 py-2 text-sm text-error">

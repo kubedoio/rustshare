@@ -23,9 +23,10 @@
 		// and never races an unloaded query on the first send.
 		boundPubkey: string | null;
 		onSendFailure: (message: string) => void;
+		onSent?: (eventId: string) => void;
 	}
 
-	let { relayUrl, channelId, boundPubkey, onSendFailure }: Props = $props();
+	let { relayUrl, channelId, boundPubkey, onSendFailure, onSent = () => {} }: Props = $props();
 
 	let draft = $state('');
 	let sending = $state(false);
@@ -124,6 +125,7 @@
 				draft = '';
 				attachmentTag = null;
 				onSendFailure('');
+				onSent(result.event_id);
 			} else if (result.reason === 'rejected') {
 				const detail = result.detail ? `: ${result.detail.slice(0, 200)}` : '';
 				onSendFailure(`relay rejected the message${detail}`);

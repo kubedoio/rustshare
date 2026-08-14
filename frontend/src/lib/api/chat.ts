@@ -15,6 +15,7 @@ export interface ChatStatus {
 	mapping: ChatCommunityMapping | null;
 	binding: ChatBinding | null;
 	admission_active: boolean;
+	ask_available: boolean;
 }
 
 export interface ChatChannelInfo {

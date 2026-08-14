@@ -314,6 +314,10 @@ impl AskWorkspaceService {
         Self { search, provider }
     }
 
+    pub fn is_available(&self) -> bool {
+        self.provider.is_some()
+    }
+
     pub async fn ask(
         &self,
         ctx: &PrincipalContext,

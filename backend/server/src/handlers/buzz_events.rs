@@ -45,15 +45,23 @@ pub async fn receive_buzz_event(
         .verify_and_ingest(&body, signature)
         .await
     {
-        Ok(IngestOutcome::FirstObservation) => (
-            StatusCode::ACCEPTED,
-            Json(json!({ "status": "observed", "duplicate": false })),
-        ),
-        Ok(IngestOutcome::DuplicateObservation) => (
-            StatusCode::ACCEPTED,
-            Json(json!({ "status": "observed", "duplicate": true })),
-        ),
+        Ok(IngestOutcome::FirstObservation) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "observed").increment(1);
+            (
+                StatusCode::ACCEPTED,
+                Json(json!({ "status": "observed", "duplicate": false })),
+            )
+        }
+        Ok(IngestOutcome::DuplicateObservation) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "duplicate").increment(1);
+            (
+                StatusCode::ACCEPTED,
+                Json(json!({ "status": "observed", "duplicate": true })),
+            )
+        }
         Err(BuzzPushError::Unauthorized) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_unauthorized")
+                .increment(1);
             warn!("buzz event rejected: invalid HMAC or outside replay window");
             error_response(
                 StatusCode::UNAUTHORIZED,
@@ -62,10 +70,14 @@ pub async fn receive_buzz_event(
             )
         }
         Err(BuzzPushError::Malformed(reason)) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_malformed")
+                .increment(1);
             warn!("buzz event rejected: malformed payload ({reason})");
             error_response(StatusCode::BAD_REQUEST, "Malformed request", &reason)
         }
         Err(BuzzPushError::VerificationFailed) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_verification")
+                .increment(1);
             warn!("buzz event rejected: id or signature verification failed, or not a text note");
             error_response(
                 StatusCode::FORBIDDEN,
@@ -74,6 +86,8 @@ pub async fn receive_buzz_event(
             )
         }
         Err(BuzzPushError::UnknownCommunity) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_community")
+                .increment(1);
             warn!("buzz event rejected: community has no active workspace mapping");
             error_response(
                 StatusCode::FORBIDDEN,
@@ -82,6 +96,8 @@ pub async fn receive_buzz_event(
             )
         }
         Err(BuzzPushError::UnboundAuthor) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_author")
+                .increment(1);
             warn!("buzz event rejected: event author has no active binding in the mapped tenant");
             error_response(
                 StatusCode::FORBIDDEN,
@@ -93,6 +109,8 @@ pub async fn receive_buzz_event(
             community_id,
             row_count,
         }) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_ambiguous")
+                .increment(1);
             error!(
                 "Ambiguous active community mapping for community_id {community_id}: {row_count} tenants"
             );
@@ -103,6 +121,8 @@ pub async fn receive_buzz_event(
             )
         }
         Err(BuzzPushError::Persistence(reason)) => {
+            metrics::counter!("chat_webhook_outcomes_total", "outcome" => "rejected_persistence")
+                .increment(1);
             error!("Buzz event persistence failure: {reason}");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
