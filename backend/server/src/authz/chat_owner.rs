@@ -74,7 +74,7 @@
 
 use bytes::Bytes;
 use futures_util::{stream, StreamExt};
-use rustshare_core::domain::{ActionCapability, ApplicationId};
+use rustshare_core::domain::{ActionCapability, ApplicationId, TenantId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::{
@@ -616,29 +616,43 @@ struct GatePrefilter {
     mapping: WorkspaceCommunityMapping,
 }
 
+/// Map one authority outcome to the shared gate decision: `Allow` maps to
+/// `Allow`, `Deny`/`NotFound` map directly, and any authority error logs and
+/// fails closed to `Deny` — the single and batch authority paths use this
+/// same fail-closed mapping.
+fn authority_outcome_to_decision(
+    outcome: Result<BuzzReadDecision, BuzzAuthorityError>,
+    resource: &ResourceRef,
+    tenant: TenantId,
+) -> Decision {
+    match outcome {
+        Ok(BuzzReadDecision::Allow) => Decision::Allow,
+        Ok(BuzzReadDecision::Deny) => Decision::Deny,
+        Ok(BuzzReadDecision::NotFound) => Decision::NotFound,
+        Err(error) => {
+            tracing::error!(
+                application = CHAT_APPLICATION_ID,
+                %resource,
+                tenant = %tenant,
+                %error,
+                "Buzz authority check failed; denying access"
+            );
+            Decision::Deny
+        }
+    }
+}
+
 /// Run the FINAL channel/message decision from the configured Buzz authority
 /// against the request built by the gate. `Ok(())` only on `Allow`; every
-/// other outcome fails closed: `Deny`/`NotFound` map directly, and any
-/// authority error logs and fails closed to `Deny`.
+/// other outcome fails closed (see [`authority_outcome_to_decision`]).
 async fn gate_authority(
     authority: &dyn BuzzAuthority,
     req: &BuzzReadRequest,
     resource: &ResourceRef,
 ) -> Result<(), Decision> {
-    match authority.can_read(req).await {
-        Ok(BuzzReadDecision::Allow) => Ok(()),
-        Ok(BuzzReadDecision::Deny) => Err(Decision::Deny),
-        Ok(BuzzReadDecision::NotFound) => Err(Decision::NotFound),
-        Err(error) => {
-            tracing::error!(
-                application = CHAT_APPLICATION_ID,
-                %resource,
-                tenant = %req.tenant_id,
-                %error,
-                "Buzz authority check failed; denying access"
-            );
-            Err(Decision::Deny)
-        }
+    match authority_outcome_to_decision(authority.can_read(req).await, resource, req.tenant_id) {
+        Decision::Allow => Ok(()),
+        decision => Err(decision),
     }
 }
 
@@ -653,25 +667,12 @@ async fn gate_batch_item(
     prefilter: &GatePrefilter,
     authority_outcome: Result<BuzzReadDecision, BuzzAuthorityError>,
 ) -> Decision {
-    match authority_outcome {
-        Ok(BuzzReadDecision::Allow) => {
-            match owner.gate_post_authority(ctx, resource, prefilter).await {
-                Ok(_) => Decision::Allow,
-                Err(decision) => decision,
-            }
-        }
-        Ok(BuzzReadDecision::Deny) => Decision::Deny,
-        Ok(BuzzReadDecision::NotFound) => Decision::NotFound,
-        Err(error) => {
-            tracing::error!(
-                application = CHAT_APPLICATION_ID,
-                %resource,
-                tenant = %ctx.tenant_id,
-                %error,
-                "Buzz authority batch check failed; denying access"
-            );
-            Decision::Deny
-        }
+    match authority_outcome_to_decision(authority_outcome, resource, ctx.tenant_id) {
+        Decision::Allow => match owner.gate_post_authority(ctx, resource, prefilter).await {
+            Ok(_) => Decision::Allow,
+            Err(decision) => decision,
+        },
+        decision => decision,
     }
 }
 
@@ -724,6 +725,11 @@ impl ResourceOwner for ChatResourceOwner {
         }
         // Unsupported actions fail closed per ref, exactly like `authorize`.
         if action.0.as_str() != CHAT_READ {
+            tracing::debug!(
+                application = CHAT_APPLICATION_ID,
+                action = %action,
+                "unsupported action for chat message"
+            );
             return resources
                 .iter()
                 .map(|resource| BatchDecision::new(resource.clone(), Decision::Invalid))
