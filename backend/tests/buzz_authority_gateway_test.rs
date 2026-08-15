@@ -103,7 +103,7 @@ use rustshare_server::buzz_gateway::{
 use rustshare_server::buzz_observation::{
     BuzzEventPush, BuzzObservationService, BuzzPushContext, BuzzPushError, IngestOutcome,
 };
-use rustshare_server::config::OutboxWorkerConfig;
+use rustshare_server::config::{ChatProvisioningMode, OutboxWorkerConfig};
 use rustshare_server::handlers::chat_app::{list_channels, ChannelInfo};
 use rustshare_server::handlers::chat_identity::{
     update_community_mapping, UpdateCommunityMappingRequest,
@@ -4848,6 +4848,8 @@ async fn setup_app_state(
         buzz_observation_service,
         chat_owner,
         buzz_gateway: gateway,
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         outbox_status: Arc::new(OutboxStatus::default()),
         outbox_worker_enabled: false,
         outbox_readiness_staleness_secs: 60,

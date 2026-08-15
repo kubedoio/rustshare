@@ -19,6 +19,7 @@ use rustshare_infrastructure::repositories::{
     ShareRepository, UserRepository,
 };
 use rustshare_server::{
+    config::ChatProvisioningMode,
     handlers::{
         chat_integration::{list_chat_webhooks, register_chat_webhook, RegisterWebhookRequest},
         extractors::AdminUser,
@@ -324,6 +325,8 @@ async fn setup_app_state(pool: PgPool) -> AppState {
         buzz_observation_service,
         chat_owner,
         buzz_gateway: None,
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

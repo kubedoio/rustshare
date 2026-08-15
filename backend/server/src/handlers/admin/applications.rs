@@ -4,15 +4,16 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use rustshare_core::domain::ApplicationConfig;
+use rustshare_core::domain::{ApplicationConfig, TenantId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
+use crate::config::ChatProvisioningMode;
 use crate::services::application_service::UpdateApplicationInput;
 use crate::{
     handlers::{AdminUser, AppError, AuthenticatedUser},
-    state::ApplicationState,
+    state::{AppState, ApplicationState},
 };
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ pub async fn get_application(
 pub async fn enable_application(
     AdminUser { user_id }: AdminUser,
     AuthenticatedUser { tenant_id, .. }: AuthenticatedUser,
-    State(state): State<ApplicationState>,
+    State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
     let application = state
@@ -125,6 +126,23 @@ pub async fn enable_application(
         json!({"application_id": key}),
     )
     .await;
+
+    // Zero-config bootstrap (ADR-0036): in auto mode, enabling Chat
+    // provisions the deployment Buzz community immediately. A failure is
+    // logged and leaves Chat safely unconfigured — the admin retries via
+    // POST .../chat/workspaces/{id}/provision.
+    if key == crate::authz::chat_owner::CHAT_APPLICATION_ID
+        && state.chat_provisioning == ChatProvisioningMode::Auto
+    {
+        if let Some(bootstrap) = &state.chat_bootstrap {
+            if let Err(error) = bootstrap
+                .provision(TenantId(tenant_id), WorkspaceId(tenant_id))
+                .await
+            {
+                tracing::warn!(%error, "chat auto-provisioning failed; chat remains unconfigured");
+            }
+        }
+    }
 
     Ok(Json(application))
 }
