@@ -75,6 +75,12 @@ and `verify_auth_header`, which both use `general_purpose::STANDARD`):
   - `method` tag — the HTTP method (e.g. `POST`, `GET`)
   - for `POST` requests, a `payload` tag whose value is the hex-encoded
     SHA-256 of the request body
+  - `nonce` tag — a per-request random value. The relay enforces NIP-98
+    replay protection keyed on the auth event id, and `created_at` is
+    second-resolution, so without a nonce two requests in the same second
+    would produce identical auth events and the second would be rejected as
+    a replay. The relay's verifier inspects only the `u`/`method`/`payload`
+    tags and ignores extra ones.
 - `content`: `""`
 - signed by the workload's service key
 

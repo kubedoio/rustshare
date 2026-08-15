@@ -363,9 +363,13 @@ impl BuzzGatewayClient {
     ///
     /// The `u` tag carries the exact request URL (query string included), the
     /// `method` tag the HTTP method, and — when a body is present — a `payload`
-    /// tag with `hex(sha256(body))`. The kind-27235 event is signed with the
-    /// service key and base64-encoded. NIP-98 leaves the concrete base64
-    /// variant open in the wild; this crate's own verifier
+    /// tag with `hex(sha256(body))`. A per-request `nonce` tag keeps every
+    /// auth event unique: `created_at` is second-resolution, so two requests
+    /// in the same second would otherwise produce IDENTICAL signed events and
+    /// the relay's NIP-98 replay protection (a seen-set keyed on the auth
+    /// event id) would reject the second as a replay. The kind-27235 event is
+    /// signed with the service key and base64-encoded. NIP-98 leaves the
+    /// concrete base64 variant open in the wild; this crate's own verifier
     /// (`nip98::verify_auth_header`) decodes standard base64 (padded), so we
     /// encode exactly like `nostr`'s own `HttpData::to_authorization` to keep
     /// headers produced here verifiable by it and by relays/test doubles built
@@ -390,6 +394,10 @@ impl BuzzGatewayClient {
                 BuzzAuthorityError::Config(format!("cannot build NIP-98 payload tag: {e}"))
             })?);
         }
+        let nonce = uuid::Uuid::new_v4().to_string();
+        tags.push(Tag::parse(["nonce", nonce.as_str()]).map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot build NIP-98 nonce tag: {e}"))
+        })?);
         let event = EventBuilder::new(Kind::HttpAuth, String::new())
             .tags(tags)
             .sign_with_keys(&self.keys)
