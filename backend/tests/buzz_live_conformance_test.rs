@@ -1576,3 +1576,115 @@ async fn live_p10_64_message_page_is_one_batch_round_trip() {
     );
     cleanup(&pool, fixture.tenant).await;
 }
+
+/// P11. Timeline-page authorization latency budget: a 64-message page across
+/// mixed allow/deny channels authorizes in ≤ 2 relay round-trips (1 batch +
+/// margin) with median wall time ≤ 500 ms against the local loopback relay.
+///
+/// Methodology (documented in `docs/architecture/elembra-chat-alpha-readiness.md`
+/// §14): ONE warm-up batch call is excluded; the measured workload is the
+/// `authorize_batch` wall time ONLY — the pre-filters, the single relay batch
+/// round-trip, and the post-authority re-reads — which is the authorization
+/// latency of a `list_messages` page (the handler adds only pagination and
+/// rendering around this path). Three repetitions are measured and the MEDIAN
+/// is asserted, so a single scheduler hiccup cannot fail the budget. The
+/// environment is honest: loopback relay + local dev DB; production numbers
+/// depend on the relay's network distance — the budget is for the
+/// authorization path itself, and authorization is NEVER weakened to hit it
+/// (bounded batch concurrency only).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires live Buzz relay (scripts/run-buzz-conformance.sh)"]
+async fn live_p11_timeline_authorization_latency_within_budget() {
+    let _guard = SERIAL.lock().await;
+    let Some(env) = LiveEnv::load() else {
+        eprintln!("SKIP live_p11: RUSTSHARE_BUZZ_LIVE_SERVICE_SK / RELAY_PUBKEY not set");
+        return;
+    };
+    let pool = pool().await;
+    let fixture = setup_tenant(
+        &pool,
+        &env,
+        &Keys::generate(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    // 64 relay-checked refs across mixed channels: 48 member-channel messages
+    // (allow) + 16 denied-channel messages (owner-published, owner bound).
+    let allowed = seed_private_channel(&env, &fixture).await;
+    let denied_channel = Uuid::new_v4().to_string();
+    relay_create_channel(
+        &env,
+        &denied_channel,
+        "conformance-denied-latency",
+        "private",
+        "stream",
+    )
+    .await;
+    bind_pubkey(
+        &pool,
+        fixture.tenant,
+        &fixture.community_id,
+        &env.service_keys.public_key().to_hex(),
+    )
+    .await;
+    let obs = observation_service(pool.clone());
+    let mut refs = Vec::with_capacity(64);
+    for i in 0..48 {
+        refs.push(seed_message(&env, &obs, &fixture, &allowed, &format!("p11 allow {i}")).await);
+    }
+    for i in 0..16 {
+        let event =
+            relay_publish_message_as_owner(&env, &denied_channel, &format!("p11 deny {i}")).await;
+        ingest_event_into(&obs, &fixture.community_id, &event).await;
+        refs.push(chat_ref(&event.id.to_hex()));
+    }
+
+    let (state, _, _) = setup_app_state(pool.clone(), live_gateway(&env)).await;
+    let ctx = user_ctx(fixture.principal, fixture.tenant);
+
+    // Warm-up call (excluded from the measurement): cold connection pools,
+    // first relay touch, caches.
+    let warm = state
+        .source_authorizer
+        .authorize_batch(&ctx, &chat_read_action(), &refs)
+        .await
+        .expect("the warm-up batch must succeed");
+    assert_eq!(warm.len(), 64);
+
+    // Measured workload: three repetitions of the same page authorization;
+    // each repetition also asserts its own relay round-trip bound.
+    const BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
+    let mut samples = Vec::with_capacity(3);
+    for _ in 0..3 {
+        let before = relay_route_count(&env, "check-batch").await;
+        let start = std::time::Instant::now();
+        let decisions = state
+            .source_authorizer
+            .authorize_batch(&ctx, &chat_read_action(), &refs)
+            .await
+            .expect("the measured batch must succeed");
+        samples.push(start.elapsed());
+        let after = relay_route_count(&env, "check-batch").await;
+        assert_eq!(decisions.len(), 64);
+        assert!(
+            decisions[..48].iter().all(|d| d.decision.is_allow()),
+            "the member-channel messages must be allowed"
+        );
+        assert!(
+            decisions[48..].iter().all(|d| d.decision == Decision::Deny),
+            "the denied-channel messages must be denied"
+        );
+        assert!(
+            after - before <= 2,
+            "one page authorization must cost at most 2 relay round-trips"
+        );
+    }
+    samples.sort();
+    let median = samples[1];
+    eprintln!("P11 latency samples: {samples:?} median: {median:?} (budget {BUDGET:?})");
+    assert!(
+        median <= BUDGET,
+        "median timeline-page authorization {median:?} exceeded the {BUDGET:?} budget (samples: {samples:?})"
+    );
+    cleanup(&pool, fixture.tenant).await;
+}

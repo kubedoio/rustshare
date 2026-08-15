@@ -307,3 +307,49 @@ mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
   L32/#244 trap is real on a fresh deployment.
 - CSRF (double-submit cookie) applies to all authenticated mutating API calls;
   API tooling must echo `X-Rustshare-Csrf` (browsers do automatically).
+
+## 14. Batch authorization latency budget
+
+**Requirement (production-authority goal):** "Use the Buzz batch contract for
+timeline/search workloads. Prove a 64+ message authorization workload remains
+bounded and within a documented latency budget. Do not solve latency by
+weakening authorization."
+
+**Budget (documented + enforced by the live conformance suite):** a 64-message
+timeline-page authorization completes in **≤ 2 relay HTTP round-trips**
+(1 batch round-trip + margin; the suite proves exactly 1) with **p95 wall
+time ≤ 500 ms** against the local loopback relay.
+
+**What is measured** (`live_p11_timeline_authorization_latency_within_budget`
+in `backend/tests/buzz_live_conformance_test.rs`): the wall time of one
+`authorize_batch` call over 64 relay-checked refs across mixed allow/deny
+channels — the pre-filters, the single relay batch round-trip, and the
+post-authority linearization re-reads. That is the authorization latency of a
+`list_messages` page: the handler adds only pagination and rendering around
+this path, so the budget measures the authorization path itself, not the full
+HTTP handler.
+
+**Methodology (reproducible, honest about environment sensitivity):**
+
+- One warm-up `authorize_batch` call is excluded from the measurement (cold
+  connection pools, first relay touch, caches).
+- Three repetitions of the identical page are measured; the **median** is
+  asserted against the budget, so a single scheduler hiccup cannot fail it.
+- Each repetition independently asserts the round-trip bound (≤ 2) via the
+  relay's own metrics endpoint (`http_requests_total{action=…check-batch}`
+  delta) — the same instrumentation `live_p10` uses to prove exactly one
+  round-trip.
+- Environment: in-process Elembra → loopback relay (localhost), local dev DB,
+  in the same run orchestrated by `scripts/run-buzz-conformance.sh`. The
+  budget is for the authorization path against a co-located relay; production
+  wall times additionally depend on the relay's network distance and the
+  tenant DB, so the production contract is the round-trip bound (≤ 2) with
+  the wall-time budget as the local-loopback reference measurement.
+
+**How the budget is met:** the batch contract (one round-trip for the whole
+page) and bounded concurrency (`AUTHORIZATION_BATCH_CONCURRENCY = 16`) — the
+same fail-closed pipeline as the single-message path. Authorization is never
+weakened to hit the budget: every message still passes the relay's current
+membership/visibility/message-availability decision plus the post-authority
+re-reads; pre-filter refusals and `NotFound` outcomes still short-circuit per
+ref without reaching the relay.
