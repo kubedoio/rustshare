@@ -210,9 +210,15 @@ async fn relay_submit(
         "POST /events must succeed"
     );
     let body: serde_json::Value = response.json().await.expect("relay answers JSON");
-    if let Some(accepted) = body.get("accepted").and_then(serde_json::Value::as_bool) {
-        assert!(accepted, "relay must accept the event: {body}");
-    }
+    // Pin the acceptance field: a silently-unlanded seed must fail loudly
+    // here instead of surfacing as a confusing downstream assertion.
+    let accepted = body
+        .get("accepted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| {
+            panic!("relay /events response must carry the `accepted` field: {body}")
+        });
+    assert!(accepted, "relay must accept the seed event: {body}");
     event.id.to_hex()
 }
 
@@ -316,12 +322,18 @@ async fn relay_publish_message(
         .expect("relay must be reachable");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let body: serde_json::Value = response.json().await.expect("relay answers JSON");
-    if let Some(accepted) = body.get("accepted").and_then(serde_json::Value::as_bool) {
-        assert!(
-            accepted,
-            "relay must accept the stream message (is the publisher a channel member?): {body}"
-        );
-    }
+    // Pin the acceptance field: a silently-unlanded seed must fail loudly
+    // here instead of surfacing as a confusing downstream assertion.
+    let accepted = body
+        .get("accepted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| {
+            panic!("relay /events response must carry the `accepted` field: {body}")
+        });
+    assert!(
+        accepted,
+        "relay must accept the stream message (is the publisher a channel member?): {body}"
+    );
     event
 }
 

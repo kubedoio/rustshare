@@ -954,6 +954,62 @@ mod tests {
         assert_eq!(verified, keys.public_key());
     }
 
+    #[tokio::test]
+    async fn nip98_headers_are_unique_within_the_same_second() {
+        // Regression guard for the per-request nonce: `created_at` is
+        // second-resolution, so without a nonce two requests in the same
+        // second produce IDENTICAL signed auth events and the relay's NIP-98
+        // replay protection rejects the second as a replay. The fake relay
+        // has no replay guard, so only this unit test (and the live
+        // conformance suite) can catch a nonce regression.
+        let service = client(Keys::generate());
+        let url = Url::parse("https://chat.example.test/api/v1/relay/access/check-batch").unwrap();
+        let body = serde_json::to_vec(&BuzzAccessCheckRequest {
+            pubkey: HEX64.to_string(),
+            channel_id: "channel-1".to_string(),
+            channel_kind: BuzzChannelKind::Workspace,
+            message_id: Some(HEX64.to_string()),
+            event_created_at: Some(1_750_000_000),
+        })
+        .unwrap();
+
+        let first = service
+            .nip98_header("POST", &url, Some(&body))
+            .await
+            .unwrap();
+        let second = service
+            .nip98_header("POST", &url, Some(&body))
+            .await
+            .unwrap();
+
+        // Decode both auth events and compare their ids + nonce tags.
+        let decode = |header: &str| -> (String, String) {
+            let encoded = header.strip_prefix("Nostr ").expect("Nostr header prefix");
+            let json = STANDARD.decode(encoded).expect("standard base64");
+            let event: serde_json::Value = serde_json::from_slice(&json).expect("auth event JSON");
+            let nonce = event["tags"]
+                .as_array()
+                .expect("tags array")
+                .iter()
+                .find(|tag| tag[0] == "nonce")
+                .and_then(|tag| tag.get(1))
+                .and_then(serde_json::Value::as_str)
+                .expect("nonce tag value")
+                .to_string();
+            (event["id"].as_str().expect("event id").to_string(), nonce)
+        };
+        let (first_id, first_nonce) = decode(&first);
+        let (second_id, second_nonce) = decode(&second);
+        assert_ne!(
+            first_nonce, second_nonce,
+            "each auth event must carry a fresh nonce"
+        );
+        assert_ne!(
+            first_id, second_id,
+            "two requests in the same second must not produce identical auth events"
+        );
+    }
+
     #[test]
     fn http_base_swaps_ws_and_wss_schemes() {
         let http = BuzzGatewayClient::http_base("ws://chat.example.test:8080").unwrap();
