@@ -130,5 +130,14 @@ the workload is trusted but must never be able to sign as a user.
 - [x] Admin reconcile over the public HTTP contract, idempotent, no outbox writes.
 - [x] Admin relay-pin rotation endpoint; tombstone-immutable `upsert_records`.
 - [x] 24-test suite (18 acceptance + admin pin-rotation + 5 handler-level) against a contract-faithful fake relay.
-- [ ] Real relay endpoints implemented in the Buzz repository (proposed spec).
-- [ ] Live-relay conformance test replacing the fake before production buzz mode.
+- [x] Real relay endpoints implemented in the Buzz repository (proposed spec).
+  **Satisfied:** kubedoio/buzz PR #1 (`feat/relay-authorization-v1alpha1`)
+  implements `POST /api/v1/relay/access/check`, `/access/check-batch`,
+  `GET /api/v1/relay/channels` and `GET /api/v1/relay/state/events` — NIP-98
+  authenticated, trusted-service-gated (`RELAY_TRUSTED_SERVICE_PUBKEYS`),
+  kind-19030 signed responses.
+- [x] Live-relay conformance test replacing the fake before production buzz mode.
+  **Satisfied:** `backend/tests/buzz_live_conformance_test.rs` (proofs 1–10,
+  run by `scripts/run-buzz-conformance.sh` against the real relay) replaces
+  the fake relay for the production-authority proofs; the fake remains for
+  the contract-faithful unit/integration suites.

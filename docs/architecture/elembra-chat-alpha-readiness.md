@@ -170,18 +170,18 @@ Items 2–6 are deferred to tracked issues (not implemented in this pass — the
 
 | # | Limitation | Class |
 |---|---|---|
-| L1 | Channel list = observed events only (no Buzz registry API) | D (upstream dependency) |
+| L1 | Channel list = observation-derived in LOCAL mode only (buzz mode uses the relay's authoritative registry) | **D — resolved (registry endpoint specified + implemented)** |
 | L2 | Reference-first messages render without body (no `content_indexing`) | C (documented posture; opt-in flag) |
-| L3 | Buzz-mode large timelines slow (per-message relay round-trips, no batch endpoint) | D (upstream batch endpoint deferred, ADR-0035) |
-| L4 | No reply/thread composer (thread tag wire format unconfirmed) | D (upstream wire format) → B when wire confirmed |
+| L3 | Buzz-mode timeline authorization is one relay batch round-trip per page (64-message bound, latency-budgeted) | **D — resolved (batch endpoint specified + implemented; live_p10 proves one round-trip, live_p11 the 500 ms budget)** |
+| L4 | No reply/thread composer (reply UI) | **D — resolved at the wire-format level (NIP-29 `h` + NIP-10 `e` confirmed upstream); remaining: the reply-UI composer feature (issue #243)** |
 | L5 | Attachments sender-side only (observation index keeps no tags) | B (projection change; not Alpha-blocking for senders) |
-| L6 | No client channel tagging (channel attribution by Buzz bridge) | D (upstream wire format) |
-| L7 | DM/private/excluded channels unreadable under local gate | D (upstream `access/check`) |
+| L6 | Client channel tagging follows the canonical wire format (kind 9 + `["h", <channel-uuid>]`; legacy kind-1 stays bridge-attributed) | **D — resolved (canonical publish tags and kinds confirmed + implemented client-side)** |
+| L7 | DM/private/excluded channels unreadable under the LOCAL gate (buzz mode reads them via the relay) | **D — resolved for buzz mode (access/check implemented); the local gate is unchanged by design** |
 | L8 | Device loss without export unrecoverable | B (documented; import/export UX now complete) |
 | L9 | No per-channel membership verification at projection/Ask candidacy | D (upstream channel-level adapter) |
 | L10 | Observation body never backfilled by re-push/reconcile | C (documented; delete+re-push recovery) |
 | L11 | No body for never-eligible channels | C (by design) |
-| L12 | Buzz mode not live upstream; all deployments run `local` gate | D (upstream; blocks production buzz authz) |
+| L12 | Buzz mode not live upstream; all deployments run `local` gate | **D — resolved (alpha/dogfood stack now runs buzz mode; local remains the explicit dev fallback)** |
 | L13 | Reconcile skips unbound (revoked) authors | C (documented) |
 | L14 | No delegated/service/agent access to Chat | C (fails closed today) |
 | L15 | Buzz-mode reads depend on relay availability | D (upstream; fail-closed by design) |
@@ -221,9 +221,9 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 - Sent-vs-observed message status indicator (L31).
 - Chat ingestion/observability metrics + bridge delivery visibility (observability items 2–6).
 - Recipient-side attachment tags (projection change, L5).
-- Reply/thread composer once the thread wire format is confirmed (L4).
+- Reply/thread composer (L4 — wire format confirmed upstream; issue #243 follow-up).
 - Ask-availability gating in the status surface (L32).
-- Buzz-mode read latency batch endpoint + upstream `access/check`/channel registry (L3/L1/L7/L12/L15 — upstream).
+- ~~Buzz-mode read latency batch endpoint + upstream `access/check`/channel registry (L3/L1/L7/L12/L15)~~ — **resolved in the production-authority pass** (batch + registry + access checks implemented; live conformance suite green).
 - Reconcile automation for revocations (L24).
 
 ## 11. Issue mapping
@@ -244,7 +244,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | — | *new*: Recipient-side attachment tags (projection) | CREATE |
 | — | *new*: Reply/thread composer (blocked on wire format) | CREATE |
 | — | *new*: Ask availability gating when LLM provider not configured | CREATE |
-| — | *new*: Buzz-mode production readiness (access/check, batch, channel registry — upstream) | CREATE |
+| — | ~~Buzz-mode production readiness (access/check, batch, channel registry — upstream)~~ | **resolved — production-authority pass (E1–E7); pending deploy** |
 
 No duplicate issues existed; none closed. Existing open issues are narrow; none need a giant "Chat v2" catch-all.
 

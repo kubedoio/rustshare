@@ -331,9 +331,24 @@ The following are operator-visible today (proven during this goal):
   schema/migration and timeline DTO change; the current sender-side tag path
   remains secure and usable for the sender, so this is a separate Alpha
   follow-up rather than a broad projection redesign in this closure.
-- #243 remains blocked on Buzz's thread-tag wire format. #245 remains blocked
-  on Buzz ADR-0035 relay capability and live conformance tests; Elembra does
-  not emulate either upstream dependency.
+- #243 is resolved at the WIRE-FORMAT level: Buzz confirms the canonical
+  thread/root contract — NIP-29 `["h", <channel-uuid>]` channel scoping plus
+  NIP-10 `["e", <64-hex>, <relay-url?>, "root"|"reply"]` thread tags with
+  server-validated ancestry (documented in the buzz repo's NOSTR.md and the
+  Elembra spec's "Canonical publish tags and kinds"). The remaining #243 work
+  is the reply/thread COMPOSER feature (reply UI in the message composer),
+  which stays open as a separate follow-up.
+- #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
+  ADR-0035 relay capability is implemented (kubedoio/buzz PR #1,
+  `feat/relay-authorization-v1alpha1`) and the live conformance suite is
+  green (`scripts/run-buzz-conformance.sh`, 10 proofs incl. `live_p10`
+  one-batch-round-trip and `live_p11` latency budget). Issue #245's four
+  acceptance criteria: relay endpoints implemented ✅; live-relay conformance
+  replaces the fake ✅; buzz-mode authorization enabled in production ⏳
+  (pending deploy of this branch); large-timeline latency regression test
+  passes within budget ✅ (`live_p11`, observed median 208 ms against the
+  500 ms budget). The production authority PR remains open for review (no
+  merge). Elembra does not emulate either upstream dependency.
 
 ## 12. Live Buzz conformance suite (production-authority proofs)
 
