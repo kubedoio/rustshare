@@ -334,3 +334,55 @@ The following are operator-visible today (proven during this goal):
 - #243 remains blocked on Buzz's thread-tag wire format. #245 remains blocked
   on Buzz ADR-0035 relay capability and live conformance tests; Elembra does
   not emulate either upstream dependency.
+
+## 12. Live Buzz conformance suite (production-authority proofs)
+
+The live conformance suite (`backend/tests/buzz_live_conformance_test.rs`)
+proves Elembra uses Buzz as the REAL production authority, fail-closed: an
+in-process Elembra (AppState with the Buzz gateway authority + `buzz_gateway`
+wired, same as the fake-relay suites) runs against the REAL relay built from
+the `feat/relay-authorization-v1alpha1` branch (`.worktrees/buzz`), with the
+dev Elembra DB as the store. The suite seeds the relay itself over its public
+HTTP surface (`POST /events`) and ingests the same signed events through the
+real in-process observation bridge.
+
+Proofs covered (each a `#[tokio::test]`):
+
+1. allowed channel read succeeds (member + available message → Allow + fetch
+   returns the message bytes);
+2. denied/private channel fails (non-member → Deny; fetch is existence-hiding
+   404);
+3. cross-community access fails (same relay, different host → unmapped host →
+   Deny, while the primary tenant still works);
+4. revoked user denied immediately (relay-side kind-9001/9031 → the very next
+   authorize denies, no caching);
+5. relay unavailable fails closed (dead port → Deny, never Allow/error);
+6. batch decisions equal single decisions (mixed allow/deny against the live
+   relay, per-message parity);
+7. channel listing is authoritative (registry lists channels with ZERO
+   observations; relay revocation reflected on the next call);
+8. no Elembra ACL / no direct Buzz DB access — structural guard
+   (`scripts/guard-buzz-no-acl.sh`);
+9. Memory/Search/Ask cannot bypass Buzz (message indexed + searchable, but
+   RAG materialization returns nothing after relay revocation);
+10. a 64-message page authorizes in exactly ONE relay batch round-trip
+    (counted via the relay's own metrics endpoint; the latency budget itself
+    is tracked separately).
+
+Run it:
+
+```bash
+./scripts/run-buzz-conformance.sh
+```
+
+The script builds the relay image from the worktree (skips when present),
+brings up the relay stack (`docker compose -f docker-compose.yml -f
+docker-compose.alpha.yml -f docker-compose.conformance.yml up -d buzz-relay`)
+with `RELAY_URL=ws://127.0.0.1:7447` (so the suite's Host header binds the
+seeded community) and `RELAY_TRUSTED_SERVICE_PUBKEYS=<Elembra service pk>`
+(the v1alpha1 authorization API's trusted-service gate), generates the
+service/relay keys when unset, waits for relay health, runs the suite with
+the live env vars, and reports PASS/FAIL. Set `RUSTSHARE_BUZZ_CONFORMANCE_KEEP=1`
+to leave the stack running. The suite requires the dev Elembra DB
+(`backend/.env` DATABASE_URL) and fails with a clear message when a leftover
+container holds the relay ports (7447/8088/9102).
