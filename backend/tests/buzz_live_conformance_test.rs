@@ -1474,18 +1474,16 @@ async fn live_p9_memory_search_ask_cannot_bypass_buzz() {
     .await;
     let channel = seed_private_channel(&env, &fixture).await;
     let obs = observation_service(pool.clone());
-    let reference = seed_message(
-        &env,
-        &obs,
-        &fixture,
-        &channel,
-        "conformance searchable payload",
-    )
-    .await;
-    let message_id = reference.resource_id.clone();
 
     // Fold the observation into the Memory catalog through the REAL pipeline
-    // (outbox → dispatcher → projection consumer).
+    // (outbox → dispatcher → projection consumer). The consumer MUST be
+    // registered BEFORE seeding: `first_delivery` only claims outbox events
+    // with `created_at >= integration_consumers.registered_at`
+    // (backend/crates/storage/src/outbox_store.rs, claim predicate), so an
+    // event written before registration is never claimed on a fresh
+    // database. Registration is an idempotent no-op that preserves the
+    // original timestamp — which is why a dev DB with a leftover registration
+    // from an earlier run masks the bug while CI's fresh DB exposes it.
     let outbox = Arc::new(OutboxStore::new(
         pool.clone(),
         Arc::new(ApplicationRegistry::first_party().unwrap()),
@@ -1510,6 +1508,18 @@ async fn live_p9_memory_search_ask_cannot_bypass_buzz() {
         OutboxWorkerConfig::default(),
         "buzz-conformance-worker".to_string(),
     ));
+
+    // Publish + ingest only now, so the outbox event lands after the
+    // consumer registration and the claim predicate holds.
+    let reference = seed_message(
+        &env,
+        &obs,
+        &fixture,
+        &channel,
+        "conformance searchable payload",
+    )
+    .await;
+    let message_id = reference.resource_id.clone();
 
     let (state, _, _) = setup_app_state(pool.clone(), live_gateway(&env)).await;
     let ctx = user_ctx(fixture.principal, fixture.tenant);
