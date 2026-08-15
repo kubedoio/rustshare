@@ -4958,3 +4958,135 @@ async fn buzz_and_local_channel_summaries_have_identical_shape() {
     fake.stop().await;
     cleanup(&pool, tenant).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn buzz_mode_channel_list_denies_when_chat_access_is_deactivated() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &keys.public_key().to_hex());
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let (state, _, _) = setup_app_state(pool.clone(), Some(gateway)).await;
+
+    // Baseline: the list is served while Chat access is enabled.
+    let response = list_channels(State(state.clone()), auth(env.principal, tenant))
+        .await
+        .expect("the list must succeed");
+    assert_eq!(response.0.len(), 1);
+    let baseline_requests = fake.state.lock().unwrap().channels_requests;
+    assert_eq!(baseline_requests, 1);
+
+    // Deactivate the Chat Application: the list surface must deny with an
+    // EMPTY list (existence hiding), never a stale registry answer. The
+    // PRE-check (chat_access) catches the deactivation before any registry
+    // round-trip, so `channels_requests` is unchanged.
+    sqlx::query("UPDATE application_enablements SET enabled = false WHERE tenant_id = $1")
+        .bind(tenant.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = list_channels(State(state.clone()), auth(env.principal, tenant))
+        .await
+        .expect("a deactivated Chat Application must not surface as an error");
+    assert!(
+        response.0.is_empty(),
+        "deactivated chat access must yield an empty list"
+    );
+    assert_eq!(
+        fake.state.lock().unwrap().channels_requests,
+        baseline_requests,
+        "the pre-check catches the deactivation before the registry call"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn buzz_mode_channel_list_denies_when_mapping_is_deactivated() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member("channel-1", &keys.public_key().to_hex());
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let (state, _, _) = setup_app_state(pool.clone(), Some(gateway)).await;
+
+    let response = list_channels(State(state.clone()), auth(env.principal, tenant))
+        .await
+        .expect("the list must succeed");
+    assert_eq!(response.0.len(), 1);
+    let baseline_requests = fake.state.lock().unwrap().channels_requests;
+
+    // Deactivate the community mapping: the list surface must deny with an
+    // EMPTY list. The handler's mapping-active check catches the
+    // deactivation before the registry call, so `channels_requests` is
+    // unchanged.
+    sqlx::query("UPDATE chat_workspace_communities SET active = false WHERE tenant_id = $1")
+        .bind(tenant.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = list_channels(State(state.clone()), auth(env.principal, tenant))
+        .await
+        .expect("a deactivated mapping must not surface as an error");
+    assert!(
+        response.0.is_empty(),
+        "a deactivated mapping must yield an empty list"
+    );
+    assert_eq!(
+        fake.state.lock().unwrap().channels_requests,
+        baseline_requests,
+        "the handler's mapping-active check catches the deactivation before the registry call"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}

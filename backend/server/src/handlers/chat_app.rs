@@ -9,7 +9,9 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{ActionCapability, ApplicationId, PrincipalId, TenantId, WorkspaceId};
-use rustshare_resource_auth::{PrincipalContext, ResourceRef, WorkspaceCommunityMapping};
+use rustshare_resource_auth::{
+    ChatIdentityBinding, PrincipalContext, ResourceRef, WorkspaceCommunityMapping,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{AppError, AuthenticatedUser};
@@ -199,26 +201,41 @@ pub async fn list_channels(
 /// (`GET /api/v1/relay/channels`) is the discovery source, already filtered
 /// by the relay to channels the caller's bound pubkey may read — no
 /// per-channel re-gating here (that would cost one relay round-trip per
-/// channel). Every failure is non-disclosing: a missing/inactive binding, an
-/// unpinned mapping, or a gateway error yields an empty list, never an
-/// error response.
+/// channel). Every failure is non-disclosing: missing/inactive local
+/// authorization, an unpinned mapping, or a gateway error yields an empty
+/// list, never an error response.
 async fn list_channels_from_registry(
     state: &AppState,
     ctx: &PrincipalContext,
     mapping: &WorkspaceCommunityMapping,
     gateway: &crate::buzz_gateway::BuzzGatewayClient,
 ) -> Result<Json<Vec<ChannelInfo>>, AppError> {
-    // The same binding lookup the authorization gate uses; no active binding
-    // → no channels (existence hiding).
-    let Some(binding) = state
-        .chat_owner
-        .chat_identity_store()
+    let chat_identity = state.chat_owner.chat_identity_store();
+    // Pre-check (fail closed, existence hiding): the caller must currently
+    // have Chat enabled, an active binding, an active admission for that
+    // binding in the mapped community, and a pinned mapping — the same
+    // local pre-filters the message gate applies before its relay call.
+    if !chat_identity
+        .chat_access(ctx.tenant_id, ctx.workspace_id, ctx.principal_id)
+        .await
+        .map_err(|e| AppError::internal(format!("chat access lookup failed: {e}")))?
+    {
+        return Ok(Json(Vec::new()));
+    }
+    let Some(binding) = chat_identity
         .active_binding(ctx.tenant_id, ctx.principal_id)
         .await
         .map_err(|e| AppError::internal(format!("chat binding lookup failed: {e}")))?
     else {
         return Ok(Json(Vec::new()));
     };
+    if !chat_identity
+        .active_admission(ctx.tenant_id, &mapping.community_id, &binding.buzz_pubkey)
+        .await
+        .map_err(|e| AppError::internal(format!("chat admission lookup failed: {e}")))?
+    {
+        return Ok(Json(Vec::new()));
+    }
     let Some(relay_pubkey) = mapping.relay_pubkey.as_deref() else {
         tracing::warn!(
             application = crate::authz::chat_owner::CHAT_APPLICATION_ID,
@@ -242,6 +259,19 @@ async fn list_channels_from_registry(
             return Ok(Json(Vec::new()));
         }
     };
+    // POST-check: re-read the local authorization state AFTER the registry
+    // response and fail closed if anything changed. A revocation or a
+    // reconfiguration racing the registry call must not surface a stale
+    // list — this mirrors the message gate's post-authority linearization
+    // (`ChatResourceOwner::gate_post_authority`).
+    if !list_authorization_still_valid(state, ctx, mapping, &binding).await {
+        tracing::warn!(
+            application = crate::authz::chat_owner::CHAT_APPLICATION_ID,
+            tenant = %ctx.tenant_id,
+            "buzz-mode channel discovery: local authorization changed during the registry call; returning an empty list"
+        );
+        return Ok(Json(Vec::new()));
+    }
     // The registry carries no per-channel event timestamp; `latest_event_at`
     // is the response time (the client verified the response fresh, ≤60s).
     let latest_event_at = Utc::now();
@@ -256,6 +286,63 @@ async fn list_channels_from_registry(
             })
             .collect(),
     ))
+}
+
+/// Re-read the local authorization state after the registry response: the
+/// same lookups the pre-check used (Chat enablement, active binding with the
+/// same pubkey, an active admission for it, and an active + unchanged
+/// mapping). Any change — or any store failure — fails closed, mirroring the
+/// message gate's post-authority linearization.
+async fn list_authorization_still_valid(
+    state: &AppState,
+    ctx: &PrincipalContext,
+    mapping: &WorkspaceCommunityMapping,
+    binding: &ChatIdentityBinding,
+) -> bool {
+    let chat_identity = state.chat_owner.chat_identity_store();
+    if !chat_identity
+        .chat_access(ctx.tenant_id, ctx.workspace_id, ctx.principal_id)
+        .await
+        .ok()
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let Some(final_binding) = chat_identity
+        .active_binding(ctx.tenant_id, ctx.principal_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return false;
+    };
+    if final_binding.buzz_pubkey != binding.buzz_pubkey {
+        return false;
+    }
+    if !chat_identity
+        .active_admission(
+            ctx.tenant_id,
+            &mapping.community_id,
+            &final_binding.buzz_pubkey,
+        )
+        .await
+        .ok()
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let Some(final_mapping) = chat_identity
+        .mapping(ctx.tenant_id, ctx.workspace_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return false;
+    };
+    final_mapping.active
+        && final_mapping.community_id == mapping.community_id
+        && final_mapping.relay_url == mapping.relay_url
+        && final_mapping.relay_pubkey == mapping.relay_pubkey
 }
 
 /// Project a registry channel onto the Elembra channel-kind vocabulary —
