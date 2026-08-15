@@ -1,7 +1,7 @@
 # docker-compose.conformance.yml
 # =============================================================================
 # Overrides for the LIVE Buzz conformance run (scripts/run-buzz-conformance.sh):
-# runs the relay built from the feat/relay-authorization-v1alpha1 worktree
+# runs the relay built from the Buzz main worktree
 # (BUZZ_RELAY_IMAGE, default buzz-relay:conformance) with:
 #   - RELAY_URL derived from the 127.0.0.1 host so the suite's Host header
 #     binds the relay's seeded community (host-derived community isolation);

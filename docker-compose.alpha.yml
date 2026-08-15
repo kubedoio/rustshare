@@ -105,7 +105,7 @@ services:
     # check/check-batch, channels, state events). The default
     # `ghcr.io/block/buzz:main` PREDATES those endpoints — buzz mode will
     # fail closed (404s) until BUZZ_RELAY_IMAGE is pinned to a v1alpha1-
-    # capable build (e.g. built from the feat/relay-authorization-v1alpha1
+    # capable build (e.g. built from the merged Buzz main
     # branch, as the conformance suite does).
     image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
     restart: unless-stopped

@@ -2,7 +2,7 @@
 //! upstream authorization contract, `docs/specs/buzz-upstream-authorization-v1alpha1.md`).
 //!
 //! Unlike the fake-relay suites, this suite runs against the real relay built
-//! from the `feat/relay-authorization-v1alpha1` worktree (see
+//! from the merged Buzz main worktree (see
 //! `scripts/run-buzz-conformance.sh`): real NIP-98-authenticated access
 //! checks, real kind-19030 signed responses, real channel registry and real
 //! stream-message state.
