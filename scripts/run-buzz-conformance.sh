@@ -117,13 +117,13 @@ trap teardown EXIT
 echo "== waiting for relay health =="
 # The app router serves `/health` on the main relay port (7447); the 8088
 # health listener uses a separate probe surface.
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 60); do
 	if curl -sf "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
 		break
 	fi
-	echo "  relay not healthy (attempt $attempt/30)…"
+	echo "  relay not healthy (attempt $attempt/60)…"
 	sleep 2
-	if [[ "$attempt" == "30" ]]; then
+	if [[ "$attempt" == "60" ]]; then
 		echo "FAIL: relay did not become healthy at http://127.0.0.1:7447/health" >&2
 		exit 1
 	fi

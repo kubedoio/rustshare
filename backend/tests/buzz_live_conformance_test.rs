@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use axum::extract::State;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use nostr::{Event as NostrEvent, EventBuilder, Keys, Kind, Tag};
 use reqwest::Client;
 use rustshare_core::domain::{
@@ -81,7 +81,7 @@ use rustshare_storage::{
     ChatIdentityStore, ChatObservationStore, EventStore, MemoryCatalogStore, MetadataStore,
     ObjectStore, ObjectStoreOptions, OutboxStore,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Serializes the tests within this binary (same convention as the other
@@ -1686,5 +1686,214 @@ async fn live_p11_timeline_authorization_latency_within_budget() {
         median <= BUDGET,
         "median timeline-page authorization {median:?} exceeded the {BUDGET:?} budget (samples: {samples:?})"
     );
+    cleanup(&pool, fixture.tenant).await;
+}
+
+/// P12. A relay-side deletion is applied via reconcile: publish a message,
+/// delete it THROUGH the relay (NIP-09 kind-5 deletion by the message
+/// author), confirm the state page serves the snapshot tombstone, reconcile,
+/// and assert the gate denies and fetch is existence-hiding.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires live Buzz relay (scripts/run-buzz-conformance.sh)"]
+async fn live_p12_relay_delete_is_applied_via_reconcile() {
+    let _guard = SERIAL.lock().await;
+    let Some(env) = LiveEnv::load() else {
+        eprintln!("SKIP live_p12: RUSTSHARE_BUZZ_LIVE_SERVICE_SK / RELAY_PUBKEY not set");
+        return;
+    };
+    let pool = pool().await;
+    let gateway = live_gateway(&env);
+    // The relay's state page carries the RELAY's community identifier in
+    // every entry's context; the Elembra mapping's community_id must equal it
+    // for the reconcile path to route entries to this tenant (the webhook
+    // observer injects the Elembra mapping id instead — the two surfaces
+    // differ, and reconcile binds on the relay's). Discover it from any
+    // recent state entry.
+    let probe = gateway
+        .page_state(
+            &env.relay_ws,
+            &env.relay_pubkey,
+            Some(Utc::now().timestamp() - 600),
+            1,
+            None,
+        )
+        .await
+        .expect("the state page must be served for community discovery");
+    let relay_community = probe
+        .entries
+        .first()
+        .map(|entry| entry.context.community_id.clone())
+        .unwrap_or_else(|| panic!("no state entries available to discover the relay community id"));
+    // The active-community unique index is global: a previous interrupted
+    // run may have left an active mapping for the relay's community id (and
+    // its tenant rows) behind — remove them so this run starts clean.
+    let stale: Option<Uuid> = sqlx::query_scalar(
+        "SELECT tenant_id FROM chat_workspace_communities WHERE community_id = $1 AND active",
+    )
+    .bind(&relay_community)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    if let Some(stale_tenant) = stale {
+        cleanup(&pool, TenantId::from(stale_tenant)).await;
+    }
+    let mut fixture = setup_tenant(
+        &pool,
+        &env,
+        &Keys::generate(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    fixture.community_id = relay_community.clone();
+    sqlx::query("UPDATE chat_workspace_communities SET community_id = $1 WHERE tenant_id = $2")
+        .bind(&relay_community)
+        .bind(fixture.tenant.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let channel = seed_private_channel(&env, &fixture).await;
+    let obs = observation_service(pool.clone());
+    let event =
+        relay_publish_message(&env, &fixture.user_keys, &channel, "p12 to be deleted").await;
+    ingest_event_into(&obs, &fixture.community_id, &event).await;
+    let message_id = event.id.to_hex();
+    let reference = chat_ref(&message_id);
+
+    let (state, _, _) = setup_app_state(pool.clone(), gateway.clone()).await;
+    let ctx = user_ctx(fixture.principal, fixture.tenant);
+    assert_eq!(
+        state
+            .source_authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::Allow,
+        "before deletion the member is allowed"
+    );
+
+    // Delete THROUGH the relay: a NIP-09 kind-5 deletion event targeting the
+    // message, signed by the message author, submitted over the public HTTP
+    // surface. The relay soft-deletes the target.
+    let delete_event = EventBuilder::new(Kind::from(5), "")
+        .tags(vec![Tag::parse(["e", message_id.as_str()]).expect("e tag")])
+        .sign_with_keys(&fixture.user_keys)
+        .expect("sign the deletion");
+    let response = Client::new()
+        .post(format!("{}/events", env.relay_http))
+        .header("X-Pubkey", fixture.user_keys.public_key().to_hex())
+        .json(&serde_json::to_value(&delete_event).expect("serialize the deletion"))
+        .send()
+        .await
+        .expect("relay must be reachable");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = response.json().await.expect("relay answers JSON");
+    let accepted = body
+        .get("accepted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| {
+            panic!("relay /events response must carry the `accepted` field: {body}")
+        });
+    assert!(
+        accepted,
+        "the relay must accept the NIP-09 deletion: {body}"
+    );
+
+    // The state page now serves the message as a snapshot tombstone:
+    // same event id, event_type "deleted", supersedes null. Scoped by
+    // `since` to this test's seeding (the relay's event store accumulates
+    // across runs, and the page is ordered oldest-first), paged to the max
+    // limit with a cursor loop: earlier tests in the same run seed hundreds
+    // of same-window messages that precede this one in page order.
+    let since = Utc::now().timestamp() - 60;
+    let mut cursor: Option<String> = None;
+    let tombstone = loop {
+        let page = gateway
+            .page_state(
+                &env.relay_ws,
+                &env.relay_pubkey,
+                Some(since),
+                500,
+                cursor.as_deref(),
+            )
+            .await
+            .expect("the state page must be served");
+        if let Some(entry) = page
+            .entries
+            .iter()
+            .find(|entry| entry.context.message_id == message_id)
+        {
+            break entry.clone();
+        }
+        if page.complete || page.cursor.is_none() {
+            panic!("the deleted message appears in the state page");
+        }
+        cursor = page.cursor;
+    };
+    assert_eq!(
+        tombstone.context.event_type, "deleted",
+        "the relay must serve the tombstone snapshot form"
+    );
+    assert_eq!(
+        tombstone.context.message_id, message_id,
+        "snapshot tombstone message_id == event id"
+    );
+    assert_eq!(
+        tombstone.context.supersedes_event_id, None,
+        "snapshot tombstone supersedes nothing"
+    );
+
+    // Reconcile: the snapshot tombstone flips the observation row and the
+    // gate denies the message on every surface.
+    let service = observation_service(pool.clone());
+    let chat_identity = ChatIdentityStore::new(pool.clone());
+    let observations = ChatObservationStore::new(pool.clone());
+    let catalog = MemoryCatalogStore::with_observation_store(pool.clone(), observations.clone());
+    let counts =
+        rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_from_buzz_for_tenant(
+            &service,
+            &chat_identity,
+            &observations,
+            &catalog,
+            &gateway,
+            fixture.tenant,
+            Some(DateTime::from_timestamp(since, 0).expect("since timestamp")),
+        )
+        .await
+        .expect("reconcile must succeed");
+    eprintln!("DBG reconcile counts: {:?}", counts);
+
+    let row = sqlx::query(
+        "SELECT event_type, active FROM chat_observed_events
+         WHERE tenant_id = $1 AND event_id = $2",
+    )
+    .bind(fixture.tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the observation row exists");
+    assert_eq!(
+        row.get::<String, _>("event_type"),
+        "deleted",
+        "reconcile must apply the relay deletion to the observation index"
+    );
+    assert!(!row.get::<bool, _>("active"));
+    assert_eq!(
+        state
+            .source_authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::NotFound,
+        "the deleted message must look absent after reconcile"
+    );
+    assert!(
+        matches!(
+            state
+                .source_authorizer
+                .fetch(&ctx, &reference, Representation::Raw)
+                .await,
+            Err(SourceError::NotFound)
+        ),
+        "fetch fails closed after the reconciled deletion"
+    );
+
     cleanup(&pool, fixture.tenant).await;
 }
