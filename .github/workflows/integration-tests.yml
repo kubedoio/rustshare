@@ -176,15 +176,25 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
+      # Per-run cryptographically random secrets. These are not real secrets;
+      # they are generated for each run and discarded afterwards.
       POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
       DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare
+      JWT_SECRET: ${{ needs.generate-secrets.outputs.jwt_secret }}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ needs.generate-secrets.outputs.encryption_key }}
+      RUSTSHARE_ADMIN_PASSWORD: ${{ needs.generate-secrets.outputs.admin_password }}
       RUSTFS_ROOT_USER: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
       RUSTFS_ROOT_PASSWORD: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
+      AWS_ACCESS_KEY_ID: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
+      AWS_SECRET_ACCESS_KEY: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
       RUSTFS_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_REGION: us-east-1
       RUSTFS_BUCKET: rustshare-files
       RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_USERNAME: admin
+      PASSWORD_LOGIN_ENABLED: true
 
     steps:
       - name: Checkout
