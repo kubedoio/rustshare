@@ -65,7 +65,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, StatusCode, Uri};
+use axum::http::{header, HeaderMap, Request, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -116,6 +116,7 @@ use rustshare_server::memory_projection::MemoryChatProjectionConsumer;
 use rustshare_server::middleware::RateLimitConfig;
 use rustshare_server::oidc_runtime::OidcRuntimeCache;
 use rustshare_server::outbox_dispatcher::{OutboxDispatcher, OutboxStatus};
+use rustshare_server::routes::chat_integration_routes;
 use rustshare_server::services::ask_workspace::AskWorkspaceService;
 use rustshare_server::services::note_service::NoteService;
 use rustshare_server::services::unified_search::UnifiedSearchService;
@@ -128,6 +129,7 @@ use rustshare_storage::{
 };
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
+use tower::ServiceExt;
 use url::Url;
 use uuid::Uuid;
 
@@ -5352,4 +5354,216 @@ async fn buzz_mode_channel_list_denies_when_mapping_is_deactivated() {
 
     fake.stop().await;
     cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// Admin revoke endpoint (HTTP level): POST
+// /api/v1/admin/applications/chat/principals/{principal_id}/revoke
+// ---------------------------------------------------------------------------
+
+/// The revoke endpoint at the HTTP level: admin-only (403 for non-admins),
+/// 200 + `{revoked: bool}` for admins, store-verified revocation, tenant
+/// scoping (another tenant's principal is never touched), and idempotent
+/// re-revocation.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn revoke_principal_endpoint_revokes_at_http_level() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone(), None).await;
+    let router = chat_integration_routes().with_state(state.clone());
+    let tenant_a = TenantId::from(Uuid::new_v4());
+    let tenant_b = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
+
+    // Tenant A: admin + non-admin + a bound principal.
+    let admin_a = insert_admin_user(&pool, tenant_a).await;
+    let non_admin = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7)",
+    )
+    .bind(non_admin)
+    .bind(format!("non-admin-{non_admin}"))
+    .bind(format!("non-admin-{non_admin}@test.local"))
+    .bind("$argon2id$v=19$m=4096,t=3,p=1$placeholder_hash")
+    .bind("Non Admin")
+    .bind(10_737_418_240i64)
+    .bind(tenant_a.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let keys = Keys::generate();
+    let (principal_a, binding_a) =
+        insert_binding(&pool, tenant_a, &keys.public_key().to_hex()).await;
+    // The principal must be a real `users` row: `revoke_principal` writes a
+    // `user_security_events` row whose `user_id` FK references `users(id)`.
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7)",
+    )
+    .bind(principal_a.0)
+    .bind(format!("principal-{}", principal_a.0))
+    .bind(format!("principal-{}@test.local", principal_a.0))
+    .bind("$argon2id$v=19$m=4096,t=3,p=1$placeholder_hash")
+    .bind("Principal A")
+    .bind(10_737_418_240i64)
+    .bind(tenant_a.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mapping_a = insert_mapping(
+        &pool,
+        tenant_a,
+        &format!("community-{}", Uuid::new_v4()),
+        "ws://relay.example.test",
+        None,
+    )
+    .await;
+    insert_admission(
+        &pool,
+        tenant_a,
+        mapping_a,
+        binding_a,
+        &keys.public_key().to_hex(),
+    )
+    .await;
+
+    // Tenant B: an unrelated bound principal that must stay untouched.
+    let admin_b = insert_admin_user(&pool, tenant_b).await;
+    let other_keys = Keys::generate();
+    let (principal_b, binding_b) =
+        insert_binding(&pool, tenant_b, &other_keys.public_key().to_hex()).await;
+    // Same `users` row requirement for tenant B's principal (see above).
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7)",
+    )
+    .bind(principal_b.0)
+    .bind(format!("principal-{}", principal_b.0))
+    .bind(format!("principal-{}@test.local", principal_b.0))
+    .bind("$argon2id$v=19$m=4096,t=3,p=1$placeholder_hash")
+    .bind("Principal B")
+    .bind(10_737_418_240i64)
+    .bind(tenant_b.0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mapping_b = insert_mapping(
+        &pool,
+        tenant_b,
+        &format!("community-{}", Uuid::new_v4()),
+        "ws://relay.example.test",
+        None,
+    )
+    .await;
+    insert_admission(
+        &pool,
+        tenant_b,
+        mapping_b,
+        binding_b,
+        &other_keys.public_key().to_hex(),
+    )
+    .await;
+
+    let bearer = |user: Uuid| {
+        state
+            .jwt_manager
+            .generate(user, "test@example.com", Uuid::nil())
+            .expect("generate token")
+    };
+    let revoke = |token: String, principal: Uuid| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::post(format!(
+                        "/api/v1/admin/applications/chat/principals/{principal}/revoke"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Admin-only: a non-admin bearer is rejected with 403.
+    let response = revoke(bearer(non_admin), principal_a.0).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // Admin A revokes tenant A's principal: 200 + revoked: true.
+    let response = revoke(bearer(admin_a), principal_a.0).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body, serde_json::json!({ "revoked": true }));
+
+    // Store-verified: the binding is revoked and the admission inactive.
+    let (status, active): (String, bool) = sqlx::query_as(
+        "SELECT b.status, COALESCE(a.active, false) FROM chat_identity_bindings b
+         LEFT JOIN chat_buzz_admissions a ON a.binding_id = b.binding_id
+         WHERE b.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(tenant_a.0)
+    .bind(principal_a.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "revoked");
+    assert!(!active, "the admission must be inactive after revocation");
+
+    // Idempotent re-revocation: 200 + revoked: false.
+    let response = revoke(bearer(admin_a), principal_a.0).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body, serde_json::json!({ "revoked": false }));
+
+    // Tenant scoping: admin A's revoke never touches tenant B's principal
+    // (no binding exists under admin A's tenant), and tenant B's binding
+    // stays active.
+    let response = revoke(bearer(admin_a), principal_b.0).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body, serde_json::json!({ "revoked": false }));
+    let (status,): (String,) = sqlx::query_as(
+        "SELECT status FROM chat_identity_bindings WHERE tenant_id = $1 AND principal_id = $2",
+    )
+    .bind(tenant_b.0)
+    .bind(principal_b.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "active", "tenant B's principal must be untouched");
+
+    // Positive cross-check: tenant B's own admin can revoke tenant B's
+    // principal.
+    let response = revoke(bearer(admin_b), principal_b.0).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body, serde_json::json!({ "revoked": true }));
+
+    cleanup(&pool, tenant_a).await;
+    cleanup(&pool, tenant_b).await;
 }
