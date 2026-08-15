@@ -12,12 +12,12 @@ Elembra Chat v1 (delivered by PR #238) is a read-surface application over an ext
 
 - **Buzz owns** communities, channels, messages/events, signatures, membership and Chat authorization. Elembra never reads Buzz's private database and never holds a human signing key server-side.
 - **Elembra owns** principal/login, the workspace/application shell, Files/ResourceRef, Memory/Search/Ask, product navigation/UX.
-- **Writes are client-direct**: the browser holds the user's Buzz key (BIP-340 Schnorr), signs kind-1 events locally, and publishes to the configured relay over a one-off NIP-42 WebSocket session (`frontend/src/lib/chat/nostr.ts`). Elembra adds no send endpoint.
+- **Writes are client-direct**: the browser holds the user's Buzz key (BIP-340 Schnorr), signs kind-9 stream messages locally (NIP-29 `h` channel tag; kind-1 legacy fallback while channels are name-based), and publishes to the configured relay over a one-off NIP-42 WebSocket session (`frontend/src/lib/chat/nostr.ts`). Elembra adds no send endpoint.
 - **Observation is push-only**: Buzz pushes signed events to `POST /api/v1/integrations/buzz/events` (HMAC + replay window + Nostr id/Schnorr verification + community/author mapping), which upserts `chat_observed_events` and publishes the durable outbox event `io.elembra.chat.buzz.event.observed.v1`; a projection consumer folds authorized observations into the Memory catalog (`memory_catalog`).
-- **Reads are derived, not stored**: channel list and timeline are queries over the observation index, gated per-message/per-channel through `ChatResourceOwner`; the final authority decision is a live relay `access/check` in `buzz` mode (not yet live upstream) or the coarse workspace-only `local` gate (the default today).
+- **Reads are derived, not stored**: in `buzz` mode the channel list comes from the relay's authoritative channel registry and timeline authorization is a live relay `access/check-batch` per page, gated per-message/per-channel through `ChatResourceOwner`; `local` mode keeps the observation-derived listing with the coarse workspace-only gate as an explicit dev fallback. The alpha stack runs `buzz` mode.
 - **Ask/citations reuse the existing pipeline**: `/memory/ask` with `ChatChannel` scope and `/memory/citations/open` reauthorize through the same Chat authority; citations open the exact message via `/apps/chat?message=<id>`.
 
-Contract status: all `v1alpha1`; the upstream relay capability (`access/check`, 9030/9031 admission, channel registry) is **proposed, not yet implemented in the Buzz repository** — until it ships, every deployment runs the `local` gate (ADR-0035).
+Contract status: all `v1alpha1`; the upstream relay capability (`access/check`, `access/check-batch`, channel registry, `state/events`) is implemented in the Buzz repository and the alpha/dogfood stack runs `buzz` mode (ADR-0035).
 
 ## 2. Runtime data flow
 
@@ -32,11 +32,11 @@ sequenceDiagram
     U->>E: OIDC login (PrincipalContext)
     U->>E: open Chat Application (/apps/chat)
     E->>B: status (enablement, mapping, binding, admission)
-    E->>B: channels (observed, per-channel gate)
+    E->>B: channels (buzz-mode registry; per-channel gate)
     E->>B: messages (timeline, keyset cursor, per-message gate)
 
     U->>E: compose + send
-    E->>R: NIP-42 AUTH + EVENT (signed kind-1, client-direct)
+    E->>R: NIP-42 AUTH + EVENT (signed kind-9 stream message, client-direct)
     R-->>E: OK true/false (NIP-20)
 
     R->>B: webhook POST /integrations/buzz/events (HMAC)
@@ -112,7 +112,7 @@ Definition: **Elembra Chat Alpha** = a workspace can dogfood Chat daily with rea
 | A4 | Channel switching | Selecting a channel loads that channel's timeline; cursor/focus never leak across channels |
 | A5 | Message history | Timeline shows folded latest-per-message, newest-first; reference-only rows render the explicit placeholder |
 | A6 | Pagination | "Load earlier" advances via opaque cursor; same-second messages never skipped; Back-to-latest returns to newest page |
-| A7 | Sending | Send publishes a signed kind-1 to the relay and clears the draft only on OK true |
+| A7 | Sending | Send publishes a signed kind-9 stream message (NIP-29 `h` channel tag; kind-1 legacy fallback) to the relay and clears the draft only on OK true |
 | A8 | Publication acknowledgement | UI distinguishes relay-reachable-but-rejected (with relay reason) from relay-unreachable; a sent message appears in the timeline within ≤15s (WS push or poll) |
 | A9 | Relay outage | Publish shows the relay-offline error; reads in `local` mode stay available; `buzz` mode fails closed (documented) |
 | A10 | Reconnect | WS reconnect up to 10 attempts with backoff; after exhaustion Chat remains usable via 15s poll (messages AND channels) until reload/login |
@@ -231,7 +231,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | Issue | Title | Action |
 |---|---|---|
 | #196 | [Epic] Evolve RustShare into Elembra… | KEEP (roadmap tracker) |
-| #214 | [Application][Chat] Build Elembra Chat bridge around Buzz… | UPDATE — mark v1 delivered by #238; remaining: Buzz bridge outbox consumer (9030/9031 live), channel registry, RustChat retain/migrate/drop |
+| #214 | [Application][Chat] Build Elembra Chat bridge around Buzz… | UPDATE — v1 delivered by #238; channel registry + batch authorization delivered in the production-authority pass; remaining: Buzz bridge outbox consumer (9030/9031 live), RustChat retain/migrate/drop |
 | #215 | [Application][Chat][Identity] SSO ↔ Buzz key binding, recovery, revocation | UPDATE — binding/admission/rotation/revocation foundation delivered; remaining: import/export UX (partially delivered here), revocation admin endpoint, multi-device story |
 | #119 | [Application][Memory] Catalog, search, cited RAG | KEEP |
 | #120 | [Application][Deferred] Object Spaces | DEFER (self-declared) |
@@ -279,7 +279,7 @@ The upstream Buzz relay has **no webhook delivery** — nothing pushes events to
 Elembra's observation endpoint. A real dogfooding deployment therefore needs a
 small relay→Elembra forwarder:
 `frontend/scripts/buzz-observer.mjs` (NIP-42 AUTH as the bridge identity, NIP-01
-REQ for kind-1, HMAC push to `POST /api/v1/integrations/buzz/events`). Elembra's
+REQ for kinds 1/9/40002, HMAC push to `POST /api/v1/integrations/buzz/events`). Elembra's
 webhook remains the authoritative verifier; the bridge only relays. This is the
 missing runtime half of the "push-only observation" contract (§1) — track its
 hardening (durable cursor, retries, supervision) in the operator-observability
@@ -298,8 +298,10 @@ mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
 - The mapping is **existence-hidden** until a binding exists (`chat_status`
   returns `mapping: null` without a binding) — provisioning flows must PATCH
   first, not rely on the status field.
-- Channel attribution is bridge-side (client publishes no channel tag): the
-  observer routes on a `channel` tag when present, else a configured default.
+- Channel attribution: clients publish the NIP-29 `h` tag on stream kinds
+  9/40002 (canonical wire format); the observer routes on the `h` tag first,
+  then a `channel` tag when present, else a configured default. Legacy kind-1
+  notes keep the `channel`-tag/default attribution.
 - Revocation works end-to-end: admin disable denies Elembra reads immediately;
   relay-side 9031 denies further publishes. The admin *endpoint* (#240) remains
   a UX/automation follow-up.

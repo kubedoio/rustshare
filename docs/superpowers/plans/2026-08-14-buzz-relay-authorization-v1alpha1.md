@@ -120,7 +120,7 @@ Errors: `api_error`/`internal_error` helpers (`api/mod.rs:19-26`); NIP-98/auth f
 Per spec: `?since=<unix>&limit=<n>&cursor=<opaque>`, `content` = `{ entries: [ { event: <raw signed event JSON>, context: { community_id, channel_id, channel_kind, thread_root_id, message_id, event_type, supersedes_event_id } } ], cursor: Option<String>, complete: bool }`; `cursor: null` with `complete: false` is malformed (never emit).
 
 - [ ] **Step 1: Failing tests:** paging two pages yields all entries in `created_at` order with no dupes; `since` filters on the event's own `created_at`; context shape matches Elembra `BuzzPushContext` field-for-field; entries limited to the Host-derived community; limit clamp 1..=500.
-- [ ] **Step 2: Implement** — `Db::query_events` with `EventQuery { kinds: Some(vec![1]), since, … }` keyset-paginated (before_id pattern, `buzz-db/src/event.rs:29`); derive `thread_root_id` from `thread_metadata`; `event_type` from tombstone/edit markers already tracked at ingest; opaque cursor = base64 `(created_at, event_id)`; final page `complete: true, cursor: null`.
+- [ ] **Step 2: Implement** — `Db::query_events` with `EventQuery { kinds: Some(vec![9, 40002]), since, … }` keyset-paginated (before_id pattern, `buzz-db/src/event.rs:29`); derive `thread_root_id` from `thread_metadata`; `event_type` = `deleted` for tombstoned events, else `created` (`edited` never emitted — stream messages are immutable); opaque cursor = base64 `(created_at, event_id)`; final page `complete: true, cursor: null`.
 - [ ] **Step 3: Tests pass; commit (`-s`).**
 
 ---
@@ -140,7 +140,7 @@ Per spec: `?since=<unix>&limit=<n>&cursor=<opaque>`, `content` = `{ entries: [ {
 
 **Files:** `NOSTR.md` (or `docs/` equivalent) in the buzz repo
 
-- [ ] **Step 1:** Document the wire format as implemented at `crates/buzz-relay/src/handlers/ingest.rs:637-789`: channel scoping via `["h", <channel-uuid>]` (NIP-29); thread identity via NIP-10 `["e", <64-hex-id>, <relay-url?>, "root"|"reply"]` with server-validated ancestry (parent must exist, same channel, root must match stored ancestry, depth cap 100); optional `["broadcast", "1"]`.
+- [ ] **Step 1:** Document the wire format as implemented at `crates/buzz-relay/src/handlers/ingest.rs:637-789`: channel scoping via `["h", <channel-uuid>]` (NIP-29) on the stream kinds 9/40002; thread identity via NIP-10 `["e", <64-hex-id>, <relay-url|"">, "root"|"reply"]` (4-element form only — 3-element tags are not recognized as thread references) with server-validated ancestry (parent must exist, same channel, root must match stored ancestry, depth cap 100); optional `["broadcast", "1"]`.
 - [ ] **Step 2:** Note explicitly that this is the canonical thread root/reply contract Elembra #243 was waiting on.
 - [ ] **Step 3: Commit (`-s`).**
 

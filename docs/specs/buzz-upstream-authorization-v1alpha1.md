@@ -175,8 +175,9 @@ Semantics:
   evaluates channel visibility/membership only, with no message-level
   availability evaluation. Elembra always sends a message id in this
   integration, so in practice the check is always message-level.
-- `allow` only when the pubkey is a **current member/participant** of the
-  channel **and** the message is available (exists and is not deleted).
+- `allow` only when the pubkey may read the channel — as a **current
+  member/participant** or because the channel is **open** — **and** the
+  message is available (exists and is not deleted).
 - Unknown channels, and deleted or unknown messages, → `not_found`.
 - Non-member, removed, or otherwise excluded principals → `deny`.
 - **Existence hiding:** the relay must never return membership lists, and
@@ -243,8 +244,9 @@ Semantics:
   failure class in batch mode.
 - **Per-item failure isolation:** one bad item does not fail the others.
   Item-level outcomes are the single check's: unknown channel, deleted or
-  unknown message → `not_found`; non-member, removed, or otherwise excluded
-  principal → `deny`. A genuine evaluation failure for one item (e.g. a
+  unknown message → `not_found`; non-member of a non-open channel, removed,
+  or otherwise excluded principal → `deny`. A genuine evaluation failure for
+  one item (e.g. a
   relay-side error evaluating it) yields `deny` for that item only, and an
   item whose echoed values do not match its request item is treated as an
   `InvalidResponse` for that item only. The remaining items are evaluated
@@ -290,6 +292,9 @@ Semantics:
   the pubkey is a member of (including private ones) plus open channels.
   `member` states whether the pubkey is a member of that channel — an open
   channel the pubkey may read without being a member has `member: false`.
+- **Hidden-DM asymmetry:** the registry excludes DM channels the subject has
+  hidden (`hidden_at` set), while `access/check` still returns `allow` for
+  them — hiding affects listing only; reads stay permitted.
 - `channel_type` uses the upstream Buzz channel types
   `stream|forum|dm|workflow` and `visibility` is `open|private` (the relay's
   native vocabulary; Elembra's `workspace|dm|private|excluded` remains a
@@ -303,6 +308,9 @@ Semantics:
   verbatim, `evaluated_at` within the 60-second freshness window.
 - **Existence hiding:** the registry never returns channels the pubkey may
   not read and never returns another community's channels.
+- **Size bound:** the registry query has a hard `LIMIT 1000` with no
+  pagination in v1alpha1 — a community with more than 1000 readable channels
+  gets a truncated listing, with no truncation signal in v1alpha1.
 
 ### `GET /api/v1/relay/state/events?since=<unix>&limit=<n>&cursor=<opaque>`
 
@@ -327,10 +335,10 @@ Response `content`:
       "context": {
         "community_id": "<str>",
         "channel_id": "<str>",
-        "channel_kind": "workspace|dm|private|excluded",
+        "channel_kind": "workspace|dm|private",
         "thread_root_id": "<str>|null",
         "message_id": "<str>",
-        "event_type": "created|edited|deleted",
+        "event_type": "created|deleted",
         "supersedes_event_id": "<str>|null"
       }
     }
@@ -349,6 +357,10 @@ Rules:
   injects the Elembra mapping id. For reconcile routing, the Elembra
   community mapping's `community_id` must equal the relay's community id —
   the same value the state entries carry.
+- The relay never emits `excluded` for `channel_kind` — it is an Elembra-side
+  concept; the relay maps the channel to `dm`/`private`/`workspace` only.
+- `event_type` is `created` or `deleted` only — v1alpha1 never emits
+  `edited`: stream messages are immutable, so edits arrive as new events.
 - **Tombstone snapshot form:** a soft-deleted (tombstoned) message is served
   as an entry whose `event` is the ORIGINAL message event (the same event id
   that was previously served as `created`) with
@@ -382,9 +394,11 @@ Elembra issue #243 was waiting on; it is resolved upstream.**
 - **Channel scoping:** `["h", "<channel-uuid>"]` — the NIP-29 group tag
   carrying the channel's UUID. An event without an `h` tag is not
   channel-scoped.
-- **Thread root/reply identity:** `["e", "<64-hex-id>", "<relay-url?>",
-  "root"|"reply"]` — NIP-10; the relay URL element is optional (the relay
-  reads only the id and the marker).
+- **Thread root/reply identity:** `["e", "<64-hex-id>", "<relay-url>",
+  "root"|"reply"]` — NIP-10; the relay accepts the 4-element form and reads
+  only the id and the marker, so the relay-URL element may be the empty
+  string `""`. 3-element tags (no marker position) are not recognized as
+  thread references (documented limitation).
 - **Server-validated ancestry** (enforced by the relay at ingest):
   - the referenced parent must exist;
   - the parent must belong to the same channel as the new event;
