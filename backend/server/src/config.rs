@@ -45,6 +45,10 @@ pub struct AppConfig {
     pub rustshare_chat_authority: String,
     #[serde(default)]
     pub rustshare_chat_bridge_secret_key: Option<String>,
+    #[serde(default = "default_chat_provisioning")]
+    pub rustshare_chat_provisioning: String,
+    #[serde(default)]
+    pub rustshare_chat_bootstrap_relay_url: Option<String>,
     #[serde(
         default = "default_bootstrap_password_file",
         rename = "RUSTSHARE_BOOTSTRAP_PASSWORD_FILE"
@@ -111,6 +115,12 @@ fn default_log_format() -> String {
 /// until an upstream Buzz authority is configured and provisioned.
 fn default_chat_authority() -> String {
     "local".into()
+}
+
+/// Default provisioning mode: `manual` keeps the existing explicit admin
+/// mapping API (zero-config bootstrap is opt-in via `auto`).
+fn default_chat_provisioning() -> String {
+    "manual".into()
 }
 
 fn default_pool_max() -> u32 {
@@ -268,6 +278,37 @@ where
 /// coarse `LocalFallbackAuthority` community-level gate.
 const CHAT_AUTHORITY_VALUES: &str = "local|buzz";
 
+/// Chat community provisioning mode (zero-config bootstrap, ADR-0036).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatProvisioningMode {
+    /// Enable-Chat auto-provisions the deployment Buzz community (single
+    /// workspace model). Requires a bootstrap relay URL.
+    Auto,
+    /// Mapping is configured explicitly by an administrator (existing API).
+    Manual,
+}
+
+impl ChatProvisioningMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChatProvisioningMode::Auto => "auto",
+            ChatProvisioningMode::Manual => "manual",
+        }
+    }
+
+    /// Parse a `RUSTSHARE_CHAT_PROVISIONING` value (round-trip with
+    /// [`Self::as_str`]); anything else is a configuration error.
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "auto" => Ok(ChatProvisioningMode::Auto),
+            "manual" => Ok(ChatProvisioningMode::Manual),
+            other => Err(format!(
+                "invalid RUSTSHARE_CHAT_PROVISIONING {other:?} (expected auto|manual)"
+            )),
+        }
+    }
+}
+
 /// Whether `value` is exactly 64 lowercase hex characters — the shape of
 /// Nostr x-only public keys and secret keys, and of the DB CHECK on
 /// `relay_pubkey`.
@@ -310,6 +351,52 @@ fn validate_chat_authority(config: &AppConfig, errors: &mut Vec<String>) {
     }
 }
 
+/// Fail closed at startup on an invalid chat provisioning configuration. In
+/// `auto` mode, zero-config bootstrap requires the Buzz authority and a
+/// ws/wss bootstrap relay URL; any violation rejects startup. The URL is only
+/// shape-checked here — the gateway's `validated_http` enforces the SSRF pin
+/// per request, so no DNS resolution happens at startup.
+fn validate_chat_provisioning(config: &AppConfig, errors: &mut Vec<String>) {
+    let mode = match ChatProvisioningMode::parse(&config.rustshare_chat_provisioning) {
+        Ok(mode) => mode,
+        Err(message) => {
+            errors.push(message);
+            return;
+        }
+    };
+    match mode {
+        ChatProvisioningMode::Manual => {}
+        ChatProvisioningMode::Auto => {
+            if config.rustshare_chat_authority != "buzz" {
+                errors.push(
+                    "RUSTSHARE_CHAT_PROVISIONING=auto requires RUSTSHARE_CHAT_AUTHORITY=buzz"
+                        .to_string(),
+                );
+            }
+            let Some(relay_url) = config.rustshare_chat_bootstrap_relay_url.as_deref() else {
+                errors.push(
+                    "RUSTSHARE_CHAT_PROVISIONING=auto requires RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL"
+                        .to_string(),
+                );
+                return;
+            };
+            match url::Url::parse(relay_url) {
+                Ok(url) => {
+                    if !matches!(url.scheme(), "wss" | "ws") || url.host_str().is_none() {
+                        errors.push(
+                            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL must use ws:// or wss:// and include a host"
+                                .to_string(),
+                        );
+                    }
+                }
+                Err(error) => errors.push(format!(
+                    "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL is not a valid URL: {error}"
+                )),
+            }
+        }
+    }
+}
+
 impl AppConfig {
     pub fn from_env() -> Result<Self, Vec<String>> {
         match envy::from_env::<Self>() {
@@ -344,6 +431,7 @@ impl AppConfig {
                     errors.push("RUSTSHARE_CHAT_WEBHOOK_SECRET is required".to_string());
                 }
                 validate_chat_authority(&config, &mut errors);
+                validate_chat_provisioning(&config, &mut errors);
                 if errors.is_empty() {
                     Ok(config)
                 } else {
@@ -388,6 +476,11 @@ mod tests {
         "RUSTSHARE_CHAT_BRIDGE_SECRET_KEY",
     ];
 
+    const CHAT_PROVISIONING_ENV_VARS: [&str; 2] = [
+        "RUSTSHARE_CHAT_PROVISIONING",
+        "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+    ];
+
     /// A minimal `AppConfig::from_env` environment that passes all existing
     /// required-field checks, with the chat authority vars cleared.
     fn set_valid_base_env() {
@@ -404,7 +497,10 @@ mod tests {
         std::env::set_var("RUSTFS_REGION", "us-east-1");
         std::env::set_var("RUSTFS_BUCKET", "test-bucket");
         std::env::set_var("RUSTSHARE_CHAT_WEBHOOK_SECRET", "test-webhook-secret");
-        for name in CHAT_AUTHORITY_ENV_VARS {
+        for name in CHAT_AUTHORITY_ENV_VARS
+            .into_iter()
+            .chain(CHAT_PROVISIONING_ENV_VARS)
+        {
             std::env::remove_var(name);
         }
     }
@@ -559,6 +655,100 @@ mod tests {
         );
         let config = AppConfig::from_env().expect("buzz with a valid key must pass");
         assert_eq!(config.rustshare_chat_authority, "buzz");
+    }
+
+    #[test]
+    fn chat_provisioning_auto_with_buzz_and_ws_url_passes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "wss://chat.example.test",
+        );
+        let config = AppConfig::from_env().expect("auto+buzz+ws must validate");
+        assert_eq!(config.rustshare_chat_provisioning, "auto");
+        assert_eq!(
+            config.rustshare_chat_bootstrap_relay_url.as_deref(),
+            Some("wss://chat.example.test")
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_auto_with_local_authority_fails() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "wss://chat.example.test",
+        );
+        let errors = AppConfig::from_env().expect_err("auto without buzz must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("requires RUSTSHARE_CHAT_AUTHORITY=buzz")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_auto_without_relay_url_fails() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        let errors = AppConfig::from_env().expect_err("auto without a relay URL must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("requires RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_non_ws_scheme() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "https://chat.example.test",
+        );
+        let errors = AppConfig::from_env().expect_err("auto with a non-ws scheme must fail");
+        assert!(
+            errors.iter().any(|error| error.contains("ws:// or wss://")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_invalid_mode() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "mystery");
+        let errors = AppConfig::from_env().expect_err("unknown provisioning mode must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("invalid RUSTSHARE_CHAT_PROVISIONING")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_defaults_to_manual() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        let config = AppConfig::from_env().expect("base env must validate");
+        assert_eq!(config.rustshare_chat_provisioning, "manual");
+        assert_eq!(config.rustshare_chat_bootstrap_relay_url, None);
     }
 
     #[test]
