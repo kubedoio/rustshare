@@ -127,9 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Canonical chat wire format:** stream-message kinds 9
   (`KIND_STREAM_MESSAGE`) and 40002 (`KIND_STREAM_MESSAGE_V2`) are accepted
   on chat ingestion alongside the legacy kind-1 text note, and published
-  messages carry the canonical `["h", <channel-uuid>]` channel tag (NIP-29)
-  with NIP-10 `e` root/reply thread tags — the wire-format dependency of
-  issue #243 is resolved.
+  messages carry the canonical `["h", <channel-uuid>]` channel tag (NIP-29);
+  the NIP-10 `e` root/reply thread-tag format is confirmed upstream for the
+  upcoming reply composer — the wire-format dependency of issue #243 is
+  resolved.
 
 ### Fixed
 
