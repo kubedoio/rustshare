@@ -22,7 +22,7 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::{Client, Response, StatusCode};
-use rustshare_core::validation::resolve_public_socket_addrs;
+use rustshare_core::validation::resolve_chat_relay_socket_addrs;
 use rustshare_resource_auth::{
     BuzzAuthority, BuzzAuthorityError, BuzzChannelInfo, BuzzChannelKind, BuzzReadDecision,
     BuzzReadRequest,
@@ -348,9 +348,11 @@ impl BuzzGatewayClient {
         let port = base.port_or_known_default().ok_or_else(|| {
             BuzzAuthorityError::Config("relay_url must include a valid port".into())
         })?;
-        let addrs = resolve_public_socket_addrs(host, port).await.map_err(|_| {
-            BuzzAuthorityError::Config("relay target failed SSRF validation".into())
-        })?;
+        let addrs = resolve_chat_relay_socket_addrs(host, port)
+            .await
+            .map_err(|_| {
+                BuzzAuthorityError::Config("relay target failed SSRF validation".into())
+            })?;
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .resolve_to_addrs(host, &addrs)
@@ -891,6 +893,12 @@ fn validate_page(page: &BuzzStatePage) -> Result<(), BuzzAuthorityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::LazyLock;
+
+    /// Serializes the env-sensitive SSRF tests (they flip the process-wide
+    /// `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` flag).
+    static SSRF_SERIAL: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
     use nostr::nips::nip98::{verify_auth_header, HttpMethod};
     use nostr::Timestamp;
     use rustshare_core::domain::TenantId;
@@ -1460,6 +1468,10 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_rejects_private_relay_targets_before_network_io() {
+        // Serialized with the dev-flag test: both flip the process-wide
+        // RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY env var.
+        let _ssrf_guard = SSRF_SERIAL.lock().await;
+        std::env::remove_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
         let service = client(Keys::generate());
         let request = BuzzReadRequest {
             tenant_id: TenantId(Uuid::new_v4()),
@@ -1476,6 +1488,33 @@ mod tests {
             service.can_read(&request).await,
             Err(BuzzAuthorityError::Config(_))
         ));
+        // The literal localhost host is equally refused by default.
+        let request = BuzzReadRequest {
+            relay_url: "ws://localhost:7447".to_string(),
+            ..request
+        };
+        assert!(matches!(
+            service.can_read(&request).await,
+            Err(BuzzAuthorityError::Config(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispatch_allows_localhost_relay_when_dev_flag_is_set() {
+        // The dogfood deployment maps ws://localhost:7447; the gateway's SSRF
+        // guard must honor RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true exactly like
+        // the mapping/binding-challenge path, so same-host relays work in
+        // dev/dogfood while production stays strict by default.
+        let _ssrf_guard = SSRF_SERIAL.lock().await;
+        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
+        let service = client(Keys::generate());
+        let (base, http) = service
+            .validated_http("ws://localhost:7447")
+            .await
+            .expect("the dev flag must allow a same-host relay");
+        assert_eq!(base.as_str(), "http://localhost:7447/");
+        let _ = http; // the client is built and usable; the resolver covers
+                      // the address selection itself.
     }
 
     #[test]
