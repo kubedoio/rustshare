@@ -10,7 +10,8 @@
 //! 3. deserializes the signed Nostr event and cryptographically verifies it
 //!    ([`nostr::Event::verify`] checks both the id — sha256 of the canonical
 //!    NIP-01 serialization — and the Schnorr signature over the id), rejecting
-//!    non text-note kinds — fail closed;
+//!    non-chat-message kinds (TextNote legacy, stream kinds 9/40002) — fail
+//!    closed;
 //! 4. maps community → Workspace and author pubkey → Principal (active
 //!    binding only);
 //! 5. in ONE transaction records the observation row in `chat_observed_events`
@@ -40,7 +41,7 @@ use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::resource_ref::ResourceRef;
 use rustshare_resource_auth::BindingStatus;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore,
+    ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore, UpsertOutcome,
 };
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +82,8 @@ pub enum BuzzPushError {
     Unauthorized,
     /// Unparseable body / invalid context fields / context mismatches event.
     Malformed(String),
-    /// Nostr id or Schnorr signature verification failed, or kind != 1.
+    /// Nostr id or Schnorr signature verification failed, or the kind is not
+    /// an accepted chat-message kind (TextNote legacy, stream kinds 9/40002).
     VerificationFailed,
     /// `community_id` maps to no active mapping.
     UnknownCommunity,
@@ -198,18 +200,31 @@ impl BuzzObservationService {
             .begin()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        let inserted = self
+        let outcome = self
             .observations
             .upsert_event_in_tx(&mut tx, &row)
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        if !inserted {
+        match outcome {
             // Identical Buzz event already observed; its durable event was
             // published on first observation — never publish again.
-            tx.rollback()
-                .await
-                .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-            return Ok(IngestOutcome::DuplicateObservation);
+            UpsertOutcome::Duplicate => {
+                tx.rollback()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            // The relay re-served the same event id as a snapshot tombstone:
+            // the flip must COMMIT, but the durable Created envelope was
+            // already published on first observation — never publish again
+            // (a second envelope for the same Buzz event id would collide).
+            UpsertOutcome::FlippedToTombstone => {
+                tx.commit()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            UpsertOutcome::Inserted => {}
         }
         let latest_created_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
             "SELECT MAX(event_created_at) FROM chat_observed_events
@@ -220,11 +235,7 @@ impl BuzzObservationService {
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        metrics::gauge!(
-            "chat_observation_lag_seconds",
-            "community_id" => data.context.community_id.clone()
-        )
-        .set(
+        metrics::gauge!("chat_observation_lag_seconds").set(
             (Utc::now() - latest_created_at.unwrap_or(data.buzz.created_at))
                 .num_milliseconds()
                 .max(0) as f64
@@ -290,7 +301,7 @@ impl BuzzObservationService {
             .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
         let event: NostrEvent = serde_json::from_value(push.event.clone())
             .map_err(|e| BuzzPushError::Malformed(format!("invalid Nostr event: {e}")))?;
-        if event.kind != Kind::TextNote {
+        if !is_chat_message_kind(event.kind) {
             return Err(BuzzPushError::VerificationFailed);
         }
         // The raw JSON `id` must equal the parsed event id. `Event::verify`
@@ -438,18 +449,29 @@ impl BuzzObservationService {
             .begin()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        let inserted = self
+        let outcome = self
             .observations
             .upsert_event_in_tx(&mut tx, &row)
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        if !inserted {
+        match outcome {
             // Identical Buzz event already observed during an earlier
             // reconcile or webhook push; nothing to repair.
-            tx.rollback()
-                .await
-                .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-            return Ok(IngestOutcome::DuplicateObservation);
+            UpsertOutcome::Duplicate => {
+                tx.rollback()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            // The relay re-served the same event id as a snapshot tombstone:
+            // the flip must COMMIT (the repair applies the deletion).
+            UpsertOutcome::FlippedToTombstone => {
+                tx.commit()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            UpsertOutcome::Inserted => {}
         }
         tx.commit()
             .await
@@ -529,6 +551,21 @@ fn build_envelope(
     Ok(envelope)
 }
 
+/// Whether `kind` is an accepted Buzz chat-message kind on ingestion.
+///
+/// Whitelist: kind 1 (`TextNote`, legacy during the transition) plus the Buzz
+/// stream-message kinds 9 (`KIND_STREAM_MESSAGE`) and 40002
+/// (`KIND_STREAM_MESSAGE_V2`) — the relay's channel-scoped chat kinds, named
+/// in the Buzz relay at `crates/buzz-core/src/kind.rs` and adopted by the
+/// amended contract in `docs/specs/buzz-upstream-authorization-v1alpha1.md`
+/// ("Canonical publish tags and kinds"). Every other kind fails closed.
+fn is_chat_message_kind(kind: Kind) -> bool {
+    // Compare by the numeric kind, not by enum variant: the `nostr` crate
+    // gives kind 9 the named variant `Kind::ChatMessage`, so a pattern like
+    // `Kind::Custom(9)` would silently reject every parsed kind-9 event.
+    matches!(kind.as_u16(), 1 | 9 | 40002)
+}
+
 /// Fail-closed Chat context sanity checks (step 3 of `verify_and_ingest`).
 fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
     let context = &push.context;
@@ -573,19 +610,42 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
                 ));
             }
         }
-        // An edit/delete is a different event from the root message. It may
+        // An edit is a different event from the root message. It may
         // supersede the root — whose event id IS the message id — so
-        // `supersedes == message_id` is the correct first-edit/delete
-        // contract; only self-supersede (`supersedes == this event's id`) is
-        // invalid.
-        ObservedEventType::Edited | ObservedEventType::Deleted => {
+        // `supersedes == message_id` is the correct first-edit contract;
+        // only self-supersede (`supersedes == this event's id`) is invalid.
+        ObservedEventType::Edited => {
             if raw_event_id == context.message_id {
                 return Err(BuzzPushError::Malformed(
-                    "edited/deleted event message_id must differ from the Nostr event id"
-                        .to_string(),
+                    "edited event message_id must differ from the Nostr event id".to_string(),
                 ));
             }
             if let Some(supersedes) = &context.supersedes_event_id {
+                if supersedes == raw_event_id {
+                    return Err(BuzzPushError::Malformed(
+                        "context.supersedes_event_id must not equal the Nostr event id".to_string(),
+                    ));
+                }
+            }
+        }
+        // A deletion has TWO accepted forms:
+        // 1. Webhook form: a separate deletion event superseding the message
+        //    — `raw_event_id != message_id` (same identity rules as Edited).
+        // 2. Snapshot form (the relay's `state/events` tombstone): the
+        //    message itself is the entry, marked deleted —
+        //    `raw_event_id == message_id` with `supersedes_event_id: null`
+        //    (a snapshot tombstone supersedes nothing). Reconcile applies it
+        //    by re-ingesting the same event id as a Deleted observation.
+        ObservedEventType::Deleted => {
+            if raw_event_id == context.message_id {
+                // Snapshot form.
+                if context.supersedes_event_id.is_some() {
+                    return Err(BuzzPushError::Malformed(
+                        "snapshot-form deleted events must not carry supersedes_event_id"
+                            .to_string(),
+                    ));
+                }
+            } else if let Some(supersedes) = &context.supersedes_event_id {
                 if supersedes == raw_event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
@@ -791,6 +851,109 @@ mod tests {
             128,
             "Schnorr signature is 128 hex"
         );
+    }
+
+    #[test]
+    fn chat_message_kind_whitelist_accepts_text_note_and_stream_kinds() {
+        // Kind 1 (TextNote) — legacy during the transition.
+        assert!(is_chat_message_kind(Kind::TextNote));
+        // Kind 9 (KIND_STREAM_MESSAGE) and 40002 (KIND_STREAM_MESSAGE_V2) —
+        // Buzz's channel-scoped chat kinds (see `is_chat_message_kind`).
+        // `Kind::ChatMessage` is the nostr crate's NAMED variant for 9 — the
+        // form a parsed kind-9 event actually carries — so the whitelist must
+        // match it too, not just the `Custom(9)` constructor form.
+        assert!(is_chat_message_kind(Kind::ChatMessage));
+        assert!(is_chat_message_kind(Kind::Custom(9)));
+        assert!(is_chat_message_kind(Kind::Custom(40002)));
+    }
+
+    #[test]
+    fn chat_message_kind_whitelist_rejects_every_other_kind() {
+        for kind in [
+            Kind::Metadata,
+            Kind::ContactList,
+            Kind::Reaction,
+            Kind::EventDeletion,
+            Kind::HttpAuth,
+            Kind::Custom(1000),
+            Kind::Custom(19_030),
+            Kind::Custom(u16::MAX),
+        ] {
+            assert!(!is_chat_message_kind(kind), "kind {kind} must fail closed");
+        }
+    }
+
+    #[test]
+    fn signed_stream_message_round_trips_and_verifies() {
+        // Stream-kind events (9/40002) must survive the same parse + verify
+        // path `validate_and_build` uses — and the PARSED kind must still pass
+        // the ingestion whitelist (kind 9 parses as the named
+        // `Kind::ChatMessage` variant, not `Kind::Custom(9)`).
+        for kind in [Kind::ChatMessage, Kind::Custom(40002)] {
+            let keys = Keys::generate();
+            let event = EventBuilder::new(kind, "hello stream")
+                .sign_with_keys(&keys)
+                .expect("sign stream message");
+            let json = serde_json::to_value(&event).unwrap();
+            let parsed: NostrEvent = serde_json::from_value(json).unwrap();
+            assert_eq!(parsed.kind, kind);
+            assert_eq!(parsed.id, event.id);
+            assert_eq!(parsed.sig, event.sig);
+            assert!(parsed.verify().is_ok(), "stream message must verify");
+            assert!(
+                is_chat_message_kind(parsed.kind),
+                "parsed stream kind {} must pass the ingestion whitelist",
+                parsed.kind.as_u16()
+            );
+        }
+    }
+
+    #[test]
+    fn context_validation_accepts_both_deletion_forms() {
+        let (_, event) = signed_text_note("hello buzz");
+        let event_id = event.id.to_hex();
+        // A deterministic 64-hex message id that differs from the event id.
+        let mut other = event_id.clone();
+        let last = other.pop().unwrap();
+        other.push(if last == 'a' { 'b' } else { 'a' });
+
+        // Snapshot form (the relay's state/events tombstone): the message
+        // itself is the entry, marked deleted — id == message_id and
+        // supersedes None.
+        let p = push(&event, &event_id, ObservedEventType::Deleted);
+        assert!(
+            validate_context(&p).is_ok(),
+            "a snapshot-form tombstone (id == message_id, supersedes None) must be accepted"
+        );
+
+        // Snapshot form with a supersedes reference is malformed (a snapshot
+        // tombstone supersedes nothing).
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
+
+        // Webhook form: a separate deletion event superseding the message
+        // root (message_id == the root's id, which differs from this event's
+        // id).
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.message_id = other.clone();
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(
+            validate_context(&p).is_ok(),
+            "a webhook-form deletion superseding the message root must be accepted"
+        );
+
+        // Webhook form must not self-supersede.
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.message_id = other.clone();
+        p.context.supersedes_event_id = Some(event_id);
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
     }
 
     #[test]

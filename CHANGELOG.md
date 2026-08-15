@@ -112,6 +112,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including declarative manifests, tenant/workspace enablement persistence,
   `/apps/...` UI routes, and `/api/v1/applications/...` registry APIs (#210).
 
+- **Buzz is now the production Chat authority (buzz mode):** when
+  `RUSTSHARE_CHAT_AUTHORITY=buzz` (the Alpha/dogfood stack default; `local`
+  remains the explicit dev fallback), every channel/message decision comes
+  from the community's authoritative Buzz relay over the v1alpha1 upstream
+  contract — NIP-98 authenticated, kind-19030 signed, pinned + freshness
+  verified, fail-closed. Channel discovery switches to the relay's
+  authoritative registry; a timeline page authorizes in ONE relay batch
+  round-trip (`AUTHORIZATION_BATCH_CONCURRENCY`-bounded) with a documented
+  500 ms latency budget. A live conformance suite
+  (`backend/tests/buzz_live_conformance_test.rs`, `scripts/run-buzz-conformance.sh`)
+  proves the ten production-authority proofs against the real relay (#245).
+
+- **Canonical chat wire format:** stream-message kinds 9
+  (`KIND_STREAM_MESSAGE`) and 40002 (`KIND_STREAM_MESSAGE_V2`) are accepted
+  on chat ingestion alongside the legacy kind-1 text note, and published
+  messages carry the canonical `["h", <channel-uuid>]` channel tag (NIP-29);
+  the NIP-10 `e` root/reply thread-tag format is confirmed upstream for the
+  upcoming reply composer — the wire-format dependency of issue #243 is
+  resolved.
+
 ### Fixed
 
 - **Fresh installs** — a new migration renames `templates.module_config` to

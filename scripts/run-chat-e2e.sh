@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # scripts/run-chat-e2e.sh
-# Real Buzz relay probe for the Chat v1 publish path: signs a kind-1 event and
-# publishes it over NIP-42 against an operator-supplied disposable relay
-# (ADR-0034 recipe), plus a MANUAL revocation checklist — the 9030/9031 relay
-# orchestration needs the relay's own admin CLI, so revocation is not
-# automated here (the Elembra-side read-gate half is automated in
-# backend/tests/chat_app_read_test.rs).
+# Real Buzz relay probe for the Chat v1 publish path: signs an event (kind-9
+# stream message scoped by ["h", <channel-uuid>] when BUZZ_CHANNEL_ID is a
+# channel UUID, else the legacy kind-1 note) and publishes it over NIP-42
+# against an operator-supplied disposable relay (ADR-0034 recipe), plus a
+# MANUAL revocation checklist — the 9030/9031 relay orchestration needs the
+# relay's own admin CLI, so revocation is not automated here (the Elembra-side
+# read-gate half is automated in backend/tests/chat_app_read_test.rs).
 # Required env:
 #   BUZZ_RELAY_IMAGE   docker image of the Buzz relay (e.g. ghcr.io/.../buzz-relay:main)
 #   BUZZ_RELAY_WS      wss:// or ws:// URL of the started relay
 #   BUZZ_SERVICE_SK    hex service/bridge key with relay admin authority
 # Optional:
 #   BUZZ_RELAY_PORT    host port mapped to the relay's 7447 (default 7447)
+#   BUZZ_CHANNEL_ID    publish a kind-9 stream message scoped to this channel
+#                      UUID (default: legacy kind-1 note, for relays with no
+#                      channel or name-based channels)
 #   ELEMBRA_API        Elembra API base (default http://localhost:8080/api/v1)
 #   ADMIN_EMAIL / ADMIN_PASSWORD   for the Elembra-side binding steps
 set -euo pipefail
@@ -34,7 +38,7 @@ docker run -d --rm --name rustshare-buzz-proof \
   "$BUZZ_RELAY_IMAGE" >/dev/null
 trap 'docker stop rustshare-buzz-proof >/dev/null 2>&1 || true' EXIT
 
-echo "== 2. publish a signed kind-1 event =="
+echo "== 2. publish a signed event (kind 9 with a UUID BUZZ_CHANNEL_ID, else kind 1) =="
 # Retry while the relay is still booting: the probe exits 1 on any failure,
 # and step 2 expects success.
 for attempt in $(seq 1 15); do

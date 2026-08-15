@@ -1,7 +1,7 @@
 # Specification: Buzz Upstream Source Authorization & State v1alpha1
 
-Status: Draft  
-Date: 2026-08-11  
+Status: Draft — v1alpha1; amended 2026-08-14 (batch checks, channel registry, canonical publish tags and kinds, stream-message wire format)  
+Date: 2026-08-11 (amended 2026-08-14)  
 Related: `resource-ref-authorization-v1alpha1.md`, Elembra Chat identity/admission contracts
 
 ## Purpose
@@ -14,8 +14,10 @@ can implement so that a trusted server workload — which **never holds a human
 user's signing key** — can:
 
 1. ask the relay whether a given pubkey may currently read a given
-   channel/message, and
-2. page the community's signed event state for reconciliation,
+   channel/message, individually or in batch,
+2. enumerate the channels a given pubkey may currently read (the
+   authoritative channel registry), and
+3. page the community's signed event state for reconciliation,
 
 while:
 
@@ -73,6 +75,12 @@ and `verify_auth_header`, which both use `general_purpose::STANDARD`):
   - `method` tag — the HTTP method (e.g. `POST`, `GET`)
   - for `POST` requests, a `payload` tag whose value is the hex-encoded
     SHA-256 of the request body
+  - `nonce` tag — a per-request random value. The relay enforces NIP-98
+    replay protection keyed on the auth event id, and `created_at` is
+    second-resolution, so without a nonce two requests in the same second
+    would produce identical auth events and the second would be rejected as
+    a replay. The relay's verifier inspects only the `u`/`method`/`payload`
+    tags and ignores extra ones.
 - `content`: `""`
 - signed by the workload's service key
 
@@ -167,20 +175,152 @@ Semantics:
   evaluates channel visibility/membership only, with no message-level
   availability evaluation. Elembra always sends a message id in this
   integration, so in practice the check is always message-level.
-- `allow` only when the pubkey is a **current member/participant** of the
-  channel **and** the message is available (exists and is not deleted).
-- Deleted or unknown messages → `not_found`.
+- `allow` only when the pubkey may read the channel — as a **current
+  member/participant** or because the channel is **open** — **and** the
+  message is available (exists and is not deleted).
+- Unknown channels, and deleted or unknown messages, → `not_found`.
 - Non-member, removed, or otherwise excluded principals → `deny`.
 - **Existence hiding:** the relay must never return membership lists, and
   `reason` strings must never reveal whether other users exist or their
   membership/activity (e.g. prefer `"not a member"` over enumerating who is).
 
+### `POST /api/v1/relay/access/check-batch`
+
+Ask whether a pubkey may currently read multiple channels/messages in a
+single round-trip.
+
+Request body:
+
+```json
+{
+  "checks": [
+    {
+      "pubkey": "<64hex>",
+      "channel_id": "<str>",
+      "channel_kind": "workspace|dm|private|excluded",
+      "message_id": "<64hex>|null",
+      "event_created_at": "<unix secs>|null"
+    }
+  ]
+}
+```
+
+- Each item is exactly a single `access/check` request body, with the same
+  semantics for its optional `event_created_at`.
+- The request must contain **at most 64 checks**; more than 64 → `400`.
+
+Response `content`:
+
+```json
+{
+  "results": [
+    {
+      "decision": "allow|deny|not_found",
+      "reason": "<str>",
+      "evaluated_at": "<unix secs>",
+      "pubkey": "<64hex>",
+      "channel_id": "<str>",
+      "message_id": "<64hex>|null"
+    }
+  ],
+  "evaluated_at": "<unix secs>"
+}
+```
+
+Semantics:
+
+- The response is a **single kind-19030 event**; `results` is
+  **order-preserving** — `results[i]` corresponds to `checks[i]`.
+- **Envelope `evaluated_at` is the freshness authority for the whole
+  response** — the relay's evaluation time for the batch. If it is missing,
+  malformed, or older than 60 seconds relative to the client clock, every
+  item fails closed (`Deny`).
+- Each result item keeps the single check's shape: its `pubkey`,
+  `channel_id`, and `message_id` echo the request item verbatim
+  (`message_id: null` when the item had none), and its `decision`, `reason`,
+  and `evaluated_at` fields must be present and well-typed. The item-level
+  `evaluated_at` mirrors the envelope value (informational echo — shape
+  parity with the single check); item-level freshness is not an independent
+  failure class in batch mode.
+- **Per-item failure isolation:** one bad item does not fail the others.
+  Item-level outcomes are the single check's: unknown channel, deleted or
+  unknown message → `not_found`; non-member of a non-open channel, removed,
+  or otherwise excluded principal → `deny`. A genuine evaluation failure for
+  one item (e.g. a
+  relay-side error evaluating it) yields `deny` for that item only, and an
+  item whose echoed values do not match its request item is treated as an
+  `InvalidResponse` for that item only. The remaining items are evaluated
+  and verified normally.
+- **Envelope-level verification failure fails all:** if the response itself
+  fails verification (wrong kind, invalid signature, wrong pinned pubkey,
+  missing/malformed/stale envelope `evaluated_at`, unparseable content),
+  every item is `Deny` — fail closed.
+
+### `GET /api/v1/relay/channels?pubkey=<64hex>`
+
+List the channels a given pubkey may currently read — the **authoritative
+channel registry**. Channel discovery in Buzz production mode must come from
+this endpoint; observation-derived channel discovery is deprecated in Buzz
+production mode.
+
+- NIP-98 GET — the `u` tag covers the exact request URL **including the query
+  string**, so the `pubkey` parameter is bound by the signature (there is no
+  `payload` tag for GET requests).
+- `pubkey` — the 64-hex pubkey to list channels for.
+
+Response `content`:
+
+```json
+{
+  "channels": [
+    {
+      "channel_id": "<str>",
+      "name": "<str>",
+      "channel_type": "stream|forum|dm|workflow",
+      "visibility": "open|private",
+      "member": true
+    }
+  ],
+  "evaluated_at": "<unix secs>",
+  "pubkey": "<64hex>"
+}
+```
+
+Semantics:
+
+- The registry returns **only channels the given pubkey may read**: channels
+  the pubkey is a member of (including private ones) plus open channels.
+  `member` states whether the pubkey is a member of that channel — an open
+  channel the pubkey may read without being a member has `member: false`.
+- **Hidden-DM asymmetry:** the registry excludes DM channels the subject has
+  hidden (`hidden_at` set), while `access/check` still returns `allow` for
+  them — hiding affects listing only; reads stay permitted.
+- `channel_type` uses the upstream Buzz channel types
+  `stream|forum|dm|workflow` and `visibility` is `open|private` (the relay's
+  native vocabulary; Elembra's `workspace|dm|private|excluded` remains a
+  client-side projection concern).
+- The listing is **host-derived community only** — the relay host answers
+  only for its own community; another community's channels are never
+  included, and the client never routes community A's registry requests to
+  community B's relay host.
+- The response follows the same envelope rules as every other endpoint:
+  kind-19030 signed by the relay's key, `pubkey` echoes the query value
+  verbatim, `evaluated_at` within the 60-second freshness window.
+- **Existence hiding:** the registry never returns channels the pubkey may
+  not read and never returns another community's channels.
+- **Size bound:** the registry query has a hard `LIMIT 1000` with no
+  pagination in v1alpha1 — a community with more than 1000 readable channels
+  gets a truncated listing, with no truncation signal in v1alpha1.
+
 ### `GET /api/v1/relay/state/events?since=<unix>&limit=<n>&cursor=<opaque>`
 
-Page the community's signed event state for reconciliation.
+Page the community's channel-scoped chat messages — Buzz stream kinds 9
+(`KIND_STREAM_MESSAGE`) and 40002 (`KIND_STREAM_MESSAGE_V2`) — for
+reconciliation. Kind-1 text notes are global-only in Buzz (never
+channel-scoped) and are out of scope for the chat state export.
 
 - `since` — optional; only events whose **own `created_at`** (the unix
-  seconds of the kind-1 event, not the entry's observation time) is at or
+  seconds of the event, not the entry's observation time) is at or
   after this timestamp.
 - `limit` — optional maximum page size.
 - `cursor` — opaque continuation token returned by a previous page.
@@ -191,14 +331,14 @@ Response `content`:
 {
   "entries": [
     {
-      "event": "<raw signed kind-1 event JSON>",
+      "event": "<raw signed chat-message event JSON>",
       "context": {
         "community_id": "<str>",
         "channel_id": "<str>",
-        "channel_kind": "workspace|dm|private|excluded",
+        "channel_kind": "workspace|dm|private",
         "thread_root_id": "<str>|null",
         "message_id": "<str>",
-        "event_type": "created|edited|deleted",
+        "event_type": "created|deleted",
         "supersedes_event_id": "<str>|null"
       }
     }
@@ -212,6 +352,26 @@ Rules:
 
 - Each `context` is exactly the shape of Elembra's webhook push payload
   (`BuzzPushContext`), so Elembra reuses its existing validation unchanged.
+  NOTE: the `community_id` here is the RELAY's community identifier (the
+  state page is host-derived), unlike the webhook surface where the observer
+  injects the Elembra mapping id. For reconcile routing, the Elembra
+  community mapping's `community_id` must equal the relay's community id —
+  the same value the state entries carry.
+- The relay never emits `excluded` for `channel_kind` — it is an Elembra-side
+  concept; the relay maps the channel to `dm`/`private`/`workspace` only.
+- `event_type` is `created` or `deleted` only — v1alpha1 never emits
+  `edited`: stream messages are immutable, so edits arrive as new events.
+- **Tombstone snapshot form:** a soft-deleted (tombstoned) message is served
+  as an entry whose `event` is the ORIGINAL message event (the same event id
+  that was previously served as `created`) with
+  `event_type: "deleted"`, `message_id` EQUAL to the event id, and
+  `supersedes_event_id: null` — the snapshot tombstone supersedes nothing;
+  the message itself is the entry, marked deleted. Clients ingest it as a
+  tombstone for that message: re-observing the same event id as `deleted`
+  flips the existing observation row (reconcile applies deletions). This is
+  distinct from the webhook's deletion form, where a SEPARATE deletion event
+  (`message_id != event id`, optional `supersedes_event_id` pointing at the
+  message root) is pushed.
 - Entries are limited to events the authenticated service workload is
   **entitled to see for the relay's community** — the same visibility the
   relay applies to its own reconciliation consumers; no event of another
@@ -220,6 +380,40 @@ Rules:
 - `cursor: null` with `complete: false` is malformed; the client must treat it
   as an invalid response (deny/fail closed).
 
+## Canonical publish tags and kinds (chat wire format)
+
+The canonical wire format for channel scoping and thread identity on
+published chat messages, confirmed against the Buzz relay's ingest
+implementation. **This is the canonical thread root/reply contract that
+Elembra issue #243 was waiting on; it is resolved upstream.**
+
+- **Message kind:** Elembra chat messages are published as **kind 9
+  (`KIND_STREAM_MESSAGE`)** — Buzz's channel-scoped stream message kind —
+  tagged with `["h", "<channel-uuid>"]` (NIP-29) as the **canonical channel
+  identity**.
+- **Channel scoping:** `["h", "<channel-uuid>"]` — the NIP-29 group tag
+  carrying the channel's UUID. An event without an `h` tag is not
+  channel-scoped.
+- **Thread root/reply identity:** `["e", "<64-hex-id>", "<relay-url>",
+  "root"|"reply"]` — NIP-10; the relay accepts the 4-element form and reads
+  only the id and the marker, so the relay-URL element may be the empty
+  string `""`. 3-element tags (no marker position) are not recognized as
+  thread references (documented limitation).
+- **Server-validated ancestry** (enforced by the relay at ingest):
+  - the referenced parent must exist;
+  - the parent must belong to the same channel as the new event;
+  - a client-claimed `root` must match the stored thread ancestry — the root
+    recorded for the parent, or, when the parent has no stored thread
+    metadata, the root the parent itself declares (its own `root`/`reply`
+    tag, or the parent itself when it starts the thread);
+  - thread depth is capped at 100.
+- **Optional:** `["broadcast", "1"]` — marks the event as a broadcast.
+- **Legacy:** kind-1 text notes remain accepted on Elembra ingestion during
+  the transition, but they are **not channel-scoped in Buzz** — the relay
+  treats them as global.
+- **Context mapping:** the `channel_kind` and `thread_root_id` context fields
+  map from the relay's stream-message metadata as before.
+
 ## HTTP base derivation
 
 The Elembra client derives the HTTPS base URL from the stored community
@@ -227,14 +421,15 @@ The Elembra client derives the HTTPS base URL from the stored community
 
 - `ws://` → `http://`, `wss://` → `https://`, keeping host and port unchanged;
 - any **path** on the stored `relay_url` is NOT carried over — the
-  access-check and state endpoints live at the relay host root
-  (`/api/v1/relay/access/check`, `/api/v1/relay/state/events`); a relay
-  served under a subpath must expose them at the root.
+  access-check, channel-registry, and state endpoints live at the relay host
+  root (`/api/v1/relay/access/check`, `/api/v1/relay/access/check-batch`,
+  `/api/v1/relay/channels`, `/api/v1/relay/state/events`); a relay served
+  under a subpath must expose them at the root.
 
 **Host-derived community isolation:** each community's relay host answers only
-its own checks and state. The client never routes community A's checks to
-community B's relay host, and a response from an unexpected host/pinned key is
-rejected.
+its own checks, registry, and state. The client never routes community A's
+checks to community B's relay host, and a response from an unexpected
+host/pinned key is rejected.
 
 **Transport:** production MUST use `wss://` relay URLs (so the derived base is
 `https://`). Plaintext `ws://` is acceptable only for local development and
@@ -255,6 +450,8 @@ observation.
 | `5xx`                                              | `Deny`           |
 | response signature mismatch / wrong kind / wrong pubkey | `Deny`    |
 | response content does not echo request `pubkey`/`channel_id`/`message_id` | `Deny` |
+| batch envelope failure (kind / signature / pubkey / missing, malformed, or stale envelope `evaluated_at` / unparseable) | every item `Deny` |
+| batch item echo mismatch (single item)             | that item `Deny`   |
 | `evaluated_at` older than 60 seconds (stale response) | `Deny`        |
 | unparseable or malformed response                  | `Deny`           |
 

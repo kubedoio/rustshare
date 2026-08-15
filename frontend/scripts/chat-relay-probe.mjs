@@ -1,8 +1,11 @@
 // frontend/scripts/chat-relay-probe.mjs
-// Real-relay proof helper: NIP-42 auth + signed kind-1 publish against any
-// Buzz relay (Node 22+ has global WebSocket). Mirrors ADR-0034's live proof.
+// Real-relay proof helper: NIP-42 auth + signed publish against any Buzz
+// relay (Node 22+ has global WebSocket). Mirrors ADR-0034's live proof.
 // Usage:
 //   node scripts/chat-relay-probe.mjs <wss://relay> <secret-key-hex> <text>
+// Publishes the canonical kind-9 stream message scoped by ["h", <channel-uuid>]
+// when BUZZ_CHANNEL_ID is a channel UUID (same env as the observer); otherwise
+// a legacy kind-1 note so name-based / channel-less relays stay probeable.
 // Exit 0 when the relay accepted the event, 1 otherwise.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
@@ -37,7 +40,17 @@ const sign = async (kind, tags, text) => {
 	return { ...event, id, sig };
 };
 
-const signed = await sign(1, [], content);
+// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
+// kind 9 with the NIP-29 `h` tag when BUZZ_CHANNEL_ID is a UUID (the relay
+// parses `h` strictly as a UUID); otherwise fall back to the legacy kind-1
+// note so name-based / channel-less relays stay probeable.
+const channelId = process.env.BUZZ_CHANNEL_ID;
+const isUuid = (value) =>
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+const signed =
+	channelId && isUuid(channelId)
+		? await sign(9, [['h', channelId]], content)
+		: await sign(1, [], content);
 const accepted = await new Promise((resolve) => {
 	const socket = new WebSocket(relayUrl);
 	const timer = setTimeout(() => {

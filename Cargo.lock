@@ -4559,6 +4559,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "futures-util",
  "nostr",
  "percent-encoding",
  "rustshare-core",

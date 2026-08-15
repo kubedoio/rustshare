@@ -148,3 +148,109 @@ jobs:
         run: |
           cargo test -p rustshare-server --test unified_search_test --features test-recording-provider -- --ignored --test-threads=1
           cargo test -p rustshare-server --test unified_search_test --features test-recording-provider -- --ignored --test-threads=1
+
+  buzz-conformance:
+    name: Buzz Live Conformance
+    # The live proofs (backend/tests/buzz_live_conformance_test.rs) run the
+    # in-process Elembra AppState against the REAL relay built from
+    # kubedoio/buzz@main, over the v1alpha1
+    # upstream contract (docs/specs/buzz-upstream-authorization-v1alpha1.md).
+    runs-on: ubuntu-latest
+    needs: [generate-secrets]
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rustshare
+          POSTGRES_USER: rustshare
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+        options: >-
+          --health-cmd "pg_isready -U rustshare"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      CARGO_TERM_COLOR: always
+      # Per-run cryptographically random secrets. These are not real secrets;
+      # they are generated for each run and discarded afterwards.
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare
+      JWT_SECRET: ${{ needs.generate-secrets.outputs.jwt_secret }}
+      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ needs.generate-secrets.outputs.encryption_key }}
+      RUSTSHARE_ADMIN_PASSWORD: ${{ needs.generate-secrets.outputs.admin_password }}
+      RUSTFS_ROOT_USER: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
+      RUSTFS_ROOT_PASSWORD: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
+      AWS_ACCESS_KEY_ID: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
+      AWS_SECRET_ACCESS_KEY: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
+      RUSTFS_ENDPOINT: http://127.0.0.1:9000
+      RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+      RUSTFS_REGION: us-east-1
+      RUSTFS_BUCKET: rustshare-files
+      RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+      RUSTSHARE_ADMIN_EMAIL: admin@localhost
+      RUSTSHARE_ADMIN_USERNAME: admin
+      PASSWORD_LOGIN_ENABLED: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Checkout Buzz relay (main)
+        uses: actions/checkout@v7
+        with:
+          repository: kubedoio/buzz
+          ref: main
+          path: .worktrees/buzz
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Frontend deps (key generation for the relay stack)
+        run: npm ci
+        working-directory: frontend
+
+      - name: Start RustFS
+        run: |
+          docker run -d --name rustfs \
+            -p 9000:9000 -p 9001:9001 \
+            -e RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER}" \
+            -e RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD}" \
+            -e RUSTFS_DATA_DIR=/data \
+            -e RUSTFS_LOGS_DIR=/logs \
+            rustfs/rustfs:1.0.0-beta.6
+
+      - name: Wait for RustFS to be ready
+        run: |
+          for i in {1..30}; do
+            if nc -z 127.0.0.1 9000 && nc -z 127.0.0.1 9001; then
+              echo "RustFS is ready"
+              exit 0
+            fi
+            echo "Waiting for RustFS..."
+            sleep 2
+          done
+          echo "RustFS did not become ready in time"
+          exit 1
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres --locked
+
+      - name: Run migrations
+        run: sqlx migrate run --source backend/migrations
+
+      - name: Structural guard (proof 8 — no Elembra ACL, no direct Buzz DB)
+        run: ./scripts/guard-buzz-no-acl.sh
+
+      - name: Run the live Buzz conformance suite
+        # Builds the relay image from .worktrees/buzz, brings up the relay
+        # stack (docker compose … docker-compose.conformance.yml), seeds via
+        # the relay's public HTTP surface, runs the suite, tears down.
+        run: ./scripts/run-buzz-conformance.sh

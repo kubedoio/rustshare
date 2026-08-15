@@ -31,8 +31,10 @@
 //! # Channel/message authority
 //!
 //! The gate's FINAL channel/message decision comes from the configured Buzz
-//! authority ([`BuzzAuthority::can_read`]) AFTER the local pre-filter above;
-//! local admission is a coarse pre-filter only, never a final allow. When no
+//! authority ([`BuzzAuthority::can_read`]; the batch surface uses
+//! [`BuzzAuthority::can_read_batch`] — one relay round-trip for a whole
+//! page) AFTER the local pre-filter above; local admission is a coarse
+//! pre-filter only, never a final allow. When no
 //! upstream authority is configured ([`LocalFallbackAuthority`]), behavior
 //! matches the historical coarse gate — workspace channels only. That is NOT
 //! per-channel authorization: it requires the upstream capability, and the
@@ -72,14 +74,14 @@
 
 use bytes::Bytes;
 use futures_util::{stream, StreamExt};
-use rustshare_core::domain::{ActionCapability, ApplicationId};
+use rustshare_core::domain::{ActionCapability, ApplicationId, TenantId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::{
-    BatchDecision, BuzzAuthority, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
-    ChatIdentityBinding, Decision, FetchedResource, LocalFallbackAuthority, PrincipalContext,
-    Purpose, Representation, ResolvedResource, ResourceCapability, ResourceOwner, ResourceRef,
-    SourceError, WorkspaceCommunityMapping, CHAT_READ, MAX_BATCH_SIZE,
+    BatchDecision, BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision,
+    BuzzReadRequest, ChatIdentityBinding, Decision, FetchedResource, LocalFallbackAuthority,
+    PrincipalContext, Purpose, Representation, ResolvedResource, ResourceCapability, ResourceOwner,
+    ResourceRef, SourceError, WorkspaceCommunityMapping, CHAT_READ, MAX_BATCH_SIZE,
 };
 use rustshare_storage::{ChatIdentityStore, ChatObservationStore};
 use std::sync::OnceLock;
@@ -318,6 +320,25 @@ impl ChatResourceOwner {
         ctx: &PrincipalContext,
         resource: &ResourceRef,
     ) -> Result<ChatObservedEvent, Decision> {
+        let prefilter = self.gate_prefilter(ctx, resource).await?;
+        // FINAL channel/message decision from the configured Buzz authority
+        // (current membership/visibility/message availability). Any
+        // authority failure fails closed to Deny.
+        gate_authority(&*self.authority, &prefilter.request, resource).await?;
+        self.gate_post_authority(ctx, resource, &prefilter).await
+    }
+
+    /// Steps 1–7 of the gate, up to (but excluding) the Buzz authority call:
+    /// shape/app checks, observation lookup, tombstone/inactive checks, and
+    /// the local pre-filters (enablement, binding, admission, mapping).
+    /// `Err(decision)` short-circuits that ref; `Ok` carries the authority
+    /// request plus the admission state the post-authority re-reads compare
+    /// against (a racing revocation must change at least one of them).
+    async fn gate_prefilter(
+        &self,
+        ctx: &PrincipalContext,
+        resource: &ResourceRef,
+    ) -> Result<GatePrefilter, Decision> {
         if resource.application.0 != CHAT_APPLICATION_ID
             || resource.resource_type != RESOURCE_TYPE_MESSAGE
         {
@@ -392,9 +413,6 @@ impl ChatResourceOwner {
         if !mapping.active {
             return Err(Decision::Deny);
         }
-        // FINAL channel/message decision from the configured Buzz authority
-        // (current membership/visibility/message availability). Any
-        // authority failure fails closed to Deny.
         let request = BuzzReadRequest {
             tenant_id: ctx.tenant_id,
             community_id: mapping.community_id.clone(),
@@ -406,20 +424,33 @@ impl ChatResourceOwner {
             pubkey: binding.buzz_pubkey.clone(),
             event_created_at: row.event_created_at,
         };
-        gate_authority(&*self.authority, &request, resource).await?;
+        Ok(GatePrefilter {
+            request,
+            row,
+            binding,
+            mapping,
+        })
+    }
 
-        // Re-read Elembra's local admission state after the external
-        // authority decision. This gives revocations a final linearization
-        // point before any caller can materialize the row body.
+    /// Step 9 of the gate: re-read Elembra's local admission state AFTER the
+    /// external authority decision, giving revocations a final linearization
+    /// point before any caller can materialize the row body. Returns the
+    /// final observation row.
+    async fn gate_post_authority(
+        &self,
+        ctx: &PrincipalContext,
+        resource: &ResourceRef,
+        prefilter: &GatePrefilter,
+    ) -> Result<ChatObservedEvent, Decision> {
         if !self.current_chat_enabled(ctx).await {
             return Err(Decision::Deny);
         }
         let Some(final_binding) = self.current_binding(ctx).await else {
             return Err(Decision::Deny);
         };
-        if final_binding.buzz_pubkey != binding.buzz_pubkey
+        if final_binding.buzz_pubkey != prefilter.binding.buzz_pubkey
             || !self
-                .current_admission(ctx, &row.community_id, &final_binding.buzz_pubkey)
+                .current_admission(ctx, &prefilter.row.community_id, &final_binding.buzz_pubkey)
                 .await
         {
             return Err(Decision::Deny);
@@ -432,7 +463,11 @@ impl ChatResourceOwner {
         }
         if self
             .observations
-            .has_tombstone_since(ctx.tenant_id, message_id, final_row.event_created_at)
+            .has_tombstone_since(
+                ctx.tenant_id,
+                resource.resource_id.as_str(),
+                final_row.event_created_at,
+            )
             .await
             .map_err(|_| Decision::Deny)?
         {
@@ -442,9 +477,9 @@ impl ChatResourceOwner {
             return Err(Decision::Deny);
         };
         if !final_mapping.active
-            || final_mapping.community_id != mapping.community_id
-            || final_mapping.relay_url != mapping.relay_url
-            || final_mapping.relay_pubkey != mapping.relay_pubkey
+            || final_mapping.community_id != prefilter.mapping.community_id
+            || final_mapping.relay_url != prefilter.mapping.relay_url
+            || final_mapping.relay_pubkey != prefilter.mapping.relay_pubkey
         {
             return Err(Decision::Deny);
         }
@@ -571,29 +606,73 @@ impl ChatResourceOwner {
     }
 }
 
+/// Everything the gate captures before the Buzz authority call: the authority
+/// request plus the admission state the post-authority re-reads compare
+/// against (a racing revocation must change at least one of these).
+struct GatePrefilter {
+    request: BuzzReadRequest,
+    row: ChatObservedEvent,
+    binding: ChatIdentityBinding,
+    mapping: WorkspaceCommunityMapping,
+}
+
+/// Map one authority outcome to the shared gate decision: `Allow` maps to
+/// `Allow`, `Deny`/`NotFound` map directly, and any authority error logs and
+/// fails closed to `Deny` — the single and batch authority paths use this
+/// same fail-closed mapping.
+fn authority_outcome_to_decision(
+    outcome: Result<BuzzReadDecision, BuzzAuthorityError>,
+    resource: &ResourceRef,
+    tenant: TenantId,
+) -> Decision {
+    match outcome {
+        Ok(BuzzReadDecision::Allow) => Decision::Allow,
+        Ok(BuzzReadDecision::Deny) => Decision::Deny,
+        Ok(BuzzReadDecision::NotFound) => Decision::NotFound,
+        Err(error) => {
+            tracing::error!(
+                application = CHAT_APPLICATION_ID,
+                %resource,
+                tenant = %tenant,
+                %error,
+                "Buzz authority check failed; denying access"
+            );
+            Decision::Deny
+        }
+    }
+}
+
 /// Run the FINAL channel/message decision from the configured Buzz authority
 /// against the request built by the gate. `Ok(())` only on `Allow`; every
-/// other outcome fails closed: `Deny`/`NotFound` map directly, and any
-/// authority error logs and fails closed to `Deny`.
+/// other outcome fails closed (see [`authority_outcome_to_decision`]).
 async fn gate_authority(
     authority: &dyn BuzzAuthority,
     req: &BuzzReadRequest,
     resource: &ResourceRef,
 ) -> Result<(), Decision> {
-    match authority.can_read(req).await {
-        Ok(BuzzReadDecision::Allow) => Ok(()),
-        Ok(BuzzReadDecision::Deny) => Err(Decision::Deny),
-        Ok(BuzzReadDecision::NotFound) => Err(Decision::NotFound),
-        Err(error) => {
-            tracing::error!(
-                application = CHAT_APPLICATION_ID,
-                %resource,
-                tenant = %req.tenant_id,
-                %error,
-                "Buzz authority check failed; denying access"
-            );
-            Err(Decision::Deny)
-        }
+    match authority_outcome_to_decision(authority.can_read(req).await, resource, req.tenant_id) {
+        Decision::Allow => Ok(()),
+        decision => Err(decision),
+    }
+}
+
+/// Map ONE batch authority outcome to the gate's final decision: `Allow`
+/// proceeds to the post-authority linearization re-reads (identical to the
+/// single path); every other outcome fails closed exactly like
+/// [`gate_authority`].
+async fn gate_batch_item(
+    owner: &ChatResourceOwner,
+    ctx: &PrincipalContext,
+    resource: &ResourceRef,
+    prefilter: &GatePrefilter,
+    authority_outcome: Result<BuzzReadDecision, BuzzAuthorityError>,
+) -> Decision {
+    match authority_outcome_to_decision(authority_outcome, resource, ctx.tenant_id) {
+        Decision::Allow => match owner.gate_post_authority(ctx, resource, prefilter).await {
+            Ok(_) => Decision::Allow,
+            Err(decision) => decision,
+        },
+        decision => decision,
     }
 }
 
@@ -644,14 +723,73 @@ impl ResourceOwner for ChatResourceOwner {
                 .map(|resource| BatchDecision::new(resource.clone(), Decision::Deny))
                 .collect();
         }
-        let mut decisions = stream::iter(resources.iter().cloned().enumerate())
+        // Unsupported actions fail closed per ref, exactly like `authorize`.
+        if action.0.as_str() != CHAT_READ {
+            tracing::debug!(
+                application = CHAT_APPLICATION_ID,
+                action = %action,
+                "unsupported action for chat message"
+            );
+            return resources
+                .iter()
+                .map(|resource| BatchDecision::new(resource.clone(), Decision::Invalid))
+                .collect();
+        }
+        // Phase 1 (per ref, concurrent): shape/app checks, observation
+        // lookup, tombstone/inactive checks and the local pre-filters —
+        // everything up to the authority call. Refused refs short-circuit
+        // here and never reach the relay.
+        let mut phase1 = stream::iter(resources.iter().cloned().enumerate())
             .map(|(index, resource)| async move {
-                let decision = self.authorize(ctx, action, &resource).await;
-                (index, BatchDecision::new(resource, decision))
+                let outcome = self.gate_prefilter(ctx, &resource).await;
+                (index, resource, outcome)
             })
             .buffer_unordered(AUTHORIZATION_CONCURRENCY)
             .collect::<Vec<_>>()
             .await;
+        phase1.sort_unstable_by_key(|(index, _, _)| *index);
+        let mut refused: Vec<(usize, ResourceRef, Decision)> = Vec::new();
+        let mut survivors: Vec<(usize, ResourceRef, GatePrefilter)> = Vec::new();
+        for (index, resource, outcome) in phase1 {
+            match outcome {
+                Err(decision) => refused.push((index, resource, decision)),
+                Ok(prefilter) => survivors.push((index, resource, prefilter)),
+            }
+        }
+
+        // Phase 2: ONE authority round-trip for every surviving ref. The
+        // batch authority preserves request order and isolates per-item
+        // failures; `LocalFallbackAuthority` inherits the same bounded
+        // fan-out the previous per-ref path used, so local mode is
+        // behavior-identical.
+        let requests: Vec<BuzzReadRequest> = survivors
+            .iter()
+            .map(|(_, _, prefilter)| prefilter.request.clone())
+            .collect();
+        let authority_results = self.authority.can_read_batch(&requests).await;
+
+        // Phase 3 (per ref, concurrent): the post-authority linearization
+        // re-reads still run for every survivor — a revocation racing the
+        // batch call denies here, exactly like the single path.
+        let mut phase3 = stream::iter(survivors.into_iter().zip(authority_results).map(
+            |((index, resource, prefilter), authority_outcome)| async move {
+                let decision =
+                    gate_batch_item(self, ctx, &resource, &prefilter, authority_outcome).await;
+                (index, BatchDecision::new(resource, decision))
+            },
+        ))
+        .buffer_unordered(AUTHORIZATION_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+        phase3.sort_unstable_by_key(|(index, _)| *index);
+
+        // Assemble in input order: pre-filter refusals plus post-authority
+        // outcomes.
+        let mut decisions: Vec<(usize, BatchDecision)> = refused
+            .into_iter()
+            .map(|(index, resource, decision)| (index, BatchDecision::new(resource, decision)))
+            .chain(phase3)
+            .collect();
         decisions.sort_unstable_by_key(|(index, _)| *index);
         decisions
             .into_iter()

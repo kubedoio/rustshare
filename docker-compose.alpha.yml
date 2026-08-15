@@ -25,6 +25,24 @@
 # =============================================================================
 
 services:
+  # Buzz is the production/dogfood Chat authority: every channel/message
+  # decision comes from the community's relay (v1alpha1 upstream contract).
+  # The bridge key is the same owner/service key the observer and relay admit
+  # with (see frontend/scripts/alpha-gen-buzz-keys.mjs, which prints both
+  # RUSTSHARE_CHAT_BRIDGE_SECRET_KEY and BUZZ_SERVICE_SK with the same value).
+  # Local mode remains the explicit dev fallback (base compose default);
+  # startup validation hard-fails a misconfigured buzz mode — no silent
+  # fallback.
+  #
+  # The dogfood relay runs on the same host, so the gateway's SSRF guard must
+  # honor the dev flag exactly like the mapping/binding-challenge path
+  # (production must leave RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY off).
+  backend:
+    environment:
+      RUSTSHARE_CHAT_AUTHORITY: "buzz"
+      RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${RUSTSHARE_CHAT_BRIDGE_SECRET_KEY:-${BUZZ_SERVICE_SK:-}}
+      RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY: "true"
+
   buzz-postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -83,6 +101,12 @@ services:
         && mc mb --ignore-existing local/buzz-media
 
   buzz-relay:
+    # The relay image MUST contain the v1alpha1 authorization API (access
+    # check/check-batch, channels, state events). The default
+    # `ghcr.io/block/buzz:main` PREDATES those endpoints — buzz mode will
+    # fail closed (404s) until BUZZ_RELAY_IMAGE is pinned to a v1alpha1-
+    # capable build (e.g. built from the merged Buzz main
+    # branch, as the conformance suite does).
     image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
     restart: unless-stopped
     ports:
@@ -103,6 +127,13 @@ services:
       BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
       BUZZ_REQUIRE_AUTH_TOKEN: "false"
       RELAY_OWNER_PUBKEY: ${BUZZ_RELAY_OWNER_PUBKEY:?set BUZZ_RELAY_OWNER_PUBKEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
+      # Trusted-service allowlist for the v1alpha1 authorization API: the
+      # Elembra gateway's NIP-98 service key. The owner pubkey IS that key
+      # (alpha-gen-buzz-keys.mjs prints BUZZ_RELAY_OWNER_PUBKEY=<owner.pk>
+      # and RUSTSHARE_CHAT_BRIDGE_SECRET_KEY=<owner.sk> for the same
+      # keypair). With an empty allowlist the API rejects every caller (401)
+      # and buzz mode cannot run.
+      RELAY_TRUSTED_SERVICE_PUBKEYS: ${BUZZ_RELAY_OWNER_PUBKEY:?set BUZZ_RELAY_OWNER_PUBKEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
       BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set BUZZ_RELAY_PRIVATE_KEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
       BUZZ_S3_ENDPOINT: http://buzz-minio:9000
       BUZZ_S3_ACCESS_KEY: ${BUZZ_MINIO_USER:-buzz_dev}

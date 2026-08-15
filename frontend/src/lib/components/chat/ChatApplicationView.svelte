@@ -116,6 +116,29 @@
 
 	let pendingEventId = $state<string | null>(null);
 	let syncState = $state<'idle' | 'waiting' | 'observed' | 'warning'>('idle');
+
+	// The success banner is informational: auto-clear it shortly after the
+	// message is observed, so the status row does not linger forever. Re-sends
+	// and channel switches invalidate the timer through the effect teardown.
+	$effect(() => {
+		if (syncState !== 'observed') return;
+		const timer = setTimeout(() => {
+			syncState = 'idle';
+		}, 3_000);
+		return () => clearTimeout(timer);
+	});
+
+	// A channel switch orphans any in-flight send: its event belongs to the
+	// previous channel's timeline. Reset the pending-event tracking (and the
+	// 15 s warning timer that watches it) so the status cannot hang on stale
+	// state; the warning persists only until the user sends again or switches.
+	$effect(() => {
+		if (selectedChannelId !== null) {
+			pendingEventId = null;
+			syncState = 'idle';
+		}
+	});
+
 	$effect(() => {
 		if (!pendingEventId) return;
 		if ($messagesQuery.data?.messages.some((m) => m.event_id === pendingEventId)) {

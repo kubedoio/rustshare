@@ -202,7 +202,8 @@ impl BuzzAuthority for ScriptedAuthority {
 // ---------------------------------------------------------------------------
 
 /// In-memory state of the fake relay implementing the v1alpha1 upstream
-/// contract: NIP-98 service auth, `POST /api/v1/relay/access/check` and
+/// contract: NIP-98 service auth, `POST /api/v1/relay/access/check`,
+/// `POST /api/v1/relay/access/check-batch` and
 /// `GET /api/v1/relay/state/events`, with kind-19030 responses signed by the
 /// relay key.
 struct FakeBuzzState {
@@ -214,6 +215,8 @@ struct FakeBuzzState {
     events: Vec<BuzzStateEntry>,
     access_check_requests: Vec<serde_json::Value>,
     state_requests: u64,
+    /// How many batch access-check round-trips the relay served.
+    check_batch_requests: u64,
 }
 
 impl FakeBuzzState {
@@ -239,6 +242,30 @@ impl FakeBuzzState {
     fn remove_member(&mut self, channel_id: &str, pubkey: &str) {
         if let Some(members) = self.channels.get_mut(channel_id) {
             members.remove(pubkey);
+        }
+    }
+
+    /// The relay's decision for one check: `(decision, reason)` — message
+    /// availability → channel visibility → membership. Shared by the single
+    /// and batch endpoints so their semantics cannot drift.
+    fn evaluate_check(
+        &self,
+        request: &rustshare_server::buzz_gateway::BuzzAccessCheckRequest,
+    ) -> (String, String) {
+        if request.message_id.as_ref().is_some_and(|message_id| {
+            !self.messages.contains_key(message_id) || self.deleted.contains(message_id)
+        }) {
+            ("not_found".to_string(), "message unavailable".to_string())
+        } else if !self.channels.contains_key(&request.channel_id) {
+            ("not_found".to_string(), "unknown channel".to_string())
+        } else if !self
+            .channels
+            .get(&request.channel_id)
+            .is_some_and(|members| members.contains(&request.pubkey))
+        {
+            ("deny".to_string(), "not a member".to_string())
+        } else {
+            ("allow".to_string(), "member".to_string())
         }
     }
 }
@@ -283,9 +310,11 @@ fn start_fake_buzz(relay_keys: Keys, service_pubkey: String) -> FakeBuzzServer {
         events: Vec::new(),
         access_check_requests: Vec::new(),
         state_requests: 0,
+        check_batch_requests: 0,
     }));
     let app = Router::new()
         .route("/api/v1/relay/access/check", post(access_check))
+        .route("/api/v1/relay/access/check-batch", post(access_check_batch))
         .route("/api/v1/relay/state/events", get(state_events))
         .with_state(FakeServerHandle {
             state: state.clone(),
@@ -406,26 +435,8 @@ async fn access_check(
         state
             .access_check_requests
             .push(serde_json::json!({ "auth_pubkey": signer.to_hex(), "request": &request }));
-        let decision = if request.message_id.as_ref().is_some_and(|message_id| {
-            !state.messages.contains_key(message_id) || state.deleted.contains(message_id)
-        }) {
-            ("not_found", "message unavailable")
-        } else if !state.channels.contains_key(&request.channel_id) {
-            ("not_found", "unknown channel")
-        } else if !state
-            .channels
-            .get(&request.channel_id)
-            .is_some_and(|members| members.contains(&request.pubkey))
-        {
-            ("deny", "not a member")
-        } else {
-            ("allow", "member")
-        };
-        (
-            decision.0.to_string(),
-            decision.1.to_string(),
-            Utc::now().timestamp(),
-        )
+        let (decision, reason) = state.evaluate_check(&request);
+        (decision, reason, Utc::now().timestamp())
     };
     let content = serde_json::json!({
         "decision": decision,
@@ -434,6 +445,102 @@ async fn access_check(
         "pubkey": request.pubkey,
         "channel_id": request.channel_id,
         "message_id": request.message_id,
+    });
+    let event = {
+        let state = handle.state.lock().unwrap();
+        relay_19030(&state.relay_keys, content)
+    };
+    let raw: serde_json::Value = serde_json::from_str(&event.as_json())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(raw))
+}
+
+/// Request body of `POST /api/v1/relay/access/check-batch`.
+#[derive(serde::Deserialize)]
+struct BatchChecksRequest {
+    checks: Vec<rustshare_server::buzz_gateway::BuzzAccessCheckRequest>,
+}
+
+/// `POST /api/v1/relay/access/check-batch`: verify NIP-98 (service key only),
+/// evaluate every check with the single-check semantics (shared
+/// [`FakeBuzzState::evaluate_check`]), and answer with ONE kind-19030 event
+/// whose content is `{ results, evaluated_at }` — results order-preserving
+/// with per-item verbatim echo, and the top-level `evaluated_at` as the
+/// envelope freshness authority (each item's mirrors it). More than 64 checks
+/// → 400 (the contract cap).
+async fn access_check_batch(
+    State(handle): State<FakeServerHandle>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let body_bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("cannot read body: {e}")))?;
+    let url = request_url(&handle.host, &headers, "/api/v1/relay/access/check-batch");
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "missing NIP-98 Authorization header".to_string(),
+            )
+        })?;
+    let signer = verify_auth_header(
+        auth,
+        &url,
+        HttpMethod::POST,
+        Timestamp::now(),
+        Some(&body_bytes),
+    )
+    .map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "invalid NIP-98 authorization".to_string(),
+        )
+    })?;
+    let batch: BatchChecksRequest = serde_json::from_slice(&body_bytes).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid batch check request: {e}"),
+        )
+    })?;
+    if batch.checks.len() > 64 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "too many checks: max 64".to_string(),
+        ));
+    }
+    let (results, evaluated_at) = {
+        let mut state = handle.state.lock().unwrap();
+        if signer.to_hex() != state.service_pubkey {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "untrusted NIP-98 signer".to_string(),
+            ));
+        }
+        state.check_batch_requests += 1;
+        let evaluated_at = Utc::now().timestamp();
+        let results: Vec<serde_json::Value> = batch
+            .checks
+            .iter()
+            .map(|request| {
+                let (decision, reason) = state.evaluate_check(request);
+                serde_json::json!({
+                    "decision": decision,
+                    "reason": reason,
+                    "evaluated_at": evaluated_at,
+                    "pubkey": request.pubkey,
+                    "channel_id": request.channel_id,
+                    "message_id": request.message_id,
+                })
+            })
+            .collect();
+        (results, evaluated_at)
+    };
+    let content = serde_json::json!({
+        "results": results,
+        "evaluated_at": evaluated_at,
     });
     let event = {
         let state = handle.state.lock().unwrap();
@@ -3077,6 +3184,7 @@ async fn full_stack_buzz_gateway_end_to_end() {
         .lock()
         .unwrap()
         .remove_member(CHANNEL_ID, &keys.public_key().to_hex());
+    let batch_requests_before = fake.state.lock().unwrap().check_batch_requests;
     let second = service
         .search(
             &ctx,
@@ -3090,11 +3198,19 @@ async fn full_stack_buzz_gateway_end_to_end() {
         second.results.is_empty(),
         "relay-side membership removal must remove the chat result immediately: {second:?}"
     );
-    let requests_after = fake.state.lock().unwrap().access_check_requests.len();
-    assert!(
-        requests_after > requests.len(),
-        "the second search must again ask the relay (no local caching)"
-    );
+    // The second search must again ask the relay — via the batch endpoint
+    // (the candidate reauthorization path) — with no local caching. The
+    // relay traffic is counted across BOTH endpoints: the single-check
+    // recording and the batch counter.
+    {
+        let state = fake.state.lock().unwrap();
+        let relay_asks_after =
+            state.access_check_requests.len() + state.check_batch_requests as usize;
+        assert!(
+            relay_asks_after > requests.len() + batch_requests_before as usize,
+            "the second search must again ask the relay (no local caching)"
+        );
+    }
 
     fake.stop().await;
     cleanup(&pool, tenant).await;

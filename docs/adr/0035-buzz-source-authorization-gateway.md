@@ -1,7 +1,7 @@
 # ADR-0035: Buzz Source Authorization Gateway
 
-Status: Accepted (implemented v1alpha1)  
-Date: 2026-08-11
+Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified; stream-message wire format adopted)  
+Date: 2026-08-11 (amended 2026-08-14)
 
 ## Context
 
@@ -43,6 +43,8 @@ repairs Chat projections from the relay's public signed state.**
 2. **A generic upstream capability** is proposed for the external Buzz
    repository (spec `docs/specs/buzz-upstream-authorization-v1alpha1.md`):
    NIP-98-authenticated `POST /api/v1/relay/access/check` and
+   `POST /api/v1/relay/access/check-batch` (≤64 checks per round-trip),
+   `GET /api/v1/relay/channels` (the authoritative channel registry), and
    `GET /api/v1/relay/state/events`. Responses are raw signed kind-19030
    events signed by the relay's key, pinned per-community mapping via
    `relay_pubkey` (admin-rotatable), echoing the request verbatim, and fresh
@@ -69,6 +71,11 @@ repairs Chat projections from the relay's public signed state.**
    'tombstoned'`), so a backdated relay delete cannot un-tombstone a Memory
    record.
 
+6. **Elembra Chat adopts the Buzz stream-message wire format.** Chat
+   messages are published as kind 9 (`KIND_STREAM_MESSAGE`) with an
+   `["h", "<channel-uuid>"]` tag; kind-1 remains accepted on Elembra
+   ingestion as legacy during the transition.
+
 ## Consequences
 
 ### Positive
@@ -86,9 +93,12 @@ repairs Chat projections from the relay's public signed state.**
 
 - Buzz-mode reads fail closed when the relay is unreachable or the mapping is
   unpinned — read availability depends on the relay.
-- One relay access-check round-trip per message; a batch endpoint is deferred
-  (single-`authorize` consumers are unaffected; future batch consumers need
-  bounded concurrency client-side or a batch endpoint in the spec).
+- One relay access-check round-trip per message on single-check paths; batch
+  consumers use `POST /api/v1/relay/access/check-batch` (≤64 checks in one
+  round-trip), now specified in the v1alpha1 contract.
+- Channel discovery in buzz mode comes from the relay's authoritative channel
+  registry (`GET /api/v1/relay/channels`) instead of the observation-derived
+  listing — observation-derived discovery is deprecated in buzz mode.
 - No body backfill for never-eligible channels: bodies are captured only for
   channels with `content_indexing`.
 - The upstream endpoints must be implemented in the Buzz repository before
@@ -120,5 +130,14 @@ the workload is trusted but must never be able to sign as a user.
 - [x] Admin reconcile over the public HTTP contract, idempotent, no outbox writes.
 - [x] Admin relay-pin rotation endpoint; tombstone-immutable `upsert_records`.
 - [x] 24-test suite (18 acceptance + admin pin-rotation + 5 handler-level) against a contract-faithful fake relay.
-- [ ] Real relay endpoints implemented in the Buzz repository (proposed spec).
-- [ ] Live-relay conformance test replacing the fake before production buzz mode.
+- [x] Real relay endpoints implemented in the Buzz repository (proposed spec).
+  **Satisfied:** kubedoio/buzz PR #1 (`feat/relay-authorization-v1alpha1`)
+  implements `POST /api/v1/relay/access/check`, `/access/check-batch`,
+  `GET /api/v1/relay/channels` and `GET /api/v1/relay/state/events` — NIP-98
+  authenticated, trusted-service-gated (`RELAY_TRUSTED_SERVICE_PUBKEYS`),
+  kind-19030 signed responses.
+- [x] Live-relay conformance test replacing the fake before production buzz mode.
+  **Satisfied:** `backend/tests/buzz_live_conformance_test.rs` (proofs 1–10,
+  run by `scripts/run-buzz-conformance.sh` against the real relay) replaces
+  the fake relay for the production-authority proofs; the fake remains for
+  the contract-faithful unit/integration suites.

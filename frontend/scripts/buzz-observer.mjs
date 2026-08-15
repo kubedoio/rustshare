@@ -5,12 +5,12 @@
 // (Elembra's `POST /api/v1/integrations/buzz/events`) needs a small runtime
 // bridge in front of the relay: this script subscribes to the relay as a
 // NIP-01 client (authenticating with NIP-42 as the bridge/owner identity),
-// and forwards every signed kind-1 event to Elembra's observation webhook,
-// carrying the shared webhook HMAC. Elembra's webhook endpoint stays the
-// authoritative verifier: HMAC + replay window + Nostr id/Schnorr signature +
-// community/author mapping. This bridge only relays; it never verifies on
-// behalf of Elembra and never reads or stores private keys beyond the bridge
-// service key it needs to authenticate to the relay.
+// and forwards every signed kind-1/kind-9/kind-40002 event to Elembra's
+// observation webhook, carrying the shared webhook HMAC. Elembra's webhook
+// endpoint stays the authoritative verifier: HMAC + replay window + Nostr
+// id/Schnorr signature + community/author mapping. This bridge only relays;
+// it never verifies on behalf of Elembra and never reads or stores private
+// keys beyond the bridge service key it needs to authenticate to the relay.
 //
 // Usage (node 22+; run from anywhere, module resolution needs the workspace
 // frontend node_modules for @noble/curves):
@@ -27,7 +27,8 @@
 //   BUZZ_SERVICE_SK              64-hex bridge/owner secret key for NIP-42 AUTH (required)
 //   BUZZ_COMMUNITY_ID            community id forwarded in the context (required;
 //                                must equal the Elembra workspace↔community mapping)
-//   BUZZ_CHANNEL_ID              channel id forwarded in the context (default alpha-channel)
+//   BUZZ_CHANNEL_ID              channel id forwarded in the context (default
+//                                alpha-channel; a stream-kind event's `h` tag wins)
 //   ELEMBRA_WEBHOOK_URL          default http://localhost/api/v1/integrations/buzz/events
 //   BUZZ_SINCE                   optional unix seconds; only events after this are forwarded
 //   BUZZ_MAX_RECONNECT_BACKOFF_S default 30
@@ -106,17 +107,23 @@ const forwardEvent = (event) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function deliver(event) {
-	// Channel attribution is bridge-side (the client publishes no channel tag —
-	// spec §10). When the publisher carries a `channel` tag (as the E2E driver
-	// and future bridge do), it wins over the configured default.
-	const channelTag = Array.isArray(event.tags)
-		? event.tags.find(
-				(tag) => Array.isArray(tag) && tag[0] === 'channel' && typeof tag[1] === 'string'
-			)
-		: undefined;
+	// Channel attribution is bridge-side. Kind-9/kind-40002 stream messages
+	// carry the authoritative channel in the NIP-29 `h` tag (canonical wire
+	// format, spec: "Canonical publish tags and kinds"; 40002 is the V2
+	// stream kind, same channel scoping) — it wins over the `channel` tag and
+	// the configured default. Kind-1 legacy notes keep the `channel` tag /
+	// default attribution unchanged.
+	const findTag = (name) =>
+		Array.isArray(event.tags)
+			? event.tags.find(
+					(tag) => Array.isArray(tag) && tag[0] === name && typeof tag[1] === 'string'
+				)
+			: undefined;
+	const hTag = event.kind === 9 || event.kind === 40002 ? findTag('h') : undefined;
+	const channelTag = findTag('channel');
 	const context = {
 		community_id: communityId,
-		channel_id: channelTag ? channelTag[1] : channelId,
+		channel_id: hTag ? hTag[1] : channelTag ? channelTag[1] : channelId,
 		channel_kind: 'workspace',
 		thread_root_id: null,
 		message_id: event.id,
@@ -225,11 +232,11 @@ function connect() {
 	const subscribe = () => {
 		if (subscribed) return;
 		subscribed = true;
-		const filter = { kinds: [1] };
+		const filter = { kinds: [1, 9, 40002] }; // 9/40002 = KIND_STREAM_MESSAGE(_V2)
 		if (since !== undefined) filter.since = since;
 		try {
 			socket.send(JSON.stringify(['REQ', reqId, filter]));
-			console.log(`subscribed ${reqId} kinds=[1] since=${since ?? 'all'}`);
+			console.log(`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}`);
 		} catch (error) {
 			subscribed = false;
 			console.error(`REQ send failed: ${error.message}`);
@@ -274,7 +281,12 @@ function connect() {
 			} else if (kind === 'EVENT') {
 				// NIP-01 frame shape: ["EVENT", <subscription-id>, <event>]
 				const event = message[2];
-				if (event && typeof event === 'object' && event.kind === 1) {
+				// 9/40002 = channel-scoped stream kinds (V2 = 40002); 1 = legacy notes.
+				if (
+					event &&
+					typeof event === 'object' &&
+					(event.kind === 1 || event.kind === 9 || event.kind === 40002)
+				) {
 					// Forward without awaiting: ordering is preserved by the promise chain.
 					forwardEvent(event).catch((error) => {
 						console.error(`unexpected forward error: ${error.message}`);

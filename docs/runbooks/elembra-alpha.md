@@ -19,8 +19,9 @@ Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │
 Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-minio
                               ▲
-        buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards kind-1 to
-                                  POST /api/v1/integrations/buzz/events)
+        buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards the observed
+                                  kinds — stream messages 9/40002 and legacy
+                                  kind-1 — to POST /api/v1/integrations/buzz/events)
 ```
 
 Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
@@ -103,13 +104,14 @@ tail -f buzz-observer.log     # expect "authenticated ... EOSE"
 
 ### 2.3 Local-relay note (dev/dogfooding on one host)
 
-The admin mapping API and the binding challenge both validate the relay URL
-against the SSRF guard (`resolve_public_socket_addrs`). A relay on
-`localhost`/private addresses is rejected **unless**
-`RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is set (mirrors
-`RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The flag is
-required for any localhost relay** — the binding challenge re-validates the
-stored URL, so an SQL row alone cannot bypass it. With the flag set,
+The admin mapping API, the binding challenge, AND the Buzz gateway all
+validate the relay URL against the same SSRF guard
+(`resolve_chat_relay_socket_addrs`). A relay on `localhost`/private
+addresses is rejected **unless** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is
+set (mirrors `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The
+flag is required for any localhost relay** — the binding challenge
+re-validates the stored URL, so an SQL row alone cannot bypass it, and the
+gateway needs it to reach a same-host relay in buzz mode. With the flag set,
 `ws://localhost:7447` is accepted and the API path works end to end.
 
 Operators who prefer to skip the admin-API/CSRF dance may insert the mapping
@@ -173,10 +175,10 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 |---|---|---|
 | `RUSTSHARE_CHAT_AUTHORITY` | `local` (coarse community gate) or `buzz` (upstream access/check) | `local` |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
-| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key for NIP-43 9030/9031 (== `BUZZ_SERVICE_SK`) | empty |
+| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
 | `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
 | `BUZZ_RELAY_IMAGE` | relay image | `ghcr.io/block/buzz:main` |
-| `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key | — |
+| `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
 | `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
@@ -264,10 +266,11 @@ observer/E2E.
 
 Full classification: Alpha readiness doc §8. Relevant here:
 
-- Channel list = observed events only (L1, upstream).
+- Channel list = the relay's authoritative registry in buzz mode (L1
+  resolved); observation-derived only under the `local` fallback.
 - Reference-first bodies render placeholder (L2, by design).
-- `local` gate = coarse community authorization; per-channel membership is
-  upstream (L7/L9/L12).
+- The stack runs buzz mode: per-channel membership decisions are upstream
+  (L7/L9 resolved); the `local` gate remains the explicit dev fallback only.
 - Sender-side attachment tags only (L5).
 - Observation relay→Elembra push is the host-side bridge (this deployment);
   upstream relay has no webhook delivery yet.
@@ -302,17 +305,21 @@ The following are operator-visible today (proven during this goal):
   observer `forward failed ... (permanent <status>)`.
 - Relay-side auth/membership decisions: relay logs (`NIP-42 auth successful`,
   `auth failed`, `restricted: not a relay member`).
-- Observation lag: `chat_observation_lag_seconds{community_id}` measures the
-  latest observed event age; alert when it exceeds 120 seconds for 5 minutes.
+- Observation lag: `chat_observation_lag_seconds` (no labels — the gauge
+  tracks the latest observed event age across the deployment; per-community
+  series would be unbounded) measures the latest observed event age; alert
+  when it exceeds 120 seconds for 5 minutes.
 - Webhook outcomes: `chat_webhook_outcomes_total{outcome}` counts observed,
   duplicate, and category-safe rejection outcomes; alert on a rejection rate
   above 10% for 10 minutes.
-- Authorization denials: `chat_authorization_denials_total{tenant_id}` is
-  bounded to tenant identifiers and contains no user or message data.
+- Authorization denials: `chat_authorization_denials_total` (no labels —
+  per-tenant series would be unbounded; the counter contains no user,
+  message, or tenant data).
 - Bridge delivery: `chat_bridge_delivery_state{kind,state}` reports 9030/9031
   acked, retry-queued, or DLQ state; alert on any non-zero DLQ count.
-- Relay outage: publish fails with a distinct transport error; reads stay
-  available under the `local` gate; recovery is automatic (observer reconnect).
+- Relay outage: publish fails with a distinct transport error; reads fail
+  closed in buzz mode (the gateway denies — no silent fallback to local);
+  recovery is automatic (observer reconnect).
 
 ## 11. Alpha blocker disposition
 
@@ -331,6 +338,73 @@ The following are operator-visible today (proven during this goal):
   schema/migration and timeline DTO change; the current sender-side tag path
   remains secure and usable for the sender, so this is a separate Alpha
   follow-up rather than a broad projection redesign in this closure.
-- #243 remains blocked on Buzz's thread-tag wire format. #245 remains blocked
-  on Buzz ADR-0035 relay capability and live conformance tests; Elembra does
-  not emulate either upstream dependency.
+- #243 is resolved at the WIRE-FORMAT level: Buzz confirms the canonical
+  thread/root contract — NIP-29 `["h", <channel-uuid>]` channel scoping plus
+  NIP-10 `["e", <64-hex>, <relay-url?>, "root"|"reply"]` thread tags with
+  server-validated ancestry (documented in the buzz repo's NOSTR.md and the
+  Elembra spec's "Canonical publish tags and kinds"). The remaining #243 work
+  is the reply/thread COMPOSER feature (reply UI in the message composer),
+  which stays open as a separate follow-up.
+- #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
+  ADR-0035 relay capability is implemented (kubedoio/buzz PR #1,
+  `feat/relay-authorization-v1alpha1`) and the live conformance suite is
+  green (`scripts/run-buzz-conformance.sh`, 10 proofs incl. `live_p10`
+  one-batch-round-trip and `live_p11` latency budget). Issue #245's four
+  acceptance criteria: relay endpoints implemented ✅; live-relay conformance
+  replaces the fake ✅; buzz-mode authorization enabled in production ⏳
+  (pending deploy of this branch); large-timeline latency regression test
+  passes within budget ✅ (`live_p11`, observed median 208 ms against the
+  500 ms budget). The production authority PR remains open for review (no
+  merge). Elembra does not emulate either upstream dependency.
+
+## 12. Live Buzz conformance suite (production-authority proofs)
+
+The live conformance suite (`backend/tests/buzz_live_conformance_test.rs`)
+proves Elembra uses Buzz as the REAL production authority, fail-closed: an
+in-process Elembra (AppState with the Buzz gateway authority + `buzz_gateway`
+wired, same as the fake-relay suites) runs against the REAL relay built from
+the `feat/relay-authorization-v1alpha1` branch (`.worktrees/buzz`), with the
+dev Elembra DB as the store. The suite seeds the relay itself over its public
+HTTP surface (`POST /events`) and ingests the same signed events through the
+real in-process observation bridge.
+
+Proofs covered (each a `#[tokio::test]`):
+
+1. allowed channel read succeeds (member + available message → Allow + fetch
+   returns the message bytes);
+2. denied/private channel fails (non-member → Deny; fetch is existence-hiding
+   404);
+3. cross-community access fails (same relay, different host → unmapped host →
+   Deny, while the primary tenant still works);
+4. revoked user denied immediately (relay-side kind-9001/9031 → the very next
+   authorize denies, no caching);
+5. relay unavailable fails closed (dead port → Deny, never Allow/error);
+6. batch decisions equal single decisions (mixed allow/deny against the live
+   relay, per-message parity);
+7. channel listing is authoritative (registry lists channels with ZERO
+   observations; relay revocation reflected on the next call);
+8. no Elembra ACL / no direct Buzz DB access — structural guard
+   (`scripts/guard-buzz-no-acl.sh`);
+9. Memory/Search/Ask cannot bypass Buzz (message indexed + searchable, but
+   RAG materialization returns nothing after relay revocation);
+10. a 64-message page authorizes in exactly ONE relay batch round-trip
+    (counted via the relay's own metrics endpoint; the latency budget itself
+    is tracked separately).
+
+Run it:
+
+```bash
+./scripts/run-buzz-conformance.sh
+```
+
+The script builds the relay image from the worktree (skips when present),
+brings up the relay stack (`docker compose -f docker-compose.yml -f
+docker-compose.alpha.yml -f docker-compose.conformance.yml up -d buzz-relay`)
+with `RELAY_URL=ws://127.0.0.1:7447` (so the suite's Host header binds the
+seeded community) and `RELAY_TRUSTED_SERVICE_PUBKEYS=<Elembra service pk>`
+(the v1alpha1 authorization API's trusted-service gate), generates the
+service/relay keys when unset, waits for relay health, runs the suite with
+the live env vars, and reports PASS/FAIL. Set `RUSTSHARE_BUZZ_CONFORMANCE_KEEP=1`
+to leave the stack running. The suite requires the dev Elembra DB
+(`backend/.env` DATABASE_URL) and fails with a clear message when a leftover
+container holds the relay ports (7447/8088/9102).

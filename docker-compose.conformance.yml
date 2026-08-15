@@ -1,0 +1,25 @@
+# docker-compose.conformance.yml
+# =============================================================================
+# Overrides for the LIVE Buzz conformance run (scripts/run-buzz-conformance.sh):
+# runs the relay built from the Buzz main worktree
+# (BUZZ_RELAY_IMAGE, default buzz-relay:conformance) with:
+#   - RELAY_URL derived from the 127.0.0.1 host so the suite's Host header
+#     binds the relay's seeded community (host-derived community isolation);
+#   - RELAY_TRUSTED_SERVICE_PUBKEYS = the Elembra service pubkey, so the
+#     v1alpha1 authorization API trusts the Elembra gateway's NIP-98 requests.
+#
+# Usage (via the run script):
+#   RELAY_TRUSTED_SERVICE_PUBKEYS=<service pk> BUZZ_RELAY_PRIVATE_KEY=<relay sk> \
+#     docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
+#       -f docker-compose.conformance.yml up -d buzz-relay
+# =============================================================================
+services:
+  buzz-relay:
+    image: ${BUZZ_RELAY_IMAGE:-buzz-relay:conformance}
+    environment:
+      # The suite reaches the relay at http://127.0.0.1:7447; the community
+      # is seeded from this host at startup, so Host-derived binding matches.
+      RELAY_URL: ${BUZZ_RELAY_URL:-ws://127.0.0.1:7447}
+      # Fail-closed trusted-service gate: without the Elembra service pubkey
+      # the authorization API rejects every caller (401).
+      RELAY_TRUSTED_SERVICE_PUBKEYS: ${RELAY_TRUSTED_SERVICE_PUBKEYS:?set RELAY_TRUSTED_SERVICE_PUBKEYS to the Elembra service pubkey}

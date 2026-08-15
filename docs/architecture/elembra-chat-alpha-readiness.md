@@ -12,12 +12,12 @@ Elembra Chat v1 (delivered by PR #238) is a read-surface application over an ext
 
 - **Buzz owns** communities, channels, messages/events, signatures, membership and Chat authorization. Elembra never reads Buzz's private database and never holds a human signing key server-side.
 - **Elembra owns** principal/login, the workspace/application shell, Files/ResourceRef, Memory/Search/Ask, product navigation/UX.
-- **Writes are client-direct**: the browser holds the user's Buzz key (BIP-340 Schnorr), signs kind-1 events locally, and publishes to the configured relay over a one-off NIP-42 WebSocket session (`frontend/src/lib/chat/nostr.ts`). Elembra adds no send endpoint.
+- **Writes are client-direct**: the browser holds the user's Buzz key (BIP-340 Schnorr), signs kind-9 stream messages locally (NIP-29 `h` channel tag; kind-1 legacy fallback while channels are name-based), and publishes to the configured relay over a one-off NIP-42 WebSocket session (`frontend/src/lib/chat/nostr.ts`). Elembra adds no send endpoint.
 - **Observation is push-only**: Buzz pushes signed events to `POST /api/v1/integrations/buzz/events` (HMAC + replay window + Nostr id/Schnorr verification + community/author mapping), which upserts `chat_observed_events` and publishes the durable outbox event `io.elembra.chat.buzz.event.observed.v1`; a projection consumer folds authorized observations into the Memory catalog (`memory_catalog`).
-- **Reads are derived, not stored**: channel list and timeline are queries over the observation index, gated per-message/per-channel through `ChatResourceOwner`; the final authority decision is a live relay `access/check` in `buzz` mode (not yet live upstream) or the coarse workspace-only `local` gate (the default today).
+- **Reads are derived, not stored**: in `buzz` mode the channel list comes from the relay's authoritative channel registry and timeline authorization is a live relay `access/check-batch` per page, gated per-message/per-channel through `ChatResourceOwner`; `local` mode keeps the observation-derived listing with the coarse workspace-only gate as an explicit dev fallback. The alpha stack runs `buzz` mode.
 - **Ask/citations reuse the existing pipeline**: `/memory/ask` with `ChatChannel` scope and `/memory/citations/open` reauthorize through the same Chat authority; citations open the exact message via `/apps/chat?message=<id>`.
 
-Contract status: all `v1alpha1`; the upstream relay capability (`access/check`, 9030/9031 admission, channel registry) is **proposed, not yet implemented in the Buzz repository** — until it ships, every deployment runs the `local` gate (ADR-0035).
+Contract status: all `v1alpha1`; the upstream relay capability (`access/check`, `access/check-batch`, channel registry, `state/events`) is implemented in the Buzz repository and the alpha/dogfood stack runs `buzz` mode (ADR-0035).
 
 ## 2. Runtime data flow
 
@@ -32,11 +32,11 @@ sequenceDiagram
     U->>E: OIDC login (PrincipalContext)
     U->>E: open Chat Application (/apps/chat)
     E->>B: status (enablement, mapping, binding, admission)
-    E->>B: channels (observed, per-channel gate)
+    E->>B: channels (buzz-mode registry; per-channel gate)
     E->>B: messages (timeline, keyset cursor, per-message gate)
 
     U->>E: compose + send
-    E->>R: NIP-42 AUTH + EVENT (signed kind-1, client-direct)
+    E->>R: NIP-42 AUTH + EVENT (signed kind-9 stream message, client-direct)
     R-->>E: OK true/false (NIP-20)
 
     R->>B: webhook POST /integrations/buzz/events (HMAC)
@@ -112,7 +112,7 @@ Definition: **Elembra Chat Alpha** = a workspace can dogfood Chat daily with rea
 | A4 | Channel switching | Selecting a channel loads that channel's timeline; cursor/focus never leak across channels |
 | A5 | Message history | Timeline shows folded latest-per-message, newest-first; reference-only rows render the explicit placeholder |
 | A6 | Pagination | "Load earlier" advances via opaque cursor; same-second messages never skipped; Back-to-latest returns to newest page |
-| A7 | Sending | Send publishes a signed kind-1 to the relay and clears the draft only on OK true |
+| A7 | Sending | Send publishes a signed kind-9 stream message (NIP-29 `h` channel tag; kind-1 legacy fallback) to the relay and clears the draft only on OK true |
 | A8 | Publication acknowledgement | UI distinguishes relay-reachable-but-rejected (with relay reason) from relay-unreachable; a sent message appears in the timeline within ≤15s (WS push or poll) |
 | A9 | Relay outage | Publish shows the relay-offline error; reads in `local` mode stay available; `buzz` mode fails closed (documented) |
 | A10 | Reconnect | WS reconnect up to 10 attempts with backoff; after exhaustion Chat remains usable via 15s poll (messages AND channels) until reload/login |
@@ -170,18 +170,18 @@ Items 2–6 are deferred to tracked issues (not implemented in this pass — the
 
 | # | Limitation | Class |
 |---|---|---|
-| L1 | Channel list = observed events only (no Buzz registry API) | D (upstream dependency) |
+| L1 | Channel list = observation-derived in LOCAL mode only (buzz mode uses the relay's authoritative registry) | **D — resolved (registry endpoint specified + implemented)** |
 | L2 | Reference-first messages render without body (no `content_indexing`) | C (documented posture; opt-in flag) |
-| L3 | Buzz-mode large timelines slow (per-message relay round-trips, no batch endpoint) | D (upstream batch endpoint deferred, ADR-0035) |
-| L4 | No reply/thread composer (thread tag wire format unconfirmed) | D (upstream wire format) → B when wire confirmed |
+| L3 | Buzz-mode timeline authorization is one relay batch round-trip per page (64-message bound, latency-budgeted) | **D — resolved (batch endpoint specified + implemented; live_p10 proves one round-trip, live_p11 the 500 ms budget)** |
+| L4 | No reply/thread composer (reply UI) | **D — resolved at the wire-format level (NIP-29 `h` + NIP-10 `e` confirmed upstream); remaining: the reply-UI composer feature (issue #243)** |
 | L5 | Attachments sender-side only (observation index keeps no tags) | B (projection change; not Alpha-blocking for senders) |
-| L6 | No client channel tagging (channel attribution by Buzz bridge) | D (upstream wire format) |
-| L7 | DM/private/excluded channels unreadable under local gate | D (upstream `access/check`) |
+| L6 | Client channel tagging follows the canonical wire format (kind 9 + `["h", <channel-uuid>]`; legacy kind-1 stays bridge-attributed) | **D — resolved (canonical publish tags and kinds confirmed + implemented client-side)** |
+| L7 | DM/private/excluded channels unreadable under the LOCAL gate (buzz mode reads them via the relay) | **D — resolved for buzz mode (access/check implemented); the local gate is unchanged by design** |
 | L8 | Device loss without export unrecoverable | B (documented; import/export UX now complete) |
 | L9 | No per-channel membership verification at projection/Ask candidacy | D (upstream channel-level adapter) |
 | L10 | Observation body never backfilled by re-push/reconcile | C (documented; delete+re-push recovery) |
 | L11 | No body for never-eligible channels | C (by design) |
-| L12 | Buzz mode not live upstream; all deployments run `local` gate | D (upstream; blocks production buzz authz) |
+| L12 | Buzz mode not live upstream; all deployments run `local` gate | **D — resolved (alpha/dogfood stack now runs buzz mode; local remains the explicit dev fallback)** |
 | L13 | Reconcile skips unbound (revoked) authors | C (documented) |
 | L14 | No delegated/service/agent access to Chat | C (fails closed today) |
 | L15 | Buzz-mode reads depend on relay availability | D (upstream; fail-closed by design) |
@@ -221,9 +221,9 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 - Sent-vs-observed message status indicator (L31).
 - Chat ingestion/observability metrics + bridge delivery visibility (observability items 2–6).
 - Recipient-side attachment tags (projection change, L5).
-- Reply/thread composer once the thread wire format is confirmed (L4).
+- Reply/thread composer (L4 — wire format confirmed upstream; issue #243 follow-up).
 - Ask-availability gating in the status surface (L32).
-- Buzz-mode read latency batch endpoint + upstream `access/check`/channel registry (L3/L1/L7/L12/L15 — upstream).
+- ~~Buzz-mode read latency batch endpoint + upstream `access/check`/channel registry (L3/L1/L7/L12/L15)~~ — **resolved in the production-authority pass** (batch + registry + access checks implemented; live conformance suite green).
 - Reconcile automation for revocations (L24).
 
 ## 11. Issue mapping
@@ -231,7 +231,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | Issue | Title | Action |
 |---|---|---|
 | #196 | [Epic] Evolve RustShare into Elembra… | KEEP (roadmap tracker) |
-| #214 | [Application][Chat] Build Elembra Chat bridge around Buzz… | UPDATE — mark v1 delivered by #238; remaining: Buzz bridge outbox consumer (9030/9031 live), channel registry, RustChat retain/migrate/drop |
+| #214 | [Application][Chat] Build Elembra Chat bridge around Buzz… | UPDATE — v1 delivered by #238; channel registry + batch authorization delivered in the production-authority pass; remaining: Buzz bridge outbox consumer (9030/9031 live), RustChat retain/migrate/drop |
 | #215 | [Application][Chat][Identity] SSO ↔ Buzz key binding, recovery, revocation | UPDATE — binding/admission/rotation/revocation foundation delivered; remaining: import/export UX (partially delivered here), revocation admin endpoint, multi-device story |
 | #119 | [Application][Memory] Catalog, search, cited RAG | KEEP |
 | #120 | [Application][Deferred] Object Spaces | DEFER (self-declared) |
@@ -244,7 +244,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | — | *new*: Recipient-side attachment tags (projection) | CREATE |
 | — | *new*: Reply/thread composer (blocked on wire format) | CREATE |
 | — | *new*: Ask availability gating when LLM provider not configured | CREATE |
-| — | *new*: Buzz-mode production readiness (access/check, batch, channel registry — upstream) | CREATE |
+| — | ~~Buzz-mode production readiness (access/check, batch, channel registry — upstream)~~ | **resolved — production-authority pass (E1–E7); pending deploy** |
 
 No duplicate issues existed; none closed. Existing open issues are narrow; none need a giant "Chat v2" catch-all.
 
@@ -279,7 +279,7 @@ The upstream Buzz relay has **no webhook delivery** — nothing pushes events to
 Elembra's observation endpoint. A real dogfooding deployment therefore needs a
 small relay→Elembra forwarder:
 `frontend/scripts/buzz-observer.mjs` (NIP-42 AUTH as the bridge identity, NIP-01
-REQ for kind-1, HMAC push to `POST /api/v1/integrations/buzz/events`). Elembra's
+REQ for kinds 1/9/40002, HMAC push to `POST /api/v1/integrations/buzz/events`). Elembra's
 webhook remains the authoritative verifier; the bridge only relays. This is the
 missing runtime half of the "push-only observation" contract (§1) — track its
 hardening (durable cursor, retries, supervision) in the operator-observability
@@ -298,8 +298,10 @@ mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
 - The mapping is **existence-hidden** until a binding exists (`chat_status`
   returns `mapping: null` without a binding) — provisioning flows must PATCH
   first, not rely on the status field.
-- Channel attribution is bridge-side (client publishes no channel tag): the
-  observer routes on a `channel` tag when present, else a configured default.
+- Channel attribution: clients publish the NIP-29 `h` tag on stream kinds
+  9/40002 (canonical wire format); the observer routes on the `h` tag first,
+  then a `channel` tag when present, else a configured default. Legacy kind-1
+  notes keep the `channel`-tag/default attribution.
 - Revocation works end-to-end: admin disable denies Elembra reads immediately;
   relay-side 9031 denies further publishes. The admin *endpoint* (#240) remains
   a UX/automation follow-up.
@@ -307,3 +309,51 @@ mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
   L32/#244 trap is real on a fresh deployment.
 - CSRF (double-submit cookie) applies to all authenticated mutating API calls;
   API tooling must echo `X-Rustshare-Csrf` (browsers do automatically).
+
+## 14. Batch authorization latency budget
+
+**Requirement (production-authority goal):** "Use the Buzz batch contract for
+timeline/search workloads. Prove a 64+ message authorization workload remains
+bounded and within a documented latency budget. Do not solve latency by
+weakening authorization."
+
+**Budget (documented + enforced by the live conformance suite):** a 64-message
+timeline-page authorization completes in **≤ 2 relay HTTP round-trips**
+(1 batch round-trip + margin; the suite proves exactly 1) with **median wall
+time ≤ 500 ms** against the local loopback relay (target framing: p95 ≤ 500 ms
+for the production authorization path — see the methodology note on why the
+suite asserts the median).
+
+**What is measured** (`live_p11_timeline_authorization_latency_within_budget`
+in `backend/tests/buzz_live_conformance_test.rs`): the wall time of one
+`authorize_batch` call over 64 relay-checked refs across mixed allow/deny
+channels — the pre-filters, the single relay batch round-trip, and the
+post-authority linearization re-reads. That is the authorization latency of a
+`list_messages` page: the handler adds only pagination and rendering around
+this path, so the budget measures the authorization path itself, not the full
+HTTP handler.
+
+**Methodology (reproducible, honest about environment sensitivity):**
+
+- One warm-up `authorize_batch` call is excluded from the measurement (cold
+  connection pools, first relay touch, caches).
+- Three repetitions of the identical page are measured; the **median** is
+  asserted against the budget, so a single scheduler hiccup cannot fail it.
+- Each repetition independently asserts the round-trip bound (≤ 2) via the
+  relay's own metrics endpoint (`http_requests_total{action=…check-batch}`
+  delta) — the same instrumentation `live_p10` uses to prove exactly one
+  round-trip.
+- Environment: in-process Elembra → loopback relay (localhost), local dev DB,
+  in the same run orchestrated by `scripts/run-buzz-conformance.sh`. The
+  budget is for the authorization path against a co-located relay; production
+  wall times additionally depend on the relay's network distance and the
+  tenant DB, so the production contract is the round-trip bound (≤ 2) with
+  the wall-time budget as the local-loopback reference measurement.
+
+**How the budget is met:** the batch contract (one round-trip for the whole
+page) and bounded concurrency (`AUTHORIZATION_BATCH_CONCURRENCY = 16`) — the
+same fail-closed pipeline as the single-message path. Authorization is never
+weakened to hit the budget: every message still passes the relay's current
+membership/visibility/message-availability decision plus the post-authority
+re-reads; pre-filter refusals and `NotFound` outcomes still short-circuit per
+ref without reaching the relay.

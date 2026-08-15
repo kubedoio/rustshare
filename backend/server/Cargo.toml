@@ -285,6 +285,10 @@ name = "buzz_authority_gateway_test"
 path = "../tests/buzz_authority_gateway_test.rs"
 
 [[test]]
+name = "buzz_live_conformance_test"
+path = "../tests/buzz_live_conformance_test.rs"
+
+[[test]]
 name = "unified_search_test"
 path = "../tests/unified_search_test.rs"
 
