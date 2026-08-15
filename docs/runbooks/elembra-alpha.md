@@ -346,16 +346,17 @@ The following are operator-visible today (proven during this goal):
   is the reply/thread COMPOSER feature (reply UI in the message composer),
   which stays open as a separate follow-up.
 - #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
-  ADR-0035 relay capability is implemented (kubedoio/buzz PR #1,
-  `feat/relay-authorization-v1alpha1`) and the live conformance suite is
-  green (`scripts/run-buzz-conformance.sh`, 10 proofs incl. `live_p10`
-  one-batch-round-trip and `live_p11` latency budget). Issue #245's four
-  acceptance criteria: relay endpoints implemented ✅; live-relay conformance
-  replaces the fake ✅; buzz-mode authorization enabled in production ⏳
-  (pending deploy of this branch); large-timeline latency regression test
-  passes within budget ✅ (`live_p11`, observed median 208 ms against the
-  500 ms budget). The production authority PR remains open for review (no
-  merge). Elembra does not emulate either upstream dependency.
+  ADR-0035 relay capability is implemented and MERGED (kubedoio/buzz PR #1,
+  now on `kubedoio/buzz` main) and the live conformance suite is green
+  (`scripts/run-buzz-conformance.sh`, 11 live proofs incl. `live_p10`
+  one-batch-round-trip, `live_p11` latency budget, `live_p12` tombstone
+  reconciliation). Issue #245's four acceptance criteria: relay endpoints
+  implemented ✅; live-relay conformance replaces the fake ✅; buzz-mode
+  authorization enabled in production ✅ (kubedoio/rustshare PR #249 merged;
+  enabled by default in the Alpha/dogfood stack); large-timeline latency
+  regression test passes within budget ✅ (`live_p11`, observed median
+  192 ms against the 500 ms budget, re-certified against merged Buzz main).
+  Elembra does not emulate either upstream dependency.
 
 ## 12. Live Buzz conformance suite (production-authority proofs)
 
@@ -363,7 +364,7 @@ The live conformance suite (`backend/tests/buzz_live_conformance_test.rs`)
 proves Elembra uses Buzz as the REAL production authority, fail-closed: an
 in-process Elembra (AppState with the Buzz gateway authority + `buzz_gateway`
 wired, same as the fake-relay suites) runs against the REAL relay built from
-the `feat/relay-authorization-v1alpha1` branch (`.worktrees/buzz`), with the
+the merged Buzz main worktree (`.worktrees/buzz`), with the
 dev Elembra DB as the store. The suite seeds the relay itself over its public
 HTTP surface (`POST /events`) and ingests the same signed events through the
 real in-process observation bridge.
