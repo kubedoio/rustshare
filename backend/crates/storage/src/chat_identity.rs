@@ -30,6 +30,25 @@ pub struct ChatIdentityStore {
     pool: PgPool,
 }
 
+/// Idempotent provisioning insert outcome (ADR-0036).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisionMappingOutcome {
+    /// This call created the mapping row.
+    Inserted,
+    /// A concurrent call created it; the winner's row is returned and MUST be
+    /// verified against the discovered community before being accepted.
+    AlreadyExists(WorkspaceCommunityMapping),
+}
+
+/// Provisioning insert failure — community-level conflicts fail closed.
+#[derive(Debug, thiserror::Error)]
+pub enum ProvisionMappingError {
+    #[error("community is already mapped to another workspace")]
+    CommunityInUse,
+    #[error(transparent)]
+    Other(#[from] sqlx::Error),
+}
+
 impl ChatIdentityStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -168,6 +187,60 @@ impl ChatIdentityStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Insert the mapping only if the workspace has none, resolving races on
+    /// the (tenant_id, workspace_id) unique key. A concurrent insert for the
+    /// same workspace returns the winner (`AlreadyExists`). Any conflict on
+    /// the (tenant_id, community_id) unique key or the one-active-per-
+    /// community partial index is `CommunityInUse` — a mapping can never be
+    /// silently stolen from or shared with another workspace.
+    pub async fn provision_mapping(
+        &self,
+        mapping: &WorkspaceCommunityMapping,
+    ) -> Result<ProvisionMappingOutcome, ProvisionMappingError> {
+        let result = sqlx::query(
+            "INSERT INTO chat_workspace_communities
+                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(mapping.tenant_id.0)
+        .bind(mapping.workspace_id.0)
+        .bind(&mapping.community_id)
+        .bind(&mapping.relay_url)
+        .bind(&mapping.relay_pubkey)
+        .bind(mapping.active)
+        .execute(&self.pool)
+        .await;
+        match result {
+            Ok(_) => Ok(ProvisionMappingOutcome::Inserted),
+            Err(error) => {
+                let constraint = error
+                    .as_database_error()
+                    .and_then(|db| db.constraint())
+                    .map(str::to_string);
+                match constraint.as_deref() {
+                    Some("chat_workspace_communities_tenant_id_workspace_id_key") => {
+                        let existing = self
+                            .mapping(mapping.tenant_id, mapping.workspace_id)
+                            .await
+                            .map_err(|error| {
+                                ProvisionMappingError::Other(sqlx::Error::Protocol(
+                                    error.to_string(),
+                                ))
+                            })?
+                            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+                        Ok(ProvisionMappingOutcome::AlreadyExists(existing))
+                    }
+                    Some("chat_workspace_communities_tenant_id_community_id_key")
+                    | Some("chat_workspace_communities_active_community") => {
+                        Err(ProvisionMappingError::CommunityInUse)
+                    }
+                    _ => Err(ProvisionMappingError::Other(error)),
+                }
+            }
+        }
     }
 
     /// Rotate the mapping's relay endpoint and/or pinned pubkey WITHOUT
