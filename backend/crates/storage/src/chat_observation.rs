@@ -2,9 +2,12 @@
 //!
 //! One row per signed Buzz event observed, content-addressed by
 //! `(tenant_id, event_id)`; event ids are `sha256` of the signed event, so a
-//! primary-key conflict means the identical event was already observed and is
-//! never rewritten. Buzz remains authoritative — this table holds reference
-//! metadata and (optionally) an indexing copy of the body only.
+//! primary-key conflict means the identical event was already observed. The
+//! only rewrite is the reconcile tombstone flip: re-observing the same event
+//! id with `event_type == Deleted` (the relay's `state/events` snapshot
+//! tombstone) turns the row into a deleted tombstone. Buzz remains
+//! authoritative — this table holds reference metadata and (optionally) an
+//! indexing copy of the body only.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -27,20 +30,41 @@ pub struct ChannelSummary {
     pub latest_event_at: DateTime<Utc>,
 }
 
+/// Outcome of one [`ChatObservationStore::upsert_event_in_tx`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpsertOutcome {
+    /// A new observation row was inserted.
+    Inserted,
+    /// The identical event was already observed and nothing changed — the
+    /// caller rolls the transaction back (no-op).
+    Duplicate,
+    /// The existing row was flipped to a DELETED tombstone (the relay's
+    /// `state/events` snapshot tombstone re-served the same event id). The
+    /// caller must COMMIT the flip but must NOT re-publish the durable
+    /// envelope (the Created envelope was already published on first
+    /// observation).
+    FlippedToTombstone,
+}
+
 impl ChatObservationStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Idempotent insert inside `tx`. PK is (tenant_id, event_id); event ids
-    /// are content-addressed (id == sha256 of the signed event), so a conflict
-    /// means the identical event was already observed — never rewrite history.
-    /// Returns whether a new row was inserted.
+    /// Idempotent upsert inside `tx`. PK is `(tenant_id, event_id)`; event
+    /// ids are content-addressed (id == sha256 of the signed event), so a
+    /// conflict means the identical event was already observed. The ONLY
+    /// rewrite allowed is the tombstone flip: a re-observation of the same
+    /// event id with `event_type == Deleted` (the relay's `state/events`
+    /// snapshot tombstone — reconcile) turns the existing row into a deleted
+    /// tombstone (`active = false`). Any other conflict — including a
+    /// re-observation of the original Created event — never rewrites the
+    /// row, so a delayed replay cannot resurrect a deleted message.
     pub async fn upsert_event_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         event: &ChatObservedEvent,
-    ) -> Result<bool> {
+    ) -> Result<UpsertOutcome> {
         let result = sqlx::query(
             r#"
             INSERT INTO chat_observed_events
@@ -51,7 +75,12 @@ impl ChatObservationStore {
                  signature_verified, body, active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                     $14, $15, $16, $17, $18, $19)
-            ON CONFLICT (tenant_id, event_id) DO NOTHING
+            ON CONFLICT (tenant_id, event_id) DO UPDATE
+                SET event_type = 'deleted', observed_at = EXCLUDED.observed_at,
+                    active = EXCLUDED.active
+                WHERE chat_observed_events.event_type <> 'deleted'
+                  AND EXCLUDED.event_type = 'deleted'
+            RETURNING (xmax = 0) AS inserted
             "#,
         )
         .bind(event.tenant_id.0)
@@ -73,9 +102,17 @@ impl ChatObservationStore {
         .bind(event.signature_verified)
         .bind(&event.body)
         .bind(event.active)
-        .execute(&mut **tx)
+        .fetch_optional(&mut **tx)
         .await?;
-        Ok(result.rows_affected() == 1)
+        Ok(match result {
+            // A returned row: genuinely inserted (xmax = 0) or the tombstone
+            // flip ran (xmax <> 0 — the only update this upsert allows).
+            Some(row) if row.get::<bool, _>("inserted") => UpsertOutcome::Inserted,
+            Some(_) => UpsertOutcome::FlippedToTombstone,
+            // No row: the conflict was excluded by the WHERE clause — the
+            // identical event was already observed and nothing changed.
+            None => UpsertOutcome::Duplicate,
+        })
     }
 
     /// Latest observed event row for a message (by `event_created_at` desc,
@@ -204,7 +241,7 @@ impl ChatObservationStore {
                      FROM chat_observed_events
                      WHERE tenant_id = $1
                        AND message_id IN (SELECT message_id FROM affected_messages)
-                     ORDER BY event_created_at, event_id",
+                     ORDER BY event_created_at, event_id, event_type",
                 )
                 .bind(tenant_id.0)
                 .bind(since)
@@ -220,7 +257,7 @@ impl ChatObservationStore {
                             signature_verified, body, active
                      FROM chat_observed_events
                      WHERE tenant_id = $1
-                     ORDER BY event_created_at, event_id",
+                     ORDER BY event_created_at, event_id, event_type",
                 )
                 .bind(tenant_id.0)
                 .fetch_all(&self.pool)

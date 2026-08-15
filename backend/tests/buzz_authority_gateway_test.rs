@@ -3404,6 +3404,269 @@ async fn update_mapping_cross_tenant_returns_403() {
 }
 
 // ---------------------------------------------------------------------------
+// 14b. Reconcile applies the relay's snapshot tombstones (finding I-1)
+// ---------------------------------------------------------------------------
+
+/// A relay `state/events` snapshot tombstone for an observed message is
+/// applied by reconcile: the observation row flips to `deleted`, the gate
+/// denies, and the Memory catalog record is tombstoned.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn reconcile_applies_relay_snapshot_tombstone() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    // Seed the message through the webhook path (observation row + catalog
+    // record via the real pipeline) and register it at the relay as created.
+    // The memory consumer MUST be registered before the push (publish-time
+    // eager fan-out creates pending deliveries only for registered
+    // consumers).
+    let store = outbox_store(pool.clone());
+    register_consumer(&store).await;
+    let service = service(pool.clone());
+    let (buzz_push, event) = created_push(
+        &keys,
+        "to be deleted",
+        &community,
+        ChatChannelKind::Workspace,
+    );
+    assert_eq!(
+        ingest_push(&service, &buzz_push).await.unwrap(),
+        IngestOutcome::FirstObservation
+    );
+    let message_id = event.id.to_hex();
+    {
+        let mut state = fake.state.lock().unwrap();
+        state.register_event(state_entry(
+            &event,
+            &community,
+            CHANNEL_ID,
+            ChatChannelKind::Workspace,
+            ObservedEventType::Created,
+        ));
+    }
+    dispatch_once(&pool, store).await;
+    assert_eq!(
+        catalog_count(&pool, tenant).await,
+        1,
+        "the catalog record exists"
+    );
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway.clone()).await;
+    let ctx = user_ctx(env.principal, tenant);
+    let reference = chat_ref(&message_id);
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::Allow
+    );
+
+    // The relay now serves the SAME event as a snapshot tombstone:
+    // `message_id == event id`, `supersedes_event_id: null`.
+    {
+        let mut state = fake.state.lock().unwrap();
+        state.register_event(state_entry(
+            &event,
+            &community,
+            CHANNEL_ID,
+            ChatChannelKind::Workspace,
+            ObservedEventType::Deleted,
+        ));
+    }
+
+    // Reconcile: the snapshot tombstone must be ingested and flip the row.
+    let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
+    assert!(counts.processed >= 2, "both entries are examined");
+    let row = sqlx::query(
+        "SELECT event_type, active FROM chat_observed_events
+         WHERE tenant_id = $1 AND event_id = $2",
+    )
+    .bind(tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the observation row exists");
+    assert_eq!(
+        row.get::<String, _>("event_type"),
+        "deleted",
+        "the reconcile snapshot tombstone must flip the row to deleted"
+    );
+    assert!(!row.get::<bool, _>("active"), "the flipped row is inactive");
+
+    // The gate denies the deleted message on every surface.
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &reference)
+            .await,
+        Decision::NotFound,
+        "a reconciled deletion must make the message look absent"
+    );
+    assert!(
+        matches!(
+            authorizer
+                .fetch(&ctx, &reference, Representation::Raw)
+                .await,
+            Err(SourceError::NotFound)
+        ),
+        "fetch fails closed after the reconciled deletion"
+    );
+
+    // The Memory catalog record is tombstoned by the reconcile fold.
+    let catalog_state: String = sqlx::query_scalar(
+        "SELECT indexing_status FROM memory_catalog
+         WHERE tenant_id = $1 AND message_id = $2",
+    )
+    .bind(tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the catalog record still exists (tombstoned)");
+    assert_eq!(
+        catalog_state, "tombstoned",
+        "the reconcile fold must tombstone the catalog record"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+/// A snapshot tombstone for an event NEVER observed is still ingested as a
+/// deleted row (harmless) and never surfaces as a crash or a record.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn reconcile_deleted_snapshot_for_unknown_event_is_harmless() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+
+    let keys = Keys::generate();
+    let community = format!("community-{}", Uuid::new_v4());
+    let relay_keys = Keys::generate();
+    let service_keys = Keys::generate();
+    let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
+    let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
+    let env = setup_tenant_with_relay(
+        &pool,
+        tenant,
+        &keys,
+        &community,
+        &relay_url,
+        &relay_keys.public_key().to_hex(),
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &keys.public_key().to_hex());
+
+    // An event that was NEVER observed: only the relay's snapshot tombstone
+    // exists.
+    let event = signed_note(&keys, "never observed");
+    let message_id = event.id.to_hex();
+    fake.state.lock().unwrap().register_event(state_entry(
+        &event,
+        &community,
+        CHANNEL_ID,
+        ChatChannelKind::Workspace,
+        ObservedEventType::Deleted,
+    ));
+
+    let gateway =
+        Arc::new(BuzzGatewayClient::new_for_test(service_keys.clone(), Client::builder()).unwrap());
+    let counts = reconcile_from_buzz(&pool, tenant, &gateway, None).await;
+    assert!(counts.processed >= 1, "the tombstone entry is examined");
+
+    // A deleted row was created for the unknown event — harmless, no crash.
+    let row = sqlx::query(
+        "SELECT event_type, active FROM chat_observed_events
+         WHERE tenant_id = $1 AND event_id = $2",
+    )
+    .bind(tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the deleted row exists");
+    assert_eq!(row.get::<String, _>("event_type"), "deleted");
+    assert!(!row.get::<bool, _>("active"));
+
+    // The webhook path accepts the same snapshot form without error.
+    let service = service(pool.clone());
+    let tombstone_push = BuzzEventPush {
+        event: serde_json::to_value(&event).unwrap(),
+        context: BuzzPushContext {
+            community_id: community.clone(),
+            channel_id: CHANNEL_ID.to_string(),
+            channel_kind: ChatChannelKind::Workspace,
+            thread_root_id: None,
+            message_id: message_id.clone(),
+            event_type: ObservedEventType::Deleted,
+            supersedes_event_id: None,
+        },
+    };
+    assert_eq!(
+        ingest_push(&service, &tombstone_push).await.unwrap(),
+        IngestOutcome::DuplicateObservation,
+        "the webhook duplicate of the snapshot tombstone is a no-op"
+    );
+
+    // The gate still fails closed; the reconcile fold may have created a
+    // TOMBSTONED record for the unknown message (provenance), but never an
+    // exposable one.
+    let authorizer = authorizer_with_gateway(pool.clone(), gateway).await;
+    let ctx = user_ctx(env.principal, tenant);
+    assert_eq!(
+        authorizer
+            .authorize(&ctx, &chat_read_action(), &chat_ref(&message_id))
+            .await,
+        Decision::NotFound
+    );
+    let exposed: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM memory_catalog
+         WHERE tenant_id = $1 AND message_id = $2 AND indexing_status <> 'tombstoned'",
+    )
+    .bind(tenant.0)
+    .bind(&message_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        exposed, 0,
+        "a tombstone for an unknown event must never produce an exposable catalog record"
+    );
+
+    fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
 // 15. Batch access checks (POST /api/v1/relay/access/check-batch): one
 //     round-trip, chunking beyond 64, and fail-closed envelopes
 // ---------------------------------------------------------------------------

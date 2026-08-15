@@ -41,7 +41,7 @@ use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::resource_ref::ResourceRef;
 use rustshare_resource_auth::BindingStatus;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore,
+    ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore, UpsertOutcome,
 };
 use serde::{Deserialize, Serialize};
 
@@ -200,18 +200,31 @@ impl BuzzObservationService {
             .begin()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        let inserted = self
+        let outcome = self
             .observations
             .upsert_event_in_tx(&mut tx, &row)
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        if !inserted {
+        match outcome {
             // Identical Buzz event already observed; its durable event was
             // published on first observation — never publish again.
-            tx.rollback()
-                .await
-                .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-            return Ok(IngestOutcome::DuplicateObservation);
+            UpsertOutcome::Duplicate => {
+                tx.rollback()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            // The relay re-served the same event id as a snapshot tombstone:
+            // the flip must COMMIT, but the durable Created envelope was
+            // already published on first observation — never publish again
+            // (a second envelope for the same Buzz event id would collide).
+            UpsertOutcome::FlippedToTombstone => {
+                tx.commit()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            UpsertOutcome::Inserted => {}
         }
         let latest_created_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
             "SELECT MAX(event_created_at) FROM chat_observed_events
@@ -440,18 +453,29 @@ impl BuzzObservationService {
             .begin()
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        let inserted = self
+        let outcome = self
             .observations
             .upsert_event_in_tx(&mut tx, &row)
             .await
             .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        if !inserted {
+        match outcome {
             // Identical Buzz event already observed during an earlier
             // reconcile or webhook push; nothing to repair.
-            tx.rollback()
-                .await
-                .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-            return Ok(IngestOutcome::DuplicateObservation);
+            UpsertOutcome::Duplicate => {
+                tx.rollback()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            // The relay re-served the same event id as a snapshot tombstone:
+            // the flip must COMMIT (the repair applies the deletion).
+            UpsertOutcome::FlippedToTombstone => {
+                tx.commit()
+                    .await
+                    .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
+                return Ok(IngestOutcome::DuplicateObservation);
+            }
+            UpsertOutcome::Inserted => {}
         }
         tx.commit()
             .await
@@ -590,19 +614,42 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
                 ));
             }
         }
-        // An edit/delete is a different event from the root message. It may
+        // An edit is a different event from the root message. It may
         // supersede the root — whose event id IS the message id — so
-        // `supersedes == message_id` is the correct first-edit/delete
-        // contract; only self-supersede (`supersedes == this event's id`) is
-        // invalid.
-        ObservedEventType::Edited | ObservedEventType::Deleted => {
+        // `supersedes == message_id` is the correct first-edit contract;
+        // only self-supersede (`supersedes == this event's id`) is invalid.
+        ObservedEventType::Edited => {
             if raw_event_id == context.message_id {
                 return Err(BuzzPushError::Malformed(
-                    "edited/deleted event message_id must differ from the Nostr event id"
-                        .to_string(),
+                    "edited event message_id must differ from the Nostr event id".to_string(),
                 ));
             }
             if let Some(supersedes) = &context.supersedes_event_id {
+                if supersedes == raw_event_id {
+                    return Err(BuzzPushError::Malformed(
+                        "context.supersedes_event_id must not equal the Nostr event id".to_string(),
+                    ));
+                }
+            }
+        }
+        // A deletion has TWO accepted forms:
+        // 1. Webhook form: a separate deletion event superseding the message
+        //    — `raw_event_id != message_id` (same identity rules as Edited).
+        // 2. Snapshot form (the relay's `state/events` tombstone): the
+        //    message itself is the entry, marked deleted —
+        //    `raw_event_id == message_id` with `supersedes_event_id: null`
+        //    (a snapshot tombstone supersedes nothing). Reconcile applies it
+        //    by re-ingesting the same event id as a Deleted observation.
+        ObservedEventType::Deleted => {
+            if raw_event_id == context.message_id {
+                // Snapshot form.
+                if context.supersedes_event_id.is_some() {
+                    return Err(BuzzPushError::Malformed(
+                        "snapshot-form deleted events must not carry supersedes_event_id"
+                            .to_string(),
+                    ));
+                }
+            } else if let Some(supersedes) = &context.supersedes_event_id {
                 if supersedes == raw_event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
@@ -863,6 +910,54 @@ mod tests {
                 parsed.kind.as_u16()
             );
         }
+    }
+
+    #[test]
+    fn context_validation_accepts_both_deletion_forms() {
+        let (_, event) = signed_text_note("hello buzz");
+        let event_id = event.id.to_hex();
+        // A deterministic 64-hex message id that differs from the event id.
+        let mut other = event_id.clone();
+        let last = other.pop().unwrap();
+        other.push(if last == 'a' { 'b' } else { 'a' });
+
+        // Snapshot form (the relay's state/events tombstone): the message
+        // itself is the entry, marked deleted — id == message_id and
+        // supersedes None.
+        let p = push(&event, &event_id, ObservedEventType::Deleted);
+        assert!(
+            validate_context(&p).is_ok(),
+            "a snapshot-form tombstone (id == message_id, supersedes None) must be accepted"
+        );
+
+        // Snapshot form with a supersedes reference is malformed (a snapshot
+        // tombstone supersedes nothing).
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
+
+        // Webhook form: a separate deletion event superseding the message
+        // root (message_id == the root's id, which differs from this event's
+        // id).
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.message_id = other.clone();
+        p.context.supersedes_event_id = Some(other.clone());
+        assert!(
+            validate_context(&p).is_ok(),
+            "a webhook-form deletion superseding the message root must be accepted"
+        );
+
+        // Webhook form must not self-supersede.
+        let mut p = push(&event, &event_id, ObservedEventType::Deleted);
+        p.context.message_id = other.clone();
+        p.context.supersedes_event_id = Some(event_id);
+        assert!(matches!(
+            validate_context(&p),
+            Err(BuzzPushError::Malformed(_))
+        ));
     }
 
     #[test]

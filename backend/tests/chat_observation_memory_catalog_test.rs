@@ -24,7 +24,9 @@ use rustshare_memory::policy::ProjectionPolicy;
 use rustshare_memory::project::project_record;
 use rustshare_memory::record::IndexingStatus;
 use rustshare_resource_auth::BindingStatus;
-use rustshare_storage::{ChatIdentityStore, ChatObservationStore, MemoryCatalogStore};
+use rustshare_storage::{
+    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, UpsertOutcome,
+};
 use sqlx::PgPool;
 use std::sync::LazyLock;
 use uuid::Uuid;
@@ -227,12 +229,14 @@ async fn chat_observation_upsert_is_idempotent_by_event_id() {
         &created_data,
         Some("v1".into()),
     );
-    assert!(
+    assert_eq!(
         store.upsert_event_in_tx(&mut tx, &created).await.unwrap(),
+        UpsertOutcome::Inserted,
         "first insert of an event_id must insert"
     );
-    assert!(
-        !store.upsert_event_in_tx(&mut tx, &created).await.unwrap(),
+    assert_eq!(
+        store.upsert_event_in_tx(&mut tx, &created).await.unwrap(),
+        UpsertOutcome::Duplicate,
         "re-inserting the identical (tenant, event_id) must be a no-op"
     );
 
@@ -249,8 +253,9 @@ async fn chat_observation_upsert_is_idempotent_by_event_id() {
         &edit_data,
         Some("v2".into()),
     );
-    assert!(
+    assert_eq!(
         store.upsert_event_in_tx(&mut tx, &edit).await.unwrap(),
+        UpsertOutcome::Inserted,
         "a different event_id inserts"
     );
     tx.commit().await.unwrap();

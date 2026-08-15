@@ -210,8 +210,13 @@ pub fn apply_tombstone(
 /// returns). Per message (grouped by message_id, preserving order):
 /// - created row → `project_record` (skipped when the policy skips or content-gated);
 /// - edited row → `apply_event` onto the current record (out-of-order guard applies);
-/// - deleted row → `apply_tombstone` (or skipped when no record exists yet — a
-///   tombstone for a never-projected message is a no-op, mirroring the consumer);
+/// - deleted row → `apply_tombstone` onto the current record; a DELETED-ONLY
+///   group (the relay's snapshot tombstone flipped the message's only
+///   observation row, or a tombstone for a never-observed message) seeds a
+///   TOMBSTONED record — the rebuild must repair any stale non-tombstoned
+///   catalog record the upsert then overwrites (unlike the consumer's
+///   receipt-driven single-event path, which keeps its no-op for
+///   never-projected messages);
 /// - `content` for each row is the row's own `body` — passed only when
 ///   `policy.content_indexing` is on.
 ///
@@ -266,10 +271,28 @@ pub fn rebuild_records(
             };
             match row.event_type {
                 ObservedEventType::Deleted => {
-                    // Tombstone with no record yet: no-op — the durable fact
-                    // of the deletion already lives in the observation index.
-                    if let Some(existing) = record.as_ref() {
-                        record = Some(apply_tombstone(existing, &data));
+                    match record.as_ref() {
+                        Some(existing) => {
+                            record = Some(apply_tombstone(existing, &data));
+                        }
+                        // Deleted-only group: seed a TOMBSTONED record so the
+                        // rebuild repairs any stale non-tombstoned catalog
+                        // record (the upsert overwrites it). This is the
+                        // reconcile snapshot-tombstone case — the flip
+                        // replaced the message's only observation row — and
+                        // the never-observed-tombstone case (harmless: the
+                        // tombstoned record is excluded from every read).
+                        None => {
+                            if let Some(seeded) = project_record(
+                                row.tenant_id,
+                                row.workspace_id,
+                                &data,
+                                policy,
+                                content,
+                            ) {
+                                record = Some(apply_tombstone(&seeded, &data));
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -997,7 +1020,13 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_tombstone_only_group_yields_no_record() {
+    fn rebuild_tombstone_only_group_yields_tombstoned_record() {
+        // A deleted-only group is either the reconcile snapshot-tombstone
+        // case (the flip replaced the message's only observation row — the
+        // rebuild must emit a tombstone so the upsert can overwrite any
+        // stale non-tombstoned catalog record) or a tombstone for a
+        // never-observed message (a tombstoned record is created, harmless —
+        // excluded from every read).
         let rows = [observed_row(
             ObservedEventType::Deleted,
             &hex64(0xdd),
@@ -1006,10 +1035,10 @@ mod tests {
             ChatChannelKind::Workspace,
             None,
         )];
-        assert!(
-            rebuild_records(&rows, &policy(true)).is_empty(),
-            "a tombstone for a never-projected message is a no-op"
-        );
+        let records = rebuild_records(&rows, &policy(true));
+        assert_eq!(records.len(), 1, "one tombstoned record per message");
+        assert_eq!(records[0].event_type, ObservedEventType::Deleted);
+        assert_eq!(records[0].indexing_status, IndexingStatus::Tombstoned);
     }
 
     #[test]

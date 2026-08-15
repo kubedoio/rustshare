@@ -344,6 +344,22 @@ Rules:
 
 - Each `context` is exactly the shape of Elembra's webhook push payload
   (`BuzzPushContext`), so Elembra reuses its existing validation unchanged.
+  NOTE: the `community_id` here is the RELAY's community identifier (the
+  state page is host-derived), unlike the webhook surface where the observer
+  injects the Elembra mapping id. For reconcile routing, the Elembra
+  community mapping's `community_id` must equal the relay's community id —
+  the same value the state entries carry.
+- **Tombstone snapshot form:** a soft-deleted (tombstoned) message is served
+  as an entry whose `event` is the ORIGINAL message event (the same event id
+  that was previously served as `created`) with
+  `event_type: "deleted"`, `message_id` EQUAL to the event id, and
+  `supersedes_event_id: null` — the snapshot tombstone supersedes nothing;
+  the message itself is the entry, marked deleted. Clients ingest it as a
+  tombstone for that message: re-observing the same event id as `deleted`
+  flips the existing observation row (reconcile applies deletions). This is
+  distinct from the webhook's deletion form, where a SEPARATE deletion event
+  (`message_id != event id`, optional `supersedes_event_id` pointing at the
+  message root) is pushed.
 - Entries are limited to events the authenticated service workload is
   **entitled to see for the relay's community** — the same visibility the
   relay applies to its own reconciliation consumers; no event of another
