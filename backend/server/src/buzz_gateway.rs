@@ -33,6 +33,13 @@ use sha2::{Digest, Sha256};
 use tracing::warn;
 use url::Url;
 
+/// Serializes the env-sensitive SSRF tests (they flip the process-wide
+/// `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` flag). Shared with the chat_identity
+/// URL-validation tests, which read the same flag.
+#[cfg(test)]
+pub(crate) static SSRF_SERIAL: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Default per-request timeout for relay calls.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Relay responses are kind-19030 events (unregistered, private replaceable
@@ -893,17 +900,21 @@ fn validate_page(page: &BuzzStatePage) -> Result<(), BuzzAuthorityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::LazyLock;
-
-    /// Serializes the env-sensitive SSRF tests (they flip the process-wide
-    /// `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` flag).
-    static SSRF_SERIAL: LazyLock<tokio::sync::Mutex<()>> =
-        LazyLock::new(|| tokio::sync::Mutex::new(()));
     use nostr::nips::nip98::{verify_auth_header, HttpMethod};
     use nostr::Timestamp;
     use rustshare_core::domain::TenantId;
     use serde_json::json;
     use uuid::Uuid;
+
+    /// Restores the process-wide relay-flag env var when dropped, so tests
+    /// running later in the same process never observe a leaked flag.
+    struct RelayEnvGuard;
+
+    impl Drop for RelayEnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        }
+    }
 
     /// A 64-char lowercase hex string (pubkey/event-id shaped).
     const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1507,6 +1518,7 @@ mod tests {
         // dev/dogfood while production stays strict by default.
         let _ssrf_guard = SSRF_SERIAL.lock().await;
         std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
+        let _flag_guard = RelayEnvGuard;
         let service = client(Keys::generate());
         let (base, http) = service
             .validated_http("ws://localhost:7447")

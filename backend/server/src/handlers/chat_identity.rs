@@ -519,6 +519,10 @@ mod tests {
 
     #[tokio::test]
     async fn relay_url_rejects_private_or_credentialed_targets() {
+        // Serialized with the buzz_gateway SSRF tests: they flip the
+        // process-wide RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY flag, which this
+        // validation path reads too.
+        let _ssrf_guard = crate::buzz_gateway::SSRF_SERIAL.lock().await;
         assert!(validate_relay_url("ws://127.0.0.1:8080").await.is_err());
         assert!(validate_relay_url("wss://user:secret@1.1.1.1")
             .await
