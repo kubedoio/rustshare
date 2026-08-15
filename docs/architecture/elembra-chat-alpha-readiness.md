@@ -317,8 +317,10 @@ weakening authorization."
 
 **Budget (documented + enforced by the live conformance suite):** a 64-message
 timeline-page authorization completes in **≤ 2 relay HTTP round-trips**
-(1 batch round-trip + margin; the suite proves exactly 1) with **p95 wall
-time ≤ 500 ms** against the local loopback relay.
+(1 batch round-trip + margin; the suite proves exactly 1) with **median wall
+time ≤ 500 ms** against the local loopback relay (target framing: p95 ≤ 500 ms
+for the production authorization path — see the methodology note on why the
+suite asserts the median).
 
 **What is measured** (`live_p11_timeline_authorization_latency_within_budget`
 in `backend/tests/buzz_live_conformance_test.rs`): the wall time of one
