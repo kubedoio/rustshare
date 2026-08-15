@@ -74,7 +74,9 @@ use rustshare_server::oidc_runtime::OidcRuntimeCache;
 use rustshare_server::outbox_dispatcher::{OutboxDispatcher, OutboxStatus};
 use rustshare_server::services::ask_workspace::AskWorkspaceService;
 use rustshare_server::services::note_service::NoteService;
-use rustshare_server::services::unified_search::{SearchSource, UnifiedSearchService};
+use rustshare_server::services::unified_search::{
+    SearchSource, UnifiedSearchResponse, UnifiedSearchService,
+};
 use rustshare_server::AppState;
 use rustshare_storage::repos::ShareNotificationRepoImpl;
 use rustshare_storage::{
@@ -600,6 +602,38 @@ fn chat_ref(message_id: &str) -> ResourceRef {
 
 fn user_ctx(principal: PrincipalId, tenant: TenantId) -> PrincipalContext {
     PrincipalContext::user(principal, tenant, WorkspaceId(tenant.0))
+}
+
+/// Poll `search` until the message appears (bounded) — the outbox→projection
+/// pipeline may need several dispatcher ticks (registration sync in tick N,
+/// delivery in tick N+1), so a single tick is not deterministic on slow CI.
+/// Returns `(found, last_response)`; on success `last_response` contains the
+/// expected URI, otherwise it is the last polled result (for the panic
+/// message).
+async fn poll_search_until_found(
+    service: &UnifiedSearchService,
+    dispatcher: &OutboxDispatcher,
+    ctx: &PrincipalContext,
+    query: &str,
+    expected_uri: &str,
+    deadline: std::time::Duration,
+) -> (bool, UnifiedSearchResponse) {
+    let started = tokio::time::Instant::now();
+    loop {
+        dispatcher.tick().await;
+        let search = service
+            .search(ctx, query, &[SearchSource::Chat], 10)
+            .await
+            .expect("search succeeds while the user is a member");
+        let found = search
+            .results
+            .iter()
+            .any(|result| result.resource_ref == expected_uri);
+        if found || started.elapsed() >= deadline {
+            return (found, search);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }
 
 fn chat_read_action() -> ActionCapability {
@@ -1476,22 +1510,26 @@ async fn live_p9_memory_search_ask_cannot_bypass_buzz() {
         OutboxWorkerConfig::default(),
         "buzz-conformance-worker".to_string(),
     ));
-    dispatcher.tick().await;
 
     let (state, _, _) = setup_app_state(pool.clone(), live_gateway(&env)).await;
     let ctx = user_ctx(fixture.principal, fixture.tenant);
-    let search = state
-        .unified_search_service
-        .search(&ctx, "conformance searchable", &[SearchSource::Chat], 10)
-        .await
-        .expect("search succeeds while the user is a member");
     let message_uri = chat_ref(&message_id).to_uri();
+    let poll_deadline = std::time::Duration::from_secs(30);
+    let (found, search) = poll_search_until_found(
+        &state.unified_search_service,
+        &dispatcher,
+        &ctx,
+        "conformance searchable",
+        &message_uri,
+        poll_deadline,
+    )
+    .await;
     assert!(
-        search
-            .results
-            .iter()
-            .any(|result| result.resource_ref == message_uri),
-        "the message is indexed and searchable"
+        found,
+        "the message is indexed and searchable: not found within {}s \
+         (last search returned {} results, none matching {message_uri})",
+        poll_deadline.as_secs(),
+        search.results.len(),
     );
     let rag = state
         .unified_search_service
