@@ -262,12 +262,16 @@ function connect() {
 		try {
 			if (hChannels.length > 0) {
 				for (const ch of hChannels) {
-					socket.send(JSON.stringify(['REQ', `${reqId}-${ch.slice(0, 8)}`, { ...baseFilter, '#h': [ch] }]));
+					socket.send(
+						JSON.stringify(['REQ', `${reqId}-${ch.slice(0, 8)}`, { ...baseFilter, '#h': [ch] }])
+					);
 				}
 			} else {
 				socket.send(JSON.stringify(['REQ', reqId, baseFilter]));
 			}
-			console.log(`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}${hChannels.length ? ` #h=[${hChannels.join(',')}] (one REQ per channel)` : ''}`);
+			console.log(
+				`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}${hChannels.length ? ` #h=[${hChannels.join(',')}] (one REQ per channel)` : ''}`
+			);
 		} catch (error) {
 			subscribed = false;
 			console.error(`REQ send failed: ${error.message}`);
