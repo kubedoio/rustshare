@@ -730,7 +730,15 @@ pub fn chat_integration_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+            get(crate::handlers::chat_identity::get_community_mapping),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
             patch(crate::handlers::chat_identity::update_community_mapping),
+        )
+        .route(
+            "/api/v1/admin/applications/chat/workspaces/{workspace_id}/provision",
+            post(crate::handlers::chat_identity::provision_community_mapping),
         )
         .route(
             "/api/v1/admin/applications/chat/principals/{principal_id}/revoke",

@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{AdminUser, AppError, AuthenticatedUser};
-use crate::state::DatabaseState;
+use crate::services::chat_bootstrap::{ChatBootstrapError, ProvisionOutcome};
+use crate::state::{AppState, DatabaseState};
 
 #[derive(Debug, Deserialize)]
 pub struct ChallengeRequest {
@@ -224,6 +225,142 @@ pub async fn update_community_mapping(
         return Err(AppError::not_found("Chat workspace mapping not found"));
     }
     Ok((StatusCode::OK, Json(updated)))
+}
+
+/// Auto-provision the deployment Buzz community for a workspace (idempotent,
+/// ADR-0036). Admin-only and tenant-scoped. On success the workspace has a
+/// mapping row (either just created or pre-existing and verified identical).
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/applications/chat/workspaces/{workspace_id}/provision",
+    tag = "Chat (admin)",
+    responses(
+        (status = 201, description = "Provisioned or already configured", body = ProvisionCommunityResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Community in use or mismatch", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn provision_community_mapping(
+    AdminUser { user_id: admin_id }: AdminUser,
+    auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(workspace_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<ProvisionCommunityResponse>), AppError> {
+    let admin_tenant = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id = $1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    if admin_tenant != auth.tenant_id {
+        return Err(AppError::Forbidden("tenant scope mismatch".into()));
+    }
+    ensure_workspace_scope(auth.tenant_id, workspace_id)?;
+    let outcome = state
+        .chat_bootstrap
+        .as_ref()
+        .ok_or_else(|| AppError::bad_request("chat provisioning is not enabled in this mode"))?
+        .provision(TenantId(auth.tenant_id), WorkspaceId(workspace_id))
+        .await
+        .map_err(bootstrap_error_to_app_error)?;
+    let (status, community_id, relay_url, relay_pubkey) = match outcome {
+        ProvisionOutcome::Inserted {
+            community_id,
+            relay_url,
+            relay_pubkey,
+        } => ("created", community_id, relay_url, relay_pubkey),
+        ProvisionOutcome::AlreadyConfigured {
+            community_id,
+            relay_url,
+            relay_pubkey,
+        } => (
+            "already_configured",
+            community_id,
+            relay_url,
+            relay_pubkey.unwrap_or_default(),
+        ),
+    };
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionCommunityResponse {
+            status: status.to_string(),
+            community_id,
+            relay_url,
+            relay_pubkey,
+        }),
+    ))
+}
+
+/// Admin diagnostics: the workspace's current mapping, including the pinned
+/// relay pubkey. Never exposed on the user-facing status surface.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/applications/chat/workspaces/{workspace_id}/community",
+    tag = "Chat (admin)",
+    responses(
+        (status = 200, description = "Mapping", body = AdminCommunityMappingResponse),
+        (status = 404, description = "No mapping", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn get_community_mapping(
+    AdminUser { user_id: admin_id }: AdminUser,
+    auth: AuthenticatedUser,
+    State(db): State<DatabaseState>,
+    Path(workspace_id): Path<WorkspaceId>,
+) -> Result<Json<AdminCommunityMappingResponse>, AppError> {
+    let admin_tenant = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id = $1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&db.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    if admin_tenant != auth.tenant_id {
+        return Err(AppError::Forbidden("tenant scope mismatch".into()));
+    }
+    ensure_workspace_scope(auth.tenant_id, workspace_id.0)?;
+    let mapping = db
+        .chat_identity_store
+        .mapping(TenantId(auth.tenant_id), workspace_id)
+        .await
+        .map_err(internal_db)?
+        .ok_or_else(|| AppError::not_found("no community mapping for this workspace"))?;
+    Ok(Json(AdminCommunityMappingResponse {
+        community_id: mapping.community_id,
+        relay_url: mapping.relay_url,
+        relay_pubkey: mapping.relay_pubkey,
+        active: mapping.active,
+    }))
+}
+
+/// Provisioning response — idempotent by design (`status` says which path).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ProvisionCommunityResponse {
+    pub status: String,
+    pub community_id: String,
+    pub relay_url: String,
+    pub relay_pubkey: String,
+}
+
+/// Admin-only mapping diagnostics (includes the pin; not for user surfaces).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AdminCommunityMappingResponse {
+    pub community_id: String,
+    pub relay_url: String,
+    pub relay_pubkey: Option<String>,
+    pub active: bool,
+}
+
+fn bootstrap_error_to_app_error(error: ChatBootstrapError) -> AppError {
+    match error {
+        ChatBootstrapError::CommunityInUse { .. }
+        | ChatBootstrapError::CommunityMismatch { .. } => AppError::conflict(error.to_string()),
+        other => AppError::internal(format!("chat provisioning failed: {other}")),
+    }
 }
 
 /// Issue a short-lived, mapping-bound NIP-42 challenge.
