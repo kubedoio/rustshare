@@ -887,19 +887,21 @@ pub async fn init_app() -> Result<AppState> {
         );
         let authority: Box<dyn BuzzAuthority> =
             Box::new(BuzzGatewayAuthority(Arc::clone(&gateway)));
-        // Zero-config bootstrap service (ADR-0036) — only in buzz mode.
-        let chat_bootstrap = Some(Arc::new(ChatBootstrapService::new(
-            gateway.clone(),
-            chat_identity_store.clone(),
-            config
-                .rustshare_chat_bootstrap_relay_url
-                .clone()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL required for chat provisioning"
-                    )
-                })?,
-        )));
+        // Zero-config bootstrap service (ADR-0036) — only in buzz mode, and
+        // only when a bootstrap relay URL is configured. Manual-mode buzz
+        // deployments without the URL keep working (provisioning is simply
+        // unavailable); auto mode is guaranteed to have the URL by startup
+        // validation, so auto deployments always get the service.
+        let chat_bootstrap = config
+            .rustshare_chat_bootstrap_relay_url
+            .clone()
+            .map(|relay_url| {
+                Arc::new(ChatBootstrapService::new(
+                    gateway.clone(),
+                    chat_identity_store.clone(),
+                    relay_url,
+                ))
+            });
         info!("Chat authority mode: buzz (relay-backed gateway)");
         (Some(gateway), authority, chat_bootstrap)
     } else {
