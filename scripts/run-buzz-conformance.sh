@@ -116,14 +116,16 @@ trap teardown EXIT
 
 echo "== waiting for relay health =="
 # The app router serves `/health` on the main relay port (7447); the 8088
-# health listener uses a separate probe surface.
-for attempt in $(seq 1 60); do
+# health listener uses a separate probe surface. 150 attempts × 2s = 300s:
+# the relay's startup A3 gate (a 32-way concurrent S3 conformance probe
+# against MinIO) occasionally exceeds 120s on cold starts.
+for attempt in $(seq 1 150); do
 	if curl -sf "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
 		break
 	fi
-	echo "  relay not healthy (attempt $attempt/60)…"
+	echo "  relay not healthy (attempt $attempt/150)…"
 	sleep 2
-	if [[ "$attempt" == "60" ]]; then
+	if [[ "$attempt" == "150" ]]; then
 		echo "FAIL: relay did not become healthy at http://127.0.0.1:7447/health" >&2
 		exit 1
 	fi
