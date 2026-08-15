@@ -25,6 +25,19 @@
 # =============================================================================
 
 services:
+  # Buzz is the production/dogfood Chat authority: every channel/message
+  # decision comes from the community's relay (v1alpha1 upstream contract).
+  # The bridge key is the same owner/service key the observer and relay admit
+  # with (see frontend/scripts/alpha-gen-buzz-keys.mjs, which prints both
+  # RUSTSHARE_CHAT_BRIDGE_SECRET_KEY and BUZZ_SERVICE_SK with the same value).
+  # Local mode remains the explicit dev fallback (base compose default);
+  # startup validation hard-fails a misconfigured buzz mode — no silent
+  # fallback.
+  backend:
+    environment:
+      RUSTSHARE_CHAT_AUTHORITY: "buzz"
+      RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${RUSTSHARE_CHAT_BRIDGE_SECRET_KEY:-${BUZZ_SERVICE_SK:-}}
+
   buzz-postgres:
     image: postgres:17-alpine
     restart: unless-stopped
