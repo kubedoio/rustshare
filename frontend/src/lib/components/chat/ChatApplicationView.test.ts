@@ -10,7 +10,26 @@ const mocks = vi.hoisted(() => ({
 	getChatChannels: vi.fn(),
 	getChatMessages: vi.fn(),
 	getChatMessage: vi.fn(),
-	pageUrl: new URL('http://localhost:8080/apps/chat')
+	pageUrl: new URL('http://localhost:8080/apps/chat'),
+	// Send path (real MessageComposer): key vault + nostr + files so the
+	// composer can publish and emit onSent(eventId).
+	hasChatKey: vi.fn(() => false),
+	loadChatKey: vi.fn(async () => 'sk-1'),
+	importChatKey: vi.fn(),
+	exportChatKey: vi.fn(() => ''),
+	clearChatKey: vi.fn(),
+	publishEvent: vi.fn(),
+	publicKeyOf: vi.fn(() => 'pk-1'),
+	buildUnsignedEvent: vi.fn(
+		async (kind: number, content: string, tags: unknown[], pubkey: string) => ({
+			pubkey,
+			created_at: 0,
+			kind,
+			tags,
+			content
+		})
+	),
+	listAllFiles: vi.fn(async () => [])
 }));
 
 vi.mock('$lib/api/chat', () => ({
@@ -19,6 +38,26 @@ vi.mock('$lib/api/chat', () => ({
 	getChatMessages: mocks.getChatMessages,
 	getChatMessage: mocks.getChatMessage
 }));
+
+vi.mock('$lib/chat/keys', () => ({
+	hasChatKey: mocks.hasChatKey,
+	loadChatKey: mocks.loadChatKey,
+	importChatKey: mocks.importChatKey,
+	exportChatKey: mocks.exportChatKey,
+	clearChatKey: mocks.clearChatKey
+}));
+
+vi.mock('$lib/chat/nostr', () => ({
+	publishEvent: mocks.publishEvent,
+	publicKeyOf: mocks.publicKeyOf,
+	buildUnsignedEvent: mocks.buildUnsignedEvent,
+	isUuid: (value: string) =>
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),
+	NOSTR_KIND_STREAM_MESSAGE: 9,
+	NOSTR_KIND_TEXT: 1
+}));
+
+vi.mock('$lib/api/files', () => ({ listAllFiles: mocks.listAllFiles }));
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: mocks.pageUrl })
@@ -50,6 +89,22 @@ describe('ChatApplicationView', () => {
 		vi.mocked(mocks.getChatChannels).mockReset();
 		vi.mocked(mocks.getChatMessages).mockReset();
 		vi.mocked(mocks.getChatMessage).mockReset();
+		// Send-path mocks: restore defaults so the composer shows the import
+		// UI unless a send test opts into a stored key.
+		vi.mocked(mocks.hasChatKey).mockReset().mockReturnValue(false);
+		vi.mocked(mocks.loadChatKey).mockReset().mockResolvedValue('sk-1');
+		vi.mocked(mocks.publishEvent).mockReset();
+		vi.mocked(mocks.buildUnsignedEvent)
+			.mockReset()
+			.mockImplementation(
+				async (kind: number, content: string, tags: unknown[], pubkey: string) => ({
+					pubkey,
+					created_at: 0,
+					kind,
+					tags,
+					content
+				})
+			);
 		mocks.pageUrl.search = '';
 		queryClient.clear();
 	});
@@ -188,6 +243,85 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', null));
 		await fireEvent.click(screen.getByRole('button', { name: /random/ }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('random', null));
+	});
+
+	it('clears the send-sync banner once the sent message is observed, then auto-hides it', async () => {
+		vi.useFakeTimers();
+		try {
+			mocks.getChatStatus.mockResolvedValue(activeStatus());
+			mocks.getChatChannels.mockResolvedValue(CHANNELS);
+			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+			mocks.hasChatKey.mockReturnValue(true);
+			mocks.publishEvent.mockResolvedValue({ ok: true, event_id: 'e-sent-1' });
+			render(ChatApplicationView);
+			await waitFor(() => expect(screen.getByPlaceholderText(/Message #general/)).toBeTruthy());
+
+			await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+				target: { value: 'hello relay' }
+			});
+			await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+			await waitFor(() =>
+				expect(screen.getByText('Sent — waiting for Elembra sync…')).toBeTruthy()
+			);
+
+			// The polling fallback picks the sent event up: the status flips to
+			// 'observed'… then the success banner auto-clears after ~3 s.
+			mocks.getChatMessages.mockResolvedValue({
+				messages: [
+					{
+						message_id: 'm-sent',
+						event_id: 'e-sent-1',
+						community_id: 'community-1',
+						channel_id: 'general',
+						channel_kind: 'topic',
+						author_pubkey: 'pk-1',
+						event_created_at: '2026-08-12T10:01:00Z',
+						thread_root_id: null,
+						body: 'hello relay'
+					}
+				],
+				next_before: null
+			});
+			await vi.advanceTimersByTimeAsync(15_000);
+			await waitFor(() => expect(screen.getByText('Observed by Elembra.')).toBeTruthy());
+
+			await vi.advanceTimersByTimeAsync(3_000);
+			await waitFor(() => expect(screen.queryByText('Observed by Elembra.')).toBeNull());
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('resets the send-sync status when switching channels mid-wait', async () => {
+		vi.useFakeTimers();
+		try {
+			mocks.getChatStatus.mockResolvedValue(activeStatus());
+			mocks.getChatChannels.mockResolvedValue(CHANNELS);
+			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+			mocks.hasChatKey.mockReturnValue(true);
+			mocks.publishEvent.mockResolvedValue({ ok: true, event_id: 'e-sent-2' });
+			render(ChatApplicationView);
+			await waitFor(() => expect(screen.getByPlaceholderText(/Message #general/)).toBeTruthy());
+
+			await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+				target: { value: 'about to switch' }
+			});
+			await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+			await waitFor(() =>
+				expect(screen.getByText('Sent — waiting for Elembra sync…')).toBeTruthy()
+			);
+
+			// Switching channels orphans the in-flight event: the status resets
+			// to idle and the stale 15 s warning timer must not fire for it.
+			await fireEvent.click(screen.getByRole('button', { name: /random/ }));
+			await waitFor(() =>
+				expect(screen.queryByText('Sent — waiting for Elembra sync…')).toBeNull()
+			);
+			await vi.advanceTimersByTimeAsync(20_000);
+			expect(screen.queryByText(/Sent, but Elembra has not observed/)).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('refetches channels on the polling fallback so a dead websocket cannot freeze the channel list', async () => {
