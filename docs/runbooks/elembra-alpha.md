@@ -19,8 +19,9 @@ Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │
 Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-minio
                               ▲
-        buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards kind-1 to
-                                  POST /api/v1/integrations/buzz/events)
+        buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards the observed
+                                  kinds — stream messages 9/40002 and legacy
+                                  kind-1 — to POST /api/v1/integrations/buzz/events)
 ```
 
 Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
@@ -103,13 +104,14 @@ tail -f buzz-observer.log     # expect "authenticated ... EOSE"
 
 ### 2.3 Local-relay note (dev/dogfooding on one host)
 
-The admin mapping API and the binding challenge both validate the relay URL
-against the SSRF guard (`resolve_public_socket_addrs`). A relay on
-`localhost`/private addresses is rejected **unless**
-`RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is set (mirrors
-`RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The flag is
-required for any localhost relay** — the binding challenge re-validates the
-stored URL, so an SQL row alone cannot bypass it. With the flag set,
+The admin mapping API, the binding challenge, AND the Buzz gateway all
+validate the relay URL against the same SSRF guard
+(`resolve_chat_relay_socket_addrs`). A relay on `localhost`/private
+addresses is rejected **unless** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is
+set (mirrors `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The
+flag is required for any localhost relay** — the binding challenge
+re-validates the stored URL, so an SQL row alone cannot bypass it, and the
+gateway needs it to reach a same-host relay in buzz mode. With the flag set,
 `ws://localhost:7447` is accepted and the API path works end to end.
 
 Operators who prefer to skip the admin-API/CSRF dance may insert the mapping
@@ -173,10 +175,10 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 |---|---|---|
 | `RUSTSHARE_CHAT_AUTHORITY` | `local` (coarse community gate) or `buzz` (upstream access/check) | `local` |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
-| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key for NIP-43 9030/9031 (== `BUZZ_SERVICE_SK`) | empty |
+| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
 | `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
 | `BUZZ_RELAY_IMAGE` | relay image | `ghcr.io/block/buzz:main` |
-| `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key | — |
+| `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
 | `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
@@ -264,10 +266,11 @@ observer/E2E.
 
 Full classification: Alpha readiness doc §8. Relevant here:
 
-- Channel list = observed events only (L1, upstream).
+- Channel list = the relay's authoritative registry in buzz mode (L1
+  resolved); observation-derived only under the `local` fallback.
 - Reference-first bodies render placeholder (L2, by design).
-- `local` gate = coarse community authorization; per-channel membership is
-  upstream (L7/L9/L12).
+- The stack runs buzz mode: per-channel membership decisions are upstream
+  (L7/L9 resolved); the `local` gate remains the explicit dev fallback only.
 - Sender-side attachment tags only (L5).
 - Observation relay→Elembra push is the host-side bridge (this deployment);
   upstream relay has no webhook delivery yet.
@@ -311,8 +314,9 @@ The following are operator-visible today (proven during this goal):
   bounded to tenant identifiers and contains no user or message data.
 - Bridge delivery: `chat_bridge_delivery_state{kind,state}` reports 9030/9031
   acked, retry-queued, or DLQ state; alert on any non-zero DLQ count.
-- Relay outage: publish fails with a distinct transport error; reads stay
-  available under the `local` gate; recovery is automatic (observer reconnect).
+- Relay outage: publish fails with a distinct transport error; reads fail
+  closed in buzz mode (the gateway denies — no silent fallback to local);
+  recovery is automatic (observer reconnect).
 
 ## 11. Alpha blocker disposition
 
