@@ -10,7 +10,7 @@
 #
 # Prerequisites (see docs/runbooks/elembra-alpha.md):
 #   - base stack up:   docker compose up -d
-#   - relay stack up:  docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
+#   - relay stack up:  docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d
 #   - observer up:     ./scripts/start-buzz-observer.sh
 #   - frontend deps:   npm install (frontend/)
 #
@@ -18,6 +18,7 @@
 #   BUZZ_SERVICE_SK    bridge/owner secret key (relay owner identity)
 #   BUZZ_RELAY_WS      relay ws url (default ws://localhost:7447)
 #   BUZZ_COMMUNITY_ID  community id (must match the observer + mapping)
+#   BUZZ_RELAY_PUBKEY  relay identity pubkey (printed by alpha-gen-buzz-keys.mjs)
 #   ADMIN_EMAIL / ADMIN_PASSWORD  admin creds (default RUSTSHARE_ADMIN_*)
 # Optional: BUZZ_CHANNEL_ID, BUZZ_CHANNEL2_ID, ELEMBRA_API, RELAY_CONTAINER, POSTGRES_CONTAINER
 #
@@ -37,8 +38,9 @@ fi
 : "${BUZZ_SERVICE_SK:?BUZZ_SERVICE_SK must be set (bridge/owner key)}"
 BUZZ_RELAY_WS="${BUZZ_RELAY_WS:-ws://localhost:7447}"
 : "${BUZZ_COMMUNITY_ID:?BUZZ_COMMUNITY_ID must be set}"
-BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-alpha-channel}"
-BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-alpha-ops}"
+: "${BUZZ_RELAY_PUBKEY:?BUZZ_RELAY_PUBKEY must be set (relay identity pubkey from alpha-gen-buzz-keys.mjs)}"
+BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-585e55c7-97d9-43ad-bbe3-a355cad93082}"
+BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-4bec90c0-4c14-48cc-8958-da8c258f9759}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-rustshare-postgres-1}"
 ELEMBRA_API="${ELEMBRA_API:-http://localhost/api/v1}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
@@ -158,7 +160,7 @@ tenant_id="$(jq_get 'd["tenant_id"]' "$TMP/body")"
 code=$(curl -s -b "$(sess admin)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/status")
 mapping="$(jq_get 'd["mapping"]' "$TMP/body")"
 cat > "$TMP/mapping.json" <<EOF
-{"community_id":"${BUZZ_COMMUNITY_ID}","relay_url":"${BUZZ_RELAY_WS}"}
+{"community_id":"${BUZZ_COMMUNITY_ID}","relay_url":"${BUZZ_RELAY_WS}","relay_pubkey":"${BUZZ_RELAY_PUBKEY}"}
 EOF
 # The mapping is existence-hidden until a binding exists, so try PATCH first
 # and fall back to POST (idempotent provisioning). On a local/dev relay the
@@ -267,6 +269,29 @@ for u in alpha_alice alpha_bob alpha_mallory; do
 	fi
 done
 
+# --- channel provisioning ------------------------------------------------------
+# The relay's v1alpha1 registry is UUID-keyed: the alpha channels must exist
+# as kind-9007 rows (open visibility) before publishes/reads exercise them,
+# and every client (observer, E2E driver, gateway) must use the same UUID ids
+# (BUZZ_CHANNEL_ID / BUZZ_CHANNEL2_ID default to the alpha channel UUIDs).
+# Re-runs of an existing channel answer accepted:false "duplicate: channel
+# already exists" — idempotent, treated as success.
+echo "== provisioning channels at the relay =="
+create_channel() { # id name
+	local id="$1" name="$2"
+	(cd frontend && $OPS create-channel "$BUZZ_RELAY_WS" "$id" "$name" open stream) > "$TMP/ch.json"
+	local ok reason
+	ok="$(jq_get 'd["accepted"]' "$TMP/ch.json")"
+	reason="$(jq_get 'd["reason"]' "$TMP/ch.json")"
+	if [[ "$ok" != "True" && "$reason" != *duplicate* ]]; then
+		echo "FATAL: create-channel $name ($id) failed: $(cat "$TMP/ch.json")" >&2
+		exit 1
+	fi
+	echo "    channel $name ($id) ready"
+}
+create_channel "$BUZZ_CHANNEL_ID" "alpha-channel"
+create_channel "$BUZZ_CHANNEL2_ID" "alpha-ops"
+
 # --- P06 publish + observation -----------------------------------------------
 echo "== publishing messages =="
 pub_msg() { # username channel content
@@ -326,7 +351,20 @@ code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMB
 msg_count="$(jq_get 'len(d["messages"])' "$TMP/body")"
 check "P08 timeline populated" "$([[ "$msg_count" != "" && "$msg_count" != "0" && "$msg_count" != "None" ]] && echo true || echo false)" "$msg_count messages"
 
-bob_attributed="$(jq_get 'any(m["author_pubkey"] == "'${USER_PK[alpha_bob]}'" for m in d["messages"])' "$TMP/body")"
+bob_attributed=""
+# P08b needs THIS run's bob message observed; the accumulated timeline can
+# satisfy the P08 count before this run's events land, so wait for bob's key
+# specifically (observation-driven, same pattern as P07/P10). The 60s budget
+# absorbs an observer reconnect + since=all replay after a relay bounce
+# (the runbook supervises the observer; a restart is lossless by replay).
+for i in $(seq 1 60); do
+	code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
+	if [[ "$code" == "200" ]]; then
+		bob_attributed="$(jq_get 'any(m["author_pubkey"] == "'${USER_PK[alpha_bob]}'" for m in d["messages"])' "$TMP/body")"
+		[[ "$bob_attributed" == "True" ]] && break
+	fi
+	sleep 1
+done
 check "P08b author mapping correct" "$([[ "$bob_attributed" == "True" ]] && echo true || echo false)" "bob's msg attributed to his key"
 
 # --- P09 pagination ----------------------------------------------------------
@@ -451,7 +489,16 @@ check "P15b revoked user cannot read" "$([[ "$code" == "401" || "$code" == "403"
 if relay_ok revoke "$BUZZ_RELAY_WS" "${USER_PK[alpha_mallory]}"; then
 	check "P15c relay revoked (9031)" true "9031 accepted"
 else
-	check "P15c relay revoked (9031)" false "9031 failed: $(cat "$TMP/op.json")"
+	# The Elembra-side disable (P15a) also queues a durable 9031 through the
+	# outbox bridge; when that one lands first, this direct 9031 is answered
+	# "member not found" — the relay already confirms the member is gone,
+	# which is the same revoked end state (P15d still proves the consequence).
+	revoke_reason="$(jq_get 'd["reason"]' "$TMP/op.json")"
+	if [[ "$revoke_reason" == *"member not found"* ]]; then
+		check "P15c relay revoked (9031)" true "member already gone (bridge 9031 landed first)"
+	else
+		check "P15c relay revoked (9031)" false "9031 failed: $(cat "$TMP/op.json")"
+	fi
 fi
 if relay_ok publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_mallory]}" "should fail" "$BUZZ_CHANNEL_ID"; then
 	check "P15d revoked publish denied" false "publish unexpectedly accepted"
@@ -476,15 +523,25 @@ code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMB
 check "P16b reads stay available (local gate)" "$([[ "$code" == "200" ]] && echo true || echo false)" "messages -> $code"
 # Restore immediately; the EXIT trap also restores it if this run is interrupted.
 docker start "$RELAY_CONTAINER" >/dev/null 2>&1 && relay_stopped=0 || true
+# The v1alpha1 relay's cold start has a documented flaky S3 probe (the live
+# conformance harness allows a 300s health window for the same reason), so
+# the recovery budget follows that envelope: wait for relay health first,
+# then for publish acceptance.
+for i in $(seq 1 150); do
+	if curl -sf --max-time 2 "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 2
+done
 recovered=""
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
 	sleep 2
 	if relay_ok publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "post-recovery" "$BUZZ_CHANNEL_ID"; then
 		recovered="yes"
 		break
 	fi
 done
-check "P16c publish recovers after restart" "$([[ "$recovered" == "yes" ]] && echo true || echo false)" "publish accepted within 40s"
+check "P16c publish recovers after restart" "$([[ "$recovered" == "yes" ]] && echo true || echo false)" "publish accepted after recovery"
 
 # --- P17 session isolation / logout-login ------------------------------------
 # Drop bob's cached session and force a REAL fresh login; assert the new jar

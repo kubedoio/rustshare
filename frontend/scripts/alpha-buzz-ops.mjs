@@ -9,6 +9,13 @@
 //   bind-proof <relay-url> <challenge> <sk>   sign a kind-22242 NIP-42 proof
 //   admit <relay-url> <owner-sk> <pk>         kind-9030 add member (owner authority)
 //   revoke <relay-url> <owner-sk> <pk>        kind-9031 remove member (owner authority)
+//   create-channel <relay-url> <channel-uuid> <name> <visibility> <channel_type>
+//                                             kind-9007 create-group (owner
+//                                             authority, BUZZ_SERVICE_SK); a
+//                                             re-run of an existing channel is
+//                                             reported as accepted:false
+//                                             "duplicate: channel already exists"
+//                                             (idempotent provisioning)
 //   publish <relay-url> <sk> <content> [channel] [elembra-ref]
 //                                             signed kind-9 stream-message publish
 //                                             scoped by ["h", <channel-uuid>]
@@ -160,6 +167,36 @@ if (command === 'admit' || command === 'revoke') {
 	);
 	const result = await sendCommand(relayUrl, event, ownerSk);
 	console.log(JSON.stringify({ ...result, kind, target: targetPk.slice(0, 8) }));
+	process.exit(result.accepted ? 0 : 1);
+}
+
+if (command === 'create-channel') {
+	// kind-9007 (NIP-29 create-group), owner authority — same key handling as
+	// admit/revoke (owner-sk from BUZZ_SERVICE_SK). The relay creates the
+	// channel under the client-chosen UUID from the `h` tag; a re-run of an
+	// existing channel is answered accepted:false "duplicate: channel already
+	// exists", which callers treat as success (idempotent provisioning).
+	const [relayUrl, channelUuid, name, visibility, channelType] = args;
+	const ownerSk = process.env.BUZZ_SERVICE_SK;
+	if (!relayUrl || !channelUuid || !name || !visibility || !channelType || !ownerSk) {
+		console.error(
+			'usage: alpha-buzz-ops.mjs create-channel <relay-url> <channel-uuid> <name> <visibility> <channel_type>  (owner-sk from BUZZ_SERVICE_SK)'
+		);
+		process.exit(2);
+	}
+	const event = await mkEvent(
+		9007,
+		[
+			['h', channelUuid],
+			['name', name],
+			['visibility', visibility],
+			['channel_type', channelType]
+		],
+		`create-channel ${name}`,
+		ownerSk
+	);
+	const result = await sendCommand(relayUrl, event, ownerSk);
+	console.log(JSON.stringify({ ...result, kind: 9007, channel: channelUuid }));
 	process.exit(result.accepted ? 0 : 1);
 }
 

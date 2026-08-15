@@ -32,7 +32,7 @@ Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
 |---|---|---|
 | Elembra backend/frontend | this repo (`docker/backend.Dockerfile`) | `docker compose up -d` |
 | Postgres / RustFS / nginx | `docker-compose.yml` | same |
-| Buzz relay + backing services | `ghcr.io/block/buzz:main` (kubedoio/buzz) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d` |
+| Buzz relay + backing services | `ghcr.io/block/buzz:main` (kubedoio/buzz) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
 | Observation bridge | `frontend/scripts/buzz-observer.mjs` | host process via `scripts/start-buzz-observer.sh` |
 
 **Why the observer runs on the host:** Buzz resolves the community from the
@@ -64,6 +64,8 @@ npm install --prefix frontend
 # 3. Generate the Buzz identity keys (prints values; paste into .env)
 node frontend/scripts/alpha-gen-buzz-keys.mjs
 #    -> BUZZ_RELAY_OWNER_PUBKEY, BUZZ_RELAY_PRIVATE_KEY,
+#       BUZZ_RELAY_PUBKEY (labeled informational by the keygen, but REQUIRED
+#       for buzz mode: the workspace mapping pins it),
 #       RUSTSHARE_CHAT_BRIDGE_SECRET_KEY (== BUZZ_SERVICE_SK)
 
 # 4. Configure chat in .env (see §3)
@@ -74,7 +76,13 @@ node frontend/scripts/alpha-gen-buzz-keys.mjs
 docker compose up -d
 
 # 6. Relay runtime
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d
+#    (the dogfood override makes the relay reachable from the containerized
+#    gateway by sharing the backend container's network namespace: the relay
+#    listens on the backend's own loopback, so the gateway's pinned
+#    127.0.0.1 relay address works while the Host-derived community stays
+#    localhost:7447 for gateway, observer, and browsers; the relay's
+#    host-published ports remain loopback-only)
 
 # 7. Observation bridge (foreground; supervise for dogfooding)
 BUZZ_SERVICE_SK=<bridge sk> BUZZ_COMMUNITY_ID=alpha-community \
@@ -90,12 +98,15 @@ CSRF="$(awk '$6 == "rustshare_csrf_token" { print $7 }' /tmp/admin.jar)"
 curl -s -b /tmp/admin.jar -X POST \
   http://localhost/api/v1/admin/applications/chat/workspaces/<tenant_id>/community \
   -H 'content-type: application/json' -H "X-Rustshare-Csrf: ${CSRF}" \
-  -d '{"community_id":"alpha-community","relay_url":"ws://localhost:7447"}'
+  -d '{"community_id":"alpha-community","relay_url":"ws://localhost:7447","relay_pubkey":"<BUZZ_RELAY_PUBKEY>"}'
 #    (a PUBLIC relay: same command with its wss:// URL. The SSRF guard
 #    resolves the host, so placeholder hosts fail — "wss://relay.example.com"
 #    in older copies of this runbook is not a real address.)
 #    Or use scripts/run-alpha-dogfood.sh, which provisions everything and
-#    runs the full dogfood matrix.
+#    runs the full dogfood matrix. The relay's channel registry is
+#    UUID-keyed: the script creates the alpha channels there (kind-9007,
+#    open visibility) and the observer/E2E driver default to those UUID
+#    channel ids (BUZZ_CHANNEL_ID / BUZZ_CHANNEL2_ID in .env).
 
 # 9. Verify
 curl -s http://localhost/health/ready
@@ -158,7 +169,7 @@ WHERE application_id = 'io.elembra.chat'
 ### 2.5 Teardown
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v   # relay volumes removed
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml down -v   # relay volumes removed
 docker compose down -v                                                     # base stack + volumes
 pkill -f start-buzz-observer.sh                                             # supervisor INT/TERM trap stops the node child
 ```
@@ -183,7 +194,7 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
 | `BUZZ_COMMUNITY_ID` | community id forwarded by the observer; must equal the mapping | — |
-| `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | observer default channel / E2E second channel | `alpha-channel` / `alpha-ops` |
+| `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | relay UUID-keyed channel ids (kind-9007 registry rows, created by `run-alpha-dogfood.sh`, open visibility) | `585e55c7-97d9-43ad-bbe3-a355cad93082` / `4bec90c0-4c14-48cc-8958-da8c258f9759` |
 | `BUZZ_POSTGRES_PASSWORD`, `BUZZ_MINIO_USER`, `BUZZ_MINIO_PASSWORD` | relay backing services | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
 
 Generate all keys once: `node frontend/scripts/alpha-gen-buzz-keys.mjs`. The
@@ -282,11 +293,11 @@ Full classification: Alpha readiness doc §8. Relevant here:
 
 ```bash
 # Stop the dogfood additions, keep Elembra:
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml stop buzz-relay buzz-postgres buzz-redis buzz-minio
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml stop buzz-relay buzz-postgres buzz-redis buzz-minio
 pkill -f start-buzz-observer.sh
 
 # Full reset (nuclear):
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml down -v
 docker compose down -v
 # then §2.2 again
 ```

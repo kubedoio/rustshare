@@ -1,0 +1,35 @@
+# Elembra Alpha dogfooding: relay <-> containerized gateway reachability.
+# =============================================================================
+# Override used ONLY by the single-host dogfood stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
+#     -f docker-compose.dogfood.yml up -d
+#
+# The buzz gateway runs INSIDE the backend container and its SSRF guard pins a
+# `localhost` relay URL to 127.0.0.1 (resolve_chat_relay_socket_addrs
+# hardcodes the loopback literal, so /etc/hosts remapping cannot reroute it).
+# The relay therefore shares the backend container's network namespace
+# (network_mode service:backend): its 0.0.0.0:7447 listener sits on the
+# backend's OWN loopback, exactly where the gateway connects. The Host header
+# stays `localhost:7447`, so the relay's Host-derived community is identical
+# for gateway, observer, and browsers (ADR-0034).
+#
+# The relay's host-facing listeners are published HERE (the shared namespace's
+# owner publishes them; the engine rejects port publishing on a container
+# using network_mode service:<x>). Bindings stay host-loopback-only: same
+# single-host dogfooding posture as the relay's standalone port block in the
+# conformance layout (docker-compose.conformance.yml).
+# =============================================================================
+
+services:
+  backend:
+    ports:
+      - "127.0.0.1:7447:7447"
+      - "127.0.0.1:8088:8088"
+      - "127.0.0.1:9102:9102"
+
+  buzz-relay:
+    network_mode: service:backend
+    depends_on:
+      backend:
+        condition: service_started

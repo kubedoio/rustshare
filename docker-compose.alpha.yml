@@ -3,7 +3,8 @@
 # Adds the Buzz relay runtime on top of the base stack so a clean operator can
 # bring up the complete Elembra Alpha stack with one command:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
+#     -f docker-compose.dogfood.yml up -d
 #
 # Services added: buzz-postgres, buzz-redis, buzz-minio(+init) — the relay's
 # backing services — and buzz-relay (the authoritative Chat engine). The
@@ -11,7 +12,9 @@
 # started separately (scripts/start-buzz-observer.sh); it must connect to the
 # relay through the SAME host the browsers use because Buzz resolves the
 # community from the connection host (ADR-0034), which is unreachable from an
-# internal container network with an identical Host value.
+# internal container network with an identical Host value. The containerized
+# gateway reaches the relay via docker-compose.dogfood.yml (network namespace
+# sharing — see that file).
 #
 # Required .env additions (see .env.example):
 #   BUZZ_RELAY_OWNER_PUBKEY  relay owner / Elembra bridge public key (64 hex)
@@ -20,7 +23,8 @@
 # BUZZ_RELAY_URL (advertised relay URL, default ws://localhost:7447).
 #
 # Teardown:
-#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml down -v
+#   docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
+#     -f docker-compose.dogfood.yml down -v
 #   (the -v flag also removes the buzz-* volumes; omit it to keep relay state)
 # =============================================================================
 
@@ -107,15 +111,13 @@ services:
     # fail closed (404s) until BUZZ_RELAY_IMAGE is pinned to a v1alpha1-
     # capable build (e.g. built from the merged Buzz main
     # branch, as the conformance suite does).
+    # The relay has NO published ports in this file: the dogfood layout
+    # shares the backend's network namespace (docker-compose.dogfood.yml)
+    # and the standalone conformance layout publishes them
+    # (docker-compose.conformance.yml). The engine rejects port publishing
+    # on a container using network_mode service:<x>.
     image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
     restart: unless-stopped
-    ports:
-      # All relay listeners are host-local: single-host dogfooding, and
-      # BUZZ_REQUIRE_AUTH_TOKEN=false must not be reachable network-wide.
-      - "127.0.0.1:7447:7447"
-      # Relay health/metrics listeners are operator surfaces, not product traffic.
-      - "127.0.0.1:8088:8088"
-      - "127.0.0.1:9102:9102"
     environment:
       DATABASE_URL: postgres://buzz:${BUZZ_POSTGRES_PASSWORD:-buzz_dev}@buzz-postgres:5432/buzz
       REDIS_URL: redis://buzz-redis:6379

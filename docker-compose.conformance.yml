@@ -7,6 +7,9 @@
 #     binds the relay's seeded community (host-derived community isolation);
 #   - RELAY_TRUSTED_SERVICE_PUBKEYS = the Elembra service pubkey, so the
 #     v1alpha1 authorization API trusts the Elembra gateway's NIP-98 requests.
+#   - the relay's published ports (the alpha relay definition carries none:
+#     the dogfood layout shares the backend's network namespace and the
+#     conformance layout runs the relay standalone, so the ports live here).
 #
 # Usage (via the run script):
 #   RELAY_TRUSTED_SERVICE_PUBKEYS=<service pk> BUZZ_RELAY_PRIVATE_KEY=<relay sk> \
@@ -16,6 +19,14 @@
 services:
   buzz-relay:
     image: ${BUZZ_RELAY_IMAGE:-buzz-relay:conformance}
+    # Standalone layout: the relay publishes its own listeners, all bound
+    # host-loopback-only (single-host test posture; BUZZ_REQUIRE_AUTH_TOKEN
+    # must not be reachable network-wide).
+    ports:
+      - "127.0.0.1:7447:7447"
+      # Relay health/metrics listeners are operator surfaces, not product traffic.
+      - "127.0.0.1:8088:8088"
+      - "127.0.0.1:9102:9102"
     environment:
       # The suite reaches the relay at http://127.0.0.1:7447; the community
       # is seeded from this host at startup, so Host-derived binding matches.

@@ -28,7 +28,12 @@
 //   BUZZ_COMMUNITY_ID            community id forwarded in the context (required;
 //                                must equal the Elembra workspace↔community mapping)
 //   BUZZ_CHANNEL_ID              channel id forwarded in the context (default
-//                                alpha-channel; a stream-kind event's `h` tag wins)
+//                                the alpha channel's relay UUID; a stream-kind
+//                                event's `h` tag wins)
+//   BUZZ_CHANNEL2_ID             second channel id (default the alpha-ops
+//                                channel's relay UUID); both ids are
+//                                subscribed via the `#h` filter when they are
+//                                UUIDs
 //   ELEMBRA_WEBHOOK_URL          default http://localhost/api/v1/integrations/buzz/events
 //   BUZZ_SINCE                   optional unix seconds; only events after this are forwarded
 //   BUZZ_MAX_RECONNECT_BACKOFF_S default 30
@@ -41,7 +46,11 @@ const relayUrl = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
 const serviceSk = process.env.BUZZ_SERVICE_SK;
 const communityId = process.env.BUZZ_COMMUNITY_ID;
-const channelId = process.env.BUZZ_CHANNEL_ID || 'alpha-channel';
+// The relay's authoritative channel registry is UUID-keyed (kind-9007 rows),
+// so the default is the alpha channel's relay UUID — same id the dogfood
+// driver publishes to and the workspace mapping covers.
+const channelId = process.env.BUZZ_CHANNEL_ID || '585e55c7-97d9-43ad-bbe3-a355cad93082';
+const channel2Id = process.env.BUZZ_CHANNEL2_ID || '4bec90c0-4c14-48cc-8958-da8c258f9759';
 const webhookUrl =
 	process.env.ELEMBRA_WEBHOOK_URL || 'http://localhost/api/v1/integrations/buzz/events';
 const sinceRaw = process.env.BUZZ_SINCE ? Number(process.env.BUZZ_SINCE) : undefined;
@@ -197,6 +206,13 @@ async function deliver(event) {
 
 let reconnectAttempt = 0;
 
+// A bridge that cannot open a connection for CONNECT_FAIL_LIMIT consecutive
+// attempts exits (status 1) so the supervisor restarts it fresh in 3s — a
+// wedged child must not sit in a failed-connect loop while the relay is back
+// up (the dogfood matrix depends on observation continuity; the since=all
+// replay on reconnect plus Elembra's event-id dedupe make a restart lossless).
+const CONNECT_FAIL_LIMIT = 3;
+
 // Registered once at module scope so reconnects do not accumulate listeners.
 let shuttingDown = false;
 const shutdown = () => {
@@ -232,11 +248,26 @@ function connect() {
 	const subscribe = () => {
 		if (subscribed) return;
 		subscribed = true;
-		const filter = { kinds: [1, 9, 40002] }; // 9/40002 = KIND_STREAM_MESSAGE(_V2)
-		if (since !== undefined) filter.since = since;
+		// One REQ per channel UUID: the relay registers a subscription in its
+		// live fan-out channel indexes ONLY when the filter carries exactly one
+		// `#h` value — a multi-#h filter is treated as global and never
+		// receives channel-scoped events live (only the connect-time replay).
+		// The sub id is `<reqId>-<channel-prefix>` so EOSE/CLOSED matching
+		// stays unambiguous. Legacy kind-1 notes (no UUID channel) keep the
+		// single global subscription.
+		const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+		const hChannels = [...new Set([channelId, channel2Id].filter((v) => uuidRe.test(v)))];
+		const baseFilter = { kinds: [1, 9, 40002] }; // 9/40002 = KIND_STREAM_MESSAGE(_V2)
+		if (since !== undefined) baseFilter.since = since;
 		try {
-			socket.send(JSON.stringify(['REQ', reqId, filter]));
-			console.log(`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}`);
+			if (hChannels.length > 0) {
+				for (const ch of hChannels) {
+					socket.send(JSON.stringify(['REQ', `${reqId}-${ch.slice(0, 8)}`, { ...baseFilter, '#h': [ch] }]));
+				}
+			} else {
+				socket.send(JSON.stringify(['REQ', reqId, baseFilter]));
+			}
+			console.log(`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}${hChannels.length ? ` #h=[${hChannels.join(',')}] (one REQ per channel)` : ''}`);
 		} catch (error) {
 			subscribed = false;
 			console.error(`REQ send failed: ${error.message}`);
@@ -295,7 +326,8 @@ function connect() {
 			} else if (kind === 'NOTICE' || kind === 'OK') {
 				console.log(`relay ${kind}: ${JSON.stringify(message).slice(0, 300)}`);
 			} else if (kind === 'EOSE') {
-				if (message[1] === reqId) eoseSeen = true;
+				// One REQ per channel: match by the shared reqId prefix.
+				if (message[1] && message[1].startsWith(reqId)) eoseSeen = true;
 				console.log(`relay EOSE for ${message[1]}`);
 			} else if (kind === 'CLOSED') {
 				// A CLOSED before EOSE is the normal pre-auth REQ rejection that
@@ -303,7 +335,7 @@ function connect() {
 				// handshake from looping. A CLOSED for the live subscription
 				// (post-EOSE) means the relay killed it: force a reconnect,
 				// which re-subscribes and replays history.
-				if (message[1] === reqId && eoseSeen) {
+				if (message[1] && message[1].startsWith(reqId) && eoseSeen) {
 					console.error(`relay closed live subscription ${reqId}; reconnecting to recover`);
 					try {
 						socket.close();
@@ -355,6 +387,12 @@ function connect() {
 		clearTimeout(connectWatchdog);
 		if (closing || shuttingDown) return;
 		reconnectAttempt++;
+		if (reconnectAttempt >= CONNECT_FAIL_LIMIT) {
+			console.error(
+				`failed to connect after ${CONNECT_FAIL_LIMIT} consecutive attempts; exiting for supervisor restart`
+			);
+			process.exit(1);
+		}
 		const backoff = Math.min(2 ** reconnectAttempt, maxBackoffS) * 1000;
 		console.log(
 			`websocket closed; reconnecting in ${backoff / 1000}s (attempt ${reconnectAttempt})`
@@ -364,6 +402,6 @@ function connect() {
 }
 
 console.log(
-	`buzz-observer starting: relay=${relayUrl} community=${communityId} channel=${channelId} webhook=${webhookUrl.split('?')[0]}`
+	`buzz-observer starting: relay=${relayUrl} community=${communityId} channel=${channelId} channel2=${channel2Id} webhook=${webhookUrl.split('?')[0]}`
 );
 connect();
