@@ -235,11 +235,7 @@ impl BuzzObservationService {
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| BuzzPushError::Persistence(e.to_string()))?;
-        metrics::gauge!(
-            "chat_observation_lag_seconds",
-            "community_id" => data.context.community_id.clone()
-        )
-        .set(
+        metrics::gauge!("chat_observation_lag_seconds").set(
             (Utc::now() - latest_created_at.unwrap_or(data.buzz.created_at))
                 .num_milliseconds()
                 .max(0) as f64

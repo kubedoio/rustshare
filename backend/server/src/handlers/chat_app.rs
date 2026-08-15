@@ -477,11 +477,7 @@ pub async fn list_messages(
     let mut messages = Vec::new();
     for (event, decision) in visible.iter().zip(&decisions) {
         if !decision.decision.is_allow() {
-            metrics::counter!(
-                "chat_authorization_denials_total",
-                "tenant_id" => ctx.tenant_id.0.to_string()
-            )
-            .increment(1);
+            metrics::counter!("chat_authorization_denials_total").increment(1);
             continue;
         }
         messages.push(ChatMessageDto {
@@ -550,11 +546,7 @@ pub async fn get_message(
         )
         .await;
     if !decision.is_allow() {
-        metrics::counter!(
-            "chat_authorization_denials_total",
-            "tenant_id" => ctx.tenant_id.0.to_string()
-        )
-        .increment(1);
+        metrics::counter!("chat_authorization_denials_total").increment(1);
         return Err(AppError::not_found("resource unavailable"));
     }
     Ok(Json(ChatMessageDto {

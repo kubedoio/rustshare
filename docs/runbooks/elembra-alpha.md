@@ -305,13 +305,16 @@ The following are operator-visible today (proven during this goal):
   observer `forward failed ... (permanent <status>)`.
 - Relay-side auth/membership decisions: relay logs (`NIP-42 auth successful`,
   `auth failed`, `restricted: not a relay member`).
-- Observation lag: `chat_observation_lag_seconds{community_id}` measures the
-  latest observed event age; alert when it exceeds 120 seconds for 5 minutes.
+- Observation lag: `chat_observation_lag_seconds` (no labels — the gauge
+  tracks the latest observed event age across the deployment; per-community
+  series would be unbounded) measures the latest observed event age; alert
+  when it exceeds 120 seconds for 5 minutes.
 - Webhook outcomes: `chat_webhook_outcomes_total{outcome}` counts observed,
   duplicate, and category-safe rejection outcomes; alert on a rejection rate
   above 10% for 10 minutes.
-- Authorization denials: `chat_authorization_denials_total{tenant_id}` is
-  bounded to tenant identifiers and contains no user or message data.
+- Authorization denials: `chat_authorization_denials_total` (no labels —
+  per-tenant series would be unbounded; the counter contains no user,
+  message, or tenant data).
 - Bridge delivery: `chat_bridge_delivery_state{kind,state}` reports 9030/9031
   acked, retry-queued, or DLQ state; alert on any non-zero DLQ count.
 - Relay outage: publish fails with a distinct transport error; reads fail
