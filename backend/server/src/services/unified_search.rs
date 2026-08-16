@@ -23,7 +23,7 @@ use rustshare_resource_auth::{
     PrincipalContext, Purpose, Representation, ResourceRef, SourceAuthorizer, SourceError,
     CHAT_READ, FILES_READ, MAX_BATCH_SIZE,
 };
-use rustshare_storage::{MemoryCatalogStore, MetadataStore};
+use rustshare_storage::{content_match_terms, MemoryCatalogStore, MetadataStore};
 use uuid::Uuid;
 
 use crate::state::AppAiService;
@@ -885,10 +885,11 @@ pub fn name_path_score(name: &str, path: &str, query: &str) -> f32 {
     }
 }
 
-/// Chat candidate score: 0.8 when any query term appears in the message
-/// content, 0.4 when the message id/author pubkey matches the query exactly
-/// or the channel id contains it, 0.0 otherwise. Mirrors the Memory catalog
-/// search conditions.
+/// Chat candidate score: 0.8 when any normalized query term (see
+/// [`rustshare_storage::content_match_terms`] — the same terms the Memory
+/// catalog search matches) appears in the message content, 0.4 when the
+/// message id/author pubkey matches the query exactly or the channel id
+/// contains it, 0.0 otherwise. Mirrors the Memory catalog search conditions.
 pub fn chat_candidate_score(
     content: Option<&str>,
     message_id: &str,
@@ -896,19 +897,19 @@ pub fn chat_candidate_score(
     channel_id: &str,
     query: &str,
 ) -> f32 {
-    let query_lower = query.to_lowercase();
+    let terms = content_match_terms(query);
     let content_match = content.is_some_and(|content| {
         let content_lower = content.to_lowercase();
-        query_lower
-            .split_whitespace()
-            .any(|term| content_lower.contains(term))
+        terms
+            .iter()
+            .any(|term| content_lower.contains(&term.to_lowercase()))
     });
     if content_match {
         return 0.8;
     }
     if message_id == query
         || author_pubkey == query
-        || channel_id.to_lowercase().contains(&query_lower)
+        || channel_id.to_lowercase().contains(&query.to_lowercase())
     {
         return 0.4;
     }
@@ -1130,6 +1131,35 @@ mod tests {
             chat_candidate_score(content, "msg1", "pubkey1", "chan1", "missing"),
             0.0,
             "no match"
+        );
+    }
+
+    #[test]
+    fn chat_candidate_score_uses_the_same_normalized_terms_as_the_catalog_search() {
+        // Content deliberately WITHOUT any stopword overlap ("the", ...): the
+        // shared normalizer strips the trailing `?`, so the single-token
+        // question must score exactly like the Memory catalog search matched it.
+        let content = Some("budget is capped at 10k");
+        assert_eq!(
+            chat_candidate_score(content, "msg1", "pubkey1", "chan1", "Budget?"),
+            0.8,
+            "single-token question with trailing punctuation grounds via `budget`"
+        );
+        assert_eq!(
+            chat_candidate_score(
+                content,
+                "msg1",
+                "pubkey1",
+                "chan1",
+                "what did dave say about the budget?"
+            ),
+            0.8,
+            "natural question scores via the shared term `budget`, not an incidental stopword"
+        );
+        assert_eq!(
+            chat_candidate_score(content, "msg1", "pubkey1", "chan1", "quarterly"),
+            0.0,
+            "no shared significant term still scores 0.0"
         );
     }
 

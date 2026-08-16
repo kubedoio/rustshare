@@ -20,7 +20,7 @@ pub mod upload_impl;
 pub use chat_identity::{ChatIdentityStore, CommunityMappingError};
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use event_store::EventStore;
-pub use memory_catalog::{MemoryCatalogStore, ReconcileCounts};
+pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
 pub use metadata::{
     BlobReferenceSummary, MetadataStore, ObjectGcCandidate, PublicShareAccessLogEntry,
     ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,

@@ -47,18 +47,27 @@ const SEARCH_STOPWORDS: &[&str] = &[
     "its", "our", "out",
 ];
 
-/// The terms matched against message content by [`MemoryCatalogStore::search`]:
-/// the whole trimmed query first (so exact-phrase questions still hit), then
-/// each whitespace token that is significant — at least 3 chars after stripping
-/// surrounding punctuation and not a [`SEARCH_STOPWORDS`] stopword. An
-/// empty/whitespace `query` yields no terms.
-fn content_match_terms(query: &str) -> Vec<String> {
+/// The terms matched against message content by [`MemoryCatalogStore::search`]
+/// and the server-side chat candidate scorer: the whole trimmed query first
+/// (so exact-phrase questions still hit), then each whitespace token that is
+/// significant — at least 3 chars after stripping surrounding punctuation and
+/// not a [`SEARCH_STOPWORDS`] stopword. Terms are deduplicated (the phrase
+/// often duplicates its own tokens) and capped at [`MAX_SEARCH_TERMS`] distinct
+/// terms; dropped terms are logged at debug level. An empty/whitespace `query`
+/// yields no terms.
+pub const MAX_SEARCH_TERMS: usize = 64;
+
+pub fn content_match_terms(query: &str) -> Vec<String> {
     let mut terms = Vec::new();
     let phrase = query.trim();
     if !phrase.is_empty() {
         terms.push(phrase.to_string());
     }
     for token in query.split_whitespace() {
+        if terms.len() >= MAX_SEARCH_TERMS {
+            tracing::debug!(%query, "search term cap reached; dropping remaining terms");
+            break;
+        }
         let token = token.trim_matches(|c: char| c.is_ascii_punctuation());
         if token.chars().count() < 3 {
             continue;
@@ -67,7 +76,11 @@ fn content_match_terms(query: &str) -> Vec<String> {
         if SEARCH_STOPWORDS.contains(&lower.as_str()) {
             continue;
         }
-        terms.push(token.to_string());
+        let term = token.to_string();
+        if terms.contains(&term) {
+            continue;
+        }
+        terms.push(term);
     }
     terms
 }
@@ -408,17 +421,19 @@ impl MemoryCatalogStore {
             return Ok(Vec::new());
         }
         // ILIKE wildcards are escaped so the user's input matches literally.
-        // The whole phrase and every significant term are bound as parameters;
-        // the raw trimmed query is bound separately for the exact
-        // message_id/author_pubkey match and the channel_id substring match.
+        // The whole phrase and every significant term are bound as escaped
+        // ILIKE patterns; the escaped whole query is bound for the channel_id
+        // substring clause, and the raw trimmed query is bound separately for
+        // the exact message_id/author_pubkey match.
         let terms = content_match_terms(query);
         let content_clauses: Vec<String> = terms
             .iter()
             .enumerate()
             .map(|(index, _)| format!("content ILIKE '%' || ${} || '%'", index + 2))
             .collect();
-        let meta_param = terms.len() + 2;
-        let limit_param = meta_param + 2;
+        let channel_param = terms.len() + 2;
+        let exact_param = channel_param + 1;
+        let limit_param = exact_param + 1;
         let limit = limit as i64;
         let sql = format!(
             "SELECT {RECORD_COLUMNS} FROM memory_catalog
@@ -433,9 +448,9 @@ impl MemoryCatalogStore {
              ORDER BY occurred_at DESC, message_id
              LIMIT ${}",
             content_clauses.join(" OR "),
-            meta_param,
-            meta_param,
-            meta_param,
+            exact_param,
+            exact_param,
+            channel_param,
             limit_param,
         );
         let mut query_builder = sqlx::query(&sql).bind(tenant_id.0);
@@ -743,5 +758,50 @@ mod tests {
         assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("did")));
         assert!(terms.iter().any(|term| term == "Dave"));
         assert!(terms.iter().any(|term| term == "Say"));
+    }
+
+    #[test]
+    fn content_match_terms_deduplicates_phrase_and_tokens() {
+        assert_eq!(
+            content_match_terms("budget"),
+            vec!["budget"],
+            "a single-token query must not duplicate the phrase and the token"
+        );
+        assert_eq!(
+            content_match_terms("budget budget"),
+            vec!["budget budget", "budget"],
+            "repeated tokens are deduplicated"
+        );
+    }
+
+    #[test]
+    fn content_match_terms_caps_at_max_search_terms() {
+        let query = (0..80)
+            .map(|i| format!("alpha{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let terms = content_match_terms(&query);
+        assert_eq!(terms.len(), MAX_SEARCH_TERMS, "the term list is capped");
+        assert_eq!(
+            terms.first().map(String::as_str),
+            Some(query.as_str()),
+            "the whole phrase always stays the first term"
+        );
+        assert!(
+            terms.iter().any(|term| term == "alpha0"),
+            "the first significant token is kept"
+        );
+        assert!(
+            terms.iter().any(|term| term == "alpha62"),
+            "the last token inside the cap is kept"
+        );
+        assert!(
+            terms.iter().all(|term| term != "alpha63"),
+            "tokens beyond the cap are dropped"
+        );
+        assert!(
+            terms.iter().all(|term| term != "alpha79"),
+            "the tail of the query is dropped"
+        );
     }
 }
