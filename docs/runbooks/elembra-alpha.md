@@ -346,7 +346,12 @@ Full classification: Alpha readiness doc §8. Relevant here:
 - Reference-first bodies render placeholder (L2, by design).
 - The stack runs buzz mode: per-channel membership decisions are upstream
   (L7/L9 resolved); the `local` gate remains the explicit dev fallback only.
-- Sender-side attachment tags only (L5).
+- Recipient-side attachment tags are shipped (L5 resolved): the observation
+  index retains each event's identifier-only refs (migration
+  `20260810000007`), the timeline DTO surfaces them as an openable
+  affordance, and opening reauthorizes through Files at read time
+  (existence-hiding, forced-download headers) — see
+  `docs/implementation/elembra-chat-app-v1.md` §1–§2.
 - Observation relay→Elembra push is the host-side bridge (this deployment);
   upstream relay has no webhook delivery yet.
 - Reload/logout clears nothing client-side; keys are per-browser vault.
@@ -409,10 +414,12 @@ The following are operator-visible today (proven during this goal):
   shown without claiming success.
 - #244 is complete: Chat status exposes only `ask_available`; unavailable Ask
   is not advertised as an active control.
-- #242 is deferred: recipient-side tags require an observation projection
-  schema/migration and timeline DTO change; the current sender-side tag path
-  remains secure and usable for the sender, so this is a separate Alpha
-  follow-up rather than a broad projection redesign in this closure.
+- #242 is complete: recipient-side tags shipped — the observation index
+  retains each event's identifier-only refs (migration `20260810000007`), the
+  timeline DTO surfaces them as an openable affordance, and opening
+  reauthorizes through Files at read time (existence-hiding,
+  forced-download headers). See
+  `docs/implementation/elembra-chat-app-v1.md` §1–§2.
 - #243 is resolved at the WIRE-FORMAT level: Buzz confirms the canonical
   thread/root contract — NIP-29 `["h", <channel-uuid>]` channel scoping plus
   NIP-10 `["e", <64-hex>, <relay-url?>, "root"|"reply"]` thread tags with

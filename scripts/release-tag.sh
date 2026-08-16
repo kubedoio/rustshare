@@ -211,8 +211,14 @@ selftest() {
 	rs_check_tag "v0.8.0-alpha.1" true "Elembra v0.8.0-alpha.1" 0.8.0-alpha.1
 	rs_check_tag "v1.2.3-rc.2" true "Elembra v1.2.3-rc.2" 1.2.3-rc.2
 	rs_check_tag "v1.2.3-beta" true "Elembra v1.2.3-beta" 1.2.3-beta
+	# Uppercase prerelease identifiers are valid SemVer; build metadata is
+	# accepted but stripped from the Docker tag (`+` is not a valid Docker tag char).
+	rs_check_tag "v1.2.3-ALPHA" true "Elembra v1.2.3-ALPHA" 1.2.3-ALPHA
+	rs_check_tag "v1.2.3-alpha.1+meta" true "Elembra v1.2.3-alpha.1+meta" 1.2.3-alpha.1
 
 	# Invalid tags.
+	rs_check_rejected ""
+	rs_check_rejected "v"
 	rs_check_rejected "v1.2"
 	rs_check_rejected "v1.2.3.4"
 	rs_check_rejected "v1.2.3-"

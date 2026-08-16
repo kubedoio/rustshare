@@ -4,7 +4,7 @@ This document defines how RustShare maintainers cut, publish, and manage release
 
 > **Maintainers:** @senolcolak, @zoorpha  
 > **Registry:** `ghcr.io/kubedoio/rustshare-backend`  
-> **CI Workflow:** `.github/workflows/release.yml` (stable), `.github/workflows/pilot-release.yml` (main/edge)
+> **CI Workflow:** `.github/workflows/release.yml` (stable + prerelease tags), `.github/workflows/pilot-release.yml` (main/edge)
 
 ---
 
@@ -48,6 +48,9 @@ The release workflows publish the following Docker tags:
 > `scripts/release-tag.sh` (single source of truth). Prerelease tags publish a
 > version-only Docker tag and a GitHub **prerelease**; `latest` and the rolling
 > aliases are moved by stable tags only (see [Pre-release Validation](#pre-release-validation)).
+> Release naming is a deliberate rule: prerelease releases are branded
+> **Elembra v<version>** (the Elembra preview line), while stable releases
+> keep the **RustShare v<version>** name.
 
 Combined tag matrix:
 
