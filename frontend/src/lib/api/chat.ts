@@ -76,3 +76,40 @@ export function chatMessageIdFromRef(resourceRef: string): string | null {
 	const id = resourceRef.slice(prefix.length).split('?')[0];
 	return id.length > 0 ? id : null;
 }
+
+export interface ChatProvisionResult {
+	status: 'created' | 'already_configured';
+	community_id: string;
+	relay_url: string;
+	relay_pubkey: string;
+}
+
+export interface AdminChatCommunityMapping {
+	community_id: string;
+	relay_url: string;
+	relay_pubkey: string | null;
+	active: boolean;
+}
+
+export function provisionChatCommunity(workspaceId: string): Promise<ChatProvisionResult> {
+	return apiClient.post<ChatProvisionResult>(
+		`/admin/applications/chat/workspaces/${encodeURIComponent(workspaceId)}/provision`,
+		{}
+	);
+}
+
+export function getChatCommunityMapping(workspaceId: string): Promise<AdminChatCommunityMapping> {
+	return apiClient.get<AdminChatCommunityMapping>(
+		`/admin/applications/chat/workspaces/${encodeURIComponent(workspaceId)}/community`
+	);
+}
+
+export function connectChatCommunity(
+	workspaceId: string,
+	body: { community_id: string; relay_url: string; relay_pubkey?: string }
+): Promise<void> {
+	return apiClient.postVoid(
+		`/admin/applications/chat/workspaces/${encodeURIComponent(workspaceId)}/community`,
+		body
+	);
+}

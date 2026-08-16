@@ -173,6 +173,14 @@
 									>
 										<Edit size={14} />
 									</a>
+									{#if module.application_id === 'io.elembra.chat'}
+										<a
+											href="/admin/applications/chat"
+											class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+										>
+											Chat settings
+										</a>
+									{/if}
 								</div>
 							</td>
 						</tr>
