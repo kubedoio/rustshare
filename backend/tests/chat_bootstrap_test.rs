@@ -81,7 +81,7 @@ use rustshare_server::handlers::collab::CollabRooms;
 use rustshare_server::middleware::RateLimitConfig;
 use rustshare_server::oidc_runtime::OidcRuntimeCache;
 use rustshare_server::outbox_dispatcher::OutboxStatus;
-use rustshare_server::routes::chat_integration_routes;
+use rustshare_server::routes::{admin_routes, chat_integration_routes};
 use rustshare_server::services::ask_workspace::AskWorkspaceService;
 use rustshare_server::services::chat_bootstrap::{
     ChatBootstrapError, ChatBootstrapService, ProvisionOutcome,
@@ -636,6 +636,56 @@ async fn bootstrap_is_idempotent() {
         .mapping(tenant, workspace)
         .await
         .unwrap()
+        .expect("the row still exists");
+    assert_eq!(row.community_id, community);
+
+    env.fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// Proof 4b — two CONCURRENT provisions for the same tenant+workspace race to
+// exactly one row: one Inserted + one AlreadyConfigured. Exercises the
+// `ProvisionMappingOutcome::AlreadyExists` winner re-read path.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn concurrent_provisions_race_to_one_mapping() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let env = bootstrap_env(pool.clone()).await;
+    let (tenant, workspace, community) = fresh_community(&env);
+
+    let (first, second) = tokio::join!(
+        env.service.provision(tenant, workspace),
+        env.service.provision(tenant, workspace),
+    );
+    let first = first.expect("the first provision must succeed");
+    let second = second.expect("the second provision must succeed");
+    let inserted = usize::from(matches!(first, ProvisionOutcome::Inserted { .. }))
+        + usize::from(matches!(second, ProvisionOutcome::Inserted { .. }));
+    let already = usize::from(matches!(first, ProvisionOutcome::AlreadyConfigured { .. }))
+        + usize::from(matches!(second, ProvisionOutcome::AlreadyConfigured { .. }));
+    assert_eq!(
+        inserted, 1,
+        "exactly one concurrent call inserts: {first:?} / {second:?}"
+    );
+    assert_eq!(
+        already, 1,
+        "the other call reports AlreadyConfigured via the winner re-read: {first:?} / {second:?}"
+    );
+
+    assert_eq!(
+        mapping_count(&pool, tenant, workspace).await,
+        1,
+        "exactly one mapping row survives the race"
+    );
+    let row = env
+        .store
+        .mapping(tenant, workspace)
+        .await
+        .expect("store read must succeed")
         .expect("the row still exists");
     assert_eq!(row.community_id, community);
 
@@ -1626,5 +1676,148 @@ async fn get_community_mapping_requires_admin() {
     );
 
     env.fake.stop().await;
+    cleanup(&pool, TenantId(tenant)).await;
+}
+
+// ---------------------------------------------------------------------------
+// Enable-hook tests (real admin routes + real AppState): in auto mode the
+// enable handler provisions inline after the enable succeeds (ADR-0036 §4).
+// ---------------------------------------------------------------------------
+
+/// One admin enable call over the real admin routes; returns the HTTP status.
+async fn enable_status(router: &Router<()>, token: &str, key: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/admin/applications/{key}/enable"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Seed the build-time application enablement rows for a fresh tenant (the
+/// enable route 404s without them).
+async fn seed_applications(state: &AppState, tenant: Uuid) {
+    state
+        .application_service
+        .ensure_default_applications(tenant)
+        .await
+        .expect("default application enablements must seed");
+}
+
+/// Enabling Chat in auto mode provisions inline: 200 and a mapping row for
+/// the admin's tenant (community = the fake relay's).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn enable_chat_in_auto_mode_provisions_mapping() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let env = bootstrap_env(pool.clone()).await;
+    let community = Uuid::new_v4().to_string();
+    env.fake.state.lock().unwrap().community_mode = CommunityMode::Valid {
+        community_id: community.clone(),
+    };
+    let state = setup_app_state(pool.clone(), Some(env.service.clone())).await;
+    let router = admin_routes().with_state(state.clone());
+
+    let tenant = Uuid::new_v4();
+    let admin = create_user(&pool, tenant, true).await;
+    let token = bearer_token(&state, admin, tenant);
+    seed_applications(&state, tenant).await;
+
+    let status = enable_status(&router, &token, "io.elembra.chat").await;
+    assert_eq!(status, StatusCode::OK, "enable succeeds in auto mode");
+    let row = env
+        .store
+        .mapping(TenantId(tenant), WorkspaceId(tenant))
+        .await
+        .expect("store read must succeed")
+        .expect("enabling Chat in auto mode must create the mapping row");
+    assert_eq!(
+        row.community_id, community,
+        "the mapping is the fake relay's community"
+    );
+
+    env.fake.stop().await;
+    cleanup(&pool, TenantId(tenant)).await;
+}
+
+/// Enabling a NON-chat application in auto mode creates no mapping row.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn enable_non_chat_application_creates_no_mapping() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let env = bootstrap_env(pool.clone()).await;
+    let state = setup_app_state(pool.clone(), Some(env.service.clone())).await;
+    let router = admin_routes().with_state(state.clone());
+
+    let tenant = Uuid::new_v4();
+    let admin = create_user(&pool, tenant, true).await;
+    let token = bearer_token(&state, admin, tenant);
+    seed_applications(&state, tenant).await;
+
+    let status = enable_status(&router, &token, "io.elembra.notes").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "enabling a non-chat application succeeds"
+    );
+    assert_eq!(
+        mapping_count(&pool, TenantId(tenant), WorkspaceId(tenant)).await,
+        0,
+        "no mapping row may be created for a non-chat application"
+    );
+
+    env.fake.stop().await;
+    cleanup(&pool, TenantId(tenant)).await;
+}
+
+/// Enabling Chat with an UNREACHABLE relay still succeeds (200) and leaves no
+/// mapping row: an auto-provisioning failure is logged, never fatal.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn enable_chat_with_unreachable_relay_leaves_chat_unconfigured() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+
+    // A free port with no listener: bind, record, drop.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a probe port");
+    let port = listener.local_addr().expect("probe port address").port();
+    drop(listener);
+    let gateway = Arc::new(
+        BuzzGatewayClient::new_for_test(Keys::generate(), Client::builder())
+            .expect("gateway for the test"),
+    );
+    let store = Arc::new(ChatIdentityStore::new(pool.clone()));
+    let bootstrap = Arc::new(ChatBootstrapService::new(
+        gateway,
+        store,
+        format!("ws://127.0.0.1:{port}"),
+    ));
+    let state = setup_app_state(pool.clone(), Some(bootstrap)).await;
+    let router = admin_routes().with_state(state.clone());
+
+    let tenant = Uuid::new_v4();
+    let admin = create_user(&pool, tenant, true).await;
+    let token = bearer_token(&state, admin, tenant);
+    seed_applications(&state, tenant).await;
+
+    let status = enable_status(&router, &token, "io.elembra.chat").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "enable still succeeds when the bootstrap relay is unreachable"
+    );
+    assert_eq!(
+        mapping_count(&pool, TenantId(tenant), WorkspaceId(tenant)).await,
+        0,
+        "a failed discovery leaves Chat safely unconfigured"
+    );
+
     cleanup(&pool, TenantId(tenant)).await;
 }

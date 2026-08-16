@@ -262,7 +262,7 @@ pub async fn provision_community_mapping(
     let outcome = state
         .chat_bootstrap
         .as_ref()
-        .ok_or_else(|| AppError::bad_request("chat provisioning is not enabled in this mode"))?
+        .ok_or_else(|| AppError::bad_request("chat provisioning requires the buzz chat authority"))?
         .provision(TenantId(auth.tenant_id), WorkspaceId(workspace_id))
         .await
         .map_err(bootstrap_error_to_app_error)?;
@@ -359,6 +359,11 @@ fn bootstrap_error_to_app_error(error: ChatBootstrapError) -> AppError {
     match error {
         ChatBootstrapError::CommunityInUse { .. }
         | ChatBootstrapError::CommunityMismatch { .. } => AppError::conflict(error.to_string()),
+        // The relay was reachable-but-invalid or unreachable: a gateway
+        // failure of the upstream Buzz authority, not a server bug.
+        ChatBootstrapError::Discovery(_) => {
+            AppError::bad_gateway(format!("chat provisioning failed: {error}"))
+        }
         other => AppError::internal(format!("chat provisioning failed: {other}")),
     }
 }

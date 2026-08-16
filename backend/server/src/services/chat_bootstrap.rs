@@ -88,7 +88,10 @@ impl ChatBootstrapService {
             .await
             .map_err(|error| ChatBootstrapError::Discovery(error.to_string()))?;
 
-        // 2. Existing mapping: verify, never overwrite.
+        // 2. Existing mapping: verify, never overwrite. An existing row — even
+        //    an inactive one — is treated as configured; there is no
+        //    deactivation path today, so this cannot currently produce a
+        //    silent unconfigured state.
         if let Some(existing) = self
             .store
             .mapping(tenant_id, workspace_id)

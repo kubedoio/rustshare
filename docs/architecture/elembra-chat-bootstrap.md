@@ -138,9 +138,11 @@ response.
   `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/provision`
   ("Set up automatically" on the admin page), which returns HTTP 201 with
   `{"status": "created" | "already_configured", "community_id", "relay_url",
-  "relay_pubkey"}`. In `manual` mode that endpoint returns 400 (provisioning
-  not enabled in this mode) — the admin page then offers "Connect existing Chat
-  deployment" instead.
+  "relay_pubkey"}`. The provision endpoint is available whenever the buzz
+  authority is active AND a bootstrap relay URL is configured (manual mode
+  included); it is unavailable in local-authority mode (400, "chat provisioning
+  requires the buzz chat authority") — the admin page then offers "Connect
+  existing Chat deployment" instead.
 - **Diagnostics.** `GET /api/v1/admin/applications/chat/workspaces/
   {workspace_id}/community` is the admin-only mapping surface (community id,
   relay URL, pinned relay pubkey, active flag; 404 when unmapped). The

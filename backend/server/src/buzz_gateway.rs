@@ -978,7 +978,13 @@ fn validate_page(page: &BuzzStatePage) -> Result<(), BuzzAuthorityError> {
 /// Structural validation of a discovered community identity — fail closed on
 /// any malformed field (ADR-0036).
 fn validate_community_identity(identity: &BuzzCommunityIdentity) -> Result<(), BuzzAuthorityError> {
-    let age = nostr::Timestamp::now().as_secs() as i64 - identity.evaluated_at;
+    // Saturating subtraction: `evaluated_at` is relay-controlled and may be
+    // i64::MIN/i64::MAX, which would overflow-panic a plain `-` in debug
+    // builds (hostile-relay DoS). Saturating fails both extremes closed via
+    // the strict 0..=MAX window below (i64::MIN → age i64::MAX; future →
+    // negative age).
+    let now = nostr::Timestamp::now().as_secs() as i64;
+    let age = now.saturating_sub(identity.evaluated_at);
     if !(0..=MAX_EVALUATED_AT_AGE_SECS as i64).contains(&age) {
         return Err(BuzzAuthorityError::InvalidResponse(format!(
             "identity evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
@@ -990,6 +996,10 @@ fn validate_community_identity(identity: &BuzzCommunityIdentity) -> Result<(), B
             identity.community_id
         ))
     })?;
+    // The relay's normalized `host` is informational: the operative identity
+    // is community_id + relay_pubkey (both signature-verified), and host
+    // normalization lives relay-side, so it is intentionally not
+    // cross-checked against the bootstrap URL.
     if identity.host.trim().is_empty() {
         return Err(BuzzAuthorityError::InvalidResponse("host is empty".into()));
     }
@@ -1743,9 +1753,20 @@ mod tests {
     /// Community-identity content claiming `relay`'s pubkey, signed-able by
     /// any key the test chooses.
     fn identity_content(relay: &Keys, evaluated_at: i64, community_id: &str) -> Value {
+        identity_content_with_host(relay, evaluated_at, community_id, "chat.example.test")
+    }
+
+    /// Like [`identity_content`], with a caller-chosen `host` field (for the
+    /// empty-host rejection case).
+    fn identity_content_with_host(
+        relay: &Keys,
+        evaluated_at: i64,
+        community_id: &str,
+        host: &str,
+    ) -> Value {
         json!({
             "community_id": community_id,
-            "host": "chat.example.test",
+            "host": host,
             "relay_pubkey": relay.public_key().to_hex(),
             "evaluated_at": evaluated_at,
         })
@@ -1800,6 +1821,65 @@ mod tests {
                 &relay,
                 Utc::now().timestamp() - 120,
                 &Uuid::new_v4().to_string(),
+            ),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_min_evaluated_at() {
+        // A hostile relay sets evaluated_at = i64::MIN: the saturating
+        // freshness arithmetic must fail closed (age saturates to i64::MAX),
+        // never overflow-panic.
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(&relay, i64::MIN, &Uuid::new_v4().to_string()),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_future_evaluated_at() {
+        // A future evaluated_at must fail closed too: the freshness window is
+        // strict 0..=MAX, so a negative age (future) is rejected.
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(
+                &relay,
+                Utc::now().timestamp() + 120,
+                &Uuid::new_v4().to_string(),
+            ),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_empty_host() {
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content_with_host(
+                &relay,
+                Utc::now().timestamp(),
+                &Uuid::new_v4().to_string(),
+                "",
             ),
         ))
         .unwrap();

@@ -45,8 +45,10 @@ pub enum ProvisionMappingOutcome {
 pub enum ProvisionMappingError {
     #[error("community is already mapped to another workspace")]
     CommunityInUse,
-    #[error(transparent)]
-    Other(#[from] sqlx::Error),
+    /// Any other storage failure, flattened to a message so the error surface
+    /// does not leak raw `sqlx::Error` variants into the service layer.
+    #[error("mapping storage failure: {0}")]
+    Other(String),
 }
 
 impl ChatIdentityStore {
@@ -226,18 +228,21 @@ impl ChatIdentityStore {
                             .mapping(mapping.tenant_id, mapping.workspace_id)
                             .await
                             .map_err(|error| {
-                                ProvisionMappingError::Other(sqlx::Error::Protocol(
-                                    error.to_string(),
-                                ))
+                                ProvisionMappingError::Other(error.to_string())
                             })?
-                            .ok_or_else(|| sqlx::Error::RowNotFound)?;
+                            .ok_or_else(|| {
+                                ProvisionMappingError::Other(
+                                    "mapping vanished between the failed insert and the winner re-read"
+                                        .to_string(),
+                                )
+                            })?;
                         Ok(ProvisionMappingOutcome::AlreadyExists(existing))
                     }
                     Some("chat_workspace_communities_tenant_id_community_id_key")
                     | Some("chat_workspace_communities_active_community") => {
                         Err(ProvisionMappingError::CommunityInUse)
                     }
-                    _ => Err(ProvisionMappingError::Other(error)),
+                    _ => Err(ProvisionMappingError::Other(error.to_string())),
                 }
             }
         }

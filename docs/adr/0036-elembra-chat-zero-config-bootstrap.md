@@ -71,7 +71,9 @@ inserts the mapping with the relay pubkey pinned. Manual mode is unchanged.**
    inline after the enable succeeds. A failure is logged and leaves Chat
    safely unconfigured — enable still succeeds. The admin retries with
    `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/provision`
-   ("Set up automatically"). In `manual` mode that endpoint returns 400.
+   ("Set up automatically"). That endpoint is available whenever the buzz
+   authority is active AND a bootstrap relay URL is configured (manual mode
+   included); it is unavailable in local-authority mode.
 
 5. **No persisted provisioning state.** Failures live in logs and in the retry
    response. Admin diagnostics = `GET /api/v1/admin/applications/chat/

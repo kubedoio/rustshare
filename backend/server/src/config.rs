@@ -382,9 +382,17 @@ fn validate_chat_provisioning(config: &AppConfig, errors: &mut Vec<String>) {
             };
             match url::Url::parse(relay_url) {
                 Ok(url) => {
-                    if !matches!(url.scheme(), "wss" | "ws") || url.host_str().is_none() {
+                    if !matches!(url.scheme(), "wss" | "ws")
+                        || url.host_str().is_none()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                        || (url.path() != "" && url.path() != "/")
+                        || url.query().is_some()
+                        || url.fragment().is_some()
+                        || url.port() == Some(0)
+                    {
                         errors.push(
-                            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL must use ws:// or wss:// and include a host"
+                            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL must use ws:// or wss:// with a host, no credentials, no path/query/fragment, and a non-zero port"
                                 .to_string(),
                         );
                     }
@@ -724,6 +732,86 @@ mod tests {
         let errors = AppConfig::from_env().expect_err("auto with a non-ws scheme must fail");
         assert!(
             errors.iter().any(|error| error.contains("ws:// or wss://")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_port_zero() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "ws://chat.example.test:0",
+        );
+        let errors = AppConfig::from_env().expect_err("auto with port 0 must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_non_root_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "ws://chat.example.test/path",
+        );
+        let errors = AppConfig::from_env().expect_err("auto with a path must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_query() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "wss://chat.example.test?x=1",
+        );
+        let errors = AppConfig::from_env().expect_err("auto with a query must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn chat_provisioning_rejects_userinfo() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CHAT_AUTHORITY", "buzz");
+        std::env::set_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY", "a".repeat(64));
+        std::env::set_var("RUSTSHARE_CHAT_PROVISIONING", "auto");
+        std::env::set_var(
+            "RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL",
+            "ws://user:pass@chat.example.test",
+        );
+        let errors = AppConfig::from_env().expect_err("auto with userinfo must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL")),
             "errors: {errors:?}"
         );
     }
