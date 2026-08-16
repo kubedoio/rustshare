@@ -46,6 +46,11 @@ services:
       RUSTSHARE_CHAT_AUTHORITY: "buzz"
       RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${RUSTSHARE_CHAT_BRIDGE_SECRET_KEY:-${BUZZ_SERVICE_SK:-}}
       RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY: "true"
+      # Zero-config Chat bootstrap (ADR-0036): the supported deployment runs
+      # in auto mode — enabling Chat provisions the Workspace↔Community
+      # mapping from the deployment Buzz relay.
+      RUSTSHARE_CHAT_PROVISIONING: ${RUSTSHARE_CHAT_PROVISIONING:-auto}
+      RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL: ${BUZZ_RELAY_WS:-ws://localhost:7447}
 
   buzz-postgres:
     image: postgres:17-alpine
@@ -106,17 +111,18 @@ services:
 
   buzz-relay:
     # The relay image MUST contain the v1alpha1 authorization API (access
-    # check/check-batch, channels, state events). The default
-    # `ghcr.io/block/buzz:main` PREDATES those endpoints — buzz mode will
-    # fail closed (404s) until BUZZ_RELAY_IMAGE is pinned to a v1alpha1-
-    # capable build (e.g. built from the merged Buzz main
-    # branch, as the conformance suite does).
+    # check/check-batch, channels, state events, community identity).
+    # The supported image is built from merged kubedoio/buzz main and pushed
+    # as ghcr.io/kubedoio/buzz (see docs/architecture/elembra-chat-bootstrap.md).
+    # The default below tracks that build; pin BUZZ_RELAY_IMAGE to an
+    # immutable `sha-<7>` tag once the merged main build exists. Never use a
+    # floating upstream (block/buzz) image — its API contract may differ.
     # The relay has NO published ports in this file: the dogfood layout
     # shares the backend's network namespace (docker-compose.dogfood.yml)
     # and the standalone conformance layout publishes them
     # (docker-compose.conformance.yml). The engine rejects port publishing
     # on a container using network_mode service:<x>.
-    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/block/buzz:main}
+    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/kubedoio/buzz:main}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://buzz:${BUZZ_POSTGRES_PASSWORD:-buzz_dev}@buzz-postgres:5432/buzz
