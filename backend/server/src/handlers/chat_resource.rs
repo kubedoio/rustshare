@@ -15,12 +15,12 @@ use serde::{Deserialize, Serialize};
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ResourceRequest {
     pub resource: ResourceRef,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AttachmentResponse {
     pub attachment: ChatResourceAttachment,
     /// The exact tag a client adds to its normal signed Buzz event.
@@ -76,6 +76,17 @@ fn source_error(error: SourceError) -> AppError {
 
 /// Validate a selected Files ref and return safe metadata plus the exact
 /// credential-free Buzz tag. This endpoint never signs or stores a message.
+#[utoipa::path(
+    post,
+    path = "/api/v1/applications/chat/attachments/prepare",
+    tag = "Chat",
+    request_body = ResourceRequest,
+    responses(
+        (status = 200, description = "Safe metadata plus the exact buzz tag", body = AttachmentResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Resource unavailable", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn prepare_attachment(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -95,6 +106,17 @@ pub async fn prepare_attachment(
 
 /// Reauthorize the referenced Files resource and return only safe preview
 /// metadata. Historical Buzz events are not consulted as authorization.
+#[utoipa::path(
+    post,
+    path = "/api/v1/applications/chat/attachments/preview",
+    tag = "Chat",
+    request_body = ResourceRequest,
+    responses(
+        (status = 200, description = "Safe preview metadata", body = ChatResourceAttachment),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Resource unavailable", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn preview_attachment(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -119,6 +141,22 @@ pub async fn preview_attachment(
 
 /// Reauthorize at access time, then stream the authorized bytes through
 /// Elembra Files. No Buzz event contains or redirects to storage access.
+///
+/// The bytes are served as a forced download (`Content-Disposition:
+/// attachment`, `X-Content-Type-Options: nosniff`) — mirroring the regular
+/// Files path — so a malicious or surprising attachment can never execute as
+/// same-origin script in the recipient's browser.
+#[utoipa::path(
+    post,
+    path = "/api/v1/applications/chat/attachments/open",
+    tag = "Chat",
+    request_body = ResourceRequest,
+    responses(
+        (status = 200, description = "Authorized file bytes (forced download)"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Resource unavailable", body = crate::handlers::ErrorResponse),
+    ),
+)]
 pub async fn open_attachment(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -135,5 +173,13 @@ pub async fn open_attachment(
             response.headers_mut().insert(header::CONTENT_TYPE, value);
         }
     }
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     Ok(response)
 }

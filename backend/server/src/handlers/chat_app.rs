@@ -56,7 +56,12 @@ pub struct ChannelInfo {
 /// Identifier-only attachment reference surfaced on a message. Never
 /// authority and never tenant-hinting: opening reauthorizes through the
 /// Files owner at read time (`POST /applications/chat/attachments/open`).
+///
+/// Serializes camelCase (`resourceType`/`resourceId`) to match the canonical
+/// `ResourceRef` wire shape — the same field names the open/preview endpoints
+/// accept back as the request body.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatAttachmentDto {
     pub application: String,
     pub resource_type: String,

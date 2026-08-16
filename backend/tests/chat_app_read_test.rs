@@ -1767,7 +1767,9 @@ async fn attachment_open_preview_authorize_through_files_owner() {
     assert_eq!(preview.0.display_name, "plan.txt");
     assert_eq!(preview.0.resource, reference);
 
-    // Authorized open: the exact bytes stream through.
+    // Authorized open: the exact bytes stream through, served as a forced
+    // download so a surprising attachment can never execute as same-origin
+    // script in the recipient's browser (Content-Disposition + nosniff).
     let open = open_attachment(
         State(state.clone()),
         auth(env.principal, env.tenant),
@@ -1775,6 +1777,23 @@ async fn attachment_open_preview_authorize_through_files_owner() {
     )
     .await
     .expect("the owner must open their own file");
+    {
+        let headers = open.headers();
+        assert_eq!(
+            headers
+                .get("content-disposition")
+                .and_then(|v| v.to_str().ok()),
+            Some("attachment"),
+            "open must force a download disposition"
+        );
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+            "open must refuse content-type sniffing"
+        );
+    }
     let body = axum::body::to_bytes(open.into_body(), 1024)
         .await
         .expect("read the streamed body");
@@ -1805,4 +1824,49 @@ async fn attachment_open_preview_authorize_through_files_owner() {
 
     cleanup(&pool, env.tenant, env.principal).await;
     cleanup(&pool, foreign.tenant, foreign.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn attachment_open_denies_same_tenant_unshared_file() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    // A second principal in the SAME tenant with no share on the file: the
+    // file exists and the tenant matches, but Files permission (View) decides
+    // at read time — the endpoint answers an existence-hiding 404.
+    let stranger = PrincipalId::from(Uuid::new_v4());
+    insert_user(&pool, env.tenant, stranger).await;
+    let file = state
+        .file_service
+        .upload_file(
+            env.principal.0,
+            "private.txt".to_string(),
+            None,
+            bytes::Bytes::from_static(b"private bytes"),
+            "text/plain".to_string(),
+            env.tenant.0,
+        )
+        .await
+        .expect("upload the test file");
+    let request = || {
+        Json(rustshare_server::handlers::chat_resource::ResourceRequest {
+            resource: file_ref(&file.id.to_string()),
+        })
+    };
+
+    let open = open_attachment(State(state.clone()), auth(stranger, env.tenant), request()).await;
+    assert!(
+        matches!(open, Err(AppError::NotFound(_))),
+        "same-tenant open without a share must be an existence-hiding 404, got {open:?}"
+    );
+    let preview = preview_attachment(State(state), auth(stranger, env.tenant), request()).await;
+    assert!(
+        matches!(preview, Err(AppError::NotFound(_))),
+        "same-tenant preview without a share must be an existence-hiding 404, got {preview:?}"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
 }

@@ -57,12 +57,14 @@ Binding and attachment support:
   `POST /applications/chat/attachments/open`, which reauthorizes through the
   Files owner at read time. Missing, foreign-tenant, or denied files answer an
   existence-hiding 404 — the timeline itself never resolves refs.
-- **Old observations (backfill policy).** Pre-migration observation rows carry
-  `attachment_refs = []`. There is deliberately NO synthetic backfill job:
-  attachments for old messages appear only if the author re-pushes the event
-  (edit) or the operator re-ingests it via Buzz reconciliation
-  (`admin/memory/chat/reconcile`), which re-derives refs from the signed
-  event. This keeps the index event-derived — Buzz stays authoritative.
+- **Old observations (backfill policy).** Pre-migration observation rows keep
+  `attachment_refs = []` permanently. There is deliberately NO synthetic
+  backfill job, and re-running Buzz reconciliation cannot help either: an
+  already-observed event id is a duplicate no-op, so reconcile never rewrites
+  a row's refs. The only paths to attachments for an old message are NEW
+  events from the author — an edit carrying the `elembra-ref` tags — or
+  delete-and-re-push the message. This keeps the index strictly
+  event-derived — Buzz stays authoritative.
 
 ## 3. Authorization chain
 
