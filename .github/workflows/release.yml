@@ -46,15 +46,20 @@ jobs:
 
       - name: Resolve version and commit
         id: resolve
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          TAG_REF: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           COMMIT="${{ github.sha }}"
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             # The dispatch input is a bare version; the tag carries the v prefix.
-            TAG="v${{ github.event.inputs.version }}"
+            # Passed via env so actor-controlled input never reaches shell syntax.
+            TAG="v${DISPATCH_VERSION}"
           else
             # push: tags:
-            TAG="${{ github.ref_name }}"
+            TAG="$TAG_REF"
           fi
 
           # Single source of truth for tag grammar and release metadata.
@@ -62,6 +67,18 @@ jobs:
           if ! resolve_release_tag "$TAG" > /tmp/release-tag.out; then
             echo "::error::Invalid release tag: $TAG. Expected strict semver with a v prefix (e.g., v0.7.0 or v0.8.0-alpha.1)."
             exit 1
+          fi
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            # A dispatch must reference an EXISTING tag that points at the
+            # exact commit being released. Without this, dispatching a stable
+            # version (e.g. 0.7.0) would push unrelated code to the stable
+            # Docker channels and clobber them.
+            TAG_SHA="$(git rev-parse "${TAG}^{}" 2>/dev/null || true)"
+            if [[ -z "$TAG_SHA" || "$TAG_SHA" != "$COMMIT" ]]; then
+              echo "::error::workflow_dispatch version '${DISPATCH_VERSION}' must exist as tag ${TAG} pointing at commit ${COMMIT} (found ${TAG_SHA:-none})."
+              exit 1
+            fi
           fi
 
           # resolve_release_tag emits GITHUB_OUTPUT-compatible key=value lines
