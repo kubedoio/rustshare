@@ -228,6 +228,7 @@ async fn chat_observation_upsert_is_idempotent_by_event_id() {
         WorkspaceId(tenant.0),
         &created_data,
         Some("v1".into()),
+        Vec::new(),
     );
     assert_eq!(
         store.upsert_event_in_tx(&mut tx, &created).await.unwrap(),
@@ -252,6 +253,7 @@ async fn chat_observation_upsert_is_idempotent_by_event_id() {
         WorkspaceId(tenant.0),
         &edit_data,
         Some("v2".into()),
+        Vec::new(),
     );
     assert_eq!(
         store.upsert_event_in_tx(&mut tx, &edit).await.unwrap(),
@@ -313,6 +315,7 @@ async fn chat_observation_lookup_for_auth_returns_latest_event() {
             } else {
                 Some("v2".into())
             },
+            Vec::new(),
         );
         store.upsert_event_in_tx(&mut tx, &observed).await.unwrap();
     }
@@ -368,8 +371,13 @@ async fn chat_observation_list_for_reconcile_respects_since_and_order() {
             ts,
             ChatChannelKind::Workspace,
         );
-        let observed =
-            ChatObservedEvent::from_observed_data(tenant, WorkspaceId(tenant.0), &data, None);
+        let observed = ChatObservedEvent::from_observed_data(
+            tenant,
+            WorkspaceId(tenant.0),
+            &data,
+            None,
+            Vec::new(),
+        );
         store.upsert_event_in_tx(&mut tx, &observed).await.unwrap();
     }
     tx.commit().await.unwrap();
@@ -434,6 +442,7 @@ async fn chat_observation_get_by_event_id_returns_specific_event() {
         WorkspaceId(tenant.0),
         &created_data,
         Some("v1".into()),
+        Vec::new(),
     );
     store.upsert_event_in_tx(&mut tx, &created).await.unwrap();
     let edit_id = hex64(0xee);
@@ -449,6 +458,7 @@ async fn chat_observation_get_by_event_id_returns_specific_event() {
         WorkspaceId(tenant.0),
         &edit_data,
         Some("v2".into()),
+        Vec::new(),
     );
     store.upsert_event_in_tx(&mut tx, &edit).await.unwrap();
     tx.commit().await.unwrap();
@@ -1260,6 +1270,188 @@ async fn chat_identity_projection_policy_reads_configuration() {
         "non-boolean value must fail closed"
     );
     assert!(!partial.content_indexing);
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+// ---------------------------------------------------------------------------
+// 11. Attachment refs: round-trip through the observation index, survive a
+//     restart (new pool), and follow edit/tombstone fold semantics
+// ---------------------------------------------------------------------------
+
+/// Canonical Files ref for a test file id.
+fn file_ref(id: &str) -> rustshare_resource_auth::ResourceRef {
+    rustshare_resource_auth::ResourceRef::new(
+        rustshare_core::domain::ApplicationId::new("io.elembra.files"),
+        "file",
+        id,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn chat_observation_attachment_refs_round_trip_and_survive_restart() {
+    let _guard = SERIAL.lock().await;
+    let pool_fn = pool;
+    let pool = pool_fn().await;
+    let tenant = tenant();
+    let store = ChatObservationStore::new(pool.clone());
+    let message_id = hex64(0xaa);
+
+    let refs = vec![file_ref("f-1"), file_ref("f-2")];
+    let mut tx = pool.begin().await.unwrap();
+    let created_data = event_data(
+        ObservedEventType::Created,
+        &message_id,
+        &message_id,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let created = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &created_data,
+        Some("v1".into()),
+        refs.clone(),
+    );
+    assert_eq!(
+        store.upsert_event_in_tx(&mut tx, &created).await.unwrap(),
+        UpsertOutcome::Inserted
+    );
+    tx.commit().await.unwrap();
+
+    // A NEW pool (fresh connection, as after a server restart) must read the
+    // refs back byte-identically, in tag order.
+    let restarted_pool = pool_fn().await;
+    let restarted = ChatObservationStore::new(restarted_pool);
+    let reloaded = restarted
+        .get_by_message_id(tenant, &message_id)
+        .await
+        .unwrap();
+    assert_eq!(reloaded.len(), 1);
+    assert_eq!(reloaded[0].attachment_refs, refs, "refs survive restart");
+    assert_eq!(
+        reloaded[0].attachment_refs[0].resource_id, "f-1",
+        "event tag order is preserved"
+    );
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn chat_observation_timeline_fold_edit_replaces_refs_and_tombstone_hides() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = ChatObservationStore::new(pool.clone());
+    let message_id = hex64(0xaa);
+    let t0 = 1_752_000_000i64;
+
+    // Created with two attachments, then edited with one: the folded timeline
+    // row is the edit, whose refs REPLACE the created event's wholesale.
+    let mut tx = pool.begin().await.unwrap();
+    let created_data = event_data(
+        ObservedEventType::Created,
+        &message_id,
+        &message_id,
+        t0,
+        ChatChannelKind::Workspace,
+    );
+    let created = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &created_data,
+        Some("v1".into()),
+        vec![file_ref("f-1"), file_ref("f-2")],
+    );
+    store.upsert_event_in_tx(&mut tx, &created).await.unwrap();
+    let edit_data = event_data(
+        ObservedEventType::Edited,
+        &hex64(0xee),
+        &message_id,
+        t0 + 10,
+        ChatChannelKind::Workspace,
+    );
+    let edit = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &edit_data,
+        Some("v2".into()),
+        vec![file_ref("f-3")],
+    );
+    store.upsert_event_in_tx(&mut tx, &edit).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let folded = store
+        .list_for_timeline(tenant, "community-1", "channel-1", None, 10)
+        .await
+        .unwrap();
+    assert_eq!(folded.len(), 1, "one folded row per message");
+    assert_eq!(folded[0].event_type, ObservedEventType::Edited);
+    assert_eq!(
+        folded[0].attachment_refs,
+        vec![file_ref("f-3")],
+        "the edit's refs replace the created refs"
+    );
+
+    // An edit WITHOUT refs clears attachments (deterministic replace).
+    let clear_data = event_data(
+        ObservedEventType::Edited,
+        &hex64(0xef),
+        &message_id,
+        t0 + 20,
+        ChatChannelKind::Workspace,
+    );
+    let clear = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &clear_data,
+        Some("v3".into()),
+        Vec::new(),
+    );
+    let mut tx = pool.begin().await.unwrap();
+    store.upsert_event_in_tx(&mut tx, &clear).await.unwrap();
+    tx.commit().await.unwrap();
+    let folded = store
+        .list_for_timeline(tenant, "community-1", "channel-1", None, 10)
+        .await
+        .unwrap();
+    assert_eq!(folded[0].event_type, ObservedEventType::Edited);
+    assert!(
+        folded[0].attachment_refs.is_empty(),
+        "an edit without refs clears the message's attachments"
+    );
+
+    // Tombstone: the fold surfaces the deleted row; the read surface filters
+    // it (and thus its refs) out entirely — a deleted message never exposes
+    // attachments.
+    let deleted_data = event_data(
+        ObservedEventType::Deleted,
+        &hex64(0xdd),
+        &message_id,
+        t0 + 30,
+        ChatChannelKind::Workspace,
+    );
+    let deleted = ChatObservedEvent::from_observed_data(
+        tenant,
+        WorkspaceId(tenant.0),
+        &deleted_data,
+        None,
+        vec![file_ref("f-1")],
+    );
+    let mut tx = pool.begin().await.unwrap();
+    store.upsert_event_in_tx(&mut tx, &deleted).await.unwrap();
+    tx.commit().await.unwrap();
+    let folded = store
+        .list_for_timeline(tenant, "community-1", "channel-1", None, 10)
+        .await
+        .unwrap();
+    assert_eq!(folded.len(), 1);
+    assert!(folded[0].is_tombstone(), "the fold surfaces the tombstone");
+    assert!(!folded[0].active, "the tombstone is inactive");
+    // Even if a Deleted event carried refs, the read surface drops the row —
+    // asserted at the handler level (chat_app_read_test).
 
     cleanup(&pool, tenant, "unused-consumer").await;
 }

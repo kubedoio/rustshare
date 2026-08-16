@@ -73,7 +73,7 @@ const URI_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
 ///
 /// Consumers treat the ref as opaque: they must not infer database table
 /// names, storage keys, runtime topology or authorization from it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ResourceRef {
     /// Stable Application ID that owns/resolves the resource.
     pub application: ApplicationId,

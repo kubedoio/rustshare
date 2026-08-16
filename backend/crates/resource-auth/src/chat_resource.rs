@@ -20,7 +20,7 @@ pub enum ChatResourceError {
 /// The only attachment data returned to a composer before the user signs a
 /// normal Buzz event. Display fields are safe hints; the URI remains the
 /// signed, canonical relationship.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChatResourceAttachment {
     pub resource: ResourceRef,
     pub display_name: String,

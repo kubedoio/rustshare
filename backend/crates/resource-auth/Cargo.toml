@@ -21,6 +21,7 @@ percent-encoding = "2.3"
 tracing = { workspace = true }
 nostr = { workspace = true }
 url = "2.5"
+utoipa = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

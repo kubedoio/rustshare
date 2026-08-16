@@ -39,11 +39,12 @@ use rustshare_memory::event::{
 };
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_resource_auth::resource_ref::ResourceRef;
-use rustshare_resource_auth::BindingStatus;
+use rustshare_resource_auth::{BindingStatus, BUZZ_RESOURCE_REF_TAG};
 use rustshare_storage::{
     ChatIdentityStore, ChatObservationStore, CommunityMappingError, OutboxStore, UpsertOutcome,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
@@ -428,7 +429,13 @@ impl BuzzObservationService {
             },
             observed_at,
         };
-        let row = ChatObservedEvent::from_observed_data(tenant, workspace, &data, body);
+        let row = ChatObservedEvent::from_observed_data(
+            tenant,
+            workspace,
+            &data,
+            body,
+            extract_attachment_refs(&event),
+        );
         Ok((tenant, workspace, row, data))
     }
 
@@ -566,6 +573,63 @@ fn is_chat_message_kind(kind: Kind) -> bool {
     matches!(kind.as_u16(), 1 | 9 | 40002)
 }
 
+/// Maximum attachment references retained per event. A bound author could
+/// attach arbitrarily many files; the cap keeps the observation row and the
+/// timeline DTO bounded. Refs beyond the cap are dropped with a warning.
+const MAX_ATTACHMENT_REFS: usize = 64;
+
+/// Extract identifier-only attachment references from a verified Buzz event's
+/// `elembra-ref` tags (issue #242).
+///
+/// The event was already cryptographically verified by the caller, so tag
+/// content is author-signed. Semantics are deterministic: refs are returned in
+/// event tag order, duplicates collapse to the first occurrence, and at most
+/// [`MAX_ATTACHMENT_REFS`] refs are retained. Malformed refs fail closed PER
+/// REF — they are dropped with a warning and the event is still accepted,
+/// matching the ingestion philosophy that a bad attachment tag must never
+/// block an otherwise valid signed message. Stored refs are pure identity
+/// (`ResourceRef`): no blob, no signed URL/token/grant, no tenant hint —
+/// opening reauthorizes through the Files owner at read time.
+fn extract_attachment_refs(event: &NostrEvent) -> Vec<ResourceRef> {
+    let mut refs: Vec<ResourceRef> = Vec::new();
+    let mut seen: HashSet<ResourceRef> = HashSet::new();
+    for tag in event.tags.iter() {
+        let fields = tag.as_slice();
+        if fields.first().map(String::as_str) != Some(BUZZ_RESOURCE_REF_TAG) {
+            continue;
+        }
+        let Some(uri) = fields.get(1) else {
+            tracing::warn!(
+                event_id = %event.id,
+                "dropping {BUZZ_RESOURCE_REF_TAG} tag without a value"
+            );
+            continue;
+        };
+        match ResourceRef::from_uri(uri) {
+            Ok(reference) => {
+                // Deduplicate before the cap: a repeat of an already-retained
+                // ref is a no-op, not a fresh slot.
+                if !seen.insert(reference.clone()) {
+                    continue;
+                }
+                if refs.len() >= MAX_ATTACHMENT_REFS {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        count = refs.len(),
+                        "dropping {BUZZ_RESOURCE_REF_TAG} tag beyond the cap"
+                    );
+                    continue;
+                }
+                refs.push(reference);
+            }
+            Err(error) => {
+                tracing::warn!(event_id = %event.id, %error, "dropping malformed {BUZZ_RESOURCE_REF_TAG} tag");
+            }
+        }
+    }
+    refs
+}
+
 /// Fail-closed Chat context sanity checks (step 3 of `verify_and_ingest`).
 fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
     let context = &push.context;
@@ -667,7 +731,7 @@ fn is_lower_hex(s: &str, len: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr::{EventBuilder, Keys};
+    use nostr::{EventBuilder, Keys, Tag};
     use rustshare_memory::event::integration_event_id_for;
     use serde_json::json;
     use uuid::Uuid;
@@ -906,6 +970,141 @@ mod tests {
                 parsed.kind.as_u16()
             );
         }
+    }
+
+    /// A signed kind-1 event carrying exactly `tags`.
+    fn tagged_event(tags: Vec<Tag>) -> NostrEvent {
+        let keys = Keys::generate();
+        EventBuilder::new(Kind::TextNote, "hello buzz")
+            .tags(tags)
+            .sign_with_keys(&keys)
+            .expect("sign the tagged note")
+    }
+
+    fn file_ref(id: &str) -> ResourceRef {
+        ResourceRef::new(ApplicationId::new("io.elembra.files"), "file", id)
+    }
+
+    #[test]
+    fn attachment_refs_preserve_tag_order_and_deduplicate() {
+        // The same ref attached twice (a re-attached file or a duplicate tag)
+        // collapses to its first occurrence; unrelated tags are ignored;
+        // order is the event's own tag order.
+        let a = file_ref("f-1").to_uri();
+        let b = file_ref("f-2").to_uri();
+        let event = tagged_event(vec![
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, a.as_str()]).unwrap(),
+            Tag::parse(["h", "general"]).unwrap(),
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, b.as_str()]).unwrap(),
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, a.as_str()]).unwrap(),
+        ]);
+        let refs = extract_attachment_refs(&event);
+        assert_eq!(
+            refs,
+            vec![file_ref("f-1"), file_ref("f-2")],
+            "order preserved, duplicate dropped"
+        );
+    }
+
+    #[test]
+    fn attachment_refs_drop_malformed_tags_fail_closed_per_ref() {
+        // A value-less tag, a non-elembra URI, and an invalid version selector
+        // are each dropped; the valid ref survives and the event is still
+        // accepted (the caller never sees an error for a bad tag).
+        let valid = file_ref("f-1").to_uri();
+        let event = tagged_event(vec![
+            Tag::parse([BUZZ_RESOURCE_REF_TAG]).unwrap(),
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, "https://evil.invalid/file"]).unwrap(),
+            Tag::parse([
+                BUZZ_RESOURCE_REF_TAG,
+                "elembra://io.elembra.files/file/f-9?version=noversionselector",
+            ])
+            .unwrap(),
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, valid.as_str()]).unwrap(),
+        ]);
+        assert_eq!(
+            extract_attachment_refs(&event),
+            vec![file_ref("f-1")],
+            "malformed refs are dropped, valid refs kept"
+        );
+    }
+
+    #[test]
+    fn attachment_refs_are_empty_without_elembra_ref_tags() {
+        // An event with no attachment tags — including an Edited event that
+        // drops attachments and a Deleted event — extracts to nothing, so the
+        // folded row replaces/clears what earlier events carried.
+        let event = tagged_event(vec![Tag::parse(["h", "general"]).unwrap()]);
+        assert!(
+            extract_attachment_refs(&event).is_empty(),
+            "non-elembra tags must not produce refs"
+        );
+        let (_, plain) = signed_text_note("no attachments");
+        assert!(extract_attachment_refs(&plain).is_empty());
+    }
+
+    #[test]
+    fn attachment_refs_are_identifier_only_and_carry_no_tenant_hint() {
+        // One unversioned ref and one versioned ref: versioned tag URIs are
+        // retained by design (the version selector rides along as identity).
+        let versioned = file_ref("f-1").with_version("sha256:0123abcdef").to_uri();
+        let event = tagged_event(vec![
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, file_ref("f-1").to_uri().as_str()]).unwrap(),
+            Tag::parse([BUZZ_RESOURCE_REF_TAG, versioned.as_str()]).unwrap(),
+        ]);
+        let refs = extract_attachment_refs(&event);
+        assert_eq!(refs.len(), 2);
+
+        let object = serde_json::to_value(&refs[0]).unwrap();
+        let object = object.as_object().unwrap();
+        assert_eq!(object.len(), 3, "application/resourceType/resourceId only");
+        for forbidden in [
+            "tenant",
+            "tenantId",
+            "workspace",
+            "runtime",
+            "endpoint",
+            "token",
+            "url",
+            "signature",
+        ] {
+            assert!(
+                !object.contains_key(forbidden),
+                "refs must never carry `{forbidden}`"
+            );
+        }
+        assert_eq!(
+            refs[0].version, None,
+            "this fixture's first tag carries no version selector"
+        );
+        assert_eq!(
+            refs[1].version.as_deref(),
+            Some("sha256:0123abcdef"),
+            "a versioned tag URI is retained verbatim"
+        );
+    }
+
+    #[test]
+    fn attachment_refs_are_capped_at_64() {
+        // 70 distinct attachments: the first 64 are kept in tag order, the
+        // rest are dropped (with a warning) — the row and DTO stay bounded.
+        let tags = (0..70)
+            .map(|i| {
+                Tag::parse([
+                    BUZZ_RESOURCE_REF_TAG,
+                    file_ref(&format!("f-{i}")).to_uri().as_str(),
+                ])
+                .unwrap()
+            })
+            .collect();
+        let refs = extract_attachment_refs(&tagged_event(tags));
+        assert_eq!(
+            refs.len(),
+            MAX_ATTACHMENT_REFS,
+            "refs beyond the cap are dropped"
+        );
+        assert_eq!(refs[0].resource_id, "f-0", "first 64 kept in tag order");
+        assert_eq!(refs[63].resource_id, "f-63");
     }
 
     #[test]

@@ -1842,6 +1842,153 @@
         }
       }
     },
+    "/api/v1/applications/chat/attachments/open": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Reauthorize at access time, then stream the authorized bytes through\nElembra Files. No Buzz event contains or redirects to storage access.",
+        "description": "The bytes are served as a forced download (`Content-Disposition:\nattachment`, `X-Content-Type-Options: nosniff`) — mirroring the regular\nFiles path — so a malicious or surprising attachment can never execute as\nsame-origin script in the recipient's browser.",
+        "operationId": "open_attachment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized file bytes (forced download)"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/attachments/prepare": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Validate a selected Files ref and return safe metadata plus the exact\ncredential-free Buzz tag. This endpoint never signs or stores a message.",
+        "operationId": "prepare_attachment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Safe metadata plus the exact buzz tag",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/attachments/preview": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Reauthorize the referenced Files resource and return only safe preview\nmetadata. Historical Buzz events are not consulted as authorization.",
+        "operationId": "preview_attachment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Safe preview metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResourceAttachment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/applications/chat/channels": {
       "get": {
         "tags": [
@@ -14603,6 +14750,25 @@
           }
         }
       },
+      "AttachmentResponse": {
+        "type": "object",
+        "required": [
+          "attachment",
+          "buzz_tag"
+        ],
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/ChatResourceAttachment"
+          },
+          "buzz_tag": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The exact tag a client adds to its normal signed Buzz event."
+          }
+        }
+      },
       "AuditEntry": {
         "type": "object",
         "required": [
@@ -14827,6 +14993,32 @@
           }
         }
       },
+      "ChatAttachmentDto": {
+        "type": "object",
+        "description": "Identifier-only attachment reference surfaced on a message. Never\nauthority and never tenant-hinting: opening reauthorizes through the\nFiles owner at read time (`POST /applications/chat/attachments/open`).\n\nSerializes camelCase (`resourceType`/`resourceId`) to match the canonical\n`ResourceRef` wire shape — the same field names the open/preview endpoints\naccept back as the request body.",
+        "required": [
+          "application",
+          "resourceType",
+          "resourceId"
+        ],
+        "properties": {
+          "application": {
+            "type": "string"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ChatMessageDto": {
         "type": "object",
         "required": [
@@ -14836,9 +15028,17 @@
           "channel_id",
           "channel_kind",
           "author_pubkey",
-          "event_created_at"
+          "event_created_at",
+          "attachments"
         ],
         "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachmentDto"
+            },
+            "description": "Identifier-only `elembra-ref` attachment references from the message's\nlatest event, in event tag order (deduplicated at ingest)."
+          },
           "author_pubkey": {
             "type": "string"
           },
@@ -14872,6 +15072,39 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ChatResourceAttachment": {
+        "type": "object",
+        "description": "The only attachment data returned to a composer before the user signs a\nnormal Buzz event. Display fields are safe hints; the URI remains the\nsigned, canonical relationship.",
+        "required": [
+          "resource",
+          "display_name",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -22406,6 +22639,47 @@
             }
           }
         ]
+      },
+      "ResourceRef": {
+        "type": "object",
+        "description": "A cross-Application reference to an Application-owned resource.\n\nCanonical JSON shape:\n\n```json\n{\n  \"application\": \"io.elembra.files\",\n  \"resourceType\": \"file\",\n  \"resourceId\": \"01K2ABC...\",\n  \"version\": \"sha256:0123...\"\n}\n```\n\nCanonical URI rendering:\n\n```text\nelembra://io.elembra.files/file/01K2ABC...?version=sha256%3A0123...\n```\n\nConsumers treat the ref as opaque: they must not infer database table\nnames, storage keys, runtime topology or authorization from it.",
+        "required": [
+          "application",
+          "resourceType",
+          "resourceId"
+        ],
+        "properties": {
+          "application": {
+            "$ref": "#/components/schemas/ApplicationId",
+            "description": "Stable Application ID that owns/resolves the resource."
+          },
+          "resourceId": {
+            "type": "string",
+            "description": "Opaque resource identifier interpreted only by the owner.\n\nOwners MUST treat this as an opaque, untrusted value and never\ninterpret it structurally (no path, URL, storage-key or SQL meaning).\nIt is percent-encoded in the canonical URI, so a decoded value may\nlegitimately contain reserved characters such as `/`, `?` or `#`."
+          },
+          "resourceType": {
+            "type": "string",
+            "description": "Application-owned stable resource type, e.g. `file` or `folder`."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional immutable/version selector for provenance or historical access."
+          }
+        }
+      },
+      "ResourceRequest": {
+        "type": "object",
+        "required": [
+          "resource"
+        ],
+        "properties": {
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          }
+        }
       },
       "ResourceType": {
         "type": "string",

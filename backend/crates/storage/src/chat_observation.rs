@@ -6,8 +6,9 @@
 //! only rewrite is the reconcile tombstone flip: re-observing the same event
 //! id with `event_type == Deleted` (the relay's `state/events` snapshot
 //! tombstone) turns the row into a deleted tombstone. Buzz remains
-//! authoritative — this table holds reference metadata and (optionally) an
-//! indexing copy of the body only.
+//! authoritative — this table holds reference metadata, the identifier-only
+//! `attachment_refs` retained from each event's `elembra-ref` tags, and
+//! (optionally) an indexing copy of the body only.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -72,9 +73,9 @@ impl ChatObservationStore {
                  supersedes_event_id, community_id, channel_id, channel_kind,
                  thread_root_id, author_pubkey, author_principal_id,
                  event_created_at, observed_at, checksum, signature,
-                 signature_verified, body, active)
+                 signature_verified, body, attachment_refs, active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17, $18, $19)
+                    $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (tenant_id, event_id) DO UPDATE
                 SET event_type = 'deleted', observed_at = EXCLUDED.observed_at,
                     active = EXCLUDED.active
@@ -101,6 +102,7 @@ impl ChatObservationStore {
         .bind(&event.signature)
         .bind(event.signature_verified)
         .bind(&event.body)
+        .bind(serde_json::to_value(&event.attachment_refs)?)
         .bind(event.active)
         .fetch_optional(&mut **tx)
         .await?;
@@ -129,7 +131,7 @@ impl ChatObservationStore {
                     supersedes_event_id, community_id, channel_id, channel_kind,
                     thread_root_id, author_pubkey, author_principal_id,
                     event_created_at, observed_at, checksum, signature,
-                    signature_verified, body, active
+                    signature_verified, body, attachment_refs, active
              FROM chat_observed_events
              WHERE tenant_id = $1 AND message_id = $2
              ORDER BY event_created_at DESC, event_id DESC
@@ -182,7 +184,7 @@ impl ChatObservationStore {
                     supersedes_event_id, community_id, channel_id, channel_kind,
                     thread_root_id, author_pubkey, author_principal_id,
                     event_created_at, observed_at, checksum, signature,
-                    signature_verified, body, active
+                    signature_verified, body, attachment_refs, active
              FROM chat_observed_events
              WHERE tenant_id = $1 AND event_id = $2",
         )
@@ -204,7 +206,7 @@ impl ChatObservationStore {
                     supersedes_event_id, community_id, channel_id, channel_kind,
                     thread_root_id, author_pubkey, author_principal_id,
                     event_created_at, observed_at, checksum, signature,
-                    signature_verified, body, active
+                    signature_verified, body, attachment_refs, active
              FROM chat_observed_events
              WHERE tenant_id = $1 AND message_id = $2
              ORDER BY event_created_at, event_id",
@@ -237,7 +239,7 @@ impl ChatObservationStore {
                             supersedes_event_id, community_id, channel_id, channel_kind,
                             thread_root_id, author_pubkey, author_principal_id,
                             event_created_at, observed_at, checksum, signature,
-                            signature_verified, body, active
+                            signature_verified, body, attachment_refs, active
                      FROM chat_observed_events
                      WHERE tenant_id = $1
                        AND message_id IN (SELECT message_id FROM affected_messages)
@@ -254,7 +256,7 @@ impl ChatObservationStore {
                             supersedes_event_id, community_id, channel_id, channel_kind,
                             thread_root_id, author_pubkey, author_principal_id,
                             event_created_at, observed_at, checksum, signature,
-                            signature_verified, body, active
+                            signature_verified, body, attachment_refs, active
                      FROM chat_observed_events
                      WHERE tenant_id = $1
                      ORDER BY event_created_at, event_id, event_type",
@@ -329,7 +331,7 @@ impl ChatObservationStore {
                         supersedes_event_id, community_id, channel_id, channel_kind,
                         thread_root_id, author_pubkey, author_principal_id,
                         event_created_at, observed_at, checksum, signature,
-                        signature_verified, body, active
+                        signature_verified, body, attachment_refs, active
                  FROM chat_observed_events
                  WHERE tenant_id = $1 AND community_id = $2 AND channel_id = $3
                  ORDER BY message_id, event_created_at DESC, event_id DESC
@@ -373,6 +375,7 @@ fn row_to_event(row: &sqlx::postgres::PgRow) -> Result<ChatObservedEvent> {
         signature: row.try_get("signature")?,
         signature_verified: row.try_get("signature_verified")?,
         body: row.try_get("body")?,
+        attachment_refs: serde_json::from_value(row.try_get("attachment_refs")?)?,
         active: row.try_get("active")?,
     })
 }

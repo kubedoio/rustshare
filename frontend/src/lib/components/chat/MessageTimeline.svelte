@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { ChatMessageDto } from '$lib/api/chat';
+	import type { ChatAttachmentDto, ChatMessageDto } from '$lib/api/chat';
+	import { openChatAttachment } from '$lib/api/chat';
 
 	interface Props {
 		messages: ChatMessageDto[];
@@ -20,6 +21,28 @@
 			.querySelector(`[data-message-id="${focusTarget.message_id}"]`)
 			?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	});
+
+	// Open reauthorizes through the Files owner at read time. Failures are
+	// silent: an unauthorized or missing file must not leak existence or
+	// ownership to the recipient. The server serves the bytes as a forced
+	// download (Content-Disposition: attachment + nosniff); the anchor click
+	// below mirrors that client-side — no window.open, so no popup blocker
+	// and no reverse-tabnabbing surface.
+	async function openAttachment(attachment: ChatAttachmentDto): Promise<void> {
+		try {
+			const blob = await openChatAttachment(attachment);
+			const url = URL.createObjectURL(blob);
+			const anchor = document.createElement('a');
+			anchor.href = url;
+			anchor.download = attachment.resourceId || 'attachment';
+			document.body.appendChild(anchor);
+			anchor.click();
+			URL.revokeObjectURL(url);
+			anchor.remove();
+		} catch {
+			// Existence-hiding by design.
+		}
+	}
 </script>
 
 <div bind:this={container} class="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
@@ -42,6 +65,20 @@
 				{:else}
 					<div class="text-sm text-base-content/50 italic">
 						Content unavailable in Elembra (reference-only message).
+					</div>
+				{/if}
+				{#if message.attachments.length > 0}
+					<div class="mt-1 flex flex-wrap gap-1">
+						{#each message.attachments as attachment, index (attachment.application + attachment.resourceType + attachment.resourceId + (attachment.version ?? ''))}
+							<button
+								type="button"
+								class="badge badge-outline gap-1 text-xs"
+								title="Open attachment"
+								onclick={() => openAttachment(attachment)}
+							>
+								Attachment{message.attachments.length > 1 ? ` ${index + 1}` : ''}
+							</button>
+						{/each}
 					</div>
 				{/if}
 				<a

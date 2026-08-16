@@ -53,6 +53,31 @@ pub struct ChannelInfo {
     pub latest_event_at: DateTime<Utc>,
 }
 
+/// Identifier-only attachment reference surfaced on a message. Never
+/// authority and never tenant-hinting: opening reauthorizes through the
+/// Files owner at read time (`POST /applications/chat/attachments/open`).
+///
+/// Serializes camelCase (`resourceType`/`resourceId`) to match the canonical
+/// `ResourceRef` wire shape — the same field names the open/preview endpoints
+/// accept back as the request body.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAttachmentDto {
+    pub application: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub version: Option<String>,
+}
+
+fn attachment_dto(reference: &ResourceRef) -> ChatAttachmentDto {
+    ChatAttachmentDto {
+        application: reference.application.0.clone(),
+        resource_type: reference.resource_type.clone(),
+        resource_id: reference.resource_id.clone(),
+        version: reference.version.clone(),
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChatMessageDto {
     pub message_id: String,
@@ -64,6 +89,9 @@ pub struct ChatMessageDto {
     pub event_created_at: DateTime<Utc>,
     pub thread_root_id: Option<String>,
     pub body: Option<String>,
+    /// Identifier-only `elembra-ref` attachment references from the message's
+    /// latest event, in event tag order (deduplicated at ingest).
+    pub attachments: Vec<ChatAttachmentDto>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -490,6 +518,7 @@ pub async fn list_messages(
             event_created_at: event.event_created_at,
             thread_root_id: event.thread_root_id.clone(),
             body: event.body.clone(),
+            attachments: event.attachment_refs.iter().map(attachment_dto).collect(),
         });
     }
     Ok(Json(MessagesResponse {
@@ -559,5 +588,6 @@ pub async fn get_message(
         event_created_at: latest.event_created_at,
         thread_root_id: latest.thread_root_id.clone(),
         body: latest.body.clone(),
+        attachments: latest.attachment_refs.iter().map(attachment_dto).collect(),
     }))
 }
