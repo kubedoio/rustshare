@@ -383,6 +383,14 @@ The Elembra implementation now exposes the following trusted boundary:
 | `POST /api/v1/applications/chat/identity-binding/verify` | Authenticated same Principal + NIP-42 proof → atomic one-use challenge consumption and active binding. |
 | `POST /api/v1/applications/chat/admission` | Active binding + mapping + Chat access → Elembra admission row and durable Buzz bridge operation (`202 queued`). |
 
+The "names and URLs are not inferred" rule is preserved and extended by
+ADR-0036: an `auto` provisioning mode may now create the mapping from a
+**verified discovery contract** (`GET /api/v1/relay/community`) instead of
+manual input, but discovery is never unauthenticated input — the response is
+relay-signed (kind-19030) and verified against the relay's stable pubkey, with
+the configured relay URL as the only external input. Explicit admin
+configuration (`POST .../community`) remains fully supported.
+
 The migration adds durable bindings, challenges, mappings, and admissions.
 Admission/revocation requests use the existing transactional
 `integration_outbox` rather than a second queue. A database trigger revokes local binding
