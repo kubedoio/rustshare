@@ -174,7 +174,7 @@ Items 2–6 are deferred to tracked issues (not implemented in this pass — the
 | L2 | Reference-first messages render without body (no `content_indexing`) | C (documented posture; opt-in flag) |
 | L3 | Buzz-mode timeline authorization is one relay batch round-trip per page (64-message bound, latency-budgeted) | **D — resolved (batch endpoint specified + implemented; live_p10 proves one round-trip, live_p11 the 500 ms budget)** |
 | L4 | No reply/thread composer (reply UI) | **D — resolved at the wire-format level (NIP-29 `h` + NIP-10 `e` confirmed upstream); remaining: the reply-UI composer feature (issue #243)** |
-| L5 | Attachments sender-side only (observation index keeps no tags) | B (projection change; not Alpha-blocking for senders) |
+| L5 | Attachments sender-side only (observation index keeps no tags) | B — **resolved (recipient-side tags delivered in the Alpha: identifier-only refs retained via migration `20260810000007`, timeline affordance, Files-reauthorized open)** |
 | L6 | Client channel tagging follows the canonical wire format (kind 9 + `["h", <channel-uuid>]`; legacy kind-1 stays bridge-attributed) | **D — resolved (canonical publish tags and kinds confirmed + implemented client-side)** |
 | L7 | DM/private/excluded channels unreadable under the LOCAL gate (buzz mode reads them via the relay) | **D — resolved for buzz mode (access/check implemented); the local gate is unchanged by design** |
 | L8 | Device loss without export unrecoverable | B (documented; import/export UX now complete) |
@@ -220,7 +220,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 - Revocation admin endpoint + offboarding UX (L30).
 - Sent-vs-observed message status indicator (L31).
 - Chat ingestion/observability metrics + bridge delivery visibility (observability items 2–6).
-- Recipient-side attachment tags (projection change, L5).
+- ~~Recipient-side attachment tags (projection change, L5)~~ — **resolved (delivered in the Alpha: identifier-only refs retained via migration `20260810000007`, timeline DTO, Files-reauthorized open)**.
 - Reply/thread composer (L4 — wire format confirmed upstream; issue #243 follow-up).
 - Ask-availability gating in the status surface (L32).
 - ~~Buzz-mode read latency batch endpoint + upstream `access/check`/channel registry (L3/L1/L7/L12/L15)~~ — **resolved in the production-authority pass** (batch + registry + access checks implemented; live conformance suite green).
@@ -241,7 +241,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | — | *new*: Chat operator observability (webhook rejection logging done; metrics/lag/bridge visibility) | CREATE |
 | — | *new*: Revocation admin endpoint + offboarding UX | CREATE |
 | — | *new*: Sent-vs-observed message status indicator | CREATE |
-| — | *new*: Recipient-side attachment tags (projection) | CREATE |
+| — | *new*: Recipient-side attachment tags (projection) | DELIVERED — shipped in the Alpha (migration `20260810000007`, timeline DTO, Files-reauthorized open) |
 | — | *new*: Reply/thread composer (blocked on wire format) | CREATE |
 | — | *new*: Ask availability gating when LLM provider not configured | CREATE |
 | — | ~~Buzz-mode production readiness (access/check, batch, channel registry — upstream)~~ | **resolved — production-authority pass (E1–E7); pending deploy** |

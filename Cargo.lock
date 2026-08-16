@@ -4424,7 +4424,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-auth"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4443,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-core"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4471,7 +4471,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-crypto"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -4510,7 +4510,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-infrastructure"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4526,7 +4526,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-integration-events"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4541,7 +4541,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-memory"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "chrono",
  "rustshare-core",
@@ -4554,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-resource-auth"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4575,7 +4575,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-server"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -4643,7 +4643,7 @@ dependencies = [
 
 [[package]]
 name = "rustshare-storage"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",

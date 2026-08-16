@@ -4,7 +4,7 @@ This document defines how RustShare maintainers cut, publish, and manage release
 
 > **Maintainers:** @senolcolak, @zoorpha  
 > **Registry:** `ghcr.io/kubedoio/rustshare-backend`  
-> **CI Workflow:** `.github/workflows/release.yml` (stable), `.github/workflows/pilot-release.yml` (main/edge)
+> **CI Workflow:** `.github/workflows/release.yml` (stable + prerelease tags), `.github/workflows/pilot-release.yml` (main/edge)
 
 ---
 
@@ -12,7 +12,8 @@ This document defines how RustShare maintainers cut, publish, and manage release
 
 RustShare follows **strict SemVer 2.0.0**.
 
-- **Tag format:** `vMAJOR.MINOR.PATCH` (e.g., `v0.3.1`, `v1.0.0`)
+- **Tag format:** `vMAJOR.MINOR.PATCH` (e.g., `v0.3.1`, `v1.0.0`), optionally
+  with a SemVer prerelease segment (e.g., `v0.8.0-alpha.1`, `v1.0.0-rc.1`)
 - `MAJOR` — incompatible API or behavioral changes
 - `MINOR` — backward-compatible functionality additions
 - `PATCH` — backward-compatible bug fixes
@@ -40,12 +41,16 @@ While the project is `< 1.0.0`:
 The release workflows publish the following Docker tags:
 
 - **`.github/workflows/pilot-release.yml`** (main branch): `edge`, `nightly-YYYY-MM-DD`, `sha-<gitsha>`
-- **`.github/workflows/release.yml`** (stable tags only): `X.Y.Z`, `X.Y`, `X`, `latest`, `sha-<gitsha>`
+- **`.github/workflows/release.yml`** (stable tags): `X.Y.Z`, `X.Y`, `X`, `latest`, `sha-<gitsha>`; prerelease tags: `X.Y.Z-<pre>` only (no `latest`/aliases)
 
-> **Note:** `release.yml` accepts **stable `vX.Y.Z` tags only** (the `validate-tag`
-> step enforces `^v[0-9]+\.[0-9]+\.[0-9]+$`). `-rc.N` tags are **not** accepted by
-> the automated pipeline; pre-release validation is done locally before tagging
-> the stable version (see [Pre-release Validation](#pre-release-validation)).
+> **Note:** `release.yml` accepts `vX.Y.Z` stable tags and SemVer prerelease
+> tags (`vX.Y.Z-alpha.N`, `vX.Y.Z-rc.N`, …) — the grammar lives in
+> `scripts/release-tag.sh` (single source of truth). Prerelease tags publish a
+> version-only Docker tag and a GitHub **prerelease**; `latest` and the rolling
+> aliases are moved by stable tags only (see [Pre-release Validation](#pre-release-validation)).
+> Release naming is a deliberate rule: prerelease releases are branded
+> **Elembra v<version>** (the Elembra preview line), while stable releases
+> keep the **RustShare v<version>** name.
 
 Combined tag matrix:
 
@@ -55,23 +60,29 @@ Combined tag matrix:
 | `nightly-YYYY-MM-DD` | Dated `main` push | Unstable | Snapshot testing, bisecting |
 | `sha-<gitsha>` | Every build | Unstable | Exact reproducibility |
 | `X.Y.Z` | Stable tag (`vX.Y.Z`) | Stable | Production deployments |
+| `X.Y.Z-<prerelease>` | Prerelease tag (`vX.Y.Z-alpha.N` / `-rc.N`) | Unstable preview | Version-only image tag + GitHub prerelease; never `latest` |
 | `X.Y` | Rolling minor alias | Stable | Automatic patch uptake |
 | `X` | Rolling major alias | Stable | Automatic minor uptake (post-1.0) |
 | `latest` | Latest stable tag only | Stable | Quick start, never `main` |
 
 **Rules:**
 
-- `latest` is **only** moved by stable version tags. A `main` push never overwrites `latest`.
-- Rolling aliases (`X.Y`, `X`) are updated on every stable release so users can choose their uptake cadence.
+- `latest` is **only** moved by stable version tags. A `main` push or a
+  prerelease tag never overwrites `latest`.
+- Rolling aliases (`X.Y`, `X`) are updated on every stable release so users can choose their uptake cadence; prerelease tags never update them.
+- Prerelease tags publish a **version-only** image tag plus the `sha-<gitsha>` tag, and create a GitHub prerelease (named `Elembra vX.Y.Z-<pre>`).
 
 ---
 
 ## Pre-release Validation
 
-The automated pipeline is **stable-tag-only**: pushing `vX.Y.Z` triggers
+The automated pipeline accepts stable `vX.Y.Z` tags and SemVer prerelease
+tags (`vX.Y.Z-alpha.N`, `vX.Y.Z-rc.N`, …): pushing either triggers
 `release.yml`, which builds binaries, publishes container images, and creates
-the GitHub Release. There is **no automated RC channel** — `vX.Y.Z-rc.N` tags
-are rejected by `release.yml`.
+the GitHub Release (stable or prerelease, per `scripts/release-tag.sh`).
+Prerelease image tags are version-only (`latest` and rolling aliases are never
+moved); run the same validation checklist below against the exact commit to be
+tagged before pushing any tag.
 
 Before pushing a stable tag, the maintainer must complete the validation
 checklist against the exact commit to be tagged:

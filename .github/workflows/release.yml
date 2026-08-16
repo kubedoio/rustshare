@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.2.3)'
+        description: 'Version to release (e.g., 1.2.3 or 0.8.0-alpha.1)'
         required: true
         type: string
 
@@ -34,6 +34,9 @@ jobs:
       commit: ${{ steps.resolve.outputs.commit }}
       tag: ${{ steps.resolve.outputs.tag }}
       should_release: ${{ steps.resolve.outputs.should_release }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
+      release_name: ${{ steps.resolve.outputs.release_name }}
+      docker_tags: ${{ steps.resolve.outputs.docker_tags }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -44,40 +47,30 @@ jobs:
       - name: Resolve version and commit
         id: resolve
         run: |
-          SHOULD_RELEASE="true"
           COMMIT="${{ github.sha }}"
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Invalid version format: $VERSION. Expected semver (e.g., 1.2.3)."
-              exit 1
-            fi
-            TAG="v$VERSION"
-
+            # The dispatch input is a bare version; the tag carries the v prefix.
+            TAG="v${{ github.event.inputs.version }}"
           else
             # push: tags:
-            REF="${{ github.ref_name }}"
-            if ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Invalid tag format: $REF. Expected vX.Y.Z."
-              exit 1
-            fi
-            VERSION="${REF#v}"
-            TAG="$REF"
+            TAG="${{ github.ref_name }}"
           fi
 
-          if [[ "$SHOULD_RELEASE" == "true" ]]; then
-            VERSION_MAJOR_MINOR="${VERSION%.*}"
-            VERSION_MAJOR="${VERSION%%.*}"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "version_major_minor=$VERSION_MAJOR_MINOR" >> "$GITHUB_OUTPUT"
-            echo "version_major=$VERSION_MAJOR" >> "$GITHUB_OUTPUT"
+          # Single source of truth for tag grammar and release metadata.
+          source scripts/release-tag.sh
+          if ! resolve_release_tag "$TAG" > /tmp/release-tag.out; then
+            echo "::error::Invalid release tag: $TAG. Expected strict semver with a v prefix (e.g., v0.7.0 or v0.8.0-alpha.1)."
+            exit 1
           fi
 
+          # resolve_release_tag emits GITHUB_OUTPUT-compatible key=value lines
+          # (multiline docker_tags via the <<RS_EOF delimiter); append verbatim.
+          cat /tmp/release-tag.out >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
-          echo "Resolved: version=$VERSION, commit=$COMMIT, tag=$TAG, release=$SHOULD_RELEASE"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "Resolved: $(grep -E '^(version|is_prerelease|release_name)=' /tmp/release-tag.out | tr '\n' ' ')"
 
   build-binaries:
     name: Build release binaries
@@ -181,11 +174,8 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ needs.validate-tag.outputs.version }}
-            type=raw,value=${{ needs.validate-tag.outputs.version_major_minor }}
-            type=raw,value=${{ needs.validate-tag.outputs.version_major }}
+            ${{ needs.validate-tag.outputs.docker_tags }}
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest
 
       - name: Build and push
         id: build
@@ -347,7 +337,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.validate-tag.outputs.version }}
-          name: RustShare v${{ needs.validate-tag.outputs.version }}
+          name: ${{ needs.validate-tag.outputs.release_name }}
+          prerelease: ${{ needs.validate-tag.outputs.is_prerelease }}
           generate_release_notes: true
           files: |
             ./artifacts/rustshare-server-*
