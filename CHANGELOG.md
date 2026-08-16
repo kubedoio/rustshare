@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-alpha.1] - 2026-08-16
+
 ### Added
 
 - Elembra Chat Application v1: read surface for Buzz communities/channels/messages
@@ -480,7 +482,8 @@ Stable release for the `0.3.0` release line.
 - **Backend tests:** Hardened integration tests for cross-user isolation, validated JSON doctests, and brainstorming handler formatting.
 - **CI:** Added `RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS` to integration test workflow; fixed DCO sign-off checks.
 
-[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/kubedoio/rustshare/compare/v0.8.0-alpha.1...HEAD
+[0.8.0-alpha.1]: https://github.com/kubedoio/rustshare/compare/v0.7.0...v0.8.0-alpha.1
 [0.7.0]: https://github.com/kubedoio/rustshare/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/kubedoio/rustshare/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/kubedoio/rustshare/compare/v0.5.0...v0.5.1
