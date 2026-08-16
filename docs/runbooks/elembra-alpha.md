@@ -136,6 +136,25 @@ No direct SQL is needed to create the mapping anymore: in `auto` mode
 enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
 page ("Connect existing Chat deployment") or the admin API does it.
 
+### 2.4 Operational notes (learned from the clean-install proof)
+
+- **Relay network namespace**: with the dogfood override, the relay shares
+  the backend container's network namespace (`network_mode: service:backend`).
+  Recreating the backend (e.g. `docker compose up -d backend` after changing
+  .env) orphans the relay; re-attach with
+  `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d buzz-relay`.
+- **`BUZZ_COMMUNITY_ID` after a relay wipe**: a fresh relay database generates
+  a NEW community id (auto-provisioning discovers it). After wiping the relay
+  volumes, re-read the discovered community id (backend log / chat status) and
+  update `BUZZ_COMMUNITY_ID` in `.env`, then restart the observer — otherwise
+  the observer forwards events that the bridge rejects with "Unknown
+  community" (403).
+- **Health probes**: the backend exposes `/health` and `/health/ready`
+  (not `/api/v1/health`); nginx maps `/api/v1` to the backend only.
+- **Ask provider**: set `ELEMBRA_LLM_API_KEY`/`BASE_URL`/`MODEL` in `.env`
+  (see §3); the backend reads them at startup — recreate the backend after
+  changing them. Leave the key empty for the documented gated Ask (503).
+
 > **Security note:** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` relaxes the SSRF guard
 > for Chat relay URLs only. Production deployments with public relays must
 > keep it unset (default fail-closed).
