@@ -297,6 +297,10 @@ name = "chat_app_read_test"
 path = "../tests/chat_app_read_test.rs"
 
 [[test]]
+name = "chat_bootstrap_test"
+path = "../tests/chat_bootstrap_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 

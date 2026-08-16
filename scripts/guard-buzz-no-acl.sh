@@ -36,7 +36,7 @@ if [[ -n "$ACL_MIGRATIONS" ]]; then
 fi
 
 # 2. No direct Buzz DB access from the authorization path.
-for file in backend/server/src/buzz_gateway.rs backend/server/src/authz/chat_owner.rs backend/server/src/handlers/chat_app.rs; do
+for file in backend/server/src/buzz_gateway.rs backend/server/src/authz/chat_owner.rs backend/server/src/handlers/chat_app.rs backend/server/src/handlers/chat_identity.rs backend/server/src/services/chat_bootstrap.rs; do
 	if grep -nE 'buzz-db|buzz_relay::|sqlx::PgPool|PgPool::connect' "$file" >/dev/null 2>&1; then
 		echo "FAIL: $file references the Buzz relay's database or a direct pool:"
 		grep -nE 'buzz-db|buzz_relay::|sqlx::PgPool|PgPool::connect' "$file" || true
