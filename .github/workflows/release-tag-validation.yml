@@ -1,0 +1,25 @@
+name: Release Tag Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-tag-validation.yml'
+      - 'scripts/release-tag.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: release-tag.sh selftest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Syntax check
+        run: bash -n scripts/release-tag.sh
+
+      - name: Run release-tag.sh selftest
+        run: bash scripts/release-tag.sh --selftest
