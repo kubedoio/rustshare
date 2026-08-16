@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	getChatChannels: vi.fn(),
 	getChatMessages: vi.fn(),
 	getChatMessage: vi.fn(),
+	openChatAttachment: vi.fn(),
 	pageUrl: new URL('http://localhost:8080/apps/chat'),
 	// Send path (real MessageComposer): key vault + nostr + files so the
 	// composer can publish and emit onSent(eventId).
@@ -36,7 +37,8 @@ vi.mock('$lib/api/chat', () => ({
 	getChatStatus: mocks.getChatStatus,
 	getChatChannels: mocks.getChatChannels,
 	getChatMessages: mocks.getChatMessages,
-	getChatMessage: mocks.getChatMessage
+	getChatMessage: mocks.getChatMessage,
+	openChatAttachment: mocks.openChatAttachment
 }));
 
 vi.mock('$lib/chat/keys', () => ({
@@ -169,6 +171,7 @@ describe('ChatApplicationView', () => {
 			author_pubkey: 'pk-a',
 			event_created_at: '2026-08-12T10:00:00Z',
 			thread_root_id: null,
+			attachments: [],
 			body: 'hello deep link'
 		});
 		render(ChatApplicationView);
@@ -192,6 +195,7 @@ describe('ChatApplicationView', () => {
 								author_pubkey: 'pk-a',
 								event_created_at: '2026-08-12T10:00:00Z',
 								thread_root_id: null,
+								attachments: [],
 								body: 'first page message'
 							}
 						],
@@ -221,6 +225,7 @@ describe('ChatApplicationView', () => {
 								author_pubkey: 'pk-a',
 								event_created_at: '2026-08-12T10:00:00Z',
 								thread_root_id: null,
+								attachments: [],
 								body: 'first page message'
 							}
 						],
@@ -279,6 +284,7 @@ describe('ChatApplicationView', () => {
 						author_pubkey: 'pk-1',
 						event_created_at: '2026-08-12T10:01:00Z',
 						thread_root_id: null,
+						attachments: [],
 						body: 'hello relay'
 					}
 				],

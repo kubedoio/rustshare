@@ -24,6 +24,16 @@ export interface ChatChannelInfo {
 	latest_event_at: string;
 }
 
+/** Identifier-only attachment reference on a chat message (issue #242). Never
+ * authority and never tenant-hinting: opening reauthorizes through the Files
+ * owner at read time via `openChatAttachment`. */
+export interface ChatAttachmentDto {
+	application: string;
+	resourceType: string;
+	resourceId: string;
+	version: string | null;
+}
+
 export interface ChatMessageDto {
 	message_id: string;
 	event_id: string;
@@ -34,6 +44,19 @@ export interface ChatMessageDto {
 	event_created_at: string;
 	thread_root_id: string | null;
 	body: string | null;
+	attachments: ChatAttachmentDto[];
+}
+
+/**
+ * Reauthorize and open a chat attachment through the Files owner. The server
+ * streams the authorized bytes, or answers an existence-hiding 404 when the
+ * file is missing or the caller may not read it.
+ */
+export function openChatAttachment(attachment: ChatAttachmentDto): Promise<Blob> {
+	return apiClient.requestBlob('/applications/chat/attachments/open', {
+		method: 'POST',
+		body: JSON.stringify({ resource: attachment })
+	});
 }
 
 export interface ChatMessagesPage {

@@ -149,6 +149,11 @@ export class ApiClient {
 		return { text: await response.text(), headers: response.headers };
 	}
 
+	async requestBlob(endpoint: string, options?: RequestInit): Promise<Blob> {
+		const response = await this.executeFetch(endpoint, options);
+		return response.blob();
+	}
+
 	async get<T>(endpoint: string): Promise<T> {
 		return this.request<T>(endpoint, { method: 'GET' });
 	}
