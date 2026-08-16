@@ -24,13 +24,21 @@
 
 	// Open reauthorizes through the Files owner at read time. Failures are
 	// silent: an unauthorized or missing file must not leak existence or
-	// ownership to the recipient.
+	// ownership to the recipient. The server serves the bytes as a forced
+	// download (Content-Disposition: attachment + nosniff); the anchor click
+	// below mirrors that client-side — no window.open, so no popup blocker
+	// and no reverse-tabnabbing surface.
 	async function openAttachment(attachment: ChatAttachmentDto): Promise<void> {
 		try {
 			const blob = await openChatAttachment(attachment);
 			const url = URL.createObjectURL(blob);
-			window.open(url, '_blank');
-			setTimeout(() => URL.revokeObjectURL(url), 60_000);
+			const anchor = document.createElement('a');
+			anchor.href = url;
+			anchor.download = attachment.resourceId || 'attachment';
+			document.body.appendChild(anchor);
+			anchor.click();
+			URL.revokeObjectURL(url);
+			anchor.remove();
 		} catch {
 			// Existence-hiding by design.
 		}
@@ -61,7 +69,7 @@
 				{/if}
 				{#if message.attachments.length > 0}
 					<div class="mt-1 flex flex-wrap gap-1">
-						{#each message.attachments as attachment, index (attachment.application + attachment.resourceType + attachment.resourceId)}
+						{#each message.attachments as attachment, index (attachment.application + attachment.resourceType + attachment.resourceId + (attachment.version ?? ''))}
 							<button
 								type="button"
 								class="badge badge-outline gap-1 text-xs"
