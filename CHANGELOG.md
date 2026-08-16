@@ -108,8 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Elembra Chat: zero-config bootstrap — enabling Chat auto-provisions the
   deployment Buzz community (auto mode), admin provisioning page, neutral
-  user-facing state copy, supported relay image sourced from merged
-  kubedoio/buzz main (SHA pin documented; default tracks the merged build).
+  user-facing state copy, supported relay image pinned to the merged
+  kubedoio/buzz main build (`ghcr.io/kubedoio/buzz:sha-8ce4dac`).
 
 ### Changed
 

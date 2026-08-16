@@ -214,7 +214,7 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
 | `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
 | `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
-| `BUZZ_RELAY_IMAGE` | relay image; supported: `ghcr.io/kubedoio/buzz` built from merged `kubedoio/buzz` main — pin the immutable `sha-<7>` tag of that build; never a floating upstream `block/buzz` image | `ghcr.io/kubedoio/buzz:main` |
+| `BUZZ_RELAY_IMAGE` | relay image; supported: `ghcr.io/kubedoio/buzz` built from merged `kubedoio/buzz` main — pin the immutable `sha-<7>` tag of that build; never a floating upstream `block/buzz` image | `ghcr.io/kubedoio/buzz:sha-8ce4dac` |
 | `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
 | `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
@@ -225,14 +225,11 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 
 The relay image must contain the v1alpha1 authorization API and the
 community-identity discovery endpoint (ADR-0035/0036). The supported image is
-`ghcr.io/kubedoio/buzz`, built from merged `kubedoio/buzz` main and published
-by the fork's CI with `:main` + `:sha-<7>` tags and provenance attestation.
-Pin `BUZZ_RELAY_IMAGE` to the `sha-<7>` tag of the merged-main build and
-verify provenance with `gh attestation verify
-oci://ghcr.io/kubedoio/buzz:sha-<7> --owner kubedoio`. The compose default
-tracks the fork build (`:main`) and its comment instructs the same pin; until
-the merged build exists (PR pending), the dogfood/conformance scripts build
-the relay image locally from the buzz worktree.
+`ghcr.io/kubedoio/buzz`, built from merged `kubedoio/buzz` main (`8ce4dac`, PR
+#2 merged) and published by the fork's CI with `:main` + `:sha-<7>` tags and
+provenance attestation. The compose default pins `BUZZ_RELAY_IMAGE` to the
+immutable `sha-8ce4dac` tag of the merged build; verify provenance with
+`gh attestation verify oci://ghcr.io/kubedoio/buzz:sha-8ce4dac --owner kubedoio`.
 
 Generate all keys once: `node frontend/scripts/alpha-gen-buzz-keys.mjs`. The
 relay owner key is the bridge identity: its public half is

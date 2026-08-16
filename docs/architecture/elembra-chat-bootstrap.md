@@ -16,8 +16,8 @@ keeps the explicit admin path unchanged.
 
 ## 1. Buzz provisioning model (verified against the buzz worktree)
 
-These facts are verified against the `kubedoio/buzz` codebase (`main` plus the
-`feat/community-identity` branch; see §4 for the PR status):
+These facts are verified against the `kubedoio/buzz` codebase (`main` at
+`8ce4dac`, which includes the merged community-identity contract):
 
 - **`communities` has no name.** The table is
   `communities(id UUID PRIMARY KEY DEFAULT gen_random_uuid(), host VARCHAR(255)
@@ -169,11 +169,10 @@ response.
   from, so the pinned contract is reproducible and auditable.
 
 **Current status (2026-08-16):** the community-identity endpoint and the fork
-image publishing ship in `kubedoio/buzz` PR #2 (branch `feat/community-identity`,
-HEAD `ac85c9c`), pending merge (human step). Until the merged build is
-published, local E2E builds the relay image from the worktree branch
-(`BUZZ_RELAY_IMAGE=buzz-relay:dogfood`) — no dependence on floating tags, no
-stale images.
+image publishing are merged in `kubedoio/buzz` main (`8ce4dac`, PR #2). The
+supported image is `ghcr.io/kubedoio/buzz:sha-8ce4dac` (built from the merged
+main by the fork CI; see `docker-compose.alpha.yml`'s `BUZZ_RELAY_IMAGE`
+default). No dependence on floating upstream tags, no stale images.
 
 ---
 

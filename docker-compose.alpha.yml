@@ -112,17 +112,16 @@ services:
   buzz-relay:
     # The relay image MUST contain the v1alpha1 authorization API (access
     # check/check-batch, channels, state events, community identity).
-    # The supported image is built from merged kubedoio/buzz main and pushed
-    # as ghcr.io/kubedoio/buzz (see docs/architecture/elembra-chat-bootstrap.md).
-    # The default below tracks that build; pin BUZZ_RELAY_IMAGE to an
-    # immutable `sha-<7>` tag once the merged main build exists. Never use a
-    # floating upstream (block/buzz) image — its API contract may differ.
+    # The supported image is built from merged kubedoio/buzz main (8ce4dac)
+    # and pinned to its immutable sha tag; provenance is verifiable with
+    # `gh attestation verify oci://ghcr.io/kubedoio/buzz:sha-8ce4dac --owner kubedoio`.
+    # Never use a floating upstream (block/buzz) image — its API contract may differ.
     # The relay has NO published ports in this file: the dogfood layout
     # shares the backend's network namespace (docker-compose.dogfood.yml)
     # and the standalone conformance layout publishes them
     # (docker-compose.conformance.yml). The engine rejects port publishing
     # on a container using network_mode service:<x>.
-    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/kubedoio/buzz:main}
+    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/kubedoio/buzz:sha-8ce4dac}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://buzz:${BUZZ_POSTGRES_PASSWORD:-buzz_dev}@buzz-postgres:5432/buzz
