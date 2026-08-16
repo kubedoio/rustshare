@@ -939,6 +939,7 @@ mod tests {
                 channel_kind,
             ),
             body.map(str::to_string),
+            Vec::new(),
         )
     }
 

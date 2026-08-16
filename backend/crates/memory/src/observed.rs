@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
+use rustshare_resource_auth::resource_ref::ResourceRef;
 use serde::{Deserialize, Serialize};
 
 use crate::event::{ChatChannelKind, ObservedChatEventData, ObservedEventType};
@@ -14,7 +15,11 @@ use crate::event::{ChatChannelKind, ObservedChatEventData, ObservedEventType};
 /// One observed Buzz chat event as stored in the bridge observation index.
 ///
 /// `body` is the indexing copy — `Some` only when the tenant has
-/// `content_indexing` enabled at observation time.
+/// `content_indexing` enabled at observation time. `attachment_refs` are the
+/// identifier-only `elembra-ref` references from the signed event's tags —
+/// retained so recipients see the attachment affordance; they are never
+/// authority (opening reauthorizes through the Files owner at read time) and
+/// carry no tenant hint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatObservedEvent {
     pub tenant_id: TenantId,
@@ -35,18 +40,22 @@ pub struct ChatObservedEvent {
     pub signature: String,
     pub signature_verified: bool,
     pub body: Option<String>,
+    pub attachment_refs: Vec<ResourceRef>,
     pub active: bool,
 }
 
 impl ChatObservedEvent {
     /// Build from the parsed durable-event payload plus envelope tenant/workspace.
     /// `body` is the indexing copy — Some only when the tenant has
-    /// content_indexing enabled at observation time.
+    /// content_indexing enabled at observation time. `attachment_refs` are the
+    /// identifier-only `elembra-ref` references extracted from the verified
+    /// signed event (empty for events without attachment tags).
     pub fn from_observed_data(
         tenant_id: TenantId,
         workspace_id: WorkspaceId,
         data: &ObservedChatEventData,
         body: Option<String>,
+        attachment_refs: Vec<ResourceRef>,
     ) -> Self {
         let event_type = data.buzz.event_type;
         Self {
@@ -68,6 +77,7 @@ impl ChatObservedEvent {
             signature: data.buzz.signature.clone(),
             signature_verified: data.buzz.signature_verified,
             body,
+            attachment_refs,
             active: event_type != ObservedEventType::Deleted,
         }
     }
@@ -119,8 +129,18 @@ mod tests {
         let tenant = TenantId::from(Uuid::new_v4());
         let workspace = WorkspaceId::from(Uuid::new_v4());
         let payload = data(ObservedEventType::Edited);
-        let event =
-            ChatObservedEvent::from_observed_data(tenant, workspace, &payload, Some("body".into()));
+        let attachment_refs = vec![ResourceRef::new(
+            rustshare_core::domain::ApplicationId::new("io.elembra.files"),
+            "file",
+            "f-1",
+        )];
+        let event = ChatObservedEvent::from_observed_data(
+            tenant,
+            workspace,
+            &payload,
+            Some("body".into()),
+            attachment_refs.clone(),
+        );
 
         assert_eq!(event.tenant_id, tenant);
         assert_eq!(event.workspace_id, workspace);
@@ -143,6 +163,7 @@ mod tests {
         assert_eq!(event.signature, payload.buzz.signature);
         assert!(event.signature_verified);
         assert_eq!(event.body.as_deref(), Some("body"));
+        assert_eq!(event.attachment_refs, attachment_refs);
         assert!(event.active, "non-deleted events are active");
         assert!(!event.is_tombstone());
     }
@@ -152,7 +173,8 @@ mod tests {
         let tenant = TenantId::from(Uuid::new_v4());
         let workspace = WorkspaceId::from(Uuid::new_v4());
         let payload = data(ObservedEventType::Deleted);
-        let event = ChatObservedEvent::from_observed_data(tenant, workspace, &payload, None);
+        let event =
+            ChatObservedEvent::from_observed_data(tenant, workspace, &payload, None, Vec::new());
         assert!(!event.active, "deleted events are inactive");
         assert!(event.is_tombstone());
     }
@@ -166,8 +188,14 @@ mod tests {
             workspace,
             &data(ObservedEventType::Created),
             None,
+            Vec::new(),
         );
         assert_eq!(event.body, None, "absent body stays None");
+        assert_eq!(
+            event.attachment_refs,
+            Vec::<ResourceRef>::new(),
+            "absent attachment refs stay empty"
+        );
     }
 
     #[test]
@@ -179,6 +207,11 @@ mod tests {
             workspace,
             &data(ObservedEventType::Created),
             Some("v1".into()),
+            vec![ResourceRef::new(
+                rustshare_core::domain::ApplicationId::new("io.elembra.files"),
+                "file",
+                "f-1",
+            )],
         );
         let json = serde_json::to_string(&event).unwrap();
         let back: ChatObservedEvent = serde_json::from_str(&json).unwrap();

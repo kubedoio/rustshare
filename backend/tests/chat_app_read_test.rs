@@ -102,6 +102,16 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId, principal_id: PrincipalId) 
         .execute(pool)
         .await
         .unwrap();
+    // Files uploaded by the attachment tests: `files.owner_id` cascades from
+    // `users`, but `file_versions.created_by` is a plain FK — drop versions
+    // first so the user deletion below cannot violate it.
+    sqlx::query(
+        "DELETE FROM file_versions WHERE created_by IN (SELECT id FROM users WHERE tenant_id = $1)",
+    )
+    .bind(tenant_id.0)
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM users WHERE tenant_id = $1")
         .bind(tenant_id.0)
         .execute(pool)
@@ -249,14 +259,48 @@ async fn insert_observation(
     body: Option<&str>,
     created_at: DateTime<Utc>,
 ) {
+    insert_observation_with_refs(
+        pool,
+        tenant,
+        community_id,
+        channel_id,
+        message_id,
+        event_id,
+        channel_kind,
+        event_type,
+        active,
+        body,
+        created_at,
+        &[],
+    )
+    .await;
+}
+
+/// [`insert_observation`] plus the row's retained identifier-only
+/// `elembra-ref` attachment references (canonical `ResourceRef` JSON).
+#[allow(clippy::too_many_arguments)]
+async fn insert_observation_with_refs(
+    pool: &PgPool,
+    tenant: TenantId,
+    community_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    event_id: &str,
+    channel_kind: &str,
+    event_type: &str,
+    active: bool,
+    body: Option<&str>,
+    created_at: DateTime<Utc>,
+    attachment_refs: &[ResourceRef],
+) {
     sqlx::query(
         "INSERT INTO chat_observed_events
             (tenant_id, workspace_id, event_id, message_id, event_type,
              community_id, channel_id, channel_kind, author_pubkey,
              event_created_at, observed_at, checksum, signature,
-             signature_verified, body, active)
+             signature_verified, body, attachment_refs, active)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(),
-                 $11, $12, true, $13, $14)",
+                 $11, $12, true, $13, $14, $15)",
     )
     .bind(tenant.0)
     .bind(tenant.0)
@@ -271,6 +315,7 @@ async fn insert_observation(
     .bind(format!("sha256:{event_id}"))
     .bind("c".repeat(128))
     .bind(body)
+    .bind(serde_json::to_value(attachment_refs).unwrap())
     .bind(active)
     .execute(pool)
     .await
@@ -353,9 +398,8 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         24,
     ));
 
-    let permission_resolver = Arc::new(PermissionResolver::new(Arc::new(
-        PermissionResolverRepository::new(pool.clone()),
-    )));
+    let permission_repo = Arc::new(PermissionResolverRepository::new(pool.clone()));
+    let permission_resolver = Arc::new(PermissionResolver::new(permission_repo.clone()));
 
     let file_service = Arc::new(FileService::new(
         event_store.clone(),
@@ -535,6 +579,20 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
             &rustshare_core::domain::ApplicationRegistry::first_party().unwrap(),
         )
         .expect("the io.elembra.chat owner registers against the canonical registry");
+    // The Files owner, so attachment open/preview reauthorize through the real
+    // Files permission semantics (the endpoint mapping is what the chat read
+    // surface proves; authorizer-level denial lives in source_authorization_test).
+    owners
+        .register(
+            Arc::new(rustshare_server::authz::FilesResourceOwner::new(
+                permission_resolver.clone(),
+                permission_repo,
+                metadata_store.clone(),
+                object_store.clone(),
+            )),
+            &rustshare_core::domain::ApplicationRegistry::first_party().unwrap(),
+        )
+        .expect("the io.elembra.files owner registers against the canonical registry");
     let source_authorizer = Arc::new(rustshare_resource_auth::SourceAuthorizer::new(owners));
 
     let unified_search_service = Arc::new(
@@ -1476,4 +1534,275 @@ async fn attachment_endpoints_deny_inaccessible_files() {
     );
 
     cleanup(&pool, env.tenant, env.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Attachment refs surface on the timeline DTO (issue #242): the fold
+//     surfaces the latest event's refs (an edit REPLACES them), tombstones
+//     never expose refs, and opening reauthorizes through the Files owner
+//     with existence-hiding errors for missing or cross-tenant files.
+// ---------------------------------------------------------------------------
+
+/// A canonical Files ref for a test file id.
+fn file_ref(id: &str) -> ResourceRef {
+    ResourceRef::new(ApplicationId::new("io.elembra.files"), "file", id)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn timeline_surfaces_attachment_refs_and_edit_replaces_them() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+    let base = Utc::now() - Duration::seconds(120);
+
+    // A message created with two attachments, then edited with one.
+    let attached_id = unique_hex64();
+    insert_observation_with_refs(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &attached_id,
+        &attached_id,
+        "workspace",
+        "created",
+        true,
+        Some("with attachments"),
+        base,
+        &[file_ref("f-1"), file_ref("f-2")],
+    )
+    .await;
+    insert_observation_with_refs(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &attached_id,
+        &unique_hex64(),
+        "workspace",
+        "edited",
+        true,
+        Some("edited, one attachment"),
+        base + Duration::seconds(10),
+        &[file_ref("f-3")],
+    )
+    .await;
+    // A message with no attachments at all.
+    let plain_id = unique_hex64();
+    insert_observation(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &plain_id,
+        &plain_id,
+        "workspace",
+        "created",
+        true,
+        Some("no attachments"),
+        base,
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    let messages = timeline.0.messages;
+    assert_eq!(messages.len(), 2);
+
+    let attached = messages
+        .iter()
+        .find(|m| m.message_id == attached_id)
+        .expect("the attached message must be on the timeline");
+    assert_eq!(
+        attached.attachments.len(),
+        1,
+        "the edit's refs replace the created refs wholesale"
+    );
+    assert_eq!(attached.attachments[0].application, "io.elembra.files");
+    assert_eq!(attached.attachments[0].resource_type, "file");
+    assert_eq!(attached.attachments[0].resource_id, "f-3");
+    assert_eq!(attached.attachments[0].version, None);
+
+    let plain = messages
+        .iter()
+        .find(|m| m.message_id == plain_id)
+        .expect("the plain message must be on the timeline");
+    assert!(plain.attachments.is_empty(), "no refs means no affordance");
+
+    // The single-message endpoint surfaces the same attachments.
+    let single = get_message(
+        State(state),
+        auth(env.principal, env.tenant),
+        Path(attached_id.clone()),
+    )
+    .await
+    .expect("get_message must succeed");
+    assert_eq!(single.0.attachments.len(), 1);
+    assert_eq!(single.0.attachments[0].resource_id, "f-3");
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn timeline_hides_attachments_of_tombstoned_messages() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+    let base = Utc::now() - Duration::seconds(120);
+
+    // Even a deleted event carrying refs must never surface them: the fold
+    // picks the tombstone row and the read surface drops the message.
+    let deleted_id = unique_hex64();
+    insert_observation_with_refs(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &deleted_id,
+        &deleted_id,
+        "workspace",
+        "created",
+        true,
+        Some("soon deleted"),
+        base,
+        &[file_ref("f-1")],
+    )
+    .await;
+    insert_observation_with_refs(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &deleted_id,
+        &unique_hex64(),
+        "workspace",
+        "deleted",
+        false,
+        None,
+        base + Duration::seconds(30),
+        &[file_ref("f-9")],
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert!(
+        timeline.0.messages.is_empty(),
+        "a tombstoned message must never surface, with or without refs"
+    );
+
+    let single = get_message(
+        State(state),
+        auth(env.principal, env.tenant),
+        Path(deleted_id),
+    )
+    .await;
+    assert!(
+        matches!(single, Err(AppError::NotFound(_))),
+        "get_message must stay existence-hiding for a tombstoned message, got {single:?}"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn attachment_open_preview_authorize_through_files_owner() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+    let foreign = setup_env(&pool).await;
+
+    // A real file owned by env's principal in env's tenant.
+    let file = state
+        .file_service
+        .upload_file(
+            env.principal.0,
+            "plan.txt".to_string(),
+            None,
+            bytes::Bytes::from_static(b"attachment bytes"),
+            "text/plain".to_string(),
+            env.tenant.0,
+        )
+        .await
+        .expect("upload the test file");
+    let reference = file_ref(&file.id.to_string());
+    let request = || {
+        Json(rustshare_server::handlers::chat_resource::ResourceRequest {
+            resource: reference.clone(),
+        })
+    };
+
+    // Authorized preview: safe metadata only.
+    let preview = preview_attachment(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        request(),
+    )
+    .await
+    .expect("the owner must preview their own file");
+    assert_eq!(preview.0.display_name, "plan.txt");
+    assert_eq!(preview.0.resource, reference);
+
+    // Authorized open: the exact bytes stream through.
+    let open = open_attachment(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        request(),
+    )
+    .await
+    .expect("the owner must open their own file");
+    let body = axum::body::to_bytes(open.into_body(), 1024)
+        .await
+        .expect("read the streamed body");
+    assert_eq!(&body[..], b"attachment bytes");
+
+    // The same ref from ANOTHER tenant: the file exists, but not for this
+    // principal — an existence-hiding 404, never an "it exists" signal.
+    let foreign_open = open_attachment(
+        State(state.clone()),
+        auth(foreign.principal, foreign.tenant),
+        request(),
+    )
+    .await;
+    assert!(
+        matches!(foreign_open, Err(AppError::NotFound(_))),
+        "cross-tenant open must be an existence-hiding 404, got {foreign_open:?}"
+    );
+    let foreign_preview = preview_attachment(
+        State(state),
+        auth(foreign.principal, foreign.tenant),
+        request(),
+    )
+    .await;
+    assert!(
+        matches!(foreign_preview, Err(AppError::NotFound(_))),
+        "cross-tenant preview must be an existence-hiding 404, got {foreign_preview:?}"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
+    cleanup(&pool, foreign.tenant, foreign.principal).await;
 }

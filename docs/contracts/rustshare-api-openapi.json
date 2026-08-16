@@ -14827,6 +14827,32 @@
           }
         }
       },
+      "ChatAttachmentDto": {
+        "type": "object",
+        "description": "Identifier-only attachment reference surfaced on a message. Never\nauthority and never tenant-hinting: opening reauthorizes through the\nFiles owner at read time (`POST /applications/chat/attachments/open`).",
+        "required": [
+          "application",
+          "resource_type",
+          "resource_id"
+        ],
+        "properties": {
+          "application": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ChatMessageDto": {
         "type": "object",
         "required": [
@@ -14836,9 +14862,17 @@
           "channel_id",
           "channel_kind",
           "author_pubkey",
-          "event_created_at"
+          "event_created_at",
+          "attachments"
         ],
         "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachmentDto"
+            },
+            "description": "Identifier-only `elembra-ref` attachment references from the message's\nlatest event, in event tag order (deduplicated at ingest)."
+          },
           "author_pubkey": {
             "type": "string"
           },
