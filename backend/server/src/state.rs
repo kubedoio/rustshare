@@ -235,6 +235,13 @@ pub struct AppState {
     /// NIP-98-authenticated client for the authoritative Buzz relay,
     /// configured only in `buzz` chat-authority mode. `None` in local mode.
     pub buzz_gateway: Option<Arc<BuzzGatewayClient>>,
+    /// Zero-config Chat bootstrap service (ADR-0036): present only in `buzz`
+    /// chat-authority mode, where provisioning can discover the deployment
+    /// community over the bootstrap relay. `None` in local mode.
+    pub chat_bootstrap: Option<Arc<crate::services::chat_bootstrap::ChatBootstrapService>>,
+    /// Chat community provisioning mode (see `config.rs`); the enable-Chat
+    /// hook and the admin provision endpoint gate on this.
+    pub chat_provisioning: crate::config::ChatProvisioningMode,
     /// Liveness of the durable integration-event outbox dispatcher, shared
     /// with the readiness probe.
     pub outbox_status: Arc<crate::outbox_dispatcher::OutboxStatus>,

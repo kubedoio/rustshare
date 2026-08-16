@@ -105,6 +105,17 @@ struct BuzzChannelRegistry {
     pubkey: String,
 }
 
+/// Community-identity discovery response (`GET /api/v1/relay/community`) —
+/// the zero-config bootstrap contract (ADR-0036). `relay_pubkey` is the
+/// relay's stable public key and must own the response signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuzzCommunityIdentity {
+    pub community_id: String,
+    pub host: String,
+    pub relay_pubkey: String,
+    pub evaluated_at: i64,
+}
+
 /// One page of the relay's signed event state
 /// (`GET /api/v1/relay/state/events`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +313,38 @@ impl BuzzGatewayClient {
         Ok(page)
     }
 
+    /// Discover the community bound to `relay_url`'s host and the relay's
+    /// stable public key — the bootstrap step taken before any mapping row
+    /// exists, so there is no pin to verify against yet. The response must be
+    /// a kind-19030 event whose signature verifies against the `relay_pubkey`
+    /// CLAIMED IN THE CONTENT (this proves the relay controls the private
+    /// key), with `evaluated_at` fresh (≤ [`MAX_EVALUATED_AT_AGE_SECS`]) and
+    /// well-formed fields. Anything else fails closed.
+    pub async fn community_identity(
+        &self,
+        relay_url: &str,
+    ) -> Result<BuzzCommunityIdentity, BuzzAuthorityError> {
+        let (base, http) = self.validated_http(relay_url).await?;
+        let url = base.join("/api/v1/relay/community").map_err(|e| {
+            BuzzAuthorityError::Config(format!("cannot build relay community URL: {e}"))
+        })?;
+        let header = self.nip98_header("GET", &url, None).await?;
+        let response = http
+            .get(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .send()
+            .await
+            .map_err(|e| {
+                log_relay_error(relay_url, BuzzAuthorityError::Transport(e.to_string()))
+            })?;
+        let raw = read_response_json(response)
+            .await
+            .map_err(|e| log_relay_error(relay_url, e))?;
+        self.identity_from_19030(&raw)
+            .map_err(|e| log_relay_error(relay_url, e))
+    }
+
     /// Derive the HTTP base URL from the stored websocket `relay_url`.
     ///
     /// `ws://` → `http://` and `wss://` → `https://`, keeping host and port
@@ -446,6 +489,41 @@ impl BuzzGatewayClient {
             ));
         }
         Ok(event)
+    }
+
+    /// Verify a kind-19030 community-identity response (trust model: see
+    /// [`Self::community_identity`]).
+    fn identity_from_19030(
+        &self,
+        raw: &Value,
+    ) -> Result<BuzzCommunityIdentity, BuzzAuthorityError> {
+        let event = NostrEvent::from_json(raw.to_string()).map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!("response is not a valid Nostr event: {e}"))
+        })?;
+        if event.kind.as_u16() != RELAY_RESPONSE_KIND {
+            return Err(BuzzAuthorityError::InvalidResponse(format!(
+                "response kind {} is not {RELAY_RESPONSE_KIND}",
+                event.kind.as_u16()
+            )));
+        }
+        event.verify().map_err(|e| {
+            BuzzAuthorityError::InvalidResponse(format!(
+                "response signature verification failed: {e}"
+            ))
+        })?;
+        let identity: BuzzCommunityIdentity =
+            serde_json::from_str(&event.content).map_err(|e| {
+                BuzzAuthorityError::InvalidResponse(format!(
+                    "community identity content is invalid: {e}"
+                ))
+            })?;
+        if event.pubkey.to_hex() != identity.relay_pubkey {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "response pubkey does not match the claimed relay pubkey".to_string(),
+            ));
+        }
+        validate_community_identity(&identity)?;
+        Ok(identity)
     }
 
     /// Verify a kind-19030 access-check response and map it to a read decision.
@@ -893,6 +971,45 @@ fn validate_page(page: &BuzzStatePage) -> Result<(), BuzzAuthorityError> {
         return Err(BuzzAuthorityError::InvalidResponse(
             "state page is incomplete but carries no continuation cursor".to_string(),
         ));
+    }
+    Ok(())
+}
+
+/// Structural validation of a discovered community identity — fail closed on
+/// any malformed field (ADR-0036).
+fn validate_community_identity(identity: &BuzzCommunityIdentity) -> Result<(), BuzzAuthorityError> {
+    // Saturating subtraction: `evaluated_at` is relay-controlled and may be
+    // i64::MIN/i64::MAX, which would overflow-panic a plain `-` in debug
+    // builds (hostile-relay DoS). Saturating fails both extremes closed via
+    // the strict 0..=MAX window below (i64::MIN → age i64::MAX; future →
+    // negative age).
+    let now = nostr::Timestamp::now().as_secs() as i64;
+    let age = now.saturating_sub(identity.evaluated_at);
+    if !(0..=MAX_EVALUATED_AT_AGE_SECS as i64).contains(&age) {
+        return Err(BuzzAuthorityError::InvalidResponse(format!(
+            "identity evaluated_at is {age}s from the client clock (max {MAX_EVALUATED_AT_AGE_SECS}s)"
+        )));
+    }
+    uuid::Uuid::parse_str(&identity.community_id).map_err(|_| {
+        BuzzAuthorityError::InvalidResponse(format!(
+            "community_id {:?} is not a UUID",
+            identity.community_id
+        ))
+    })?;
+    // The relay's normalized `host` is informational: the operative identity
+    // is community_id + relay_pubkey (both signature-verified), and host
+    // normalization lives relay-side, so it is intentionally not
+    // cross-checked against the bootstrap URL.
+    if identity.host.trim().is_empty() {
+        return Err(BuzzAuthorityError::InvalidResponse("host is empty".into()));
+    }
+    let is_64_hex = identity.relay_pubkey.len() == 64
+        && identity.relay_pubkey.bytes().all(|b| b.is_ascii_hexdigit());
+    if !is_64_hex {
+        return Err(BuzzAuthorityError::InvalidResponse(format!(
+            "relay_pubkey {:?} is not 64 hex digits",
+            identity.relay_pubkey
+        )));
     }
     Ok(())
 }
@@ -1600,5 +1717,233 @@ mod tests {
                 Err(BuzzAuthorityError::InvalidResponse(_))
             ));
         }
+    }
+
+    /// A test client with private-target SSRF allowed (for loopback relay
+    /// doubles; the production constructors always enforce public targets).
+    fn test_client(keys: Keys) -> BuzzGatewayClient {
+        BuzzGatewayClient::new_for_test(keys, Client::builder()).expect("build test client")
+    }
+
+    /// Spawn a one-shot HTTP responder on a loopback port and return its
+    /// `ws://` URL. The response is written after the first request arrives.
+    async fn one_shot_relay(status_line: &'static str, body: String) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("loopback address");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut socket, _) = listener.accept().await.expect("accept relay request");
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await; // drain the request
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write relay response");
+        });
+        format!("ws://{addr}")
+    }
+
+    /// Community-identity content claiming `relay`'s pubkey, signed-able by
+    /// any key the test chooses.
+    fn identity_content(relay: &Keys, evaluated_at: i64, community_id: &str) -> Value {
+        identity_content_with_host(relay, evaluated_at, community_id, "chat.example.test")
+    }
+
+    /// Like [`identity_content`], with a caller-chosen `host` field (for the
+    /// empty-host rejection case).
+    fn identity_content_with_host(
+        relay: &Keys,
+        evaluated_at: i64,
+        community_id: &str,
+        host: &str,
+    ) -> Value {
+        json!({
+            "community_id": community_id,
+            "host": host,
+            "relay_pubkey": relay.public_key().to_hex(),
+            "evaluated_at": evaluated_at,
+        })
+    }
+
+    #[tokio::test]
+    async fn community_identity_round_trips() {
+        // The fake relay returns a signed 19030 whose content claims the
+        // signing key's own pubkey → the identity is accepted with the
+        // parsed fields intact.
+        let relay = Keys::generate();
+        let service = test_client(Keys::generate());
+        let community_id = Uuid::new_v4().to_string();
+        let event = relay_19030(
+            &relay,
+            identity_content(&relay, Utc::now().timestamp(), &community_id),
+        );
+        let relay_url = one_shot_relay("200 OK", serde_json::to_string(&event).unwrap()).await;
+        let identity = service
+            .community_identity(&relay_url)
+            .await
+            .expect("discovery must succeed");
+        assert_eq!(identity.community_id, community_id);
+        assert_eq!(identity.host, "chat.example.test");
+        assert_eq!(identity.relay_pubkey, relay.public_key().to_hex());
+    }
+
+    #[test]
+    fn community_identity_rejects_response_signed_by_other_key() {
+        // The event is signed by a key that is NOT the content-claimed
+        // relay_pubkey → the relay cannot prove it owns the claimed key.
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &Keys::generate(),
+            identity_content(&relay, Utc::now().timestamp(), &Uuid::new_v4().to_string()),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_stale_evaluated_at() {
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(
+                &relay,
+                Utc::now().timestamp() - 120,
+                &Uuid::new_v4().to_string(),
+            ),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_min_evaluated_at() {
+        // A hostile relay sets evaluated_at = i64::MIN: the saturating
+        // freshness arithmetic must fail closed (age saturates to i64::MAX),
+        // never overflow-panic.
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(&relay, i64::MIN, &Uuid::new_v4().to_string()),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_future_evaluated_at() {
+        // A future evaluated_at must fail closed too: the freshness window is
+        // strict 0..=MAX, so a negative age (future) is rejected.
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(
+                &relay,
+                Utc::now().timestamp() + 120,
+                &Uuid::new_v4().to_string(),
+            ),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_empty_host() {
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content_with_host(
+                &relay,
+                Utc::now().timestamp(),
+                &Uuid::new_v4().to_string(),
+                "",
+            ),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_non_19030_kind() {
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let note = EventBuilder::text_note(
+            identity_content(&relay, Utc::now().timestamp(), &Uuid::new_v4().to_string())
+                .to_string(),
+        )
+        .sign_with_keys(&relay)
+        .unwrap();
+        let raw = serde_json::to_value(&note).unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[test]
+    fn community_identity_rejects_malformed_content() {
+        let relay = Keys::generate();
+        let service = client(Keys::generate());
+        let raw = serde_json::to_value(relay_19030(
+            &relay,
+            identity_content(&relay, Utc::now().timestamp(), "not-a-uuid"),
+        ))
+        .unwrap();
+        assert!(matches!(
+            service.identity_from_19030(&raw),
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn community_identity_fails_closed_when_relay_unreachable() {
+        // A loopback port with no listener: bind, then drop so nothing
+        // accepts the connection → transport failure, never a panic.
+        let service = test_client(Keys::generate());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("loopback address");
+        drop(listener);
+        assert!(matches!(
+            service.community_identity(&format!("ws://{addr}")).await,
+            Err(BuzzAuthorityError::Transport(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn community_identity_maps_relay_401_to_unauthorized() {
+        let service = test_client(Keys::generate());
+        let relay_url = one_shot_relay("401 Unauthorized", String::new()).await;
+        assert!(matches!(
+            service.community_identity(&relay_url).await,
+            Err(BuzzAuthorityError::Unauthorized)
+        ));
     }
 }

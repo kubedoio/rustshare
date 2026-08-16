@@ -49,6 +49,7 @@ use rustshare_infrastructure::repositories::{
 };
 use rustshare_resource_auth::ResourceRef;
 use rustshare_server::authz::ChatResourceOwner;
+use rustshare_server::config::ChatProvisioningMode;
 use rustshare_server::handlers::chat_app::{
     chat_status, get_message, list_channels, list_messages, ListMessagesQuery,
 };
@@ -596,6 +597,8 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         buzz_observation_service,
         chat_owner,
         buzz_gateway: None,
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         outbox_status: Arc::new(rustshare_server::outbox_dispatcher::OutboxStatus::default()),
         outbox_worker_enabled: false,
         outbox_readiness_staleness_secs: 60,

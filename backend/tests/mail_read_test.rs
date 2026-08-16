@@ -4,6 +4,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use rustshare_server::config::ChatProvisioningMode;
 use rustshare_server::middleware;
 use rustshare_server::routes;
 use rustshare_server::state::AppState;
@@ -301,6 +302,8 @@ async fn setup_test_env() -> AppState {
         buzz_observation_service,
         chat_owner,
         buzz_gateway: None,
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

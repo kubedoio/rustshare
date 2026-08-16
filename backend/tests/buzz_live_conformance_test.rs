@@ -57,15 +57,17 @@ use rustshare_integration_events::event_types::CHAT_BUZZ_EVENT_OBSERVED_V1;
 use rustshare_integration_events::OutboxConsumer;
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_resource_auth::{
-    Decision, PrincipalContext, Representation, ResourceOwner, ResourceOwnerRegistry, ResourceRef,
-    SourceAuthorizer, SourceError, CHAT_READ,
+    BuzzChannelKind, BuzzReadDecision, Decision, PrincipalContext, Representation, ResourceOwner,
+    ResourceOwnerRegistry, ResourceRef, SourceAuthorizer, SourceError, CHAT_READ,
 };
 use rustshare_server::authz::ChatResourceOwner;
-use rustshare_server::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
+use rustshare_server::buzz_gateway::{
+    BuzzAccessCheckRequest, BuzzGatewayAuthority, BuzzGatewayClient,
+};
 use rustshare_server::buzz_observation::{
     BuzzEventPush, BuzzObservationService, BuzzPushContext, IngestOutcome,
 };
-use rustshare_server::config::OutboxWorkerConfig;
+use rustshare_server::config::{ChatProvisioningMode, OutboxWorkerConfig};
 use rustshare_server::handlers::chat_app::{list_channels, ChannelInfo};
 use rustshare_server::handlers::extractors::AuthenticatedUser;
 use rustshare_server::memory_projection::MemoryChatProjectionConsumer;
@@ -931,6 +933,8 @@ async fn setup_app_state(
         buzz_observation_service,
         chat_owner,
         buzz_gateway: Some(gateway),
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         outbox_status: Arc::new(OutboxStatus::default()),
         outbox_worker_enabled: false,
         outbox_readiness_staleness_secs: 60,
@@ -1944,4 +1948,65 @@ async fn live_p12_relay_delete_is_applied_via_reconcile() {
     );
 
     cleanup(&pool, fixture.tenant).await;
+}
+
+/// P13. Bootstrap identity discovery (ADR-0036): the community-identity
+/// endpoint returns the deployment community and the relay pubkey, the
+/// returned pubkey matches the harness's pinned expectation, the response is
+/// signature-verified, and authorization still works with the discovered
+/// identity (the client's pin for everything that follows).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires live Buzz relay (scripts/run-buzz-conformance.sh)"]
+async fn live_p13_bootstrap_identity_discovery() {
+    let _guard = SERIAL.lock().await;
+    let Some(env) = LiveEnv::load() else {
+        eprintln!("SKIP live_p13: RUSTSHARE_BUZZ_LIVE_SERVICE_SK / RELAY_PUBKEY not set");
+        return;
+    };
+    let gateway = live_gateway(&env);
+    let identity = gateway
+        .community_identity(&env.relay_ws)
+        .await
+        .expect("community identity discovery must succeed against the live relay");
+    assert_eq!(
+        identity.relay_pubkey, env.relay_pubkey,
+        "the discovered relay pubkey must match the harness pin"
+    );
+
+    // Cross-check the community identity against an independent surface:
+    // every state-event entry must report the same community id.
+    let page = gateway
+        .page_state(&env.relay_ws, &identity.relay_pubkey, None, 1, None)
+        .await
+        .expect("the state page must be served with the discovered pin");
+    if let Some(entry) = page.entries.first() {
+        assert_eq!(
+            entry.context.community_id, identity.community_id,
+            "state events must report the discovered community"
+        );
+    }
+
+    // Authorization continues with the discovered identity: a real access
+    // check round-trips to an Allow/Deny/NotFound decision (never an error).
+    let decision = gateway
+        .check_access(
+            &env.relay_ws,
+            &identity.relay_pubkey,
+            &BuzzAccessCheckRequest {
+                pubkey: env.service_keys.public_key().to_hex(),
+                channel_id: Uuid::new_v4().to_string(),
+                channel_kind: BuzzChannelKind::Workspace,
+                message_id: None,
+                event_created_at: None,
+            },
+        )
+        .await
+        .expect("an access check with the discovered pin must succeed");
+    assert!(
+        matches!(
+            decision,
+            BuzzReadDecision::Allow | BuzzReadDecision::Deny | BuzzReadDecision::NotFound
+        ),
+        "unexpected decision: {decision:?}"
+    );
 }

@@ -1,7 +1,7 @@
 use crate::authz;
 use crate::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
 use crate::buzz_observation::BuzzObservationService;
-use crate::config::{AppConfig, OutboxWorkerConfig};
+use crate::config::{AppConfig, ChatProvisioningMode, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
@@ -9,6 +9,7 @@ use crate::oidc_runtime::{seed_oidc_config_from_env, OidcRuntimeCache};
 use crate::outbox_dispatcher::OutboxDispatcher;
 use crate::replication::{spawn_replication_worker, ReplicationWorkerConfig};
 use crate::retention::{spawn_retention_cleanup_worker, RetentionConfig};
+use crate::services::chat_bootstrap::ChatBootstrapService;
 use crate::state::{AppAiService, AppState, AppUploadService, AppUserShareService};
 use crate::trash_cleanup::{spawn_trash_cleanup_worker, TrashCleanupConfig};
 use anyhow::Result;
@@ -73,6 +74,15 @@ struct Services {
     application_registry: Arc<ApplicationRegistry>,
     outbox_store: Arc<OutboxStore>,
 }
+
+/// Buzz-mode chat runtime built in `init_app`: the shared gateway client, its
+/// source-authority wrapper, and the zero-config bootstrap service (ADR-0036).
+/// Local mode keeps the tuple's `Option`s `None`.
+type ChatBuzzRuntime = (
+    Option<Arc<BuzzGatewayClient>>,
+    Box<dyn BuzzAuthority>,
+    Option<Arc<ChatBootstrapService>>,
+);
 
 fn init_tracing(log_format: &str) {
     let env_filter =
@@ -853,10 +863,10 @@ pub async fn init_app() -> Result<AppState> {
     // through this client. Config validation guarantees the bridge secret
     // key exists and parses in buzz mode; any failure here is a startup
     // error — never a silent fallback to local.
-    let (buzz_gateway, chat_buzz_authority): (
-        Option<Arc<BuzzGatewayClient>>,
-        Box<dyn BuzzAuthority>,
-    ) = if config.rustshare_chat_authority == "buzz" {
+    let (buzz_gateway, chat_buzz_authority, chat_bootstrap): ChatBuzzRuntime = if config
+        .rustshare_chat_authority
+        == "buzz"
+    {
         let key = config
             .rustshare_chat_bridge_secret_key
             .as_deref()
@@ -877,11 +887,26 @@ pub async fn init_app() -> Result<AppState> {
         );
         let authority: Box<dyn BuzzAuthority> =
             Box::new(BuzzGatewayAuthority(Arc::clone(&gateway)));
+        // Zero-config bootstrap service (ADR-0036) — only in buzz mode, and
+        // only when a bootstrap relay URL is configured. Manual-mode buzz
+        // deployments without the URL keep working (provisioning is simply
+        // unavailable); auto mode is guaranteed to have the URL by startup
+        // validation, so auto deployments always get the service.
+        let chat_bootstrap = config
+            .rustshare_chat_bootstrap_relay_url
+            .clone()
+            .map(|relay_url| {
+                Arc::new(ChatBootstrapService::new(
+                    gateway.clone(),
+                    chat_identity_store.clone(),
+                    relay_url,
+                ))
+            });
         info!("Chat authority mode: buzz (relay-backed gateway)");
-        (Some(gateway), authority)
+        (Some(gateway), authority, chat_bootstrap)
     } else {
         info!("Chat authority mode: local (coarse workspace-only gate)");
-        (None, Box::new(LocalFallbackAuthority))
+        (None, Box::new(LocalFallbackAuthority), None)
     };
 
     let (source_authorizer, chat_owner) = authz::build_source_authorizer(
@@ -958,6 +983,9 @@ pub async fn init_app() -> Result<AppState> {
         buzz_observation_service,
         chat_owner,
         buzz_gateway,
+        chat_bootstrap,
+        chat_provisioning: ChatProvisioningMode::parse(&config.rustshare_chat_provisioning)
+            .map_err(|message| anyhow::anyhow!(message))?,
         outbox_status,
         outbox_worker_enabled: outbox_worker_config.enabled,
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,

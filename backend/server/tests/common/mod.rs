@@ -11,6 +11,7 @@ use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
+use rustshare_server::config::ChatProvisioningMode;
 use rustshare_server::AppState;
 use rustshare_storage::{EventStore, MetadataStore, ObjectStore};
 use sqlx::PgPool;
@@ -297,6 +298,8 @@ pub async fn setup_test_server() -> (AppState, String) {
         buzz_observation_service,
         chat_owner,
         buzz_gateway: None,
+        chat_bootstrap: None,
+        chat_provisioning: ChatProvisioningMode::Manual,
         user_repository,
         public_base_url: "http://localhost:8080".to_string(),
         collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),

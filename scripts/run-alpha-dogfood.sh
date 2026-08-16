@@ -157,23 +157,29 @@ check "P02b chat application enabled" "$([[ "$http_code" == "200" || "$http_code
 curl -s -b "$(sess admin)" -o "$TMP/body" "$ELEMBRA_API/users/me"
 tenant_id="$(jq_get 'd["tenant_id"]' "$TMP/body")"
 
-code=$(curl -s -b "$(sess admin)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/status")
-mapping="$(jq_get 'd["mapping"]' "$TMP/body")"
-cat > "$TMP/mapping.json" <<EOF
-{"community_id":"${BUZZ_COMMUNITY_ID}","relay_url":"${BUZZ_RELAY_WS}","relay_pubkey":"${BUZZ_RELAY_PUBKEY}"}
-EOF
-# The mapping is existence-hidden until a binding exists, so try PATCH first
-# and fall back to POST (idempotent provisioning). On a local/dev relay the
-# SSRF guard rejects the URL; the operator pre-provisions the row via SQL (see
-# runbook) and sets ALPHA_LOCAL_RELAY=1.
-http_call_csrf PATCH "/api/v1/admin/applications/chat/workspaces/${tenant_id}/community" "$TMP/mapping.json" "$(sess admin)"
-if [[ "$http_code" != "200" && "$http_code" != "201" && "$http_code" != "204" ]]; then
-	http_call_csrf POST "/api/v1/admin/applications/chat/workspaces/${tenant_id}/community" "$TMP/mapping.json" "$(sess admin)"
-fi
-if [[ "$http_code" == "400" && "${ALPHA_LOCAL_RELAY:-0}" == "1" ]]; then
-	check "P02c workspace->community mapping" true "pre-provisioned for local relay (SQL path, see runbook)"
+# P02c' — zero-config bootstrap (ADR-0036): enabling Chat above triggered
+# automatic provisioning (RUSTSHARE_CHAT_PROVISIONING=auto in the alpha
+# compose). Poll the admin diagnostics endpoint until the authoritative
+# mapping lands (404 until provisioned), then assert it matches the relay
+# identity exactly.
+mapping_json=""
+for _ in $(seq 1 30); do
+	code=$(curl -s -b "$(sess admin)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/admin/applications/chat/workspaces/${tenant_id}/community")
+	if [[ "$code" == "200" ]]; then
+		mapping_json="$(cat "$TMP/body")"
+		break
+	fi
+	sleep 1
+done
+if [[ -n "$mapping_json" ]]; then
+	got_community="$(jq_get 'd["community_id"]' "$TMP/body")"
+	got_relay_url="$(jq_get 'd["relay_url"]' "$TMP/body")"
+	got_relay_pubkey="$(jq_get 'd["relay_pubkey"]' "$TMP/body")"
+	check "P02c auto-provisioned mapping" \
+		"$([[ "$got_community" == "$BUZZ_COMMUNITY_ID" && "$got_relay_url" == "$BUZZ_RELAY_WS" && "$got_relay_pubkey" == "$BUZZ_RELAY_PUBKEY" ]] && echo true || echo false)" \
+		"community=$got_community relay=$got_relay_url pubkey=${got_relay_pubkey:0:8}…"
 else
-	check "P02c workspace->community mapping" "$([[ "$http_code" == "200" || "$http_code" == "201" || "$http_code" == "204" ]] && echo true || echo false)" "workspace=$tenant_id -> $http_code $(head -c 120 "$TMP/body")"
+	check "P02c auto-provisioned mapping" false "no mapping within 30s of enable (last status -> $code)"
 fi
 
 # Memory projection + content indexing: the chat Application configuration has
@@ -553,6 +559,63 @@ fresh_cookie="false"
 grep -q "rustshare_session" "$jar" 2>/dev/null && fresh_cookie="true"
 code=$(curl -s -b "$jar" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/users/me")
 check "P17 fresh login works" "$([[ "$code" == "200" && "$fresh_cookie" == "true" ]] && echo true || echo false)" "bob re-login /users/me -> $code"
+
+# --- P18 restart persistence --------------------------------------------------
+# A stack restart must preserve the auto-provisioned mapping and the
+# authorization gate: bound reads keep working, unbound reads stay
+# fail-closed (P11/P15 semantics) — no re-provisioning needed.
+echo "== restart persistence =="
+# nginx resolves its `proxy_pass http://backend:8080` upstream ONCE at startup
+# and pins the resolved IP, so a backend container restart (new IP) must be
+# accompanied by an nginx restart or every nginx-routed health/API call 502s.
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml restart backend buzz-relay nginx
+# Wait for the backend first (P01's readiness probe through nginx), then the
+# relay — its health sits on the shared backend namespace's loopback
+# (docker-compose.dogfood.yml), same envelope as P16's recovery wait.
+for i in $(seq 1 90); do
+	code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost/health/ready")
+	[[ "$code" == "200" ]] && break
+	sleep 2
+done
+# The relay's cold start runs a git object-store conformance probe (A3 gate)
+# whose flaky transport can stall without a timeout (documented; the live
+# conformance harness allows a 300s health window for the same reason). The
+# recovery pattern mirrors P16: wait out the envelope, and if health still
+# does not come up, restart the relay container once — a fresh process gets a
+# fresh connection pool and passes the probe (observed: stuck >8min, healthy
+# ~15s after restart).
+relay_healthy=""
+for attempt in 1 2; do
+	for i in $(seq 1 150); do
+		if curl -sf --max-time 2 "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
+			relay_healthy="yes"
+			break
+		fi
+		sleep 2
+	done
+	[[ "$relay_healthy" == "yes" || "$attempt" == "2" ]] && break
+	echo "    relay health not up within envelope; restarting relay container"
+	docker restart "${RELAY_CONTAINER:-rustshare-buzz-relay-1}" >/dev/null 2>&1 || true
+done
+code=$(curl -s -b "$(sess admin)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/admin/applications/chat/workspaces/${tenant_id}/community")
+mapping2="$(jq_get 'd["community_id"]' "$TMP/body")"
+check "P18 mapping survives restart" "$([[ "$code" == "200" && "$mapping2" == "$BUZZ_COMMUNITY_ID" ]] && echo true || echo false)" "community=$mapping2 (-> $code)"
+# The observer replays (since=all) after the relay bounce, so the timeline
+# repopulates asynchronously through the webhook — wait for messages to land
+# again (same observation-driven pattern as P08b) before asserting the gate.
+for i in $(seq 1 60); do
+	code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
+	if [[ "$code" == "200" ]]; then
+		alice_msgs="$(jq_get 'len(d["messages"])' "$TMP/body")"
+		[[ "${alice_msgs:-0}" != "0" && "${alice_msgs:-}" != "" ]] && break
+	fi
+	sleep 1
+done
+curl -s -b "$(sess alpha_eve)" -o "$TMP/body2" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}"
+eve_msgs="$(jq_get 'len(d["messages"]) if "messages" in d else -1' "$TMP/body2")"
+check "P18 authorization gate survives restart" \
+	"$([[ "$code" == "200" && "${alice_msgs:-0}" != "0" && "$eve_msgs" == "0" ]] && echo true || echo false)" \
+	"alice=$alice_msgs msgs (-> $code), eve=$eve_msgs msgs (fail closed)"
 
 # --- summary -----------------------------------------------------------------
 echo

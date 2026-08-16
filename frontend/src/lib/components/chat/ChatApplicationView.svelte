@@ -179,9 +179,7 @@
 {:else if !status || !status.chat_enabled}
 	<div class="p-6 text-base-content/60">Chat is not enabled for this workspace.</div>
 {:else if !status.mapping}
-	<div class="p-6 text-base-content/60">
-		No Buzz community is mapped for this workspace yet. An administrator can configure it.
-	</div>
+	<div class="p-6 text-base-content/60">Chat is being configured for this workspace.</div>
 {:else if !bindingActive}
 	<BindingPanel
 		onBound={() => {

@@ -123,10 +123,12 @@ describe('ChatApplicationView', () => {
 		);
 	});
 
-	it('shows the mapping notice when no Buzz community is mapped', async () => {
+	it('shows the configuring notice when no community mapping exists', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus({ mapping: null, binding: null }));
 		render(ChatApplicationView);
-		await waitFor(() => expect(screen.getByText(/No Buzz community is mapped/)).toBeTruthy());
+		await waitFor(() =>
+			expect(screen.getByText(/Chat is being configured for this workspace/)).toBeTruthy()
+		);
 	});
 
 	it('renders the binding panel for an unbound user', async () => {
