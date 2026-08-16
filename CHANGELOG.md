@@ -141,6 +141,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ask grounding** — a natural-language question now grounds when ANY
+  significant query term (stopwords and <3-char tokens dropped) appears in the
+  indexed chat message content, instead of requiring the entire question as a
+  literal substring; the whole phrase is still one of the terms, all
+  tenant/tombstone/metadata scoping is unchanged, and the term match is fully
+  parameterized (P13/P14 dogfood regression).
 - **Fresh installs** — a new migration renames `templates.module_config` to
   `templates.application_config` (the cutover renamed the code but never the
   column), restoring first-boot default template seeding; the pilot release

@@ -21,7 +21,7 @@ use rustshare_memory::event::{
 };
 use rustshare_memory::observed::ChatObservedEvent;
 use rustshare_memory::policy::ProjectionPolicy;
-use rustshare_memory::project::project_record;
+use rustshare_memory::project::{apply_tombstone, project_record};
 use rustshare_memory::record::IndexingStatus;
 use rustshare_resource_auth::BindingStatus;
 use rustshare_storage::{
@@ -1138,6 +1138,286 @@ async fn memory_catalog_get_and_count_are_tenant_scoped() {
 
     cleanup(&pool, tenant_a, "unused-consumer").await;
     cleanup(&pool, tenant_b, "unused-consumer").await;
+}
+
+// ---------------------------------------------------------------------------
+// 8b. MemoryCatalogStore::search: any-significant-term match + scoping
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_search_matches_natural_language_question_terms() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
+    let policy = ProjectionPolicy {
+        memory_projection: true,
+        content_indexing: true,
+    };
+    let msg = hex64(0xa1);
+    let data = event_data(
+        ObservedEventType::Created,
+        &msg,
+        &msg,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let record = project_record(
+        tenant,
+        WorkspaceId(tenant.0),
+        &data,
+        &policy,
+        Some("the budget is capped at 10k".into()),
+    )
+    .unwrap();
+    store.upsert_records(&[record]).await.unwrap();
+
+    // A natural question shares no whole-phrase overlap with the content, but
+    // the significant term `budget` (stripped of its trailing `?`) appears in
+    // it — the message must ground.
+    let hits = store
+        .search(tenant, "what did dave say about the budget?", 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "natural question must match via the term `budget`"
+    );
+    assert_eq!(hits[0].message_id, msg);
+
+    // The whole phrase is still one of the terms: a substring phrase hits.
+    let phrase_hits = store.search(tenant, "budget is capped", 10).await.unwrap();
+    assert_eq!(phrase_hits.len(), 1, "whole-phrase match must still hit");
+    assert_eq!(phrase_hits[0].message_id, msg);
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_search_no_shared_terms_returns_nothing() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
+    let policy = ProjectionPolicy {
+        memory_projection: true,
+        content_indexing: true,
+    };
+    let msg = hex64(0xa1);
+    let data = event_data(
+        ObservedEventType::Created,
+        &msg,
+        &msg,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let record = project_record(
+        tenant,
+        WorkspaceId(tenant.0),
+        &data,
+        &policy,
+        Some("the budget is capped at 10k".into()),
+    )
+    .unwrap();
+    store.upsert_records(&[record]).await.unwrap();
+
+    let hits = store
+        .search(tenant, "completely unrelated topics", 10)
+        .await
+        .unwrap();
+    assert!(
+        hits.is_empty(),
+        "no term shared with the content must return nothing"
+    );
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_search_stopword_and_short_token_queries_return_nothing() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
+    let policy = ProjectionPolicy {
+        memory_projection: true,
+        content_indexing: true,
+    };
+    let msg = hex64(0xa1);
+    let data = event_data(
+        ObservedEventType::Created,
+        &msg,
+        &msg,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let record = project_record(
+        tenant,
+        WorkspaceId(tenant.0),
+        &data,
+        &policy,
+        Some("the budget is capped at 10k".into()),
+    )
+    .unwrap();
+    store.upsert_records(&[record]).await.unwrap();
+
+    for query in ["what did the", "the and for", "ab cd ef"] {
+        let hits = store.search(tenant, query, 10).await.unwrap();
+        assert!(
+            hits.is_empty(),
+            "query `{query}` carries no significant term and must match nothing"
+        );
+    }
+
+    cleanup(&pool, tenant, "unused-consumer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_search_excludes_tombstoned_and_other_tenants() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant_a = tenant();
+    let tenant_b = tenant();
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
+    let policy = ProjectionPolicy {
+        memory_projection: true,
+        content_indexing: true,
+    };
+
+    let live = hex64(0xa1);
+    let live_data = event_data(
+        ObservedEventType::Created,
+        &live,
+        &live,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let live_record = project_record(
+        tenant_a,
+        WorkspaceId(tenant_a.0),
+        &live_data,
+        &policy,
+        Some("the budget is capped at 10k".into()),
+    )
+    .unwrap();
+
+    let tombstoned_msg = hex64(0xa2);
+    let created_data = event_data(
+        ObservedEventType::Created,
+        &tombstoned_msg,
+        &tombstoned_msg,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let created_record = project_record(
+        tenant_a,
+        WorkspaceId(tenant_a.0),
+        &created_data,
+        &policy,
+        Some("the budget overrun was never approved".into()),
+    )
+    .unwrap();
+    let deleted_data = event_data(
+        ObservedEventType::Deleted,
+        &hex64(0xdd),
+        &tombstoned_msg,
+        1_752_000_020,
+        ChatChannelKind::Workspace,
+    );
+    let tombstoned_record = apply_tombstone(&created_record, &deleted_data);
+
+    let other_tenant = hex64(0xa3);
+    let other_data = event_data(
+        ObservedEventType::Created,
+        &other_tenant,
+        &other_tenant,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let other_record = project_record(
+        tenant_b,
+        WorkspaceId(tenant_b.0),
+        &other_data,
+        &policy,
+        Some("the budget lives elsewhere".into()),
+    )
+    .unwrap();
+
+    store
+        .upsert_records(&[live_record, tombstoned_record, other_record])
+        .await
+        .unwrap();
+
+    let hits = store.search(tenant_a, "budget", 10).await.unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "only the live tenant-A message may match: {hits:?}"
+    );
+    assert_eq!(hits[0].message_id, live);
+
+    cleanup(&pool, tenant_a, "unused-consumer").await;
+    cleanup(&pool, tenant_b, "unused-consumer").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn memory_catalog_search_empty_question_returns_nothing() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let tenant = tenant();
+    let store = MemoryCatalogStore::with_observation_store(
+        pool.clone(),
+        ChatObservationStore::new(pool.clone()),
+    );
+    let policy = ProjectionPolicy {
+        memory_projection: true,
+        content_indexing: true,
+    };
+    let msg = hex64(0xa1);
+    let data = event_data(
+        ObservedEventType::Created,
+        &msg,
+        &msg,
+        1_752_000_000,
+        ChatChannelKind::Workspace,
+    );
+    let record = project_record(
+        tenant,
+        WorkspaceId(tenant.0),
+        &data,
+        &policy,
+        Some("the budget is capped at 10k".into()),
+    )
+    .unwrap();
+    store.upsert_records(&[record]).await.unwrap();
+
+    for query in ["", "   ", "\t\n"] {
+        let hits = store.search(tenant, query, 10).await.unwrap();
+        assert!(
+            hits.is_empty(),
+            "empty/whitespace query must return nothing"
+        );
+    }
+
+    cleanup(&pool, tenant, "unused-consumer").await;
 }
 
 // ---------------------------------------------------------------------------

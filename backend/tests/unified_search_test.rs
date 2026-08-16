@@ -3536,3 +3536,197 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
 
     cleanup(&pool, tenant).await;
 }
+
+// ---------------------------------------------------------------------------
+// Ask-grounding: a natural-language question grounds via any significant
+// query term in the indexed message content, and the channel scope still
+// excludes same-term messages from other channels (P13/P14 regression).
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn ask_workspace_grounds_natural_language_question_on_chat_content() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "ask-grounding-owner", tenant.0).await;
+    let keys = Keys::generate();
+    let env = setup_tenant_with_relay_for_principal(
+        &pool,
+        tenant,
+        PrincipalId::from(owner.id),
+        &keys,
+        &format!("community-{}", Uuid::new_v4()),
+        "wss://relay.example.test",
+        None,
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+
+    // The indexed message the natural question must ground against: the whole
+    // question is not a substring, but the significant term `budget` (stripped
+    // of its trailing `?`) appears in the content.
+    let msg_id = message_id(9002);
+    insert_chat_message(
+        &pool,
+        &harness.memory_catalog_store,
+        tenant,
+        &env.community_id,
+        &msg_id,
+        "the budget is capped at 10k",
+        Utc::now(),
+    )
+    .await;
+
+    // A decoy in ANOTHER channel whose content also contains `budget`: the
+    // ChatChannel scope must exclude it even though the term matches.
+    let decoy_id = message_id(9003);
+    let mut decoy = catalog_record(
+        tenant,
+        &env.community_id,
+        &decoy_id,
+        "the budget is over the limit",
+        Utc::now(),
+    );
+    decoy.channel_id = "channel-other".to_string();
+    harness
+        .memory_catalog_store
+        .upsert_records(&[decoy])
+        .await
+        .unwrap();
+
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The budget is capped at 10k.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(Arc::new(harness.service()), Some(provider.clone()));
+    let answer = ask
+        .ask_scoped(
+            &user_ctx(env.principal, tenant),
+            "what did dave say about the budget?",
+            &[SearchSource::Chat],
+            8,
+            &SearchScope::ChatChannel {
+                community_id: env.community_id.clone(),
+                channel_id: CHANNEL_ID.into(),
+            },
+        )
+        .await
+        .expect("natural-language Ask succeeds");
+    assert!(answer.grounded, "the message must ground: {answer:?}");
+    assert_eq!(
+        answer.citations.len(),
+        1,
+        "exactly the in-scope message is cited: {answer:?}"
+    );
+    assert!(
+        answer.citations[0].resource_ref.ends_with(msg_id.as_str()),
+        "citation must be the budget message: {answer:?}"
+    );
+    assert!(
+        !answer.citations[0]
+            .resource_ref
+            .ends_with(decoy_id.as_str()),
+        "the other-channel decoy must never be cited"
+    );
+
+    let calls = provider.calls().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].sources.len(), 1);
+    assert!(calls[0].sources[0]
+        .text
+        .contains("the budget is capped at 10k"));
+    assert!(!calls[0].sources[0].text.contains("over the limit"));
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// Ask-grounding: a SINGLE-TOKEN question with trailing punctuation grounds via
+// the punctuation-stripped significant term — content has no stopword overlap
+// ("the" etc.), so this exercises the real scorer path, not an incidental
+// stopword match.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn ask_workspace_grounds_single_token_question_with_trailing_punctuation() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "ask-punct-owner", tenant.0).await;
+    let keys = Keys::generate();
+    let env = setup_tenant_with_relay_for_principal(
+        &pool,
+        tenant,
+        PrincipalId::from(owner.id),
+        &keys,
+        &format!("community-{}", Uuid::new_v4()),
+        "wss://relay.example.test",
+        None,
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+
+    // Content deliberately WITHOUT the stopword `the`: the match must come from
+    // the punctuation-stripped significant term `budget`, never from an
+    // incidental stopword overlap in the scorer.
+    let msg_id = message_id(9004);
+    insert_chat_message(
+        &pool,
+        &harness.memory_catalog_store,
+        tenant,
+        &env.community_id,
+        &msg_id,
+        "budget is capped at 10k",
+        Utc::now(),
+    )
+    .await;
+
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The budget is capped at 10k.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(Arc::new(harness.service()), Some(provider.clone()));
+    let answer = ask
+        .ask_scoped(
+            &user_ctx(env.principal, tenant),
+            "Budget?",
+            &[SearchSource::Chat],
+            8,
+            &SearchScope::ChatChannel {
+                community_id: env.community_id.clone(),
+                channel_id: CHANNEL_ID.into(),
+            },
+        )
+        .await
+        .expect("single-token Ask succeeds");
+    assert!(
+        answer.grounded,
+        "the single-token question must ground: {answer:?}"
+    );
+    assert_eq!(
+        answer.citations.len(),
+        1,
+        "exactly one citation: {answer:?}"
+    );
+    assert!(
+        answer.citations[0].resource_ref.ends_with(msg_id.as_str()),
+        "citation must be the budget message: {answer:?}"
+    );
+
+    let calls = provider.calls().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].sources.len(), 1);
+    assert!(calls[0].sources[0].text.contains("budget is capped at 10k"));
+
+    cleanup(&pool, tenant).await;
+}

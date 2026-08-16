@@ -36,6 +36,55 @@ const RECORD_COLUMNS: &str = "record_id, tenant_id, workspace_id, source_applica
     retention_policy_ref, legal_hold_ref, authorization_source, authorization_ref, \
     content_indexing, content, indexing_status, tombstoned_at, created_at, updated_at";
 
+/// Common English words that carry no content signal for the Ask-grounding
+/// term match. Small inline list (no dependency); a dropped token can still
+/// match via the whole-phrase condition.
+const SEARCH_STOPWORDS: &[&str] = &[
+    "the", "and", "for", "what", "did", "does", "do", "is", "are", "was", "were", "how", "why",
+    "who", "whom", "when", "where", "which", "that", "this", "these", "those", "with", "from",
+    "about", "into", "upon", "have", "has", "had", "not", "but", "you", "your", "can", "could",
+    "would", "should", "will", "there", "their", "them", "they", "then", "than", "him", "her",
+    "its", "our", "out",
+];
+
+/// The terms matched against message content by [`MemoryCatalogStore::search`]
+/// and the server-side chat candidate scorer: the whole trimmed query first
+/// (so exact-phrase questions still hit), then each whitespace token that is
+/// significant — at least 3 chars after stripping surrounding punctuation and
+/// not a [`SEARCH_STOPWORDS`] stopword. Terms are deduplicated (the phrase
+/// often duplicates its own tokens) and capped at [`MAX_SEARCH_TERMS`] distinct
+/// terms; dropped terms are logged at debug level. An empty/whitespace `query`
+/// yields no terms.
+pub const MAX_SEARCH_TERMS: usize = 64;
+
+pub fn content_match_terms(query: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let phrase = query.trim();
+    if !phrase.is_empty() {
+        terms.push(phrase.to_string());
+    }
+    for token in query.split_whitespace() {
+        if terms.len() >= MAX_SEARCH_TERMS {
+            tracing::debug!(%query, "search term cap reached; dropping remaining terms");
+            break;
+        }
+        let token = token.trim_matches(|c: char| c.is_ascii_punctuation());
+        if token.chars().count() < 3 {
+            continue;
+        }
+        let lower = token.to_lowercase();
+        if SEARCH_STOPWORDS.contains(&lower.as_str()) {
+            continue;
+        }
+        let term = token.to_string();
+        if terms.contains(&term) {
+            continue;
+        }
+        terms.push(term);
+    }
+    terms
+}
+
 #[derive(Clone)]
 pub struct MemoryCatalogStore {
     pool: PgPool,
@@ -355,9 +404,12 @@ impl MemoryCatalogStore {
     /// Memory-owned keyword search over catalog records (candidates only; final
     /// authorization is the source owner's). Tombstoned records never appear.
     ///
-    /// Matches the message content/channel name as a substring and the
-    /// `message_id`/`author_pubkey` exactly; returns at most `limit` rows
-    /// ordered newest-first. An empty/whitespace `query` returns no rows.
+    /// Matches the message content when ANY significant query term appears in
+    /// it (the whole query phrase is kept as one of the terms, so exact-phrase
+    /// questions still hit), and the `message_id`/`author_pubkey` exactly or
+    /// the `channel_id` as a substring of the whole query; returns at most
+    /// `limit` rows ordered newest-first. An empty/whitespace `query` returns
+    /// no rows.
     pub async fn search(
         &self,
         tenant_id: TenantId,
@@ -368,30 +420,49 @@ impl MemoryCatalogStore {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        // ILIKE wildcards are escaped so the user's input matches literally;
-        // the raw trimmed query is bound separately for the exact
-        // message_id/author_pubkey match.
-        let pattern = escape_ilike(query);
+        // ILIKE wildcards are escaped so the user's input matches literally.
+        // The whole phrase and every significant term are bound as escaped
+        // ILIKE patterns; the escaped whole query is bound for the channel_id
+        // substring clause, and the raw trimmed query is bound separately for
+        // the exact message_id/author_pubkey match.
+        let terms = content_match_terms(query);
+        let content_clauses: Vec<String> = terms
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("content ILIKE '%' || ${} || '%'", index + 2))
+            .collect();
+        let channel_param = terms.len() + 2;
+        let exact_param = channel_param + 1;
+        let limit_param = exact_param + 1;
         let limit = limit as i64;
-        let rows = sqlx::query(&format!(
+        let sql = format!(
             "SELECT {RECORD_COLUMNS} FROM memory_catalog
              WHERE tenant_id = $1
                AND source_application = 'io.elembra.chat'
                AND source_type = 'message'
                AND indexing_status <> 'tombstoned'
-               AND (content ILIKE '%' || $2 || '%'
-                    OR message_id = $3
-                    OR author_pubkey = $3
-                    OR channel_id ILIKE '%' || $2 || '%')
+               AND ({}
+                    OR message_id = ${}
+                    OR author_pubkey = ${}
+                    OR channel_id ILIKE '%' || ${} || '%')
              ORDER BY occurred_at DESC, message_id
-             LIMIT $4"
-        ))
-        .bind(tenant_id.0)
-        .bind(&pattern)
-        .bind(query)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+             LIMIT ${}",
+            content_clauses.join(" OR "),
+            exact_param,
+            exact_param,
+            channel_param,
+            limit_param,
+        );
+        let mut query_builder = sqlx::query(&sql).bind(tenant_id.0);
+        for term in &terms {
+            query_builder = query_builder.bind(escape_ilike(term));
+        }
+        let rows = query_builder
+            .bind(escape_ilike(query))
+            .bind(query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter().map(row_to_record).collect()
     }
 
@@ -603,4 +674,134 @@ fn parse_indexing_status(value: String) -> Result<IndexingStatus> {
         "tombstoned" => IndexingStatus::Tombstoned,
         other => anyhow::bail!("unknown memory_catalog.indexing_status `{other}`"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_match_terms_keeps_whole_phrase_first_and_significant_tokens() {
+        let terms = content_match_terms("what did the team say about the budget");
+        assert_eq!(
+            terms.first().map(String::as_str),
+            Some("what did the team say about the budget"),
+            "the whole phrase stays the first term"
+        );
+        for expected in ["team", "say", "budget"] {
+            assert!(
+                terms.iter().any(|term| term == expected),
+                "significant term `{expected}` must be kept, got: {terms:?}"
+            );
+        }
+        for dropped in ["what", "did", "the", "about"] {
+            assert!(
+                terms.iter().all(|term| term != dropped),
+                "stopword `{dropped}` must be dropped, got: {terms:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_match_terms_strips_surrounding_punctuation_from_tokens() {
+        assert_eq!(
+            content_match_terms("what did dave say about the budget?"),
+            vec![
+                "what did dave say about the budget?",
+                "dave",
+                "say",
+                "budget"
+            ],
+            "trailing `?` is stripped so `budget` matches `the budget is capped at 10k`"
+        );
+        assert_eq!(
+            content_match_terms("(quarterly plan) approved!"),
+            vec![
+                "(quarterly plan) approved!",
+                "quarterly",
+                "plan",
+                "approved"
+            ]
+        );
+    }
+
+    #[test]
+    fn content_match_terms_drops_short_and_stopword_only_tokens() {
+        assert_eq!(
+            content_match_terms("ab cd ef"),
+            vec!["ab cd ef"],
+            "tokens shorter than 3 chars are dropped; only the phrase remains"
+        );
+        assert_eq!(
+            content_match_terms("what did the"),
+            vec!["what did the"],
+            "stopword-only tokens are dropped; only the phrase remains"
+        );
+        assert_eq!(
+            content_match_terms("to be or not to be"),
+            vec!["to be or not to be"],
+            "a phrase of only stopwords/short tokens keeps no term beyond itself"
+        );
+    }
+
+    #[test]
+    fn content_match_terms_empty_and_whitespace_questions_have_no_terms() {
+        assert!(content_match_terms("").is_empty());
+        assert!(content_match_terms("   ").is_empty());
+        assert!(content_match_terms("\t\n").is_empty());
+    }
+
+    #[test]
+    fn content_match_terms_is_case_insensitive_for_stopwords() {
+        let terms = content_match_terms("What Did Dave Say");
+        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("what")));
+        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("did")));
+        assert!(terms.iter().any(|term| term == "Dave"));
+        assert!(terms.iter().any(|term| term == "Say"));
+    }
+
+    #[test]
+    fn content_match_terms_deduplicates_phrase_and_tokens() {
+        assert_eq!(
+            content_match_terms("budget"),
+            vec!["budget"],
+            "a single-token query must not duplicate the phrase and the token"
+        );
+        assert_eq!(
+            content_match_terms("budget budget"),
+            vec!["budget budget", "budget"],
+            "repeated tokens are deduplicated"
+        );
+    }
+
+    #[test]
+    fn content_match_terms_caps_at_max_search_terms() {
+        let query = (0..80)
+            .map(|i| format!("alpha{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let terms = content_match_terms(&query);
+        assert_eq!(terms.len(), MAX_SEARCH_TERMS, "the term list is capped");
+        assert_eq!(
+            terms.first().map(String::as_str),
+            Some(query.as_str()),
+            "the whole phrase always stays the first term"
+        );
+        assert!(
+            terms.iter().any(|term| term == "alpha0"),
+            "the first significant token is kept"
+        );
+        assert!(
+            terms.iter().any(|term| term == "alpha62"),
+            "the last token inside the cap is kept"
+        );
+        assert!(
+            terms.iter().all(|term| term != "alpha63"),
+            "tokens beyond the cap are dropped"
+        );
+        assert!(
+            terms.iter().all(|term| term != "alpha79"),
+            "the tail of the query is dropped"
+        );
+    }
 }
