@@ -222,6 +222,17 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `BUZZ_COMMUNITY_ID` | community id forwarded by the observer; must equal the mapping | — |
 | `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | relay UUID-keyed channel ids (kind-9007 registry rows, created by `run-alpha-dogfood.sh`, open visibility) | `585e55c7-97d9-43ad-bbe3-a355cad93082` / `4bec90c0-4c14-48cc-8958-da8c258f9759` |
 | `BUZZ_POSTGRES_PASSWORD`, `BUZZ_MINIO_USER`, `BUZZ_MINIO_PASSWORD` | relay backing services | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
+| `ELEMBRA_LLM_API_KEY` | OpenAI-compatible Ask provider key (DeepSeek, OpenAI, …); leave unset to keep Ask gated (`ask_available=false`, #244) | empty |
+| `ELEMBRA_LLM_BASE_URL` | provider base URL, e.g. `https://api.deepseek.com/v1` | empty |
+| `ELEMBRA_LLM_MODEL` | provider model id, e.g. `deepseek-chat` | `gpt-4o-mini` (app fallback) |
+| `ELEMBRA_LLM_TIMEOUT_SECS` | provider request timeout | `30` |
+
+The Ask provider is optional: with `ELEMBRA_LLM_API_KEY` unset the Chat
+status surface reports `ask_available=false` and Ask returns 503 — clean,
+documented degradation (never a fallback to another provider or to local
+mode). Set the four variables in `.env` (never commit credentials), then
+`docker compose up -d backend` to inject them. The `docker-compose.alpha.yml`
+backend service passes them through from the environment.
 
 The relay image must contain the v1alpha1 authorization API and the
 community-identity discovery endpoint (ADR-0035/0036). The supported image is

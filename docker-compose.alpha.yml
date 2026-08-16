@@ -51,6 +51,14 @@ services:
       # mapping from the deployment Buzz relay.
       RUSTSHARE_CHAT_PROVISIONING: ${RUSTSHARE_CHAT_PROVISIONING:-auto}
       RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL: ${BUZZ_RELAY_WS:-ws://localhost:7447}
+      # Optional OpenAI-compatible Ask provider (see runbook §3). Leave the
+      # key unset to keep Ask gated (ask_available=false, #244); credentials
+      # come from .env, never from this file.
+      ELEMBRA_LLM_API_KEY: ${ELEMBRA_LLM_API_KEY:-}
+      ELEMBRA_LLM_BASE_URL: ${ELEMBRA_LLM_BASE_URL:-}
+      ELEMBRA_LLM_MODEL: ${ELEMBRA_LLM_MODEL:-}
+      ELEMBRA_LLM_TEMPERATURE: ${ELEMBRA_LLM_TEMPERATURE:-}
+      ELEMBRA_LLM_TIMEOUT_SECS: ${ELEMBRA_LLM_TIMEOUT_SECS:-30}
 
   buzz-postgres:
     image: postgres:17-alpine
