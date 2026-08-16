@@ -296,8 +296,9 @@ mirroring `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`. Public relays are unaffected.
 ### Other observed behaviors
 
 - The mapping is **existence-hidden** until a binding exists (`chat_status`
-  returns `mapping: null` without a binding) — provisioning flows must PATCH
-  first, not rely on the status field.
+  returns `mapping: null` without a binding) — provisioning flows must create
+  the mapping first, not rely on the status field (auto mode does exactly that;
+  see §15).
 - Channel attribution: clients publish the NIP-29 `h` tag on stream kinds
   9/40002 (canonical wire format); the observer routes on the `h` tag first,
   then a `channel` tag when present, else a configured default. Legacy kind-1
@@ -357,3 +358,38 @@ weakened to hit the budget: every message still passes the relay's current
 membership/visibility/message-availability decision plus the post-authority
 re-reads; pre-filter refusals and `NotFound` outcomes still short-circuit per
 ref without reaching the relay.
+
+## 15. Zero-config bootstrap provisioning (ADR-0036)
+
+A supported deployment can now obtain the Workspace↔Community mapping without
+manual SQL/curl steps. Full contract: `docs/architecture/elembra-chat-bootstrap.md`
+and ADR-0036.
+
+**Provisioning contract.** `RUSTSHARE_CHAT_PROVISIONING` (`auto|manual`,
+default `manual`) selects the mode; `auto` requires
+`RUSTSHARE_CHAT_AUTHORITY=buzz` plus `RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL`
+(`ws`/`wss`), enforced fail-closed at startup. In `auto` mode, enabling Chat
+discovers the deployment community over the relay's read-only
+`GET /api/v1/relay/community` endpoint (NIP-98 + trusted-service allowlist
+`RELAY_TRUSTED_SERVICE_PUBKEYS`), verifies the relay-signed kind-19030
+response against the content-claimed `relay_pubkey` (no prior pin exists at
+bootstrap) with `evaluated_at` freshness ≤ 60 s and structural validation, and
+idempotently inserts the mapping with the pin. Conflicts fail closed with
+HTTP 409 (`CommunityMismatch` / `CommunityInUse`); a mapping is never
+overwritten. Provisioning failure leaves Chat safely unconfigured (enable
+still succeeds) with no persisted state — the admin retries from the Chat
+admin page (`/admin/applications/chat`, "Set up automatically") or
+`POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/provision`.
+
+**Admin diagnostics.** `GET /api/v1/admin/applications/chat/workspaces/
+{workspace_id}/community` is the admin-only mapping surface (community id,
+relay URL, pinned relay pubkey, active; 404 when unmapped). It is never
+exposed on the user-facing status surface.
+
+**Known limitation (pre-existing, out of scope for the bootstrap task).** The
+user-facing `chat_status` surface deliberately hides the mapping until a
+binding exists (`mapping: null` without a binding, existence-hiding), so
+during bind entry the UI shows "Chat is being configured for this workspace."
+even though the mapping was provisioned successfully. This is unchanged
+boundary behavior (ADR-0034); the neutral copy simply states the in-progress
+state honestly.

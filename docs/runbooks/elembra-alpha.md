@@ -32,7 +32,7 @@ Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
 |---|---|---|
 | Elembra backend/frontend | this repo (`docker/backend.Dockerfile`) | `docker compose up -d` |
 | Postgres / RustFS / nginx | `docker-compose.yml` | same |
-| Buzz relay + backing services | `ghcr.io/block/buzz:main` (kubedoio/buzz) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
+| Buzz relay + backing services | `ghcr.io/kubedoio/buzz` (main-built; pin a `sha-<7>` tag, see §3) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
 | Observation bridge | `frontend/scripts/buzz-observer.mjs` | host process via `scripts/start-buzz-observer.sh` |
 
 **Why the observer runs on the host:** Buzz resolves the community from the
@@ -48,8 +48,12 @@ same community; an internal container network cannot present that Host value.
 
 - Docker Engine + Compose plugin (validated matrix: Ubuntu 22.04/24.04, Debian 12)
 - Node.js 22+ (for the observer and E2E driver)
-- An image of the Buzz relay: `ghcr.io/block/buzz:main` (pin a `relay-v*` tag
-  for stability). Published by kubedoio/buzz (`docker.yml` workflow).
+- An image of the Buzz relay: `ghcr.io/kubedoio/buzz`, built from merged
+  `kubedoio/buzz` main and published by the fork's `docker.yml` workflow with
+  `:main` + immutable `:sha-<7>` tags and provenance attestation. Pin
+  `BUZZ_RELAY_IMAGE` to the `sha-<7>` tag of the merged-main build (see §3);
+  never use a floating upstream `block/buzz` image — its API contract is stale
+  or absent.
 
 ### 2.2 Bring up
 
@@ -69,6 +73,8 @@ node frontend/scripts/alpha-gen-buzz-keys.mjs
 #       RUSTSHARE_CHAT_BRIDGE_SECRET_KEY (== BUZZ_SERVICE_SK)
 
 # 4. Configure chat in .env (see §3)
+#    RUSTSHARE_CHAT_PROVISIONING=auto   (alpha default; zero-config bootstrap)
+#    RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL=ws://localhost:7447   (required for auto)
 #    RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true   (only when the relay runs on this host)
 #    RUSTSHARE_ADMIN_PASSWORD=<strong-password>  (set BEFORE first start, see §4)
 
@@ -88,25 +94,25 @@ docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compo
 BUZZ_SERVICE_SK=<bridge sk> BUZZ_COMMUNITY_ID=alpha-community \
   nohup ./scripts/start-buzz-observer.sh >> buzz-observer.log 2>&1 &
 
-# 8. Provision the workspace mapping. Mutating API calls require CSRF
-#    double-submit (cookie + X-Rustshare-Csrf header, see §6); <workspace_id>
-#    equals the admin tenant id. For a relay on this host (flag from step 4):
+# 8. Admin session — required for the enable call (§2.4), which in auto mode
+#    (the alpha default) auto-provisions the deployment community
+#    (discover → verify → insert, idempotent; ADR-0036). Mutating API calls
+#    require CSRF double-submit (cookie + X-Rustshare-Csrf header, see §6);
+#    <tenant_id> equals the admin tenant id:
 curl -s -c /tmp/admin.jar -X POST http://localhost/api/v1/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"admin@localhost","password":"<admin-password>"}'
 CSRF="$(awk '$6 == "rustshare_csrf_token" { print $7 }' /tmp/admin.jar)"
-curl -s -b /tmp/admin.jar -X POST \
-  http://localhost/api/v1/admin/applications/chat/workspaces/<tenant_id>/community \
-  -H 'content-type: application/json' -H "X-Rustshare-Csrf: ${CSRF}" \
-  -d '{"community_id":"alpha-community","relay_url":"ws://localhost:7447","relay_pubkey":"<BUZZ_RELAY_PUBKEY>"}'
-#    (a PUBLIC relay: same command with its wss:// URL. The SSRF guard
-#    resolves the host, so placeholder hosts fail — "wss://relay.example.com"
-#    in older copies of this runbook is not a real address.)
-#    Or use scripts/run-alpha-dogfood.sh, which provisions everything and
-#    runs the full dogfood matrix. The relay's channel registry is
-#    UUID-keyed: the script creates the alpha channels there (kind-9007,
-#    open visibility) and the observer/E2E driver default to those UUID
-#    channel ids (BUZZ_CHANNEL_ID / BUZZ_CHANNEL2_ID in .env).
+#    Manual deployments (RUSTSHARE_CHAT_PROVISIONING=manual, the default):
+#    use the admin page's "Connect existing Chat deployment" form, or the
+#    existing admin API POST .../community with the CSRF header above. The
+#    SSRF guard resolves the relay host, so placeholder hosts fail —
+#    "wss://relay.example.com" is not a real address. Alternatively, use
+#    scripts/run-alpha-dogfood.sh, which provisions everything and runs the
+#    full dogfood matrix. The relay's channel registry is UUID-keyed: the
+#    script creates the alpha channels there (kind-9007, open visibility) and
+#    the observer/E2E driver default to those UUID channel ids
+#    (BUZZ_CHANNEL_ID / BUZZ_CHANNEL2_ID in .env).
 
 # 9. Verify
 curl -s http://localhost/health/ready
@@ -121,19 +127,14 @@ validate the relay URL against the same SSRF guard
 addresses is rejected **unless** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is
 set (mirrors `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The
 flag is required for any localhost relay** — the binding challenge
-re-validates the stored URL, so an SQL row alone cannot bypass it, and the
-gateway needs it to reach a same-host relay in buzz mode. With the flag set,
-`ws://localhost:7447` is accepted and the API path works end to end.
+re-validates the stored URL (so no row can bypass the guard, however it was
+created), and the gateway needs the flag to reach a same-host relay in buzz
+mode. With the flag set, `ws://localhost:7447` is accepted and the mapping/
+bootstrap path works end to end.
 
-Operators who prefer to skip the admin-API/CSRF dance may insert the mapping
-row directly (it only replaces the API call; the flag is still required):
-
-```sql
-INSERT INTO chat_workspace_communities
-  (mapping_id, tenant_id, workspace_id, community_id, relay_url, active, created_at)
-VALUES (gen_random_uuid(), '<tenant_id>', '<tenant_id>', 'alpha-community',
-        'ws://localhost:7447', true, now());
-```
+No direct SQL is needed to create the mapping anymore: in `auto` mode
+enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
+page ("Connect existing Chat deployment") or the admin API does it.
 
 > **Security note:** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` relaxes the SSRF guard
 > for Chat relay URLs only. Production deployments with public relays must
@@ -147,6 +148,29 @@ header from §2.2 step 8):
 ```bash
 curl -s -b /tmp/admin.jar -X POST \
   http://localhost/api/v1/admin/applications/io.elembra.chat/enable \
+  -H "X-Rustshare-Csrf: ${CSRF}"
+```
+
+In `auto` mode (the alpha default) this enable call also auto-provisions the
+workspace mapping from `RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL` (§2.2 step 8);
+a provisioning failure is logged and Chat stays unconfigured but enabled —
+retry from the Chat admin page.
+
+Verify the mapping after the enable call (admin-only; returns `community_id`,
+`relay_url`, `relay_pubkey`, `active`) — or check the Chat admin page at
+`/admin/applications/chat`:
+
+```bash
+curl -s -b /tmp/admin.jar \
+  http://localhost/api/v1/admin/applications/chat/workspaces/<tenant_id>/community
+```
+
+If auto-provisioning failed (enable succeeded but the mapping is absent),
+retry with the admin page's "Set up automatically" button or:
+
+```bash
+curl -s -b /tmp/admin.jar -X POST \
+  http://localhost/api/v1/admin/applications/chat/workspaces/<tenant_id>/provision \
   -H "X-Rustshare-Csrf: ${CSRF}"
 ```
 
@@ -185,10 +209,12 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | Variable | Purpose | Default |
 |---|---|---|
 | `RUSTSHARE_CHAT_AUTHORITY` | `local` (coarse community gate) or `buzz` (upstream access/check) | `local` |
+| `RUSTSHARE_CHAT_PROVISIONING` | chat community provisioning mode: `auto` (zero-config bootstrap, ADR-0036) or `manual` | `manual` |
+| `RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL` | relay URL (`ws://`/`wss://`) discovered for auto-provisioning; required when provisioning is `auto` | — |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
 | `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
 | `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
-| `BUZZ_RELAY_IMAGE` | relay image | `ghcr.io/block/buzz:main` |
+| `BUZZ_RELAY_IMAGE` | relay image; supported: `ghcr.io/kubedoio/buzz` built from merged `kubedoio/buzz` main — pin the immutable `sha-<7>` tag of that build; never a floating upstream `block/buzz` image | `ghcr.io/kubedoio/buzz:main` |
 | `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
 | `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
@@ -196,6 +222,17 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `BUZZ_COMMUNITY_ID` | community id forwarded by the observer; must equal the mapping | — |
 | `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | relay UUID-keyed channel ids (kind-9007 registry rows, created by `run-alpha-dogfood.sh`, open visibility) | `585e55c7-97d9-43ad-bbe3-a355cad93082` / `4bec90c0-4c14-48cc-8958-da8c258f9759` |
 | `BUZZ_POSTGRES_PASSWORD`, `BUZZ_MINIO_USER`, `BUZZ_MINIO_PASSWORD` | relay backing services | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
+
+The relay image must contain the v1alpha1 authorization API and the
+community-identity discovery endpoint (ADR-0035/0036). The supported image is
+`ghcr.io/kubedoio/buzz`, built from merged `kubedoio/buzz` main and published
+by the fork's CI with `:main` + `:sha-<7>` tags and provenance attestation.
+Pin `BUZZ_RELAY_IMAGE` to the `sha-<7>` tag of the merged-main build and
+verify provenance with `gh attestation verify
+oci://ghcr.io/kubedoio/buzz:sha-<7> --owner kubedoio`. The compose default
+tracks the fork build (`:main`) and its comment instructs the same pin; until
+the merged build exists (PR pending), the dogfood/conformance scripts build
+the relay image locally from the buzz worktree.
 
 Generate all keys once: `node frontend/scripts/alpha-gen-buzz-keys.mjs`. The
 relay owner key is the bridge identity: its public half is
@@ -359,9 +396,9 @@ The following are operator-visible today (proven during this goal):
 - #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
   ADR-0035 relay capability is implemented and MERGED (kubedoio/buzz PR #1,
   now on `kubedoio/buzz` main) and the live conformance suite is green
-  (`scripts/run-buzz-conformance.sh`, 11 live proofs incl. `live_p10`
+  (`scripts/run-buzz-conformance.sh`, 12 live proofs incl. `live_p10`
   one-batch-round-trip, `live_p11` latency budget, `live_p12` tombstone
-  reconciliation). Issue #245's four acceptance criteria: relay endpoints
+  reconciliation, `live_p13` bootstrap identity discovery). Issue #245's four acceptance criteria: relay endpoints
   implemented ✅; live-relay conformance replaces the fake ✅; buzz-mode
   authorization enabled in production ✅ (kubedoio/rustshare PR #249 merged;
   enabled by default in the Alpha/dogfood stack); large-timeline latency
@@ -401,7 +438,11 @@ Proofs covered (each a `#[tokio::test]`):
    RAG materialization returns nothing after relay revocation);
 10. a 64-message page authorizes in exactly ONE relay batch round-trip
     (counted via the relay's own metrics endpoint; the latency budget itself
-    is tracked separately).
+    is tracked separately);
+11. bootstrap identity discovery (`live_p13`, ADR-0036): the community-identity
+    endpoint returns the deployment community and the relay pubkey, the
+    pubkey matches the harness pin, the response signature verifies, and
+    authorization still works with the discovered identity.
 
 Run it:
 

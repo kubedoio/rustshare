@@ -106,6 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relay delete excluded by a `since` window cannot un-tombstone a Memory
   record.
 
+- Elembra Chat: zero-config bootstrap — enabling Chat auto-provisions the
+  deployment Buzz community (auto mode), admin provisioning page, neutral
+  user-facing state copy, supported relay image pinned to a main-built SHA
+  tag.
+
 ### Changed
 
 - Replaced the pre-release Module product boundary with Elembra Applications,
