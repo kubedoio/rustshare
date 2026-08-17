@@ -106,6 +106,12 @@ jobs:
     # debian:bookworm-slim runtime image (GLIBC_2.38/2.39 not found).
     container:
       image: rust:1.97-bookworm
+    # The container's default shell is /bin/sh (dash), which lacks the `[[`
+    # builtin used by the stage step — the arm64 leg silently fell into the
+    # x86_64 strip branch and failed. Force bash for every step of this job.
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
