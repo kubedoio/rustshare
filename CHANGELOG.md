@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Release pipeline hardening: released Docker tags (`X.Y.Z`, `X.Y`, `X`,
+  `latest`, `sha-<short>`) are now promoted only after the candidate image
+  passes the boot smoke test, and a version that already has a GitHub release
+  can only be re-run via `workflow_dispatch` at its own commit (repair mode);
+  tag pushes and force-moves of already-released versions are rejected in
+  `validate-tag` before any build.
+
 ### Fixed
 
 - Release pipeline: the precompiled-binary image path now restores the exec
