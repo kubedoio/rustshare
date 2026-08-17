@@ -361,3 +361,22 @@ These binaries are built by `release.yml` (job `build-binaries`) with the pinned
 Rust toolchain (1.97.1) and cross-compilation toolchain for `aarch64`, then
 consumed by the container-image build. Operators who prefer binaries over Docker
 can download them directly from the release page.
+
+## v0.7.0 remediation record (2026-08-17)
+
+The v0.7.0 image shipped by the pre-hardening pipeline was broken (missing
+exec bit + glibc 2.39 binary in the bookworm runtime). Remediation chosen:
+**REBUILD from the unchanged v0.7.0 source commit** (148746f8) through the
+gated pipeline via the sanctioned repair path (branch `repair/v0.7.0`:
+pipeline files only; `workflow_dispatch` at that branch with `version=0.7.0`).
+
+Result:
+- The moving tags `0.7.0`, `0.7`, `0`, `latest` were **repointed to the
+  boot-gated, bookworm-built digest** `sha256:66b9dffb…` (exec bit + loader
+  verified by the pipeline gate and post-hoc).
+- The historical v0.7.0 GitHub Release record and its binary/SBOM assets
+  were **preserved unchanged** (release-exists check skipped creation).
+- The original broken digest remains referenced only by the immutable
+  `sha-148746f` tag (historical evidence of the original build).
+- Elembra v0.8.0-alpha.1 was **not** made `latest`; it remains a prerelease
+  with its own immutable tags.
