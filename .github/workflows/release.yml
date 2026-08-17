@@ -230,9 +230,13 @@ jobs:
 
       - name: Boot smoke test (exec bit + dynamic linker)
         shell: bash
-        env:
-          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: |
+          # Run from the mutable sha tag, not the digest: pulling the same
+          # multi-arch digest twice with different --platform values fails in
+          # the runner's classic docker store ("cannot overwrite digest ...").
+          # The sha tag is re-resolved per leg, and both legs reference the
+          # exact image this job just built and pushed.
+          IMAGE_REF="${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}"
           # The server has no --help/--version: main() ignores argv and boots
           # straight into startup, which first validates config and connects to
           # Postgres. Without a database it exits 1 quickly — that is a PASS,
