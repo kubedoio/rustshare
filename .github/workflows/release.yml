@@ -120,6 +120,11 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # The container build links against glibc 2.36; keep its cache key
+          # separate from the host (glibc 2.39) CI runs so each restores its
+          # own artifacts.
+          prefix-key: release-container
 
       - name: Install cross-compilation toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -242,7 +247,7 @@ jobs:
             rc=0
             for attempt in 1 2 3 4 5; do
               set +e
-              timeout 60 docker run --rm --platform "${platform}" "${IMAGE_REF}" \
+              docker run --rm --platform "${platform}" "${IMAGE_REF}" \
                 timeout 25 /usr/local/bin/rustshare-server \
                 > "${logfile}" 2>&1
               rc=$?
