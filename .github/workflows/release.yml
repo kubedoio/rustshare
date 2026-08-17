@@ -50,6 +50,7 @@ jobs:
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
           TAG_REF: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           COMMIT="${{ github.sha }}"
 
@@ -69,16 +70,51 @@ jobs:
             exit 1
           fi
 
+          # The commit the release tag points at; used by the dispatch guard
+          # below and by the release-immutability decision.
+          TAG_SHA="$(git rev-parse "${TAG}^{}" 2>/dev/null || true)"
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             # A dispatch must reference an EXISTING tag that points at the
             # exact commit being released. Without this, dispatching a stable
             # version (e.g. 0.7.0) would push unrelated code to the stable
             # Docker channels and clobber them.
-            TAG_SHA="$(git rev-parse "${TAG}^{}" 2>/dev/null || true)"
             if [[ -z "$TAG_SHA" || "$TAG_SHA" != "$COMMIT" ]]; then
               echo "::error::workflow_dispatch version '${DISPATCH_VERSION}' must exist as tag ${TAG} pointing at commit ${COMMIT} (found ${TAG_SHA:-none})."
               exit 1
             fi
+          fi
+
+          # Release immutability (before any build): a version that already has
+          # a GitHub release may only be re-run via workflow_dispatch at ITS
+          # OWN commit (explicit repair mode). A tag push against an existing
+          # release is a force-move/duplicate attempt and is rejected. This
+          # composes with the dispatch guard above — the guard pins a dispatch
+          # to the tag's commit, this decision pins the run to an unreleased
+          # version or a same-commit repair.
+          # gh exits 0 when the release exists; on HTTP errors it exits 1, so
+          # the status line distinguishes "not found" from real failures (any
+          # non-200/404 status fails the job closed). '+' in build-metadata
+          # tags must be %-encoded in the API path.
+          ENCODED_TAG="${TAG//+/%2B}"
+          api_out="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ENCODED_TAG}" --silent -i 2>&1 || true)"
+          status_line="$(printf '%s\n' "$api_out" | head -n1)"
+          status="${status_line#* }" # "404 Not Found"
+          status="${status%% *}"     # "404"
+          RELEASE_EXISTS=false
+          if [[ "$status" == "200" ]]; then
+            RELEASE_EXISTS=true
+          elif [[ "$status" == "404" ]]; then
+            :
+          else
+            echo "::error::release immutability check failed (HTTP ${status:-unknown}); refusing to proceed"
+            exit 1
+          fi
+          DECISION="$(immutability_decision "$EVENT_NAME" "$TAG" "$COMMIT" "$RELEASE_EXISTS" "$TAG_SHA" || true)"
+          echo "Immutability decision: ${DECISION}"
+          if [[ "$DECISION" == FAIL:* ]]; then
+            echo "::error::${DECISION#FAIL:}"
+            exit 1
           fi
 
           # resolve_release_tag emits GITHUB_OUTPUT-compatible key=value lines
@@ -207,11 +243,18 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_NAME }}
+          # Kept for LABELS only: the build is tagged with the unadvertised
+          # candidate tag, and the released tags (docker_tags + sha) are
+          # created by the promote step AFTER the boot gate passes. The
+          # metadata action derives the OCI version label from the first tag,
+          # so it is pinned to the real release version below; revision,
+          # created, source, etc. are emitted as before.
           tags: |
-            ${{ needs.validate-tag.outputs.docker_tags }}
-            type=sha,prefix=sha-,format=short
+            type=raw,value=candidate-${{ github.run_id }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.validate-tag.outputs.version }}
 
-      - name: Build and push
+      - name: Build and push candidate
         id: build
         uses: docker/build-push-action@v7
         with:
@@ -219,6 +262,8 @@ jobs:
           file: docker/backend.Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          # Only the candidate tag is pushed here; release tags are promoted
+          # from this digest after the boot gate.
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
@@ -231,12 +276,14 @@ jobs:
       - name: Boot smoke test (exec bit + dynamic linker)
         shell: bash
         run: |
-          # Run from the mutable sha tag, not the digest: pulling the same
+          # Run from the candidate tag, not the digest: pulling the same
           # multi-arch digest twice with different --platform values fails in
           # the runner's classic docker store ("cannot overwrite digest ...").
-          # The sha tag is re-resolved per leg, and both legs reference the
-          # exact image this job just built and pushed.
-          IMAGE_REF="${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}"
+          # The candidate tag is re-resolved per leg, and both legs reference
+          # the exact image this job just built and pushed. No released tag
+          # (docker_tags + sha) exists yet — they are created by the promote
+          # step below only when this gate passes.
+          IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
           # The server has no --help/--version: main() ignores argv and boots
           # straight into startup, which first validates config and connects to
           # Postgres. Without a database it exits 1 quickly — that is a PASS,
@@ -289,6 +336,34 @@ jobs:
                 ;;
             esac
           done
+
+      - name: Promote release tags (post-gate)
+        shell: bash
+        env:
+          RELEASE_TAGS: ${{ needs.validate-tag.outputs.docker_tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Reached only when the boot smoke test passed: a failed gate fails
+          # the job, so this step (and every downstream job) never runs. The
+          # released tags — version (+ major/minor/latest for stable) and
+          # sha-<short> — are created as references to the SAME digest the
+          # gate just verified; nothing is rebuilt. latest/major/minor can
+          # therefore only move after a green gate.
+          set -euo pipefail
+          TAGS=()
+          while IFS= read -r entry; do
+            [[ -n "$entry" ]] || continue
+            [[ "$entry" == type=raw,value=* ]] || {
+              echo "::error::unexpected docker_tags entry: $entry"
+              exit 1
+            }
+            tag="${entry#type=raw,value=}"
+            TAGS+=(--tag "${IMAGE_NAME}:${tag}")
+            echo "Promoting ${IMAGE_NAME}:${tag}"
+          done <<< "$RELEASE_TAGS"
+          TAGS+=(--tag "${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}")
+          echo "Promoting ${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}"
+          docker buildx imagetools create "${TAGS[@]}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
 
   generate-sbom:
     name: Generate SBOMs
