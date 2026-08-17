@@ -29,7 +29,7 @@ keywords = ["file-sharing", "sync", "self-hosted", "rust", "storage"]
 categories = ["filesystem", "web-programming"]
 
 [workspace.dependencies]
-nostr = { version = "0.44", features = ["nip98"] }
+nostr = { version = "0.45", features = ["nip98"] }
 # Async runtime
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -64,8 +64,8 @@ aws-sdk-s3 = "1.17"
 aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
-aws-smithy-types = "=1.6.1"
-time = "=0.3.54"
+aws-smithy-types = "=1.6.2"
+time = "=0.3.55"
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls-tls"], default-features = false }
 
