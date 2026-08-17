@@ -98,7 +98,9 @@ resolve_release_tag() {
 }
 
 # Reason used for every immutability FAIL; the workflow surfaces it verbatim.
-RS_IMMUTABILITY_FAIL_REASON="version already released; a defective release must use the next prerelease version"
+# Version-class-aware: a defective stable release is fixed by the next stable
+# patch, a defective prerelease by the next prerelease version.
+RS_IMMUTABILITY_FAIL_REASON="version already released; a defective release must be fixed by the next version of the same class (prerelease->prerelease, stable->patch)"
 
 # immutability_decision <event_name> <tag> <sha> <release_exists> <tag_sha>
 #   Pure release-immutability decision for a release attempt:
