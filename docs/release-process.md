@@ -74,12 +74,66 @@ Combined tag matrix:
 
 ---
 
+## Release Immutability
+
+Published releases are immutable. Once a version is released it is never
+re-published, force-moved, or re-pointed — neither as a Git tag nor as a Docker
+image tag:
+
+- **Git version tags are immutable.** A release tag (`vX.Y.Z`, `vX.Y.Z-<pre>`)
+  is created once and never deleted, force-moved, or re-pointed at a different
+  commit.
+- **Docker version tags are immutable.** The version image tags (`X.Y.Z`,
+  `X.Y.Z-<pre>`) are published exactly once, from exactly one commit, and are
+  never overwritten with a different image. The rolling aliases (`X.Y`, `X`,
+  `latest`) are moved by CI only as part of a successful stable release —
+  never by a prerelease and never by a failed run (the manual alias retag in
+  the [Rollback Procedure](#rollback-procedure) below remains an explicit
+  operator exception).
+- **Every release identifies exactly one immutable source commit and one image
+  digest.** The source commit is the Git tag, which the workflow verifies
+  against the commit it runs on; the image digest is the digest of the
+  multi-arch candidate image built from that commit. All released Docker tags
+  point at that single digest — promotion re-tags the verified digest, it
+  never rebuilds.
+- **A defective release is fixed by the NEXT prerelease version**, never by
+  re-publishing the defective one. Example: if `v0.8.0-alpha.1` ships broken,
+  publish `v0.8.0-alpha.2` — `alpha.1` and its digest stay as they were.
+
+**The only exception — remediation/repair runs.** A release that was published
+from the correct commit but produced a broken artifact (e.g. a bad image or a
+failed build) may be re-run via **`workflow_dispatch` only**: re-running the
+SAME version at ITS OWN commit rebuilds the artifact from the same code and
+re-runs the gate. This is the explicit repair mode (the v0.7.0 remediation
+path). A repair run requires all of:
+
+1. The version tag exists and points at the exact commit being dispatched
+   (existing dispatch guard, issue #256), **and**
+2. A GitHub release already exists for that version (repair is only meaningful
+   for an already-released version), **and**
+3. The trigger is `workflow_dispatch` — a tag push against an already-released
+   version is a force-move/duplicate attempt and is rejected.
+
+The decision is made in `validate-tag`, before anything is built, by the pure
+`immutability_decision` function in `scripts/release-tag.sh`:
+
+| Release exists | Event | Tag commit vs run commit | Decision |
+|----------------|-------|--------------------------|----------|
+| no | any | — | ALLOW |
+| yes | `workflow_dispatch` | same | ALLOW (repair mode) |
+| yes | `workflow_dispatch` | different | FAIL |
+| yes | tag push | — | FAIL |
+
+---
+
 ## Pre-release Validation
 
 The automated pipeline accepts stable `vX.Y.Z` tags and SemVer prerelease
 tags (`vX.Y.Z-alpha.N`, `vX.Y.Z-rc.N`, …): pushing either triggers
-`release.yml`, which builds binaries, publishes container images, and creates
-the GitHub Release (stable or prerelease, per `scripts/release-tag.sh`).
+`release.yml`, which builds binaries, builds and gates a candidate image,
+promotes the released Docker tags, and creates the GitHub Release (stable or
+prerelease, per `scripts/release-tag.sh`). See the
+[Promotion Pipeline](#promotion-pipeline) below for the ordering guarantees.
 Prerelease image tags are version-only (`latest` and rolling aliases are never
 moved); run the same validation checklist below against the exact commit to be
 tagged before pushing any tag.
@@ -110,6 +164,33 @@ run the integration suites there, and verify migration behavior against a copy
 of production data before tagging. If issues are found, fix them on `main`,
 merge, and re-run the affected gates against the new candidate commit — then
 tag the stable version.
+
+---
+
+## Promotion Pipeline
+
+`release.yml` publishes images in strict order — the released tags are created
+only after the candidate image has passed the boot gate:
+
+1. **Build candidate** — the image is built (multi-arch, SBOM/provenance
+   attestations, OCI labels) and pushed under the unadvertised candidate tag
+   `candidate-<run_id>` only. The released tags are NOT attached during the
+   build.
+2. **Boot smoke test** — the candidate image is booted per platform (exec bit
+   + dynamic linker checks, full exit-code taxonomy and glibc-marker scan).
+3. **Promote** — only when the boot gate passed, `docker buildx imagetools
+   create` re-tags the verified digest with the released tags (version, and
+   for stable: `X.Y`, `X`, `latest`) plus `sha-<short>`. No rebuild happens:
+   promotion only creates references to the digest the gate tested.
+4. **SBOM / provenance** — SBOMs for the binaries and the image, and build
+   provenance attestations, are generated from the same digest.
+5. **Release** — the GitHub Release (stable or prerelease) is created from the
+   tag.
+
+A failed gate fails the job before step 3: **no released tags are created, no
+`latest`/alias mutation happens, and no release is created.** The `candidate-*`
+tags are transient audit artifacts (they record what was gated); they are not
+advertised and may be deleted at any time.
 
 ---
 
