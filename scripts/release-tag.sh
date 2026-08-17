@@ -27,6 +27,12 @@
 # prerelease segments, and stray identifiers are rejected. Build metadata
 # (`+meta`) is accepted and does NOT make a tag a prerelease.
 #
+# `immutability_decision` implements release immutability: a version that
+# already has a GitHub release may only be re-run via workflow_dispatch at its
+# own commit (repair mode); a tag push against an existing release is a
+# force-move/duplicate attempt and is rejected. The workflow calls it in
+# validate-tag, before anything is built.
+#
 # Run `bash scripts/release-tag.sh --selftest` to assert the full matrix.
 
 set -euo pipefail
@@ -89,6 +95,35 @@ resolve_release_tag() {
 		echo "type=raw,value=latest"
 	fi
 	echo "RS_EOF"
+}
+
+# Reason used for every immutability FAIL; the workflow surfaces it verbatim.
+RS_IMMUTABILITY_FAIL_REASON="version already released; a defective release must use the next prerelease version"
+
+# immutability_decision <event_name> <tag> <sha> <release_exists> <tag_sha>
+#   Pure release-immutability decision for a release attempt:
+#     - no existing GitHub release -> ALLOW
+#     - existing release + workflow_dispatch + tag_sha == sha
+#       -> ALLOW (explicit repair mode: re-running the SAME version at ITS OWN
+#          commit, e.g. the v0.7.0 remediation path)
+#     - anything else (incl. a tag push against an existing release = force-move
+#       or duplicate attempt) -> FAIL:<reason>
+#   Echoes ALLOW or FAIL:<reason>; exits 1 on FAIL so callers can gate on it.
+#   The caller computes release_exists (e.g. gh api .../releases/tags/$tag)
+#   and tag_sha (git rev-parse "$tag^{}"); this function is side-effect free.
+immutability_decision() {
+	local event_name="$1" tag="$2" sha="$3" release_exists="$4" tag_sha="$5"
+
+	if [[ "$release_exists" != "true" ]]; then
+		echo "ALLOW"
+		return 0
+	fi
+	if [[ "$event_name" == "workflow_dispatch" && "$tag_sha" == "$sha" ]]; then
+		echo "ALLOW"
+		return 0
+	fi
+	echo "FAIL:${RS_IMMUTABILITY_FAIL_REASON}"
+	return 1
 }
 
 # --- Self-test -----------------------------------------------------------------
@@ -187,6 +222,20 @@ rs_check_tag() {
 	fi
 }
 
+# check_immutability <event_name> <tag> <sha> <release_exists> <tag_sha> <expected>
+rs_check_immutability() {
+	local event_name="$1" tag="$2" sha="$3" release_exists="$4" tag_sha="$5" expected="$6"
+	local decision
+
+	RS_CHECKS=$((RS_CHECKS + 1))
+	decision="$(immutability_decision "$event_name" "$tag" "$sha" "$release_exists" "$tag_sha" || true)"
+	if [[ "$decision" == "$expected" ]]; then
+		rs_pass "immutability event=$event_name tag=$tag release_exists=$release_exists tag_sha=${tag_sha:-none} -> $decision"
+	else
+		rs_fail "immutability event=$event_name tag=$tag release_exists=$release_exists tag_sha=${tag_sha:-none}: got '$decision' (expected '$expected')"
+	fi
+}
+
 # check_rejected <tag>
 rs_check_rejected() {
 	local tag="$1"
@@ -215,6 +264,17 @@ selftest() {
 	# accepted but stripped from the Docker tag (`+` is not a valid Docker tag char).
 	rs_check_tag "v1.2.3-ALPHA" true "Elembra v1.2.3-ALPHA" 1.2.3-ALPHA
 	rs_check_tag "v1.2.3-alpha.1+meta" true "Elembra v1.2.3-alpha.1+meta" 1.2.3-alpha.1
+
+	# Release immutability decision matrix.
+	# No existing release -> ALLOW, regardless of event.
+	rs_check_immutability "push" "v0.7.0" "aaa1111" "false" "" "ALLOW"
+	# Existing release + workflow_dispatch + same commit -> ALLOW (repair mode).
+	rs_check_immutability "workflow_dispatch" "v0.8.0-alpha.1" "aaa1111" "true" "aaa1111" "ALLOW"
+	# Existing release + workflow_dispatch + different commit -> FAIL.
+	rs_check_immutability "workflow_dispatch" "v0.8.0-alpha.1" "aaa1111" "true" "bbb2222" "FAIL:${RS_IMMUTABILITY_FAIL_REASON}"
+	# Existing release + tag push -> FAIL even when the tag points at the same
+	# commit (a force-move or duplicate attempt is never allowed via push).
+	rs_check_immutability "push" "v0.7.0" "aaa1111" "true" "aaa1111" "FAIL:${RS_IMMUTABILITY_FAIL_REASON}"
 
 	# Invalid tags.
 	rs_check_rejected ""
