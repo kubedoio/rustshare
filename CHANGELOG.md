@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Release pipeline: the precompiled-binary image path now restores the exec
+  bit on `rustshare-server` and builds release binaries inside
+  `rust:1.97-bookworm` (glibc 2.36) so they load in the
+  `debian:bookworm-slim` runtime image; the built image is boot-smoke-tested
+  on linux/amd64 and linux/arm64 before the push is accepted. The published
+  v0.8.0-alpha.1 image could not boot (missing exec bit + GLIBC_2.38/2.39
+  loader error).
+
 ## [0.8.0-alpha.1] - 2026-08-16
 
 ### Added
