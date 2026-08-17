@@ -100,6 +100,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
           - target: aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest
+    # Build inside the same base image the Dockerfile builder stage uses
+    # (rust:1.97-bookworm, glibc 2.36). Building on the ubuntu-latest host
+    # (glibc 2.39) produced binaries that cannot load in the
+    # debian:bookworm-slim runtime image (GLIBC_2.38/2.39 not found).
+    container:
+      image: rust:1.97-bookworm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -114,12 +120,17 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # The container build links against glibc 2.36; keep its cache key
+          # separate from the host (glibc 2.39) CI runs so each restores its
+          # own artifacts.
+          prefix-key: release-container
 
       - name: Install cross-compilation toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          apt-get update
+          apt-get install -y gcc-aarch64-linux-gnu
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
           [target.aarch64-unknown-linux-gnu]
@@ -210,6 +221,64 @@ jobs:
             REVISION=${{ needs.validate-tag.outputs.commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Boot smoke test (exec bit + dynamic linker)
+        shell: bash
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          # The server has no --help/--version: main() ignores argv and boots
+          # straight into startup, which first validates config and connects to
+          # Postgres. Without a database it exits 1 quickly — that is a PASS,
+          # because it proves the kernel executed the file and the dynamic
+          # linker resolved it. The two boot defects this gate guards against
+          # both die before any app code runs:
+          #   missing exec bit / exec format -> exit 126
+          #   glibc version mismatch -> ld.so error on stderr, exit 1 or 127
+          # Exit codes alone cannot separate a loader failure from the app's
+          # own no-database exit (both can be 1), so the log is also scanned
+          # for ld.so's distinctive error messages. Exit 124 (timeout killed
+          # a server that was still running) is a PASS; exit 125 is a docker
+          # infra error (pull/daemon) — retried.
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            logfile="/tmp/boot-${platform//\//-}.log"
+            echo "Boot smoke test: ${platform}"
+            rc=0
+            for attempt in 1 2 3 4 5; do
+              set +e
+              docker run --rm --platform "${platform}" "${IMAGE_REF}" \
+                timeout 25 /usr/local/bin/rustshare-server \
+                > "${logfile}" 2>&1
+              rc=$?
+              set -e
+              [ "$rc" -ne 125 ] && break
+              echo "docker infrastructure error (exit 125), attempt ${attempt}/5; retrying"
+              sleep 10
+            done
+            if grep -E "GLIBC_[0-9.]+' not found|error while loading shared libraries|not found \(required by" "${logfile}"; then
+              echo "::error::FAIL ${platform}: dynamic loader error (glibc mismatch or missing shared library)"
+              exit 1
+            fi
+            case "$rc" in
+              124)
+                echo "PASS ${platform}: server ran until timeout killed it (exec bit + loader OK)"
+                ;;
+              126|127)
+                echo "::error::FAIL ${platform}: exec/loader defect (exit ${rc})"
+                cat "${logfile}"
+                exit 1
+                ;;
+              1)
+                echo "PASS ${platform}: binary executed and linked; app exited (no database in smoke env)"
+                ;;
+              *)
+                echo "::error::FAIL ${platform}: unexpected exit code ${rc}"
+                cat "${logfile}"
+                exit 1
+                ;;
+            esac
+          done
 
   generate-sbom:
     name: Generate SBOMs

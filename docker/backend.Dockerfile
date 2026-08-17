@@ -59,6 +59,9 @@ COPY .sqlx ./.sqlx/
 # Build the application or select precompiled binaries
 ENV SQLX_OFFLINE=true
 ENV CARGO_NET_RETRY=10
+# Precompiled artifacts arrive via actions/download-artifact merge-multiple,
+# which drops the exec bit; restore it so the runtime image can execute the
+# binary. (strip preserves the file mode, so ordering vs. chmod is irrelevant.)
 RUN mkdir -p target/release \
     && if [ "$USE_PRECOMPILED" = "true" ]; then \
         case "$TARGETPLATFORM" in \
@@ -66,6 +69,7 @@ RUN mkdir -p target/release \
             "linux/arm64") cp rustshare-server-aarch64-unknown-linux-gnu target/release/rustshare-server ;; \
             *) echo "Unsupported target platform for precompiled: $TARGETPLATFORM" >&2; exit 1 ;; \
         esac; \
+        chmod +x target/release/rustshare-server; \
     else \
         cargo build --release --bin rustshare-server; \
     fi \
