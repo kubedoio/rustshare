@@ -120,7 +120,19 @@ jobs:
             echo "::error::release immutability check failed (HTTP ${status}); refusing to proceed"
             exit 1
           fi
-          DECISION="$(immutability_decision "$EVENT_NAME" "$TAG" "$COMMIT" "$RELEASE_EXISTS" "$TAG_SHA" || true)"
+          # Repair mode: a dispatch may rebuild an EXISTING version only when
+          # the tree at this commit differs from the version tag's commit
+          # EXCLUSIVELY in release-pipeline files (workflow, tag script,
+          # Dockerfile, validation workflow, release-process doc). Any
+          # application-code difference means this is a republish attempt at a
+          # different commit and is refused.
+          REPAIR_DIFF="$(git diff --name-only "${TAG}^{}" HEAD 2>/dev/null | grep -vE '^(\.github/workflows/release\.yml|scripts/release-tag\.sh|docker/backend\.Dockerfile|\.github/workflows/release-tag-validation\.yml|docs/release-process\.md)$' || true)"
+          if [[ -z "$REPAIR_DIFF" ]]; then
+            REPAIR_DIFF_EMPTY="true"
+          else
+            REPAIR_DIFF_EMPTY="false"
+          fi
+          DECISION="$(immutability_decision "$EVENT_NAME" "$TAG" "$COMMIT" "$RELEASE_EXISTS" "$TAG_SHA" "$REPAIR_DIFF_EMPTY" || true)"
           echo "Immutability decision: ${DECISION}"
           if [[ "$DECISION" == FAIL:* ]]; then
             echo "::error::${DECISION#FAIL:}"
