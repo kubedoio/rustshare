@@ -44,7 +44,7 @@ services:
   backend:
     environment:
       RUSTSHARE_CHAT_AUTHORITY: "buzz"
-      RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${RUSTSHARE_CHAT_BRIDGE_SECRET_KEY:-${BUZZ_SERVICE_SK:-}}
+      RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${BUZZ_SERVICE_SK:?BUZZ_SERVICE_SK must be set (run node frontend/scripts/alpha-gen-buzz-keys.mjs)}
       RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY: "true"
       # Zero-config Chat bootstrap (ADR-0036): the supported deployment runs
       # in auto mode — enabling Chat provisions the Workspace↔Community

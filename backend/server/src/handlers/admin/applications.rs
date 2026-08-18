@@ -11,6 +11,7 @@ use serde_json::json;
 use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
 use crate::config::ChatProvisioningMode;
 use crate::services::application_service::UpdateApplicationInput;
+use crate::services::chat_bootstrap::ChatBootstrapError;
 use crate::{
     handlers::{AdminUser, AppError, AuthenticatedUser},
     state::{AppState, ApplicationState},
@@ -139,7 +140,29 @@ pub async fn enable_application(
                 .provision(TenantId(tenant_id), WorkspaceId(tenant_id))
                 .await
             {
-                tracing::warn!(%error, "chat auto-provisioning failed; chat remains unconfigured");
+                match error {
+                    ChatBootstrapError::ServiceIdentityRejected => {
+                        tracing::warn!(
+                            "chat auto-provisioning failed: Buzz rejected Elembra's service identity; chat remains unconfigured"
+                        );
+                    }
+                    ChatBootstrapError::Discovery(_) => {
+                        tracing::warn!(
+                            %error,
+                            "chat auto-provisioning failed: relay discovery error; chat remains unconfigured"
+                        );
+                    }
+                    ChatBootstrapError::CommunityInUse { .. }
+                    | ChatBootstrapError::CommunityMismatch { .. } => {
+                        tracing::warn!(
+                            %error,
+                            "chat auto-provisioning failed: mapping conflict; chat remains unconfigured"
+                        );
+                    }
+                    _ => {
+                        tracing::warn!(%error, "chat auto-provisioning failed; chat remains unconfigured");
+                    }
+                }
             }
         }
     }

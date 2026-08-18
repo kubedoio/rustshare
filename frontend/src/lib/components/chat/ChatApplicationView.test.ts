@@ -131,12 +131,20 @@ describe('ChatApplicationView', () => {
 		await waitFor(() =>
 			expect(screen.getByText(/Chat is being configured for this workspace/)).toBeTruthy()
 		);
+		expect(screen.queryByText('Set up Chat')).toBeNull();
 	});
 
 	it('renders the binding panel for an unbound user', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus({ binding: null }));
 		render(ChatApplicationView);
 		await waitFor(() => expect(screen.getByText('Set up Chat')).toBeTruthy());
+	});
+
+	it('never shows the configuring notice when a mapping exists but the user is not bound', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus({ binding: null }));
+		render(ChatApplicationView);
+		await waitFor(() => expect(screen.getByText('Set up Chat')).toBeTruthy());
+		expect(screen.queryByText(/Chat is being configured for this workspace/)).toBeNull();
 	});
 
 	it('renders channel names for a bound, admitted user', async () => {

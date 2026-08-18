@@ -194,6 +194,8 @@ enum CommunityMode {
     MalformedContent,
     /// HTTP 500.
     Http500,
+    /// HTTP 401 Unauthorized — the relay rejected the service identity.
+    Unauthorized,
 }
 
 /// In-memory state of the fake relay. There is deliberately NO database: the
@@ -335,6 +337,9 @@ async fn community_identity(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "fake relay exploded".to_string(),
             ))
+        }
+        CommunityMode::Unauthorized => {
+            return Err((StatusCode::UNAUTHORIZED, "Unauthorized".to_string()))
         }
     };
     Ok(Json(event_json(&event)))
@@ -543,6 +548,48 @@ async fn bootstrap_rejects_stale_malformed_and_erroring_discovery() {
             "no mapping row may be created from an invalid discovery response"
         );
     }
+
+    env.fake.stop().await;
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// Proof 2c — a 401 Unauthorized from the relay maps to the operator-facing
+// service-identity diagnostic and creates no row.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn bootstrap_rejects_unauthorized_service_identity() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let env = bootstrap_env(pool.clone()).await;
+    let tenant = TenantId::from(Uuid::new_v4());
+    let workspace = WorkspaceId::from(Uuid::new_v4());
+    env.fake.state.lock().unwrap().community_mode = CommunityMode::Unauthorized;
+
+    let result = env.service.provision(tenant, workspace).await;
+    assert!(
+        matches!(result, Err(ChatBootstrapError::ServiceIdentityRejected)),
+        "a 401 Unauthorized from the relay must map to ServiceIdentityRejected: {result:?}"
+    );
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("HTTP 401 Unauthorized"),
+        "the diagnostic must mention HTTP 401 Unauthorized: {message:?}"
+    );
+    assert!(
+        message.contains("RELAY_TRUSTED_SERVICE_PUBKEYS"),
+        "the diagnostic must mention RELAY_TRUSTED_SERVICE_PUBKEYS: {message:?}"
+    );
+    assert!(
+        env.store
+            .mapping(tenant, workspace)
+            .await
+            .expect("store read must succeed")
+            .is_none(),
+        "no mapping row may be created when the relay rejects the service identity"
+    );
 
     env.fake.stop().await;
     cleanup(&pool, tenant).await;

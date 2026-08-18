@@ -239,6 +239,7 @@ pub async fn update_community_mapping(
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
         (status = 409, description = "Community in use or mismatch", body = crate::handlers::ErrorResponse),
+        (status = 502, description = "Upstream Buzz authority error", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn provision_community_mapping(
@@ -359,6 +360,10 @@ fn bootstrap_error_to_app_error(error: ChatBootstrapError) -> AppError {
     match error {
         ChatBootstrapError::CommunityInUse { .. }
         | ChatBootstrapError::CommunityMismatch { .. } => AppError::conflict(error.to_string()),
+        // 401 from the relay: the service identity used by Elembra is not
+        // trusted by the relay. Surface the operator-actionable diagnostic
+        // verbatim so the admin UI can display it.
+        ChatBootstrapError::ServiceIdentityRejected => AppError::bad_gateway(error.to_string()),
         // The relay was reachable-but-invalid or unreachable: a gateway
         // failure of the upstream Buzz authority, not a server bug.
         ChatBootstrapError::Discovery(_) => {

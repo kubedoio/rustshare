@@ -11,6 +11,8 @@ use rustshare_storage::chat_identity::{
     ChatIdentityStore, ProvisionMappingError, ProvisionMappingOutcome,
 };
 
+use rustshare_resource_auth::BuzzAuthorityError;
+
 use crate::buzz_gateway::BuzzGatewayClient;
 
 /// Result of a provisioning attempt — both variants are idempotent successes.
@@ -38,6 +40,8 @@ pub enum ProvisionOutcome {
 pub enum ChatBootstrapError {
     #[error("relay discovery failed: {0}")]
     Discovery(String),
+    #[error("Buzz rejected Elembra's service identity (HTTP 401 Unauthorized). Verify that the public key corresponding to `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` / `BUZZ_SERVICE_SK` is configured in the relay's `RELAY_TRUSTED_SERVICE_PUBKEYS`, then recreate the backend and relay containers.")]
+    ServiceIdentityRejected,
     #[error("community {community_id} is already mapped to another workspace")]
     CommunityInUse { community_id: String },
     #[error(
@@ -86,7 +90,7 @@ impl ChatBootstrapService {
             .gateway
             .community_identity(&self.bootstrap_relay_url)
             .await
-            .map_err(|error| ChatBootstrapError::Discovery(error.to_string()))?;
+            .map_err(|error| map_gateway_error(&self.bootstrap_relay_url, error))?;
 
         // 2. Existing mapping: verify, never overwrite. An existing row — even
         //    an inactive one — is treated as configured; there is no
@@ -105,6 +109,12 @@ impl ChatBootstrapService {
                     relay_pubkey: existing.relay_pubkey,
                 });
             }
+            tracing::warn!(
+                relay_url = %self.bootstrap_relay_url,
+                relay_community = %identity.community_id,
+                mapped_community = %existing.community_id,
+                "chat bootstrap: mapping conflict between relay and existing workspace mapping"
+            );
             return Err(ChatBootstrapError::CommunityMismatch {
                 relay: identity.community_id,
                 mapped: existing.community_id,
@@ -134,16 +144,144 @@ impl ChatBootstrapService {
                         relay_pubkey: existing.relay_pubkey,
                     })
                 } else {
+                    tracing::warn!(
+                        relay_url = %self.bootstrap_relay_url,
+                        relay_community = %identity.community_id,
+                        mapped_community = %existing.community_id,
+                        "chat bootstrap: mapping conflict detected after idempotent insert race"
+                    );
                     Err(ChatBootstrapError::CommunityMismatch {
                         relay: identity.community_id,
                         mapped: existing.community_id,
                     })
                 }
             }
-            Err(ProvisionMappingError::CommunityInUse) => Err(ChatBootstrapError::CommunityInUse {
-                community_id: identity.community_id,
-            }),
+            Err(ProvisionMappingError::CommunityInUse) => {
+                tracing::warn!(
+                    relay_url = %self.bootstrap_relay_url,
+                    community_id = %identity.community_id,
+                    "chat bootstrap: community already mapped to another workspace"
+                );
+                Err(ChatBootstrapError::CommunityInUse {
+                    community_id: identity.community_id,
+                })
+            }
             Err(error) => Err(ChatBootstrapError::Storage(error)),
+        }
+    }
+}
+
+/// Heuristic to detect stale relay responses inside [`BuzzAuthorityError::InvalidResponse`].
+/// The gateway reports freshness failures using the string "stale" or the
+/// `evaluated_at` field name; either is safe, operator-useful context.
+fn is_stale_response(msg: &str) -> bool {
+    msg.contains("stale") || msg.contains("evaluated_at")
+}
+
+/// Map a Buzz gateway error into a [`ChatBootstrapError`] and log safe context
+/// that lets operators distinguish the main failure modes without exposing
+/// secrets, private keys, or raw auth headers.
+fn map_gateway_error(relay_url: &str, error: BuzzAuthorityError) -> ChatBootstrapError {
+    match error {
+        BuzzAuthorityError::Unauthorized => {
+            tracing::warn!(
+                relay_url = %relay_url,
+                "chat bootstrap 401: Buzz rejected Elembra's service identity; verify RELAY_TRUSTED_SERVICE_PUBKEYS"
+            );
+            ChatBootstrapError::ServiceIdentityRejected
+        }
+        BuzzAuthorityError::Transport(_) => {
+            tracing::warn!(
+                relay_url = %relay_url,
+                error = %error,
+                "chat bootstrap: relay unreachable or transport failure"
+            );
+            ChatBootstrapError::Discovery(error.to_string())
+        }
+        BuzzAuthorityError::InvalidResponse(ref msg) if is_stale_response(msg) => {
+            tracing::warn!(
+                relay_url = %relay_url,
+                error = %error,
+                "chat bootstrap: stale relay response"
+            );
+            ChatBootstrapError::Discovery(error.to_string())
+        }
+        BuzzAuthorityError::InvalidResponse(_) => {
+            tracing::warn!(
+                relay_url = %relay_url,
+                error = %error,
+                "chat bootstrap: invalid relay response or signature"
+            );
+            ChatBootstrapError::Discovery(error.to_string())
+        }
+        BuzzAuthorityError::Config(_) => {
+            tracing::warn!(
+                relay_url = %relay_url,
+                error = %error,
+                "chat bootstrap: relay configuration error"
+            );
+            ChatBootstrapError::Discovery(error.to_string())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unauthorized_maps_to_service_identity_rejected() {
+        let error = map_gateway_error("wss://relay.example.test", BuzzAuthorityError::Unauthorized);
+        assert!(
+            matches!(error, ChatBootstrapError::ServiceIdentityRejected),
+            "expected ServiceIdentityRejected, got {error:?}"
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("HTTP 401 Unauthorized"),
+            "diagnostic must mention HTTP 401 Unauthorized: {message:?}"
+        );
+        assert!(
+            message.contains("RELAY_TRUSTED_SERVICE_PUBKEYS"),
+            "diagnostic must mention RELAY_TRUSTED_SERVICE_PUBKEYS: {message:?}"
+        );
+        assert!(
+            message.contains("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY"),
+            "diagnostic must mention RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: {message:?}"
+        );
+    }
+
+    #[test]
+    fn transport_config_and_invalid_response_map_to_discovery() {
+        for error in [
+            BuzzAuthorityError::Transport("connection refused".to_string()),
+            BuzzAuthorityError::InvalidResponse(
+                "response signature verification failed".to_string(),
+            ),
+            BuzzAuthorityError::Config("bad URL".to_string()),
+        ] {
+            let mapped = map_gateway_error("wss://relay.example.test", error);
+            assert!(
+                matches!(mapped, ChatBootstrapError::Discovery(_)),
+                "expected Discovery, got {mapped:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_response_maps_to_discovery() {
+        for msg in [
+            "batch evaluated_at is stale",
+            "response evaluated_at is 120s from the client clock (max 60s)",
+        ] {
+            let mapped = map_gateway_error(
+                "wss://relay.example.test",
+                BuzzAuthorityError::InvalidResponse(msg.to_string()),
+            );
+            assert!(
+                matches!(mapped, ChatBootstrapError::Discovery(_)),
+                "expected Discovery for stale response, got {mapped:?}"
+            );
         }
     }
 }
