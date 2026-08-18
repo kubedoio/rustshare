@@ -78,10 +78,10 @@ jobs:
           # share it): a dispatch may rebuild an EXISTING version only when
           # the tree at this commit differs from the version tag's commit
           # EXCLUSIVELY in release-pipeline files (workflow, tag script,
-          # Dockerfile, validation workflow, release-process doc). Any
-          # application-code difference means this is a republish attempt at
-          # a different commit and is refused.
-          REPAIR_DIFF="$(git diff --name-only "${TAG}^{}" HEAD 2>/dev/null | grep -vE '^(\.github/workflows/release\.yml|scripts/release-tag\.sh|docker/backend\.Dockerfile|\.github/workflows/release-tag-validation\.yml|docs/release-process\.md)$' || true)"
+          # validation workflow, release-process doc). Any
+          # application-code difference — including the Dockerfile — means
+          # this is a republish attempt at a different commit and is refused.
+          REPAIR_DIFF="$(git diff --name-only "${TAG}^{}" HEAD 2>/dev/null | grep -vE '^(\.github/workflows/release\.yml|scripts/release-tag\.sh|\.github/workflows/release-tag-validation\.yml|docs/release-process\.md)$' || true)"
           if [[ -z "$REPAIR_DIFF" ]]; then
             REPAIR_DIFF_EMPTY="true"
           else

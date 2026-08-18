@@ -124,27 +124,36 @@ they were originally published from.
 
 **The only exception — remediation/repair runs.** A release that was published
 from the correct commit but produced a broken artifact (e.g. a bad image or a
-failed build) may be re-run via **`workflow_dispatch` only**: re-running the
-SAME version at ITS OWN commit rebuilds the artifact from the same code and
-re-runs the gate. This is the explicit repair mode (the v0.7.0 remediation
-path). A repair run requires all of:
+failed build) may be re-run via **`workflow_dispatch` only**. There are two
+sanctioned repair shapes:
 
-1. The version tag exists and points at the exact commit being dispatched
-   (existing dispatch guard, issue #256), **and**
-2. A GitHub release already exists for that version (repair is only meaningful
-   for an already-released version), **and**
-3. The trigger is `workflow_dispatch` — a tag push against an already-released
-   version is a force-move/duplicate attempt and is rejected.
+1. **Same-commit re-run:** the version tag points at the exact commit being
+   dispatched (existing dispatch guard, issue #256). The artifact is rebuilt
+   from the same source and re-gated. **and/or**
+2. **Pipeline-only fix:** the dispatch commit differs from the tag commit, but
+   the tree diff is limited to release-pipeline orchestration files
+   (`.github/workflows/release.yml`, `.github/workflows/release-tag-validation.yml`,
+   `scripts/release-tag.sh`, `docs/release-process.md`). **The Dockerfile and
+   all application code are excluded** — a different image must ship as a new
+   version.
+
+A repair run additionally requires:
+
+- A GitHub release already exists for that version (repair is only meaningful
+  for an already-released version), **and**
+- The trigger is `workflow_dispatch` — a tag push against an already-released
+  version is a force-move/duplicate attempt and is rejected.
 
 The decision is made in `validate-tag`, before anything is built, by the pure
 `immutability_decision` function in `scripts/release-tag.sh`:
 
-| Release exists | Event | Tag commit vs run commit | Decision |
-|----------------|-------|--------------------------|----------|
-| no | any | — | ALLOW |
-| yes | `workflow_dispatch` | same | ALLOW (repair mode) |
-| yes | `workflow_dispatch` | different | FAIL |
-| yes | tag push | — | FAIL |
+| Release exists | Event | Tag commit vs run commit | Tree diff | Decision |
+|----------------|-------|--------------------------|-----------|----------|
+| no | any | — | — | ALLOW |
+| yes | `workflow_dispatch` | same | — | ALLOW (repair mode) |
+| yes | `workflow_dispatch` | different | pipeline-only | ALLOW (repair mode) |
+| yes | `workflow_dispatch` | different | includes Dockerfile or app code | FAIL |
+| yes | tag push | — | — | FAIL |
 
 ---
 
