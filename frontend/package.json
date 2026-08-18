@@ -14,7 +14,8 @@
 		"format": "prettier --write .",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test",
+		"test:buzz-config": "node --test scripts/alpha-validate-buzz-config.test.mjs"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.0",

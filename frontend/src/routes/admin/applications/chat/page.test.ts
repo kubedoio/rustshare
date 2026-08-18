@@ -50,7 +50,7 @@ describe('admin chat settings page', () => {
 		);
 	});
 
-	it('shows mapping details when a mapping exists', async () => {
+	it('shows connected state and mapping details when an active mapping exists', async () => {
 		mocks.getChatCommunityMapping.mockResolvedValue({
 			community_id: 'community-1',
 			relay_url: 'wss://relay.example',
@@ -58,9 +58,24 @@ describe('admin chat settings page', () => {
 			active: true
 		});
 		render(Page);
-		await waitFor(() => expect(screen.getByText('community-1')).toBeTruthy());
+		await waitFor(() => expect(screen.getByText(/Connected/)).toBeTruthy());
+		expect(screen.getByText('community-1')).toBeTruthy();
 		expect(screen.getByText('wss://relay.example')).toBeTruthy();
 		expect(screen.getByText('pk-1')).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Set up automatically' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Connect existing Chat deployment' })).toBeNull();
+	});
+
+	it('hides automatic provisioning when any mapping exists, even if inactive', async () => {
+		mocks.getChatCommunityMapping.mockResolvedValue({
+			community_id: 'community-2',
+			relay_url: 'wss://relay.old',
+			relay_pubkey: null,
+			active: false
+		});
+		render(Page);
+		await waitFor(() => expect(screen.getByText('community-2')).toBeTruthy());
+		expect(screen.queryByRole('button', { name: 'Set up automatically' })).toBeNull();
 	});
 
 	it('provisions on click and shows the returned community id', async () => {
@@ -113,6 +128,19 @@ describe('admin chat settings page', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Set up automatically' }));
 		await waitFor(() =>
 			expect(screen.getByText('community is already mapped to another workspace')).toBeTruthy()
+		);
+	});
+
+	it('shows a verify relay connection action when a mapping exists', async () => {
+		mocks.getChatCommunityMapping.mockResolvedValue({
+			community_id: 'community-1',
+			relay_url: 'wss://relay.example',
+			relay_pubkey: 'pk-1',
+			active: true
+		});
+		render(Page);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Verify relay connection' })).toBeTruthy()
 		);
 	});
 });

@@ -76,6 +76,15 @@
 
 	const mapping = $derived($mappingQuery.data);
 	const chatEnabled = $derived($statusQuery.data?.chat_enabled ?? false);
+	const hasMapping = $derived(Boolean(mapping));
+	const mappingActive = $derived(mapping?.active === true);
+
+	function verifyConnection() {
+		// Re-verification is purely diagnostic: it refreshes the mapping and
+		// status without provisioning or overwriting anything.
+		mappingQuery.refetch().catch(() => {});
+		statusQuery.refetch().catch(() => {});
+	}
 </script>
 
 <svelte:head>
@@ -113,6 +122,11 @@
 			{:else if $mappingQuery.isError}
 				<p class="mt-2 text-sm text-error">Could not load the current community mapping.</p>
 			{:else if mapping}
+				{#if mappingActive}
+					<p class="mt-2 text-sm font-medium text-success">Connected ✓</p>
+				{:else}
+					<p class="mt-2 text-sm text-warning">Mapping exists but is not active.</p>
+				{/if}
 				<dl class="mt-3 space-y-2 text-sm">
 					<div class="flex gap-2">
 						<dt class="w-32 shrink-0 text-base-content/60">community_id</dt>
@@ -131,6 +145,17 @@
 						<dd class="text-base-content">{mapping.active ? 'Yes' : 'No'}</dd>
 					</div>
 				</dl>
+				<button
+					type="button"
+					class="btn btn-outline btn-sm mt-4"
+					disabled={$mappingQuery.isFetching || $statusQuery.isFetching}
+					onclick={verifyConnection}
+				>
+					{#if $mappingQuery.isFetching || $statusQuery.isFetching}
+						<span class="loading loading-spinner loading-sm"></span>
+					{/if}
+					Verify relay connection
+				</button>
 			{:else}
 				<p class="mt-2 text-sm text-base-content/60">Chat is not yet connected to a community.</p>
 			{/if}
@@ -142,93 +167,100 @@
 				Existing mappings are never overwritten automatically.
 			</p>
 
-			<button
-				type="button"
-				class="btn btn-primary mt-4"
-				disabled={workspaceId === '' || $provisionMutation.isPending}
-				onclick={() => {
-					// Errors are surfaced via onError → provisionError; swallow the
-					// dropped mutate() promise so it never counts as unhandled.
-					$provisionMutation.mutate(workspaceId).catch(() => {});
-				}}
-			>
-				{#if $provisionMutation.isPending}
-					<span class="loading loading-spinner loading-sm"></span>
-				{/if}
-				Set up automatically
-			</button>
-			{#if provisionResult}
-				<p class="mt-3 text-sm text-success" role="status">
-					Connected to community {provisionResult.community_id} ({provisionResult.status}).
-				</p>
-			{/if}
-			{#if provisionError}
-				<p class="mt-3 text-sm text-error" role="alert">{provisionError}</p>
-			{/if}
-
-			<button
-				type="button"
-				class="btn btn-outline mt-4"
-				onclick={() => (showConnectForm = !showConnectForm)}
-			>
-				Connect existing Chat deployment
-			</button>
-			{#if showConnectForm}
-				<form
-					class="mt-4 space-y-3"
-					onsubmit={(e) => {
-						e.preventDefault();
-						connectError = '';
-						$connectMutation
-							.mutate({
-								community_id: communityId.trim(),
-								relay_url: relayUrl.trim(),
-								...(relayPubkey.trim() ? { relay_pubkey: relayPubkey.trim() } : {})
-							})
-							.catch(() => {});
+			{#if !hasMapping}
+				<button
+					type="button"
+					class="btn btn-primary mt-4"
+					disabled={workspaceId === '' || $provisionMutation.isPending}
+					onclick={() => {
+						// Errors are surfaced via onError → provisionError; swallow the
+						// dropped mutate() promise so it never counts as unhandled.
+						$provisionMutation.mutate(workspaceId).catch(() => {});
 					}}
 				>
-					<label class="block text-sm">
-						<span class="text-base-content/70">relay_url (ws/wss)</span>
-						<input
-							class="input input-bordered mt-1 w-full"
-							type="text"
-							placeholder="wss://relay.example"
-							bind:value={relayUrl}
-						/>
-					</label>
-					<label class="block text-sm">
-						<span class="text-base-content/70">community_id</span>
-						<input
-							class="input input-bordered mt-1 w-full"
-							type="text"
-							placeholder="00000000-0000-0000-0000-000000000000"
-							bind:value={communityId}
-						/>
-					</label>
-					<label class="block text-sm">
-						<span class="text-base-content/70">relay_pubkey (optional)</span>
-						<input
-							class="input input-bordered mt-1 w-full"
-							type="text"
-							placeholder="npub…"
-							bind:value={relayPubkey}
-						/>
-					</label>
-					<button
-						type="submit"
-						class="btn btn-primary"
-						disabled={!relayUrl.trim() || !communityId.trim() || $connectMutation.isPending}
-					>
-						{#if $connectMutation.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
-						{/if}
-						Connect
-					</button>
-					{#if connectError}
-						<p class="text-sm text-error" role="alert">{connectError}</p>
+					{#if $provisionMutation.isPending}
+						<span class="loading loading-spinner loading-sm"></span>
 					{/if}
-				</form>
+					Set up automatically
+				</button>
+				{#if provisionResult}
+					<p class="mt-3 text-sm text-success" role="status">
+						Connected to community {provisionResult.community_id} ({provisionResult.status}).
+					</p>
+				{/if}
+				{#if provisionError}
+					<p class="mt-3 text-sm text-error" role="alert">{provisionError}</p>
+				{/if}
+
+				<button
+					type="button"
+					class="btn btn-outline mt-4"
+					onclick={() => (showConnectForm = !showConnectForm)}
+				>
+					Connect existing Chat deployment
+				</button>
+				{#if showConnectForm}
+					<form
+						class="mt-4 space-y-3"
+						onsubmit={(e: SubmitEvent) => {
+							e.preventDefault();
+							connectError = '';
+							$connectMutation
+								.mutate({
+									community_id: communityId.trim(),
+									relay_url: relayUrl.trim(),
+									...(relayPubkey.trim() ? { relay_pubkey: relayPubkey.trim() } : {})
+								})
+								.catch(() => {});
+						}}
+					>
+						<label class="block text-sm">
+							<span class="text-base-content/70">relay_url (ws/wss)</span>
+							<input
+								class="input input-bordered mt-1 w-full"
+								type="text"
+								placeholder="wss://relay.example"
+								bind:value={relayUrl}
+							/>
+						</label>
+						<label class="block text-sm">
+							<span class="text-base-content/70">community_id</span>
+							<input
+								class="input input-bordered mt-1 w-full"
+								type="text"
+								placeholder="00000000-0000-0000-0000-000000000000"
+								bind:value={communityId}
+							/>
+						</label>
+						<label class="block text-sm">
+							<span class="text-base-content/70">relay_pubkey (optional)</span>
+							<input
+								class="input input-bordered mt-1 w-full"
+								type="text"
+								placeholder="64 lowercase hex (optional)"
+								bind:value={relayPubkey}
+							/>
+						</label>
+						<button
+							type="submit"
+							class="btn btn-primary"
+							disabled={!relayUrl.trim() || !communityId.trim() || $connectMutation.isPending}
+						>
+							{#if $connectMutation.isPending}
+								<span class="loading loading-spinner loading-sm"></span>
+							{/if}
+							Connect
+						</button>
+						{#if connectError}
+							<p class="text-sm text-error" role="alert">{connectError}</p>
+						{/if}
+					</form>
+				{/if}
+			{:else}
+				<p class="mt-4 text-sm text-base-content/70">
+					A community mapping already exists for this workspace. Disconnect it from the backend
+					before creating or connecting a different one.
+				</p>
 			{/if}
 		</section>
 	</div>
