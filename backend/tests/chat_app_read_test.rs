@@ -756,6 +756,172 @@ async fn status_hides_inactive_mapping_details() {
 }
 
 // ---------------------------------------------------------------------------
+// 1c. First-use deadlock: active mapping exists but caller has no binding yet
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_mapping_visible_without_binding() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+
+    let tenant = TenantId::from(Uuid::new_v4());
+    let principal = PrincipalId::from(Uuid::new_v4());
+    let community_id = format!("community-{}", Uuid::new_v4());
+
+    insert_mapping(&pool, tenant, &community_id, true).await;
+    set_chat_enablement(&pool, tenant, true).await;
+    insert_user(&pool, tenant, principal).await;
+
+    let response = chat_status(State(state), auth(principal, tenant))
+        .await
+        .expect("status must succeed with an active mapping and no binding");
+    let body = response.0;
+    assert!(body.chat_enabled, "chat must be reported enabled");
+    let mapping = body
+        .mapping
+        .expect("mapping must be visible so the UI can offer binding");
+    assert_eq!(mapping.community_id, community_id);
+    assert_eq!(mapping.relay_url, "wss://relay.example.test");
+    assert!(body.binding.is_none(), "no binding must be reported");
+    assert!(
+        !body.admission_active,
+        "no admission without an active binding"
+    );
+
+    cleanup(&pool, tenant, principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1d. Chat enabled but no mapping at all
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_no_mapping_reports_none() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+
+    let tenant = TenantId::from(Uuid::new_v4());
+    let principal = PrincipalId::from(Uuid::new_v4());
+
+    set_chat_enablement(&pool, tenant, true).await;
+    insert_user(&pool, tenant, principal).await;
+
+    let response = chat_status(State(state), auth(principal, tenant))
+        .await
+        .expect("status must succeed with no mapping");
+    let body = response.0;
+    assert!(body.chat_enabled, "chat is enabled at the tenant level");
+    assert!(body.mapping.is_none(), "no mapping must be reported");
+    assert!(body.binding.is_none(), "no binding must be reported");
+    assert!(!body.admission_active, "no admission is active");
+
+    cleanup(&pool, tenant, principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1e. Active mapping + active binding but no admission
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_binding_visible_without_admission() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+
+    let tenant = TenantId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    let principal = PrincipalId::from(Uuid::new_v4());
+    let community_id = format!("community-{}", Uuid::new_v4());
+
+    insert_mapping(&pool, tenant, &community_id, true).await;
+    insert_binding(&pool, tenant, principal, &keys.public_key().to_hex()).await;
+    set_chat_enablement(&pool, tenant, true).await;
+    insert_user(&pool, tenant, principal).await;
+
+    let response = chat_status(State(state), auth(principal, tenant))
+        .await
+        .expect("status must succeed with an active binding and no admission");
+    let body = response.0;
+    assert!(body.chat_enabled);
+    assert!(body.mapping.is_some(), "mapping must be visible");
+    let binding = body.binding.expect("binding must be visible");
+    assert_eq!(binding.status, "Active");
+    assert_eq!(binding.buzz_pubkey, keys.public_key().to_hex());
+    assert!(
+        !body.admission_active,
+        "admission is not active without an admission row"
+    );
+
+    cleanup(&pool, tenant, principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1f. Fully configured: active mapping + active binding + active admission
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_fully_configured_reports_active_admission() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    let response = chat_status(State(state), auth(env.principal, env.tenant))
+        .await
+        .expect("status must succeed for a fully configured tenant");
+    let body = response.0;
+    assert!(body.chat_enabled);
+    assert!(body.mapping.is_some(), "mapping must be visible");
+    assert_eq!(
+        body.mapping.as_ref().unwrap().community_id,
+        env.community_id
+    );
+    assert!(body.binding.is_some(), "binding must be visible");
+    assert!(body.admission_active, "admission must be active");
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 1g. Tenant isolation: tenant B must never see tenant A's mapping
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn status_isolation_tenant_b_cannot_see_tenant_a_mapping() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env_a = setup_env(&pool).await;
+
+    let tenant_b = TenantId::from(Uuid::new_v4());
+    let principal_b = PrincipalId::from(Uuid::new_v4());
+    set_chat_enablement(&pool, tenant_b, true).await;
+    insert_user(&pool, tenant_b, principal_b).await;
+
+    let response = chat_status(State(state), auth(principal_b, tenant_b))
+        .await
+        .expect("status must succeed for tenant B");
+    let body = response.0;
+    assert!(body.chat_enabled);
+    assert!(
+        body.mapping.is_none(),
+        "tenant B must not see tenant A's mapping"
+    );
+    assert!(body.binding.is_none());
+    assert!(!body.admission_active);
+
+    cleanup(&pool, env_a.tenant, env_a.principal).await;
+    cleanup(&pool, tenant_b, principal_b).await;
+}
+
+// ---------------------------------------------------------------------------
 // 2. The channel list is gated channel-by-channel: workspace visible, dm
 //    denied (local authority mode)
 // ---------------------------------------------------------------------------

@@ -139,21 +139,24 @@ pub async fn chat_status(
         .active_binding(ctx.tenant_id, ctx.principal_id)
         .await
         .map_err(|e| AppError::internal(format!("chat binding lookup failed: {e}")))?;
+    // An active mapping is visible independently of whether the caller has
+    // created a binding yet; an inactive mapping must not disclose
+    // community/relay configuration (existence-hiding).
+    let mapping_info = mapping
+        .as_ref()
+        .filter(|m| m.active)
+        .map(|m| CommunityMappingInfo {
+            community_id: m.community_id.clone(),
+            relay_url: m.relay_url.clone(),
+        });
+
     let mut admission_active = false;
-    let mut mapping_info = None;
     if let (Some(mapping), Some(binding)) = (&mapping, &binding) {
         if mapping.active && binding.status == rustshare_resource_auth::BindingStatus::Active {
             admission_active = chat_identity
                 .active_admission(ctx.tenant_id, &mapping.community_id, &binding.buzz_pubkey)
                 .await
                 .map_err(|e| AppError::internal(format!("chat admission lookup failed: {e}")))?;
-        }
-        // An inactive mapping must not disclose community/relay configuration.
-        if mapping.active {
-            mapping_info = Some(CommunityMappingInfo {
-                community_id: mapping.community_id.clone(),
-                relay_url: mapping.relay_url.clone(),
-            });
         }
     }
     Ok(Json(ChatStatusResponse {
