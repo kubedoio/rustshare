@@ -138,6 +138,26 @@ page ("Connect existing Chat deployment") or the admin API does it.
 
 ### 2.4 Operational notes (learned from the clean-install proof)
 
+**Chat readiness is not the same as "Chat enabled".** Enabling the application
+(§2.4 step 1) only flips the workspace-level toggle. A user can only send/read
+messages after five independent states line up:
+
+1. **Application enabled** — `POST /admin/applications/io.elembra.chat/enable`
+   succeeded.
+2. **Community mapped** — the workspace has an active `community_id` + relay
+   identity (auto-provisioned in `auto` mode, or manually connected).
+3. **Relay trusted-service authentication healthy** — the relay accepts the
+   bridge identity used by Elembra (`RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` /
+   `BUZZ_SERVICE_SK`) against its `RELAY_TRUSTED_SERVICE_PUBKEYS` allowlist.
+4. **User identity bound** — the user completed the NIP-42 binding challenge.
+5. **Admission active** — the relay has admitted the user (9030 delivered and
+   accepted).
+
+The admin Chat page and `applications/chat/status` distinguish these states.
+"Chat enabled" with no mapping shows the provisioning UI; a mapping with no
+binding shows the binding UI; only when all five states are true is Chat ready
+for that user.
+
 - **Relay network namespace**: with the dogfood override, the relay shares
   the backend container's network namespace (`network_mode: service:backend`).
   Recreating the backend (e.g. `docker compose up -d backend` after changing
@@ -267,6 +287,26 @@ relay owner key is the bridge identity: its public half is
 `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` in Elembra and `BUZZ_SERVICE_SK` for the
 observer/E2E.
 
+In the alpha/dogfood deployment there is exactly one canonical source for the
+bridge service secret: `BUZZ_SERVICE_SK`. `docker-compose.alpha.yml` sets
+`RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${BUZZ_SERVICE_SK:?...}` directly, so a
+stale explicit `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` cannot silently win. Before
+starting the alpha stack, validate key consistency with:
+
+```bash
+node frontend/scripts/alpha-validate-buzz-config.mjs
+```
+
+`scripts/pre-flight.sh` runs this automatically when `BUZZ_SERVICE_SK` is set;
+`scripts/run-alpha-dogfood.sh` runs it as a pre-check. The validation script
+derives public keys from the configured secrets and checks that:
+
+- `BUZZ_SERVICE_SK` derives `BUZZ_RELAY_OWNER_PUBKEY`;
+- `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` equals `BUZZ_SERVICE_SK` when both are set;
+- `BUZZ_RELAY_PUBKEY` matches the key derived from `BUZZ_RELAY_PRIVATE_KEY`.
+
+It never prints private secrets.
+
 ---
 
 ## 4. User onboarding
@@ -319,6 +359,7 @@ observer/E2E.
 | Ask 503 | LLM provider not configured | configure provider; status surface `ask_available` (issue #244) |
 | Channel list frozen | observer dead or WS exhaustion (fixed: 15s poll covers channels) | restart observer |
 | Binding challenge 400 "relay_url must resolve to an allowed address" | local relay without `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` | set flag + restart backend |
+| Buzz 401 / "service identity rejected" | bridge secret (`RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` / `BUZZ_SERVICE_SK`) does not match the relay's `RELAY_TRUSTED_SERVICE_PUBKEYS` allowlist | regenerate keys with `alpha-gen-buzz-keys.mjs`, update `.env`, run `alpha-validate-buzz-config.mjs`, then recreate backend + relay containers |
 | 403 on mutating calls | missing CSRF header (browser clients get it automatically) | API tooling: send `X-Rustshare-Csrf` matching the cookie |
 
 ---

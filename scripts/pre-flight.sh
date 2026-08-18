@@ -372,6 +372,27 @@ for var_name in "${REQUIRED_NON_SECRETS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Alpha Buzz key consistency check
+# ---------------------------------------------------------------------------
+
+# Export Buzz config variables from .env so the validator can see them even
+# when the caller has not sourced .env first.
+for buzz_var in BUZZ_SERVICE_SK BUZZ_RELAY_OWNER_PUBKEY RUSTSHARE_CHAT_BRIDGE_SECRET_KEY BUZZ_RELAY_PRIVATE_KEY BUZZ_RELAY_PUBKEY; do
+	buzz_value="$(env_get "${buzz_var}" 2>/dev/null || true)"
+	if [[ -n "${buzz_value}" ]]; then
+		export "${buzz_var}=${buzz_value}"
+	fi
+done
+
+if [[ -n "${BUZZ_SERVICE_SK:-}" ]]; then
+	if ! node frontend/scripts/alpha-validate-buzz-config.mjs; then
+		error "Buzz key configuration is inconsistent"
+		exit 1
+	fi
+	ok "Buzz key configuration is consistent"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 

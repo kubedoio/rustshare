@@ -24,6 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Elembra Chat first-use deadlock: `GET /applications/chat/status` now returns
+  an active workspace/community mapping even when the caller has no identity
+  binding, so the Chat UI can render the `BindingPanel` instead of the
+  "Chat is being configured" dead end.
+- Buzz bootstrap `401 Unauthorized` is now surfaced as an operator-actionable
+  diagnostic (`Buzz rejected Elembra's service identity`) without leaking
+  secrets or raw auth headers.
+
+### Added
+
+- Alpha Buzz key validation: `frontend/scripts/alpha-validate-buzz-config.mjs`
+  checks that `BUZZ_SERVICE_SK`, `BUZZ_RELAY_OWNER_PUBKEY`,
+  `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY`, and `BUZZ_RELAY_PRIVATE_KEY` are
+  consistent, and is wired into `scripts/pre-flight.sh` and
+  `scripts/run-alpha-dogfood.sh`.
+
+### Changed
+
+- `docker-compose.alpha.yml` now uses `BUZZ_SERVICE_SK` as the single canonical
+  source for `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY`, preventing stale explicit
+  bridge secrets from silently overriding regenerated service keys.
+- Admin Chat page no longer offers "Set up automatically" when an active mapping
+  already exists; it shows "Connected ✓" and a honest "Verify relay connection"
+  action instead.
+
 - Release pipeline: the precompiled-binary image path now restores the exec
   bit on `rustshare-server` and builds release binaries inside
   `rust:1.97-bookworm` (glibc 2.36) so they load in the

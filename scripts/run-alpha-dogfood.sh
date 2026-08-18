@@ -35,6 +35,15 @@ if [[ -f .env ]]; then
 	. ./.env
 	set +a
 fi
+
+# Validate Buzz key consistency before touching the stack.
+if [[ -n "${BUZZ_SERVICE_SK:-}" ]]; then
+	if ! node frontend/scripts/alpha-validate-buzz-config.mjs; then
+		echo "Buzz key configuration is inconsistent — fix .env and re-run." >&2
+		exit 1
+	fi
+fi
+
 : "${BUZZ_SERVICE_SK:?BUZZ_SERVICE_SK must be set (bridge/owner key)}"
 BUZZ_RELAY_WS="${BUZZ_RELAY_WS:-ws://localhost:7447}"
 : "${BUZZ_COMMUNITY_ID:?BUZZ_COMMUNITY_ID must be set}"
