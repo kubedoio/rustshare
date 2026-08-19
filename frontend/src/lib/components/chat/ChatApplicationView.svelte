@@ -15,6 +15,8 @@
 	import ChannelList from './ChannelList.svelte';
 	import MessageTimeline from './MessageTimeline.svelte';
 	import MessageComposer from './MessageComposer.svelte';
+	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
+	import { chatSessionStore } from '$lib/chat/session';
 
 	const statusQuery = createQuery({
 		queryKey: ['chat-status'],
@@ -241,17 +243,28 @@
 					cursor = $messagesQuery.data?.next_before ?? null;
 				}}
 			/>
-			<MessageComposer
-				relayUrl={status.mapping.relay_url}
-				channelId={selectedChannelId ?? ''}
-				boundPubkey={status.binding?.buzz_pubkey ?? null}
-				onSendFailure={handleSendFailure}
-				onSent={(eventId: string) => {
-					cursor = null;
-					pendingEventId = eventId;
-					syncState = 'waiting';
-				}}
-			/>
+			{#if $chatSessionStore.state === 'unlocked'}
+				{#key selectedChannelId}
+					<MessageComposer
+						relayUrl={status.mapping.relay_url}
+						channelId={selectedChannelId ?? ''}
+						boundPubkey={status.binding?.buzz_pubkey ?? ''}
+						onSendFailure={handleSendFailure}
+						onSent={(eventId: string) => {
+							cursor = null;
+							pendingEventId = eventId;
+							syncState = 'waiting';
+						}}
+					/>
+				{/key}
+			{:else}
+				<ChatIdentityUnlock
+					boundPubkey={status.binding?.buzz_pubkey ?? ''}
+					onUnlocked={() => {
+						// The session store update drives the composer render.
+					}}
+				/>
+			{/if}
 			{#if relayError}
 				<div class="px-4 py-2 text-sm text-error">
 					{relayError}

@@ -19,6 +19,7 @@ function message(overrides: Partial<ChatMessageDto> = {}): ChatMessageDto {
 		channel_id: 'general',
 		channel_kind: 'topic',
 		author_pubkey: 'pk-a',
+		author: null,
 		event_created_at: '2026-08-12T10:00:00Z',
 		thread_root_id: null,
 		body: 'hello',

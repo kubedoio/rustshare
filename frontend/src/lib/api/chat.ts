@@ -20,8 +20,18 @@ export interface ChatStatus {
 
 export interface ChatChannelInfo {
 	channel_id: string;
+	name: string | null;
 	channel_kind: string;
+	channel_type: string | null;
+	visibility: string | null;
+	member: boolean | null;
 	latest_event_at: string;
+}
+
+export interface ChatMessageAuthor {
+	display_name: string;
+	avatar_url: string | null;
+	is_current_user: boolean;
 }
 
 /** Identifier-only attachment reference on a chat message (issue #242). Never
@@ -41,6 +51,7 @@ export interface ChatMessageDto {
 	channel_id: string;
 	channel_kind: string;
 	author_pubkey: string;
+	author: ChatMessageAuthor | null;
 	event_created_at: string;
 	thread_root_id: string | null;
 	body: string | null;

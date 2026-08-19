@@ -1,26 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MessageComposer from './MessageComposer.svelte';
 
 const mocks = vi.hoisted(() => {
-	// Storeful fake of the key vault so tests can move between "no key on this
-	// device" (import UI) and "key present" (composer + export) states.
-	let stored: { raw: string } | null = null;
+	const attachmentTag = ['a', 'file', 'io.elembra.files', 'file', 'abc', null] as (string | null)[];
 	return {
-		hasChatKey: vi.fn(() => stored !== null),
-		loadChatKey: vi.fn(async (passphrase: string) => {
-			if (passphrase !== 'pass') throw new Error('wrong passphrase');
-			return 'sk-imported';
-		}),
-		importChatKey: vi.fn(async (json: string, passphrase: string) => {
-			if (!json.trim() || passphrase !== 'pass') throw new Error('decrypt failed');
-			stored = { raw: json };
-			return 'sk-imported';
-		}),
-		exportChatKey: vi.fn(() => stored?.raw ?? ''),
-		clearChatKey: vi.fn(() => {
-			stored = null;
-		}),
+		getSigningKey: vi.fn((): string | null => 'sk-1'),
 		publishEvent: vi.fn(),
 		publicKeyOf: vi.fn(() => 'pk-1'),
 		buildUnsignedEvent: vi.fn(
@@ -32,18 +17,19 @@ const mocks = vi.hoisted(() => {
 				content
 			})
 		),
-		clear: () => {
-			stored = null;
-		}
+		attachmentTag,
+		listAllFiles: vi.fn(async () => [
+			{ id: 'f-1', name: 'plan.txt', path: '/plan.txt', mime_type: 'text/plain', size: 12 }
+		]),
+		apiPost: vi.fn(async () => ({ buzz_tag: attachmentTag }))
 	};
 });
 
-vi.mock('$lib/chat/keys', () => ({
-	hasChatKey: mocks.hasChatKey,
-	loadChatKey: mocks.loadChatKey,
-	importChatKey: mocks.importChatKey,
-	exportChatKey: mocks.exportChatKey,
-	clearChatKey: mocks.clearChatKey
+vi.mock('$lib/chat/session', () => ({
+	getSigningKey: mocks.getSigningKey,
+	chatSessionStore: {
+		subscribe: vi.fn((fn: (value: unknown) => void) => fn({ state: 'unlocked' }))
+	}
 }));
 
 vi.mock('$lib/chat/nostr', () => ({
@@ -56,15 +42,38 @@ vi.mock('$lib/chat/nostr', () => ({
 	NOSTR_KIND_TEXT: 1
 }));
 
-vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn(async () => []) }));
+vi.mock('$lib/api/files', () => ({ listAllFiles: mocks.listAllFiles }));
 
-function renderComposer(onSendFailure = vi.fn(), channelId = 'general') {
+vi.mock('$lib/api/client', () => ({
+	apiClient: {
+		get: vi.fn(),
+		post: mocks.apiPost,
+		postVoid: vi.fn(),
+		requestBlob: vi.fn()
+	}
+}));
+
+function renderComposer(
+	props: {
+		onSendFailure?: (message: string) => void;
+		channelId?: string;
+		boundPubkey?: string;
+		signingKey?: string | null;
+	} = {}
+) {
+	const {
+		onSendFailure = vi.fn(),
+		channelId = 'general',
+		boundPubkey = 'pk-1',
+		signingKey = 'sk-1'
+	} = props;
+	mocks.getSigningKey.mockReturnValue(signingKey);
 	return {
 		onSendFailure,
 		...render(MessageComposer, {
 			relayUrl: 'wss://relay.example',
 			channelId,
-			boundPubkey: 'pk-1',
+			boundPubkey,
 			onSendFailure
 		})
 	};
@@ -72,6 +81,7 @@ function renderComposer(onSendFailure = vi.fn(), channelId = 'general') {
 
 describe('MessageComposer', () => {
 	beforeEach(() => {
+		vi.mocked(mocks.getSigningKey).mockReset().mockReturnValue('sk-1');
 		vi.mocked(mocks.publishEvent).mockReset().mockResolvedValue({ ok: true });
 		vi.mocked(mocks.publicKeyOf).mockReset().mockReturnValue('pk-1');
 		vi.mocked(mocks.buildUnsignedEvent)
@@ -85,125 +95,18 @@ describe('MessageComposer', () => {
 					content
 				})
 			);
-		vi.mocked(mocks.hasChatKey).mockClear();
-		vi.mocked(mocks.loadChatKey).mockClear();
-		vi.mocked(mocks.importChatKey).mockClear();
-		vi.mocked(mocks.exportChatKey).mockClear();
-		vi.mocked(mocks.clearChatKey).mockClear();
-		mocks.clear();
-	});
-
-	it('shows the import UI when the device holds no key, imports, then sends as the bound identity', async () => {
-		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
-
-		const backup = '{"v":1,"salt":"aa","iv":"bb","ciphertext":"cc","pubkey":"pk-1"}';
-		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: backup } });
-		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
-			target: { value: 'pass' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
-
-		await waitFor(() => expect(mocks.importChatKey).toHaveBeenCalledWith(backup, 'pass'));
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
-		await waitFor(() =>
-			expect(screen.getByText('Key imported — you can send as your bound identity.')).toBeTruthy()
-		);
-
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
-			target: { value: 'hello from the second device' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-		await waitFor(() =>
-			expect(mocks.publishEvent).toHaveBeenCalledWith(
-				'wss://relay.example',
-				expect.objectContaining({ pubkey: 'pk-1', content: 'hello from the second device' }),
-				'sk-imported'
-			)
-		);
-		// Name-based channels (the current observation-derived ids) cannot
-		// publish kind 9 — the relay requires a UUID `h` tag — so the send
-		// falls back to a legacy kind-1 note with no h tag.
-		expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
-			1,
-			'hello from the second device',
-			[],
-			'pk-1'
-		);
-		expect(onSendFailure).toHaveBeenCalledWith('');
-	});
-
-	it('surfaces an import failure for a bad backup or passphrase', async () => {
-		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
-
-		await fireEvent.input(screen.getByLabelText('Key backup'), {
-			target: { value: 'not-a-json-backup' }
-		});
-		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
-			target: { value: 'wrong' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
-
-		await waitFor(() => expect(screen.getByText('decrypt failed')).toBeTruthy());
-		expect(mocks.publishEvent).not.toHaveBeenCalled();
-		expect(onSendFailure).not.toHaveBeenCalled();
-	});
-
-	it('discards a mismatched import and lets the user re-import the correct backup', async () => {
-		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-other');
-		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
-
-		const badBackup = '{"v":1,"salt":"aa","iv":"bb","ciphertext":"cc","pubkey":"pk-other"}';
-		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: badBackup } });
-		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
-			target: { value: 'pass' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
-
-		// The wrong envelope is discarded and the panel stays open.
-		await waitFor(() => expect(mocks.clearChatKey).toHaveBeenCalled());
-		await waitFor(() =>
-			expect(screen.getByText(/That backup is not the identity bound to this account/)).toBeTruthy()
-		);
-		expect(screen.getByText(/No chat key on this device/)).toBeTruthy();
-		expect(screen.queryByText('Key imported — you can send as your bound identity.')).toBeNull();
-
-		// Re-importing the correct backup then succeeds and unlocks the composer.
-		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-1');
-		await fireEvent.input(screen.getByLabelText('Key backup'), {
-			target: { value: 'good-backup' }
-		});
-		await fireEvent.input(screen.getByPlaceholderText('backup passphrase'), {
-			target: { value: 'pass' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
-
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
-		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith(''));
-		expect(screen.queryByText(/That backup is not the identity bound/)).toBeNull();
+		vi.mocked(mocks.apiPost).mockReset().mockResolvedValue({ buzz_tag: mocks.attachmentTag });
 	});
 
 	it('publishes a kind-9 stream message with the h tag when the channel id is a UUID', async () => {
-		// Runs after the import-UI tests: hasChatKey stays mocked true from
-		// here on (mockReturnValue persists across tests in this file).
-		mocks.hasChatKey.mockReturnValue(true);
-		// The unlock flow itself is covered at the unit level (keys.test.ts);
-		// here the key is already unlocked so sends reach buildUnsignedEvent.
-		vi.mocked(mocks.loadChatKey).mockResolvedValue('sk-imported');
 		const channelUuid = '11111111-2222-4333-8444-555555555555';
-		const { onSendFailure } = renderComposer(vi.fn(), channelUuid);
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+		const { onSendFailure } = renderComposer({ channelId: channelUuid });
 
-		await fireEvent.input(screen.getByPlaceholderText(new RegExp(`Message #${channelUuid}`)), {
+		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'scoped hello' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-		// Canonical wire format: kind-9 stream message scoped to the channel
-		// by the NIP-29 `h` tag carrying its UUID.
 		await waitFor(() =>
 			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
 				9,
@@ -215,108 +118,150 @@ describe('MessageComposer', () => {
 		expect(onSendFailure).toHaveBeenCalledWith('');
 	});
 
-	it('surfaces a malformed stored key as a send failure, not an unhandled rejection', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		vi.mocked(mocks.loadChatKey).mockResolvedValue('not-a-valid-secret');
-		vi.mocked(mocks.publicKeyOf).mockImplementation(() => {
-			throw new Error('invalid secret key');
-		});
-		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+	it('falls back to kind-1 for name-based channels', async () => {
+		const { onSendFailure } = renderComposer({ channelId: 'general' });
 
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
-			target: { value: 'hello' }
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'hello general' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith('invalid secret key'));
-		expect(mocks.publishEvent).not.toHaveBeenCalled();
+		await waitFor(() =>
+			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(1, 'hello general', [], 'pk-1')
+		);
+		expect(onSendFailure).toHaveBeenCalledWith('');
 	});
 
-	it('surfaces the import UI when the stored key is corrupt or unsupported', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		vi.mocked(mocks.loadChatKey).mockRejectedValue(new Error('unsupported chat key format'));
+	it('disables send when locked (no signing key) or empty', async () => {
+		renderComposer({ signingKey: null });
+		const lockedSendButton = screen.getByRole('button', {
+			name: 'Send message'
+		}) as HTMLButtonElement;
+		expect(lockedSendButton.disabled).toBe(true);
+
+		cleanup();
+		renderComposer({ signingKey: 'sk-1' });
+		const emptySendButton = screen.getByRole('button', {
+			name: 'Send message'
+		}) as HTMLButtonElement;
+		expect(emptySendButton.disabled).toBe(true);
+	});
+
+	it('sends on Enter and inserts a newline on Shift+Enter', async () => {
 		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
+		const textarea = screen.getByLabelText('Message text');
 
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
-			target: { value: 'hello' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await fireEvent.input(textarea, { target: { value: 'send me' } });
+		await fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
-		await waitFor(() => expect(screen.getByText(/No chat key on this device/)).toBeTruthy());
-		expect(onSendFailure).toHaveBeenCalledWith(
-			'stored chat key format is unsupported — re-import your backup'
+		await waitFor(() => expect(mocks.publishEvent).toHaveBeenCalled());
+		expect(onSendFailure).toHaveBeenCalledWith('');
+
+		await fireEvent.input(textarea, { target: { value: 'line one' } });
+		await fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+		// Shift+Enter should not trigger a send.
+		const callsAfterShiftEnter = mocks.publishEvent.mock.calls.length;
+		expect(callsAfterShiftEnter).toBe(1);
+	});
+
+	it('prevents double-send while a message is in flight', async () => {
+		let resolvePublish: (value: { ok: true; event_id: string }) => void = () => {};
+		vi.mocked(mocks.publishEvent).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolvePublish = resolve;
+				})
 		);
-		expect(mocks.publishEvent).not.toHaveBeenCalled();
+		renderComposer();
+
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'first' }
+		});
+		const sendButton = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+		await fireEvent.click(sendButton);
+		expect(sendButton.disabled).toBe(true);
+
+		// A second click during the in-flight publish must not fire again.
+		await fireEvent.click(sendButton);
+		expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+
+		resolvePublish({ ok: true, event_id: 'e-1' });
+		// After a successful send the draft is cleared, so the button remains
+		// disabled until the user types again. The important invariant is that
+		// only one publish happened.
+		await waitFor(() => expect(mocks.publishEvent).toHaveBeenCalledTimes(1));
 	});
 
 	it('reports a relay rejection with the relay reason', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		// The unlock flow itself is covered at the unit level (keys.test.ts);
-		// here the key is already unlocked so sends reach publishEvent.
-		vi.mocked(mocks.loadChatKey).mockResolvedValue('sk-imported');
 		vi.mocked(mocks.publishEvent).mockResolvedValue({
 			ok: false,
 			reason: 'rejected',
 			detail: 'blocked: not admitted'
 		});
 		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+
+		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'will be rejected' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
 		await waitFor(() =>
 			expect(onSendFailure).toHaveBeenCalledWith(
-				'relay rejected the message: blocked: not admitted'
+				'Relay rejected the message: blocked: not admitted'
 			)
 		);
 	});
 
 	it('reports a transport failure as relay unreachable', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		vi.mocked(mocks.loadChatKey).mockResolvedValue('sk-imported');
 		vi.mocked(mocks.publishEvent).mockResolvedValue({ ok: false, reason: 'transport' });
 		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+
+		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'relay is down' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith('relay unreachable'));
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+		await waitFor(() => expect(onSendFailure).toHaveBeenCalledWith('Relay unreachable'));
 	});
 
-	it('does not publish when the local key pubkey differs from the bound identity', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		vi.mocked(mocks.loadChatKey).mockResolvedValue('sk-other');
+	it('reports a local key that does not match the bound identity', async () => {
 		vi.mocked(mocks.publicKeyOf).mockReturnValue('pk-other');
 		const { onSendFailure } = renderComposer();
-		await waitFor(() => expect(screen.queryByText(/No chat key on this device/)).toBeNull());
-		await fireEvent.input(screen.getByPlaceholderText(/Message #general/), {
+
+		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'identity mismatch' }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
 		await waitFor(() =>
 			expect(onSendFailure).toHaveBeenCalledWith(
-				'local key does not match your bound Buzz identity'
+				'Local Chat key does not match your bound Buzz identity.'
 			)
 		);
 		expect(mocks.publishEvent).not.toHaveBeenCalled();
 	});
 
-	it('exposes key export when a local key exists', async () => {
-		mocks.hasChatKey.mockReturnValue(true);
-		const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
-		Object.assign(navigator, { clipboard });
+	it('sends an attachment-only message', async () => {
 		const { onSendFailure } = renderComposer();
+
+		const sendButton = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(true);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Attach file' }));
+		await waitFor(() => expect(screen.getByText('plan.txt')).toBeTruthy());
+		await fireEvent.click(screen.getByText('plan.txt'));
+
+		await waitFor(() => expect(sendButton.disabled).toBe(false));
+		await fireEvent.click(sendButton);
+
 		await waitFor(() =>
-			expect(screen.getByRole('button', { name: 'Export key backup' })).toBeTruthy()
+			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
+				1,
+				'',
+				expect.arrayContaining([mocks.attachmentTag]),
+				'pk-1'
+			)
 		);
-		await fireEvent.click(screen.getByRole('button', { name: 'Export key backup' }));
-		await waitFor(() => expect(mocks.exportChatKey).toHaveBeenCalled());
-		await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
-		await waitFor(() => expect(screen.getByText('Backup copied to clipboard.')).toBeTruthy());
-		expect(onSendFailure).not.toHaveBeenCalled();
+		expect(onSendFailure).toHaveBeenCalledWith('');
 	});
 });
