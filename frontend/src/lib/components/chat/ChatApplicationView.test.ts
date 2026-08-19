@@ -40,7 +40,12 @@ const mocks = vi.hoisted(() => {
 				content
 			})
 		),
-		listAllFiles: vi.fn(async () => [])
+		listAllFiles: vi.fn(async () => []),
+		apiClient: {
+			get: vi.fn(),
+			post: vi.fn(),
+			getBaseURL: vi.fn(() => 'http://localhost:8080/api/v1')
+		}
 	};
 });
 
@@ -50,6 +55,10 @@ vi.mock('$lib/api/chat', () => ({
 	getChatMessages: mocks.getChatMessages,
 	getChatMessage: mocks.getChatMessage,
 	openChatAttachment: mocks.openChatAttachment
+}));
+
+vi.mock('$lib/api/client', () => ({
+	apiClient: mocks.apiClient
 }));
 
 vi.mock('$lib/chat/session', () => ({
@@ -197,8 +206,8 @@ describe('ChatApplicationView', () => {
 		mocks.getChatChannels.mockResolvedValue(CHANNELS);
 		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
 		renderView();
-		await waitFor(() => expect(screen.getByText(/general/)).toBeTruthy());
-		expect(screen.getByText(/random/)).toBeTruthy();
+		await waitFor(() => expect(screen.getByRole('option', { name: /general/ })).toBeTruthy());
+		expect(screen.getByRole('option', { name: /random/ })).toBeTruthy();
 	});
 
 	it('shows the unlock panel when the Chat session is locked', async () => {
@@ -243,13 +252,24 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(screen.getByText('Sent — waiting for Elembra sync…')).toBeTruthy());
 	});
 
-	it('does not advertise Ask when the provider is unavailable', async () => {
+	it('advertises Ask Elembra when the provider is available', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus({ ask_available: true }));
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		renderView();
+		await waitFor(() => expect(screen.getByRole('link', { name: 'Ask Elembra' })).toBeTruthy());
+	});
+
+	it('disables Ask Elembra when the provider is unavailable', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus({ ask_available: false }));
 		mocks.getChatChannels.mockResolvedValue(CHANNELS);
 		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
 		renderView();
-		await waitFor(() => expect(screen.getByText(/Ask this channel is unavailable/)).toBeTruthy());
-		expect(screen.queryByRole('link', { name: 'Ask this channel' })).toBeNull();
+		await waitFor(() => {
+			const askButton = screen.getByRole('button', { name: 'Ask Elembra' });
+			expect(askButton).toBeTruthy();
+			expect(askButton.hasAttribute('disabled')).toBe(true);
+		});
 	});
 
 	it('fetches the deep-linked message', async () => {
@@ -300,8 +320,8 @@ describe('ChatApplicationView', () => {
 					}
 		);
 		renderView();
-		await waitFor(() => expect(screen.getByText('Load earlier')).toBeTruthy());
-		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }));
+		await waitFor(() => expect(screen.getByText('Load earlier messages')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', 't2'));
 	});
 
@@ -331,8 +351,8 @@ describe('ChatApplicationView', () => {
 					}
 		);
 		renderView();
-		await waitFor(() => expect(screen.getByText('Load earlier')).toBeTruthy());
-		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }));
+		await waitFor(() => expect(screen.getByText('Load earlier messages')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Back to latest' })).toBeTruthy()
 		);
@@ -346,7 +366,7 @@ describe('ChatApplicationView', () => {
 		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
 		renderView();
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', null));
-		await fireEvent.click(screen.getByRole('button', { name: /random/ }));
+		await fireEvent.click(screen.getByRole('option', { name: /random/ }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('random', null));
 	});
 
@@ -420,7 +440,7 @@ describe('ChatApplicationView', () => {
 				expect(screen.getByText('Sent — waiting for Elembra sync…')).toBeTruthy()
 			);
 
-			await fireEvent.click(screen.getByRole('button', { name: /random/ }));
+			await fireEvent.click(screen.getByRole('option', { name: /random/ }));
 			await waitFor(() =>
 				expect(screen.queryByText('Sent — waiting for Elembra sync…')).toBeNull()
 			);
@@ -438,7 +458,7 @@ describe('ChatApplicationView', () => {
 			mocks.getChatChannels.mockResolvedValue(CHANNELS);
 			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
 			renderView();
-			await waitFor(() => expect(screen.getByText(/general/)).toBeTruthy());
+			await waitFor(() => expect(screen.getByRole('option', { name: /general/ })).toBeTruthy());
 			const channelsCalls = mocks.getChatChannels.mock.calls.length;
 			const messagesCalls = mocks.getChatMessages.mock.calls.length;
 			const statusCalls = mocks.getChatStatus.mock.calls.length;
