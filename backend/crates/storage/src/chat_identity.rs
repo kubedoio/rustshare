@@ -11,6 +11,19 @@ use rustshare_resource_auth::{
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+/// A chat author resolved from Elembra-owned identity state.
+///
+/// Returned by [`ChatIdentityStore::resolve_authors_by_pubkeys`]. Revoked
+/// bindings are intentionally kept so historical messages can still show the
+/// display name that was current at the time of binding.
+#[derive(Debug, Clone)]
+pub struct ResolvedChatAuthor {
+    pub buzz_pubkey: String,
+    pub principal_id: PrincipalId,
+    pub display_name: String,
+    pub avatar_path: Option<String>,
+}
+
 /// Errors from [`ChatIdentityStore::mapping_by_community`].
 #[derive(Debug, thiserror::Error)]
 pub enum CommunityMappingError {
@@ -556,6 +569,55 @@ impl ChatIdentityStore {
             })
         })
         .transpose()
+    }
+
+    /// Resolve display metadata for a batch of Buzz pubkeys in one query.
+    ///
+    /// This is a historical resolution: revoked bindings are kept so messages
+    /// authored before a rotation/revocation still show the correct display
+    /// name. Per pubkey the query prefers an **active** binding; if none is
+    /// active it falls back to the most recently created binding. Disabled
+    /// users are not filtered out because their historical display names are
+    /// still needed for the timeline. Tenant isolation is enforced on the
+    /// binding table (`b.tenant_id = $1`).
+    pub async fn resolve_authors_by_pubkeys(
+        &self,
+        tenant_id: TenantId,
+        pubkeys: &[String],
+    ) -> Result<Vec<ResolvedChatAuthor>, sqlx::Error> {
+        if pubkeys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (b.buzz_pubkey)
+                    b.buzz_pubkey,
+                    b.principal_id,
+                    u.display_name,
+                    u.avatar_path
+             FROM chat_identity_bindings b
+             JOIN users u ON u.id = b.principal_id
+             WHERE b.tenant_id = $1
+               AND b.buzz_pubkey = ANY($2)
+             ORDER BY b.buzz_pubkey,
+                      CASE WHEN b.status = 'active' AND b.revoked_at IS NULL THEN 0 ELSE 1 END,
+                      b.created_at DESC",
+        )
+        .bind(tenant_id.0)
+        .bind(pubkeys)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(ResolvedChatAuthor {
+                    buzz_pubkey: row.try_get("buzz_pubkey")?,
+                    principal_id: PrincipalId(row.try_get("principal_id")?),
+                    display_name: row.try_get("display_name")?,
+                    avatar_path: row.try_get("avatar_path")?,
+                })
+            })
+            .collect()
     }
 
     /// Reverse mapping: live binding for a Buzz pubkey in this tenant, if any.
