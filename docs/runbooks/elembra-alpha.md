@@ -229,6 +229,25 @@ WHERE application_id = 'io.elembra.chat'
 
 `scripts/run-alpha-dogfood.sh` performs this step automatically (P02d).
 
+### 2.4.1 Chat UI state machine
+
+The Chat application view follows a deterministic state machine:
+
+| State | Render | Description |
+|---|---|---|
+| No mapping | "Chat is being configured for this workspace." | Workspace not yet bound to a Buzz community |
+| Mapping exists + no binding | `BindingPanel` | Key creation / import UI; user creates a Buzz keypair |
+| Binding exists + no admission | "Admission pending" | Waiting for relay admission (automated via bridge) |
+| Bound + admitted + key locked | `ChatIdentityUnlock` | Passphrase entry / key recovery |
+| Bound + admitted + key unlocked | `ChannelList` + `ChannelHeader` + `MessageTimeline` + `MessageComposer` | Full Chat experience |
+
+Channel display names from the Buzz registry are shown as the primary label
+(e.g. `# ops`); the raw channel UUID is preserved as the stable identity for
+all API calls but is never the default primary label. Message authors are
+resolved to the Elembra user's display name when the author's Buzz pubkey has
+an active or historical binding in the current tenant; unknown Buzz pubkeys
+are shown as "Unknown Buzz user" with a shortened pubkey.
+
 ### 2.5 Teardown
 
 ```bash
@@ -322,9 +341,20 @@ It never prints private secrets.
 1. **Account**: admin creates the user (API: `POST /api/v1/admin/users`, or the
    admin UI). The user logs in.
 2. **Chat key**: the browser generates a Buzz key on first Chat use and encrypts
-   it with a passphrase (PBKDF2 600k). Export/import:
-   - Export: composer "Export key" affordance → encrypted JSON envelope.
-   - Import on another device: composer import UI → envelope + passphrase.
+   it with a passphrase (PBKDF2 600k). The encrypted key is stored in
+   localStorage; the plaintext secret key is loaded into an **in-memory identity
+   session** once per browser session:
+
+   - **Locked state**: the user sees an unlock panel (`ChatIdentityUnlock`)
+     with a passphrase input. A locked identity does not prevent reading
+     messages, but the Send control and composer are not shown.
+   - **Unlock**: on correct passphrase the session holds the decrypted secret
+     key in module memory (never persisted, never visible to the backend).
+   - **Wrong passphrase**: clear inline error; the session remains locked.
+   - **No key / corrupt key**: the unlock panel shows the import/recovery UI.
+   - **Export / Lock / Remove**: available from the `ChatIdentityMenu` in the
+     composer action strip.
+   - **Logout**: clears the in-memory session.
    - Loss without export: unrecoverable by design (a new key requires a new
      binding; document to users).
 3. **Binding**: challenge → NIP-42 proof → verify (all client-driven).
