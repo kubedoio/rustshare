@@ -12,7 +12,9 @@ use rustshare_core::domain::{ActionCapability, ApplicationId, PrincipalId, Tenan
 use rustshare_resource_auth::{
     ChatIdentityBinding, PrincipalContext, ResourceRef, WorkspaceCommunityMapping,
 };
+use rustshare_storage::ResolvedChatAuthor;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 use super::{AppError, AuthenticatedUser};
 use crate::state::AppState;
@@ -49,7 +51,11 @@ pub struct ChatStatusResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChannelInfo {
     pub channel_id: String,
+    pub name: Option<String>,
     pub channel_kind: String,
+    pub channel_type: Option<String>,
+    pub visibility: Option<String>,
+    pub member: Option<bool>,
     pub latest_event_at: DateTime<Utc>,
 }
 
@@ -79,6 +85,13 @@ fn attachment_dto(reference: &ResourceRef) -> ChatAttachmentDto {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ChatAuthorDto {
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub is_current_user: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChatMessageDto {
     pub message_id: String,
     pub event_id: String,
@@ -92,6 +105,10 @@ pub struct ChatMessageDto {
     /// Identifier-only `elembra-ref` attachment references from the message's
     /// latest event, in event tag order (deduplicated at ingest).
     pub attachments: Vec<ChatAttachmentDto>,
+    /// Resolved Elembra author metadata, when the author's Buzz pubkey maps to
+    /// a local user identity. Missing for unbound pubkeys; revoked bindings
+    /// still resolve historically.
+    pub author: Option<ChatAuthorDto>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -220,7 +237,11 @@ pub async fn list_channels(
         {
             channels.push(ChannelInfo {
                 channel_id: summary.channel_id,
+                name: None,
                 channel_kind: summary.channel_kind.as_str().to_string(),
+                channel_type: None,
+                visibility: None,
+                member: None,
                 latest_event_at: summary.latest_event_at,
             });
         }
@@ -311,8 +332,12 @@ async fn list_channels_from_registry(
             .into_iter()
             .map(|channel| ChannelInfo {
                 channel_id: channel.channel_id,
+                name: Some(channel.name),
                 channel_kind: registry_channel_kind(&channel.channel_type, &channel.visibility)
                     .to_string(),
+                channel_type: Some(channel.channel_type),
+                visibility: Some(channel.visibility),
+                member: Some(channel.member),
                 latest_event_at,
             })
             .collect(),
@@ -505,12 +530,39 @@ pub async fn list_messages(
             })?
     };
 
+    // Only resolve authors for messages the caller is actually allowed to see.
+    let allowed_events: Vec<_> = visible
+        .iter()
+        .zip(&decisions)
+        .filter_map(|(event, decision)| {
+            if decision.decision.is_allow() {
+                Some(event)
+            } else {
+                metrics::counter!("chat_authorization_denials_total").increment(1);
+                None
+            }
+        })
+        .collect();
+
+    // Batch-resolve display metadata for every distinct author pubkey in the
+    // page. One query per page, never N+1.
+    let author_pubkeys: Vec<String> = allowed_events
+        .iter()
+        .map(|event| event.author_pubkey.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let authors = chat_identity
+        .resolve_authors_by_pubkeys(ctx.tenant_id, &author_pubkeys)
+        .await
+        .map_err(|e| AppError::internal(format!("chat author resolution failed: {e}")))?;
+    let authors_by_pubkey: HashMap<String, ResolvedChatAuthor> = authors
+        .into_iter()
+        .map(|a| (a.buzz_pubkey.clone(), a))
+        .collect();
+
     let mut messages = Vec::new();
-    for (event, decision) in visible.iter().zip(&decisions) {
-        if !decision.decision.is_allow() {
-            metrics::counter!("chat_authorization_denials_total").increment(1);
-            continue;
-        }
+    for event in allowed_events {
         messages.push(ChatMessageDto {
             message_id: event.message_id.clone(),
             event_id: event.event_id.clone(),
@@ -522,6 +574,16 @@ pub async fn list_messages(
             thread_root_id: event.thread_root_id.clone(),
             body: event.body.clone(),
             attachments: event.attachment_refs.iter().map(attachment_dto).collect(),
+            author: authors_by_pubkey
+                .get(&event.author_pubkey)
+                .map(|author| ChatAuthorDto {
+                    display_name: author.display_name.clone(),
+                    avatar_url: author
+                        .avatar_path
+                        .as_ref()
+                        .map(|_| format!("/users/{}/avatar", author.principal_id.0)),
+                    is_current_user: author.principal_id.0 == auth.user_id,
+                }),
         });
     }
     Ok(Json(MessagesResponse {
@@ -548,6 +610,7 @@ pub async fn get_message(
     Path(message_id): Path<String>,
 ) -> Result<Json<ChatMessageDto>, AppError> {
     let ctx = principal(&auth);
+    let chat_identity = state.chat_owner.chat_identity_store();
     let events = state
         .chat_observation_store
         .get_by_message_id(ctx.tenant_id, &message_id)
@@ -581,6 +644,22 @@ pub async fn get_message(
         metrics::counter!("chat_authorization_denials_total").increment(1);
         return Err(AppError::not_found("resource unavailable"));
     }
+
+    let author = chat_identity
+        .resolve_authors_by_pubkeys(ctx.tenant_id, std::slice::from_ref(&latest.author_pubkey))
+        .await
+        .map_err(|e| AppError::internal(format!("chat author resolution failed: {e}")))?
+        .into_iter()
+        .next()
+        .map(|author| ChatAuthorDto {
+            display_name: author.display_name,
+            avatar_url: author
+                .avatar_path
+                .as_ref()
+                .map(|_| format!("/users/{}/avatar", author.principal_id.0)),
+            is_current_user: author.principal_id.0 == auth.user_id,
+        });
+
     Ok(Json(ChatMessageDto {
         message_id: latest.message_id.clone(),
         event_id: latest.event_id.clone(),
@@ -592,5 +671,80 @@ pub async fn get_message(
         thread_root_id: latest.thread_root_id.clone(),
         body: latest.body.clone(),
         attachments: latest.attachment_refs.iter().map(attachment_dto).collect(),
+        author,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use rustshare_resource_auth::BuzzChannelInfo;
+
+    #[test]
+    fn buzz_channel_registry_mapping_preserves_name_and_optional_fields() {
+        let latest_event_at = Utc::now();
+        let channel = BuzzChannelInfo {
+            channel_id: "channel-ws".into(),
+            name: "General".into(),
+            channel_type: "stream".into(),
+            visibility: "open".into(),
+            member: true,
+        };
+        let info = ChannelInfo {
+            channel_id: channel.channel_id.clone(),
+            name: Some(channel.name.clone()),
+            channel_kind: registry_channel_kind(&channel.channel_type, &channel.visibility)
+                .to_string(),
+            channel_type: Some(channel.channel_type.clone()),
+            visibility: Some(channel.visibility.clone()),
+            member: Some(channel.member),
+            latest_event_at,
+        };
+        assert_eq!(info.channel_id, "channel-ws");
+        assert_eq!(info.name, Some("General".to_string()));
+        assert_eq!(info.channel_kind, "workspace");
+        assert_eq!(info.channel_type, Some("stream".to_string()));
+        assert_eq!(info.visibility, Some("open".to_string()));
+        assert_eq!(info.member, Some(true));
+        assert_eq!(info.latest_event_at, latest_event_at);
+
+        let dm = BuzzChannelInfo {
+            channel_id: "dm-1".into(),
+            name: "DM".into(),
+            channel_type: "dm".into(),
+            visibility: "private".into(),
+            member: true,
+        };
+        let dm_info = ChannelInfo {
+            channel_id: dm.channel_id.clone(),
+            name: Some(dm.name.clone()),
+            channel_kind: registry_channel_kind(&dm.channel_type, &dm.visibility).to_string(),
+            channel_type: Some(dm.channel_type.clone()),
+            visibility: Some(dm.visibility.clone()),
+            member: Some(dm.member),
+            latest_event_at,
+        };
+        assert_eq!(dm_info.channel_kind, "dm");
+
+        let private = BuzzChannelInfo {
+            channel_id: "private-1".into(),
+            name: "Secret".into(),
+            channel_type: "forum".into(),
+            visibility: "private".into(),
+            member: false,
+        };
+        let private_info = ChannelInfo {
+            channel_id: private.channel_id.clone(),
+            name: Some(private.name.clone()),
+            channel_kind: registry_channel_kind(&private.channel_type, &private.visibility)
+                .to_string(),
+            channel_type: Some(private.channel_type.clone()),
+            visibility: Some(private.visibility.clone()),
+            member: Some(private.member),
+            latest_event_at,
+        };
+        assert_eq!(private_info.channel_kind, "private");
+        assert_eq!(private_info.member, Some(false));
+    }
 }

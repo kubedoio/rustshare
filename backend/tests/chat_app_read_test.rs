@@ -228,18 +228,45 @@ async fn set_chat_enablement(pool: &PgPool, tenant: TenantId, enabled: bool) {
 /// is a foreign key to `users.id`). Production revocations always act on real
 /// users; the harness must provide one.
 async fn insert_user(pool: &PgPool, tenant: TenantId, principal: PrincipalId) {
+    insert_user_with_profile(pool, tenant, principal, "test", None).await;
+}
+
+async fn insert_user_with_profile(
+    pool: &PgPool,
+    tenant: TenantId,
+    principal: PrincipalId,
+    display_name: &str,
+    avatar_path: Option<&str>,
+) {
     sqlx::query(
         "INSERT INTO users
-            (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
-         VALUES ($1, $2, $3, 'x', 'test', false, 0, $4)",
+            (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id, avatar_path)
+         VALUES ($1, $2, $3, 'x', $4, false, 0, $5, $6)",
     )
     .bind(principal.0)
     .bind(format!("user-{}", Uuid::new_v4().simple()))
     .bind(format!("user-{}@example.test", Uuid::new_v4().simple()))
+    .bind(display_name)
     .bind(tenant.0)
+    .bind(avatar_path)
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn update_user_profile(
+    pool: &PgPool,
+    principal: PrincipalId,
+    display_name: &str,
+    avatar_path: Option<&str>,
+) {
+    sqlx::query("UPDATE users SET display_name = $1, avatar_path = $2 WHERE id = $3")
+        .bind(display_name)
+        .bind(avatar_path)
+        .bind(principal.0)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// Insert one `chat_observed_events` row directly via SQL (the bridge's
@@ -293,6 +320,76 @@ async fn insert_observation_with_refs(
     created_at: DateTime<Utc>,
     attachment_refs: &[ResourceRef],
 ) {
+    insert_observation_with_refs_and_author(
+        pool,
+        tenant,
+        community_id,
+        channel_id,
+        message_id,
+        event_id,
+        channel_kind,
+        event_type,
+        active,
+        body,
+        created_at,
+        &hex64(0xbb),
+        attachment_refs,
+    )
+    .await;
+}
+
+/// [`insert_observation_with_refs`] with an explicit `author_pubkey`.
+#[allow(clippy::too_many_arguments)]
+async fn insert_observation_with_author(
+    pool: &PgPool,
+    tenant: TenantId,
+    community_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    event_id: &str,
+    channel_kind: &str,
+    event_type: &str,
+    active: bool,
+    body: Option<&str>,
+    created_at: DateTime<Utc>,
+    author_pubkey: &str,
+) {
+    insert_observation_with_refs_and_author(
+        pool,
+        tenant,
+        community_id,
+        channel_id,
+        message_id,
+        event_id,
+        channel_kind,
+        event_type,
+        active,
+        body,
+        created_at,
+        author_pubkey,
+        &[],
+    )
+    .await;
+}
+
+/// [`insert_observation_with_refs`] with an explicit `author_pubkey` and
+/// retained attachment references.
+#[allow(clippy::too_many_arguments)]
+async fn insert_observation_with_refs_and_author(
+    pool: &PgPool,
+    tenant: TenantId,
+    community_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    event_id: &str,
+    channel_kind: &str,
+    event_type: &str,
+    active: bool,
+    body: Option<&str>,
+    created_at: DateTime<Utc>,
+    author_pubkey: &str,
+    attachment_refs: &[ResourceRef],
+) {
     sqlx::query(
         "INSERT INTO chat_observed_events
             (tenant_id, workspace_id, event_id, message_id, event_type,
@@ -310,7 +407,7 @@ async fn insert_observation_with_refs(
     .bind(community_id)
     .bind(channel_id)
     .bind(channel_kind)
-    .bind(hex64(0xbb))
+    .bind(author_pubkey)
     .bind(created_at)
     .bind(format!("sha256:{event_id}"))
     .bind("c".repeat(128))
@@ -320,6 +417,47 @@ async fn insert_observation_with_refs(
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn mapping_id_for_tenant(pool: &PgPool, tenant: TenantId) -> Uuid {
+    let (mapping_id,): (Uuid,) =
+        sqlx::query_as("SELECT mapping_id FROM chat_workspace_communities WHERE tenant_id = $1")
+            .bind(tenant.0)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    mapping_id
+}
+
+async fn revoke_binding(pool: &PgPool, tenant: TenantId, binding_id: Uuid) {
+    sqlx::query(
+        "UPDATE chat_identity_bindings
+         SET status = 'revoked', revoked_at = COALESCE(revoked_at, now())
+         WHERE tenant_id = $1 AND binding_id = $2",
+    )
+    .bind(tenant.0)
+    .bind(binding_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn active_pubkey_for_principal(
+    pool: &PgPool,
+    tenant: TenantId,
+    principal: PrincipalId,
+) -> String {
+    let (pubkey,): (String,) = sqlx::query_as(
+        "SELECT buzz_pubkey FROM chat_identity_bindings
+         WHERE tenant_id = $1 AND principal_id = $2 AND status = 'active'
+           AND revoked_at IS NULL",
+    )
+    .bind(tenant.0)
+    .bind(principal.0)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    pubkey
 }
 
 /// The ids a fully configured tenant's assertions need.
@@ -975,6 +1113,13 @@ async fn channels_requires_mapping_and_gate() {
         "local mode: the workspace channel is listed, the dm channel is not"
     );
     assert_eq!(channels[0].channel_kind, "workspace");
+    assert!(
+        channels[0].name.is_none()
+            && channels[0].channel_type.is_none()
+            && channels[0].visibility.is_none()
+            && channels[0].member.is_none(),
+        "local mode must not fabricate Buzz registry metadata"
+    );
 
     cleanup(&pool, env.tenant, env.principal).await;
 }
@@ -2035,4 +2180,410 @@ async fn attachment_open_denies_same_tenant_unshared_file() {
     );
 
     cleanup(&pool, env.tenant, env.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// Author resolution tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_resolves_for_known_local_user() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    update_user_profile(&pool, env.principal, "Alice", Some("avatars/alice.png")).await;
+    let author_pubkey = active_pubkey_for_principal(&pool, env.tenant, env.principal).await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let message_id = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("hello from alice"),
+        base,
+        &author_pubkey,
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state.clone()),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 1);
+    let author = timeline.0.messages[0]
+        .author
+        .as_ref()
+        .expect("the known local user must resolve");
+    assert_eq!(author.display_name, "Alice");
+    assert_eq!(
+        author.avatar_url,
+        Some(format!("/users/{}/avatar", env.principal.0))
+    );
+    assert!(author.is_current_user);
+
+    let single = get_message(
+        State(state),
+        auth(env.principal, env.tenant),
+        Path(message_id),
+    )
+    .await
+    .expect("get_message must resolve the same author");
+    let single_author = single.0.author.expect("single message author must resolve");
+    assert_eq!(single_author.display_name, "Alice");
+    assert!(single_author.is_current_user);
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_batch_resolves_multiple_pubkeys() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+    let mapping_id = mapping_id_for_tenant(&pool, env.tenant).await;
+
+    update_user_profile(&pool, env.principal, "Alice", None).await;
+    let alice_pubkey = active_pubkey_for_principal(&pool, env.tenant, env.principal).await;
+
+    let bob = PrincipalId::from(Uuid::new_v4());
+    let bob_keys = Keys::generate();
+    insert_user_with_profile(&pool, env.tenant, bob, "Bob", None).await;
+    let bob_binding = insert_binding(&pool, env.tenant, bob, &bob_keys.public_key().to_hex()).await;
+    insert_admission(
+        &pool,
+        env.tenant,
+        mapping_id,
+        bob_binding,
+        &bob_keys.public_key().to_hex(),
+    )
+    .await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let alice_msg = unique_hex64();
+    let bob_msg = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &alice_msg,
+        &alice_msg,
+        "workspace",
+        "created",
+        true,
+        Some("alice"),
+        base,
+        &alice_pubkey,
+    )
+    .await;
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &bob_msg,
+        &bob_msg,
+        "workspace",
+        "created",
+        true,
+        Some("bob"),
+        base + Duration::seconds(30),
+        &bob_keys.public_key().to_hex(),
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 2);
+
+    let alice_message = timeline
+        .0
+        .messages
+        .iter()
+        .find(|m| m.message_id == alice_msg)
+        .expect("alice's message must be present");
+    let bob_message = timeline
+        .0
+        .messages
+        .iter()
+        .find(|m| m.message_id == bob_msg)
+        .expect("bob's message must be present");
+
+    let alice_author = alice_message.author.as_ref().expect("alice must resolve");
+    assert_eq!(alice_author.display_name, "Alice");
+    assert!(alice_author.is_current_user);
+
+    let bob_author = bob_message.author.as_ref().expect("bob must resolve");
+    assert_eq!(bob_author.display_name, "Bob");
+    assert!(!bob_author.is_current_user);
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_unknown_buzz_pubkey_is_null() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let message_id = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("anonymous"),
+        base,
+        &hex64(0xcc),
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 1);
+    assert!(
+        timeline.0.messages[0].author.is_none(),
+        "an unbound pubkey must yield author: null"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_revoked_binding_resolves_historically() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+    let mapping_id = mapping_id_for_tenant(&pool, env.tenant).await;
+
+    let author = PrincipalId::from(Uuid::new_v4());
+    let author_keys = Keys::generate();
+    insert_user_with_profile(&pool, env.tenant, author, "Former", None).await;
+    let author_binding = insert_binding(
+        &pool,
+        env.tenant,
+        author,
+        &author_keys.public_key().to_hex(),
+    )
+    .await;
+    insert_admission(
+        &pool,
+        env.tenant,
+        mapping_id,
+        author_binding,
+        &author_keys.public_key().to_hex(),
+    )
+    .await;
+
+    // Revoke the author's binding: historical messages from this pubkey must
+    // still resolve to the former display name.
+    revoke_binding(&pool, env.tenant, author_binding).await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let message_id = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("before revocation"),
+        base,
+        &author_keys.public_key().to_hex(),
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 1);
+    let author = timeline.0.messages[0]
+        .author
+        .as_ref()
+        .expect("a revoked binding must still resolve historically");
+    assert_eq!(author.display_name, "Former");
+    assert!(!author.is_current_user);
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_rotated_pubkey_resolves_active_binding() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env = setup_env(&pool).await;
+
+    let original = PrincipalId::from(Uuid::new_v4());
+    let keys = Keys::generate();
+    let pubkey = keys.public_key().to_hex();
+    insert_user_with_profile(&pool, env.tenant, original, "Original", None).await;
+    let original_binding = insert_binding(&pool, env.tenant, original, &pubkey).await;
+
+    // Rotate the pubkey to a different principal.
+    revoke_binding(&pool, env.tenant, original_binding).await;
+    let rotated = PrincipalId::from(Uuid::new_v4());
+    insert_user_with_profile(&pool, env.tenant, rotated, "Rotated", None).await;
+    insert_binding(&pool, env.tenant, rotated, &pubkey).await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let message_id = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env.tenant,
+        &env.community_id,
+        "channel-1",
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("after rotation"),
+        base,
+        &pubkey,
+    )
+    .await;
+
+    let timeline = list_messages(
+        State(state),
+        auth(env.principal, env.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 1);
+    let author = timeline.0.messages[0]
+        .author
+        .as_ref()
+        .expect("rotated pubkey must resolve to the active binding");
+    assert_eq!(author.display_name, "Rotated");
+    assert!(!author.is_current_user);
+
+    cleanup(&pool, env.tenant, env.principal).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn author_resolution_is_tenant_isolated() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+    let (state, _, _) = setup_app_state(pool.clone()).await;
+    let env_a = setup_env(&pool).await;
+    let mapping_a = mapping_id_for_tenant(&pool, env_a.tenant).await;
+
+    let keys = Keys::generate();
+    let pubkey = keys.public_key().to_hex();
+    let author_a = PrincipalId::from(Uuid::new_v4());
+    insert_user_with_profile(&pool, env_a.tenant, author_a, "Tenant A User", None).await;
+    let binding_a = insert_binding(&pool, env_a.tenant, author_a, &pubkey).await;
+    insert_admission(&pool, env_a.tenant, mapping_a, binding_a, &pubkey).await;
+
+    let base = Utc::now() - Duration::seconds(60);
+    let message_id = unique_hex64();
+    insert_observation_with_author(
+        &pool,
+        env_a.tenant,
+        &env_a.community_id,
+        "channel-1",
+        &message_id,
+        &message_id,
+        "workspace",
+        "created",
+        true,
+        Some("hi"),
+        base,
+        &pubkey,
+    )
+    .await;
+
+    // Tenant B has a user with the same pubkey; it must not leak into tenant A.
+    let tenant_b = TenantId::from(Uuid::new_v4());
+    let principal_b = PrincipalId::from(Uuid::new_v4());
+    insert_user_with_profile(&pool, tenant_b, principal_b, "Tenant B User", None).await;
+    insert_binding(&pool, tenant_b, principal_b, &pubkey).await;
+
+    let timeline = list_messages(
+        State(state),
+        auth(env_a.principal, env_a.tenant),
+        Query(ListMessagesQuery {
+            channel_id: "channel-1".to_string(),
+            before: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("timeline must succeed");
+    assert_eq!(timeline.0.messages.len(), 1);
+    let author = timeline.0.messages[0]
+        .author
+        .as_ref()
+        .expect("author must resolve");
+    assert_eq!(author.display_name, "Tenant A User");
+
+    cleanup(&pool, env_a.tenant, env_a.principal).await;
+    cleanup(&pool, tenant_b, principal_b).await;
 }
