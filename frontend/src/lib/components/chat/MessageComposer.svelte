@@ -11,10 +11,12 @@
 	import { getSigningKey } from '$lib/chat/session';
 	import AttachmentPicker from './AttachmentPicker.svelte';
 	import ChatIdentityMenu from './ChatIdentityMenu.svelte';
+	import { Send, Smile } from 'lucide-svelte';
 
 	interface Props {
 		relayUrl: string;
 		channelId: string;
+		channelName: string;
 		// The bound Buzz pubkey comes from the parent's Chat status. The composer
 		// assumes the Chat identity session is already unlocked and only verifies
 		// that the in-memory key matches this pubkey before signing.
@@ -23,16 +25,32 @@
 		onSent?: (eventId: string) => void;
 	}
 
-	let { relayUrl, channelId, boundPubkey, onSendFailure, onSent = () => {} }: Props = $props();
+	let {
+		relayUrl,
+		channelId,
+		channelName,
+		boundPubkey,
+		onSendFailure,
+		onSent = () => {}
+	}: Props = $props();
 
 	let draft = $state('');
 	let sending = $state(false);
 	let attachmentTag = $state<NostrTag | null>(null);
+	let textarea = $state<HTMLTextAreaElement | null>(null);
 
 	const signingKey = $derived(getSigningKey());
 	const canSend = $derived(
 		!sending && signingKey !== null && (draft.trim().length > 0 || attachmentTag !== null)
 	);
+
+	function adjustHeight(): void {
+		if (!textarea) return;
+		textarea.style.height = 'auto';
+		const maxHeight = 240;
+		const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+		textarea.style.height = `${nextHeight}px`;
+	}
 
 	async function send(): Promise<void> {
 		if (sending) return;
@@ -79,6 +97,7 @@
 			if (result.ok) {
 				draft = '';
 				attachmentTag = null;
+				requestAnimationFrame(adjustHeight);
 				onSendFailure('');
 				onSent(result.event_id);
 			} else if (result.reason === 'rejected') {
@@ -97,38 +116,68 @@
 	}
 </script>
 
-<div class="border-t border-base-300 p-3">
+<div class="border-t border-base-300 bg-base-100 p-3">
 	{#if attachmentTag}
-		<div class="mb-2 text-xs text-base-content/60">
-			Attachment: {attachmentTag[1]}
-			<button type="button" class="ml-2 text-error" onclick={() => (attachmentTag = null)}>
+		<div
+			class="mb-2 inline-flex items-center gap-2 rounded-lg bg-base-200 px-2 py-1 text-xs text-base-content/80"
+		>
+			<span class="truncate max-w-[16rem]">Attachment: {attachmentTag[1]}</span>
+			<button
+				type="button"
+				class="text-error hover:underline"
+				onclick={() => (attachmentTag = null)}
+			>
 				remove
 			</button>
 		</div>
 	{/if}
-	<div class="flex items-end gap-2">
-		<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} />
+	<div
+		class="flex items-end gap-3 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50"
+	>
 		<textarea
-			class="textarea textarea-sm min-h-0 flex-1"
-			rows={2}
-			placeholder="Message #{channelId}"
+			bind:this={textarea}
+			class="textarea textarea-ghost min-h-[44px] max-h-[240px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-relaxed focus:outline-none"
+			rows={1}
+			placeholder="Message #{channelName}"
 			aria-label="Message text"
 			bind:value={draft}
+			oninput={adjustHeight}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && !e.shiftKey) {
 					e.preventDefault();
 					if (canSend) send();
 				}
 			}}></textarea>
+	</div>
+
+	<div class="mt-2 flex items-center justify-between px-1">
+		<div class="flex items-center gap-1">
+			<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} iconOnly />
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs h-8 w-8 rounded-lg p-0"
+				aria-label="Add emoji"
+				title="Emoji (coming soon)"
+				disabled
+			>
+				<Smile size={16} class="text-base-content/60" />
+			</button>
+			<ChatIdentityMenu />
+		</div>
+
 		<button
 			type="button"
-			class="btn btn-sm btn-primary"
+			class="btn btn-sm btn-primary inline-flex items-center gap-1.5 rounded-xl px-4"
 			disabled={!canSend}
 			aria-label="Send message"
 			onclick={send}
 		>
-			{sending ? 'Sending…' : 'Send'}
+			{#if sending}
+				<span class="loading loading-xs loading-spinner"></span>
+				Sending…
+			{:else}
+				<Send size={16} />
+			{/if}
 		</button>
-		<ChatIdentityMenu />
 	</div>
 </div>

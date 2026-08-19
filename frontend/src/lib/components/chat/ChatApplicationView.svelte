@@ -13,6 +13,7 @@
 	} from '$lib/api/chat';
 	import BindingPanel from './BindingPanel.svelte';
 	import ChannelList from './ChannelList.svelte';
+	import ChannelHeader from './ChannelHeader.svelte';
 	import MessageTimeline from './MessageTimeline.svelte';
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
@@ -164,6 +165,10 @@
 
 	const status = $derived($statusQuery.data);
 	const bindingActive = $derived(status?.binding != null && status.binding.status === 'Active');
+	const selectedChannel = $derived(
+		$channelsQuery.data?.find((c) => c.channel_id === selectedChannelId) ?? null
+	);
+	const channelDisplayName = $derived(selectedChannel?.name ?? selectedChannelId ?? 'unknown');
 	const askChannelHref = $derived(
 		selectedChannelId && status?.mapping && status.ask_available
 			? `/ask?scope=chat&communityId=${encodeURIComponent(status.mapping.community_id)}&channelId=${encodeURIComponent(selectedChannelId)}`
@@ -194,7 +199,7 @@
 		Your Chat admission is still being processed by the community relay.
 	</div>
 {:else}
-	<div class="flex h-full">
+	<div class="flex h-full min-h-0">
 		<ChannelList
 			channels={$channelsQuery.data ?? []}
 			loading={$channelsQuery.isLoading}
@@ -206,38 +211,53 @@
 			}}
 		/>
 		<div class="flex min-w-0 flex-1 flex-col">
-			{#if askChannelHref}
-				<div class="px-4 pt-2">
-					<a class="text-sm text-primary" href={askChannelHref}>Ask this channel</a>
+			<ChannelHeader
+				channelId={selectedChannelId ?? ''}
+				channelName={channelDisplayName}
+				channelKind={selectedChannel?.channel_kind ?? null}
+				visibility={selectedChannel?.visibility ?? null}
+				member={selectedChannel?.member ?? null}
+				askAvailable={status.ask_available}
+				askHref={askChannelHref ?? undefined}
+				communityId={status.mapping?.community_id ?? ''}
+			/>
+
+			{#if syncState !== 'idle' || cursor || relayError}
+				<div class="border-b border-base-300 bg-base-100 px-4 py-2">
+					<div class="flex flex-wrap items-center gap-3 text-sm">
+						{#if syncState === 'waiting'}
+							<span class="text-base-content/60" role="status">
+								Sent — waiting for Elembra sync…
+							</span>
+						{:else if syncState === 'warning'}
+							<span class="text-warning" role="status">
+								Sent, but Elembra has not observed it yet. Check Chat diagnostics.
+							</span>
+						{:else if syncState === 'observed'}
+							<span class="text-success" role="status">Observed by Elembra.</span>
+						{/if}
+						{#if cursor}
+							<button
+								type="button"
+								class="text-sm text-primary hover:underline"
+								onclick={() => (cursor = null)}
+							>
+								Back to latest
+							</button>
+						{/if}
+					</div>
+					{#if relayError}
+						<p class="mt-1 text-sm text-error">{relayError}</p>
+					{/if}
 				</div>
 			{/if}
-			{#if status && !status.ask_available}
-				<div class="px-4 pt-2 text-sm text-base-content/60" role="status">
-					Ask this channel is unavailable right now.
-				</div>
-			{/if}
-			{#if syncState === 'waiting'}
-				<div class="px-4 pt-2 text-sm text-base-content/60" role="status">
-					Sent — waiting for Elembra sync…
-				</div>
-			{:else if syncState === 'warning'}
-				<div class="px-4 pt-2 text-sm text-warning" role="status">
-					Sent, but Elembra has not observed it yet. Check Chat diagnostics.
-				</div>
-			{:else if syncState === 'observed'}
-				<div class="px-4 pt-2 text-sm text-success" role="status">Observed by Elembra.</div>
-			{/if}
-			{#if cursor}
-				<div class="px-4 pt-2">
-					<button type="button" class="text-sm text-primary" onclick={() => (cursor = null)}>
-						Back to latest
-					</button>
-				</div>
-			{/if}
+
 			<MessageTimeline
 				messages={$messagesQuery.data?.messages ?? []}
 				loading={$messagesQuery.isLoading}
 				{focusTarget}
+				askAvailable={status.ask_available}
+				communityId={status.mapping?.community_id ?? ''}
 				onLoadMore={() => {
 					if ($messagesQuery.isFetching) return;
 					cursor = $messagesQuery.data?.next_before ?? null;
@@ -248,6 +268,7 @@
 					<MessageComposer
 						relayUrl={status.mapping.relay_url}
 						channelId={selectedChannelId ?? ''}
+						channelName={channelDisplayName}
 						boundPubkey={status.binding?.buzz_pubkey ?? ''}
 						onSendFailure={handleSendFailure}
 						onSent={(eventId: string) => {
@@ -264,11 +285,6 @@
 						// The session store update drives the composer render.
 					}}
 				/>
-			{/if}
-			{#if relayError}
-				<div class="px-4 py-2 text-sm text-error">
-					{relayError}
-				</div>
 			{/if}
 		</div>
 	</div>

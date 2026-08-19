@@ -49,7 +49,8 @@ vi.mock('$lib/api/client', () => ({
 		get: vi.fn(),
 		post: mocks.apiPost,
 		postVoid: vi.fn(),
-		requestBlob: vi.fn()
+		requestBlob: vi.fn(),
+		getBaseURL: vi.fn(() => 'http://localhost:8080/api/v1')
 	}
 }));
 
@@ -57,6 +58,7 @@ function renderComposer(
 	props: {
 		onSendFailure?: (message: string) => void;
 		channelId?: string;
+		channelName?: string;
 		boundPubkey?: string;
 		signingKey?: string | null;
 	} = {}
@@ -64,6 +66,7 @@ function renderComposer(
 	const {
 		onSendFailure = vi.fn(),
 		channelId = 'general',
+		channelName = 'general',
 		boundPubkey = 'pk-1',
 		signingKey = 'sk-1'
 	} = props;
@@ -73,6 +76,7 @@ function renderComposer(
 		...render(MessageComposer, {
 			relayUrl: 'wss://relay.example',
 			channelId,
+			channelName,
 			boundPubkey,
 			onSendFailure
 		})
@@ -100,7 +104,7 @@ describe('MessageComposer', () => {
 
 	it('publishes a kind-9 stream message with the h tag when the channel id is a UUID', async () => {
 		const channelUuid = '11111111-2222-4333-8444-555555555555';
-		const { onSendFailure } = renderComposer({ channelId: channelUuid });
+		const { onSendFailure } = renderComposer({ channelId: channelUuid, channelName: 'ops' });
 
 		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'scoped hello' }
@@ -119,7 +123,7 @@ describe('MessageComposer', () => {
 	});
 
 	it('falls back to kind-1 for name-based channels', async () => {
-		const { onSendFailure } = renderComposer({ channelId: 'general' });
+		const { onSendFailure } = renderComposer({ channelId: 'general', channelName: 'general' });
 
 		await fireEvent.input(screen.getByLabelText('Message text'), {
 			target: { value: 'hello general' }
@@ -145,6 +149,12 @@ describe('MessageComposer', () => {
 			name: 'Send message'
 		}) as HTMLButtonElement;
 		expect(emptySendButton.disabled).toBe(true);
+	});
+
+	it('shows the channel name in the textarea placeholder', () => {
+		renderComposer({ channelId: 'general', channelName: 'random' });
+		const textarea = screen.getByLabelText('Message text') as HTMLTextAreaElement;
+		expect(textarea.placeholder).toBe('Message #random');
 	});
 
 	it('sends on Enter and inserts a newline on Shift+Enter', async () => {
