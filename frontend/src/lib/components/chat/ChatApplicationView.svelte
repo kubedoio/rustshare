@@ -179,6 +179,7 @@
 			? $focusedMessageQuery.data
 			: null
 	);
+	const hasMoreMessages = $derived($messagesQuery.data?.next_before != null);
 </script>
 
 {#if $statusQuery.isLoading}
@@ -256,6 +257,7 @@
 				messages={$messagesQuery.data?.messages ?? []}
 				loading={$messagesQuery.isLoading}
 				{focusTarget}
+				hasMore={hasMoreMessages}
 				askAvailable={status.ask_available}
 				communityId={status.mapping?.community_id ?? ''}
 				onLoadMore={() => {

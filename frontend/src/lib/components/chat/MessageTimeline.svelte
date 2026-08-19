@@ -8,6 +8,7 @@
 		loading: boolean;
 		focusTarget: ChatMessageDto | null;
 		onLoadMore: () => void;
+		hasMore?: boolean;
 		askAvailable?: boolean;
 		communityId?: string;
 	}
@@ -17,6 +18,7 @@
 		loading,
 		focusTarget,
 		onLoadMore,
+		hasMore = true,
 		askAvailable = false,
 		communityId = ''
 	}: Props = $props();
@@ -85,7 +87,6 @@
 	}
 
 	const rowMetas = $derived(rows(messages));
-	const hasMore = $derived(messages.length > 0);
 
 	// Scroll the deep-linked message into view once it is rendered.
 	$effect(() => {
@@ -128,6 +129,7 @@
 		</div>
 	{:else}
 		<div class="py-2">
+		{#if hasMore}
 			<div class="px-4 pb-2">
 				<button
 					type="button"
@@ -143,6 +145,7 @@
 					{/if}
 				</button>
 			</div>
+		{/if}
 			<div bind:this={scrollAnchor}></div>
 			{#each rowMetas as { message, showHeader, dateSeparator } (message.event_id)}
 				{#if dateSeparator}
