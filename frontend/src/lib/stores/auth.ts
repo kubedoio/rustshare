@@ -7,6 +7,7 @@ import { themeStore } from './theme';
 import { initializeWebSocket, cleanupWebSocket } from '../websocket/manager';
 import { queryClient } from '../query-client';
 import { setChatKeyUser } from '../chat/keys';
+import { clear as clearChatSession } from '../chat/session';
 
 interface AuthState {
 	user: User | null;
@@ -84,6 +85,7 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			clearChatSession();
 			setChatKeyUser(null);
 			if (myGeneration !== sessionGeneration) return;
 			set({
@@ -148,6 +150,7 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			clearChatSession();
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
 			setChatKeyUser(null);
