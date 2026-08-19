@@ -32,6 +32,7 @@ docker-compose.override.yml
 # Logs and temp files
 *.log
 *.tmp
+*.profraw
 tmp/
 temp/
 
@@ -45,6 +46,8 @@ launch-smoke-reports/
 .jules/
 .worktrees/
 .gstack/
+.kimi/
+.sccache/
 .superpowers
 skills-lock.json
 # Desktop Distributables

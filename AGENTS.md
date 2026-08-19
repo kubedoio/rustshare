@@ -146,3 +146,45 @@ Releases are tag-driven via `.github/workflows/release.yml`.
 
 - Project: Kubedo.io RustShare
 - License: Apache-2.0 core
+
+## Agent Context and Token Efficiency
+
+Planning may inspect cross-cutting architecture when necessary, but execution should be deliberately narrow. Once the affected Rust package(s), frontend area, files, and tests are known, start implementation there instead of asking each executor to rediscover the full monorepo.
+
+### Search and reading discipline
+
+- Prefer `rg`, `git grep`, targeted directory listings, and bounded file reads over recursive filesystem scans or broad source dumps.
+- Respect `.gitignore` and `.rgignore`. Do not search `target/`, `node_modules/`, Svelte/Vite build output, coverage, smoke/restore reports, worktrees, caches, or agent-tool state unless the task explicitly depends on them.
+- The Obsidian plugin is a separate Git submodule. Do not recursively explore it unless the task targets that plugin; follow the existing submodule workflow when it does.
+- Do not repeatedly read unchanged files. Re-open only relevant sections or use `git diff` after edits.
+- Keep SQLx metadata, migrations, ADRs/specs, and security-boundary docs searchable; they can be required correctness inputs.
+- Avoid streaming large compiler, test, Docker, or frontend build logs into model context. Capture noisy output and inspect the relevant errors or a bounded tail.
+
+### Planner/executor discipline
+
+Before editing, identify:
+
+- affected domain and workspace package(s);
+- backend/frontend/desktop/submodule boundary;
+- safety-sensitive paths and review requirements;
+- expected files and symbols;
+- smallest tests that demonstrate the change;
+- whether SQLx metadata, PostgreSQL, S3, or Docker are actually required.
+
+An executor should begin from this scope and expand only when code or test evidence requires it. Do not repeat broad repository discovery already completed by a planning agent.
+
+### Validation ladder
+
+For Rust changes, run targeted checks before the full workspace gate:
+
+```bash
+# Resolve the package name once if needed (for example with cargo metadata --no-deps),
+# then keep subsequent checks scoped to the affected package.
+SQLX_OFFLINE=true cargo check -p <affected-package>
+SQLX_OFFLINE=true cargo test -p <affected-package> --lib
+SQLX_OFFLINE=true cargo clippy -p <affected-package> --all-targets --all-features -- -D warnings
+```
+
+For frontend-only changes, remain under `frontend/` and begin with the relevant check/unit-test scope before running the complete frontend baseline. Do not start PostgreSQL, RustFS, Docker Compose, or launch smoke tests unless the behavior under test crosses those boundaries.
+
+Before opening the PR, still run every full baseline required by **Validation Before Opening a PR** for the areas changed, plus SQLx prepare or deployment/smoke checks when the task requires them. This is an ordering and context-efficiency rule, not permission to skip final validation.
