@@ -152,11 +152,7 @@
 			var(--rs-canvas);
 		color: var(--rs-text);
 		font-family:
-			'Instrument Sans',
-			system-ui,
-			'Apple Color Emoji',
-			'Segoe UI Emoji',
-			'Noto Color Emoji',
+			'Instrument Sans', system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
 			sans-serif;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;

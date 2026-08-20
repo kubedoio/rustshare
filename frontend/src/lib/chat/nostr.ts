@@ -139,7 +139,11 @@ export async function publishEvent(
 				// An auth-required rejection is the relay demanding NIP-42 auth;
 				// the AUTH + re-send above answers it and a later OK for the same
 				// event id carries the real outcome.
-				if (message[2] === false && typeof message[3] === 'string' && message[3].toLowerCase().includes('auth')) {
+				if (
+					message[2] === false &&
+					typeof message[3] === 'string' &&
+					message[3].toLowerCase().includes('auth')
+				) {
 					return;
 				}
 				finish(
