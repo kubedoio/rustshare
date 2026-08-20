@@ -133,8 +133,11 @@
 			accumulatedMessages = page.messages;
 		} else if (cursor !== prevCursor) {
 			// Older page loaded: prepend without duplicates
-			const existingIds = new Set(accumulatedMessages.map(m => m.event_id));
-			accumulatedMessages = [...page.messages.filter(m => !existingIds.has(m.event_id)), ...accumulatedMessages];
+			const existingIds = new Set(accumulatedMessages.map((m) => m.event_id));
+			accumulatedMessages = [
+				...page.messages.filter((m) => !existingIds.has(m.event_id)),
+				...accumulatedMessages
+			];
 		} else {
 			// cursor === prevCursor: same page loaded again (polling), keep accumulation
 			return;
