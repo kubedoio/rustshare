@@ -68,12 +68,14 @@ BUZZ_RELAY_PUBKEY="$(cd frontend && node scripts/alpha-buzz-ops.mjs pubkey "$BUZ
 echo "  service pubkey: ${BUZZ_SERVICE_PK:0:16}…  relay pubkey: ${BUZZ_RELAY_PUBKEY:0:16}…"
 
 # Export the compose interpolation vars up front: the alpha compose uses
-# `:?`-required vars (BUZZ_RELAY_OWNER_PUBKEY / BUZZ_RELAY_PRIVATE_KEY), so
-# EVERY compose invocation (ps/up/stop) needs them or config validation fails.
+# `:?`-required vars (BUZZ_SERVICE_SK / BUZZ_RELAY_OWNER_PUBKEY /
+# BUZZ_RELAY_PRIVATE_KEY), so EVERY compose invocation (ps/up/stop) needs
+# them or config validation fails.
 export BUZZ_RELAY_IMAGE BUZZ_RELAY_URL
 export RELAY_TRUSTED_SERVICE_PUBKEYS="$BUZZ_SERVICE_PK"
 export BUZZ_RELAY_OWNER_PUBKEY="$BUZZ_SERVICE_PK"
 export BUZZ_RELAY_PRIVATE_KEY
+export BUZZ_SERVICE_SK
 
 # --- relay image ------------------------------------------------------------
 if ! docker image inspect "$BUZZ_RELAY_IMAGE" >/dev/null 2>&1; then
