@@ -97,22 +97,19 @@ export async function publishEvent(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			clearTimeout(authGrace);
 			socket.close();
 			resolve(result);
 		};
 		const timer = setTimeout(() => finish({ ok: false, reason: 'transport' }), 10_000);
 		const socket = new WebSocket(relayUrl);
-		let authGrace: ReturnType<typeof setTimeout> | undefined;
 
+		// NIP-42 flow proven against the Buzz relay: publish the event first so
+		// the relay answers with an AUTH challenge when authentication is
+		// required; authenticate, then re-send the event. An initial REQ probe
+		// does NOT provoke a challenge on the Buzz relay, so publishing without
+		// auth first would always be rejected with "auth required".
 		socket.onopen = () => {
-			// Ask for the AUTH challenge by sending an empty subscription.
-			socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
-			// Some relays never challenge; give them a short grace, then
-			// publish anyway so a challenge-less relay still works.
-			authGrace = setTimeout(() => {
-				socket.send(JSON.stringify(['EVENT', signed]));
-			}, 1500);
+			socket.send(JSON.stringify(['EVENT', signed]));
 		};
 		socket.onmessage = async (raw) => {
 			let message: unknown;
@@ -123,7 +120,6 @@ export async function publishEvent(
 			}
 			if (!Array.isArray(message)) return;
 			if (message[0] === 'AUTH' && typeof message[1] === 'string') {
-				clearTimeout(authGrace);
 				const auth = await signEvent(
 					await buildUnsignedEvent(
 						NOSTR_KIND_AUTH,
@@ -140,6 +136,12 @@ export async function publishEvent(
 				socket.send(JSON.stringify(['EVENT', signed]));
 			}
 			if (message[0] === 'OK' && message[1] === signed.id) {
+				// An auth-required rejection is the relay demanding NIP-42 auth;
+				// the AUTH + re-send above answers it and a later OK for the same
+				// event id carries the real outcome.
+				if (message[2] === false && typeof message[3] === 'string' && message[3].toLowerCase().includes('auth')) {
+					return;
+				}
 				finish(
 					message[2] === true
 						? { ok: true, event_id: signed.id }
