@@ -14987,9 +14987,33 @@
           "channel_kind": {
             "type": "string"
           },
+          "channel_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "latest_event_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "member": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visibility": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -15019,6 +15043,27 @@
           }
         }
       },
+      "ChatAuthorDto": {
+        "type": "object",
+        "required": [
+          "display_name",
+          "is_current_user"
+        ],
+        "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_current_user": {
+            "type": "boolean"
+          }
+        }
+      },
       "ChatMessageDto": {
         "type": "object",
         "required": [
@@ -15038,6 +15083,17 @@
               "$ref": "#/components/schemas/ChatAttachmentDto"
             },
             "description": "Identifier-only `elembra-ref` attachment references from the message's\nlatest event, in event tag order (deduplicated at ingest)."
+          },
+          "author": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChatAuthorDto",
+                "description": "Resolved Elembra author metadata, when the author's Buzz pubkey maps to\na local user identity. Missing for unbound pubkeys; revoked bindings\nstill resolve historically."
+              }
+            ]
           },
           "author_pubkey": {
             "type": "string"

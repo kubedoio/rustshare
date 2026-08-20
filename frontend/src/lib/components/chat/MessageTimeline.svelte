@@ -129,23 +129,23 @@
 		</div>
 	{:else}
 		<div class="py-2">
-		{#if hasMore}
-			<div class="px-4 pb-2">
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm w-full text-sm text-primary"
-					disabled={loading}
-					onclick={onLoadMore}
-				>
-					{#if loading}
-						<Loader2 size={14} class="mr-1 animate-spin" />
-						Loading older messages…
-					{:else}
-						Load earlier messages
-					{/if}
-				</button>
-			</div>
-		{/if}
+			{#if hasMore}
+				<div class="px-4 pb-2">
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm w-full text-sm text-primary"
+						disabled={loading}
+						onclick={onLoadMore}
+					>
+						{#if loading}
+							<Loader2 size={14} class="mr-1 animate-spin" />
+							Loading older messages…
+						{:else}
+							Load earlier messages
+						{/if}
+					</button>
+				</div>
+			{/if}
 			<div bind:this={scrollAnchor}></div>
 			{#each rowMetas as { message, showHeader, dateSeparator } (message.event_id)}
 				{#if dateSeparator}

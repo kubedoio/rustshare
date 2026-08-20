@@ -45,6 +45,8 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
     { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
+    # h2 v0.3.x — unbounded empty DATA frames; transitive via hyper 0.14 / reqwest / AWS SDK
+    { id = "RUSTSEC-2026-0258", reason = "h2 v0.3.x pulled in by hyper 0.14 via aws-smithy-runtime; blocked on upstream hyper releases" },
 ]
 
 [bans]
