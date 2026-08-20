@@ -119,6 +119,23 @@
 
 	let pendingEventId = $state<string | null>(null);
 	let syncState = $state<'idle' | 'waiting' | 'observed' | 'warning'>('idle');
+	let accumulatedMessages = $state<ChatMessageDto[]>([]);
+	let prevCursor = $state<string | null>(null);
+	// Accumulate older message pages when paginating backward
+	$effect(() => {
+		const page = $messagesQuery.data;
+		const isChannelSwitch = prevCursor === null && cursor === null && accumulatedMessages.length > 0;
+		if (!page) return;
+		if (cursor === null || isChannelSwitch) {
+			// Latest page or channel switch: replace
+			accumulatedMessages = page.messages;
+		} else if (cursor !== prevCursor) {
+			// Older page loaded: prepend without duplicates
+			const existingIds = new Set(accumulatedMessages.map(m => m.event_id));
+			accumulatedMessages = [...page.messages.filter(m => !existingIds.has(m.event_id)), ...accumulatedMessages];
+		}
+		prevCursor = cursor;
+	});
 
 	// The success banner is informational: auto-clear it shortly after the
 	// message is observed, so the status row does not linger forever. Re-sends
@@ -139,6 +156,7 @@
 		if (selectedChannelId !== null) {
 			pendingEventId = null;
 			syncState = 'idle';
+			relayError = '';
 		}
 	});
 
@@ -254,7 +272,7 @@
 			{/if}
 
 			<MessageTimeline
-				messages={$messagesQuery.data?.messages ?? []}
+				messages={accumulatedMessages}
 				loading={$messagesQuery.isLoading}
 				{focusTarget}
 				hasMore={hasMoreMessages}
