@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { hasChatKey, importChatKey } from '$lib/chat/keys';
+	import { hasChatKey, importChatKey, clearChatKey } from '$lib/chat/keys';
 	import { unlock, ChatSessionError } from '$lib/chat/session';
 
 	interface Props {
@@ -67,11 +67,12 @@
 			await importChatKey(backupJson.trim(), importPassphrase);
 			// load the just-imported envelope into the in-memory session
 			await unlock(importPassphrase, boundPubkey);
-			importPassphrase = '';
-			backupJson = '';
 			onUnlocked();
 		} catch (err) {
 			if (err instanceof ChatSessionError && err.code === 'PUBKEY_MISMATCH') {
+				// The imported key was saved to localStorage but does not match the
+				// bound pubkey. Remove it so the user can try a different backup.
+				clearChatKey();
 				importError =
 					'That backup is not the identity bound to this account. Paste the backup from your original device, or ask an administrator to rotate the binding.';
 			} else {
@@ -79,6 +80,8 @@
 					err instanceof Error ? err.message : 'Import failed — check the backup and passphrase.';
 			}
 		} finally {
+			importPassphrase = '';
+			backupJson = '';
 			importing = false;
 		}
 	}
