@@ -19,7 +19,6 @@ export class ChatSessionError extends Error {
 }
 
 let memorySecretKey: string | null = null;
-let memoryPubkey: string | null = null;
 
 const internal = writable<ChatSessionState>({ state: 'locked' });
 
@@ -37,7 +36,10 @@ export function getSigningKey(): string | null {
 
 export async function unlock(passphrase: string, boundPubkey: string): Promise<void> {
 	if (!hasChatKey()) {
-		throw new ChatSessionError('NO_KEY', 'No Chat identity is stored on this device.');
+		throw new ChatSessionError(
+			'NO_KEY',
+			'No Chat identity found. Import a key backup from your original device.'
+		);
 	}
 
 	let secretKey: string;
@@ -64,13 +66,11 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 	}
 
 	memorySecretKey = secretKey;
-	memoryPubkey = pubkey;
 	internal.set({ state: 'unlocked', pubkey });
 }
 
 export function lock(): void {
 	memorySecretKey = null;
-	memoryPubkey = null;
 	internal.set({ state: 'locked' });
 }
 

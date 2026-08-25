@@ -31,6 +31,7 @@
 		unlocking = true;
 		try {
 			await unlock(passphrase, boundPubkey);
+			passphrase = '';
 			onUnlocked();
 		} catch (err) {
 			if (err instanceof ChatSessionError) {
