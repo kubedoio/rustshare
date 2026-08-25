@@ -103,8 +103,9 @@
 		if (container && scrollAnchor && currentCount > prevMessageCount && prevMessageCount > 0) {
 			requestAnimationFrame(() => {
 				if (!scrollAnchor || !container) return;
-				const newTop = scrollAnchor.offsetTop;
-				container.scrollTop = newTop;
+				const anchorRect = scrollAnchor.getBoundingClientRect();
+				const containerRect = container.getBoundingClientRect();
+				container.scrollTop += anchorRect.top - containerRect.top;
 			});
 		}
 		prevMessageCount = currentCount;
