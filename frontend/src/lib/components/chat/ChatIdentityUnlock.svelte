@@ -67,6 +67,8 @@
 			await importChatKey(backupJson.trim(), importPassphrase);
 			// load the just-imported envelope into the in-memory session
 			await unlock(importPassphrase, boundPubkey);
+			importPassphrase = '';
+			backupJson = '';
 			onUnlocked();
 		} catch (err) {
 			if (err instanceof ChatSessionError && err.code === 'PUBKEY_MISMATCH') {
