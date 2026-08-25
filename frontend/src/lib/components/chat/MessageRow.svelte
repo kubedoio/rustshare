@@ -19,7 +19,9 @@
 
 	const displayName = $derived(message.author?.display_name ?? 'Unknown Buzz user');
 	const avatarUrl = $derived(
-		message.author?.avatar_url ? `${apiClient.getBaseURL()}${message.author.avatar_url}` : null
+		message.author?.avatar_url
+			? new URL(message.author.avatar_url, apiClient.getBaseURL()).href
+			: null
 	);
 	const pubkeyShort = $derived(message.author_pubkey.slice(0, 8));
 	const initials = $derived(getInitials(displayName));
