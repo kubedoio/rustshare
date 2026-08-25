@@ -61,6 +61,7 @@ class FakeWebSocket {
 	static instances: FakeWebSocket[] = [];
 	static okValue = true;
 	static okMessage = '';
+	static challengeOnEvent = true;
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -68,6 +69,7 @@ class FakeWebSocket {
 	onerror: (() => void) | null = null;
 	onclose: (() => void) | null = null;
 	closed = false;
+	authenticated = false;
 
 	constructor() {
 		FakeWebSocket.instances.push(this);
@@ -79,7 +81,11 @@ class FakeWebSocket {
 	send(data: string) {
 		const frame = JSON.parse(data) as unknown[];
 		this.sent.push(frame);
-		if (frame[0] === 'REQ') {
+		if (frame[0] === 'AUTH') {
+			this.authenticated = true;
+		} else if (frame[0] === 'EVENT' && FakeWebSocket.challengeOnEvent && !this.authenticated) {
+			// Buzz relay behavior: an unauthenticated EVENT provokes the NIP-42
+			// AUTH challenge instead of an immediate OK.
 			this.reply(['AUTH', 'challenge-1']);
 		} else if (frame[0] === 'EVENT') {
 			const event = frame[1] as { id: string };
@@ -116,7 +122,7 @@ describe('publishEvent', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('sends the EVENT frame after AUTH and resolves ok on OK true', async () => {
+	it('sends the EVENT frame first, authenticates on the AUTH challenge, and re-sends it', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -126,15 +132,38 @@ describe('publishEvent', () => {
 
 		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
-		expect(ws.sent[0][0]).toBe('REQ');
+		// Proven Buzz flow: EVENT first (no REQ probe), then AUTH, then EVENT again.
+		expect(ws.sent[0][0]).toBe('EVENT');
+		const authFrame = ws.sent.find((frame) => frame[0] === 'AUTH');
+		expect(authFrame).toBeTruthy();
+		expect((authFrame![1] as { tags: string[][] }).tags[0]).toEqual(['relay', 'wss://relay.test']);
 		const eventFrame = ws.sent.find((frame) => frame[0] === 'EVENT');
 		expect(eventFrame).toBeTruthy();
 		expect((eventFrame![1] as { id: string }).id).toBe(expected.id);
 	});
 
+	it('retries after an auth-required rejection and resolves ok on the re-send', async () => {
+		// Relay answers the first (unauthenticated) EVENT with OK false
+		// "auth required" before/after the challenge; the client must not
+		// treat that as the final rejection and must resolve from the
+		// post-AUTH OK instead.
+		FakeWebSocket.challengeOnEvent = true;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
+		const ws = FakeWebSocket.instances[0];
+		expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2);
+		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
+	});
+
 	it('resolves rejected with the relay message when the relay answers OK false', async () => {
 		FakeWebSocket.okValue = false;
 		FakeWebSocket.okMessage = 'blocked: not admitted';
+		FakeWebSocket.challengeOnEvent = false; // no auth dance for this rejection
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -177,7 +206,7 @@ describe('publishEvent without an AUTH challenge', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('publishes via the grace timer when the relay never challenges', async () => {
+	it('publishes immediately when the relay answers OK without challenging', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -187,5 +216,7 @@ describe('publishEvent without an AUTH challenge', () => {
 		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
+		// No auth dance on a challenge-less relay.
+		expect(ws.sent.some((frame) => frame[0] === 'AUTH')).toBe(false);
 	});
 });

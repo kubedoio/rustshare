@@ -4,11 +4,16 @@ import MessageTimeline from './MessageTimeline.svelte';
 import type { ChatMessageDto } from '$lib/api/chat';
 
 const mocks = vi.hoisted(() => ({
-	openChatAttachment: vi.fn()
+	openChatAttachment: vi.fn(),
+	copyToClipboard: vi.fn()
 }));
 
 vi.mock('$lib/api/chat', () => ({
 	openChatAttachment: mocks.openChatAttachment
+}));
+
+vi.mock('$lib/utils/clipboard', () => ({
+	copyToClipboard: mocks.copyToClipboard
 }));
 
 function message(overrides: Partial<ChatMessageDto> = {}): ChatMessageDto {
@@ -19,6 +24,7 @@ function message(overrides: Partial<ChatMessageDto> = {}): ChatMessageDto {
 		channel_id: 'general',
 		channel_kind: 'topic',
 		author_pubkey: 'pk-a',
+		author: null,
 		event_created_at: '2026-08-12T10:00:00Z',
 		thread_root_id: null,
 		body: 'hello',
@@ -33,7 +39,9 @@ function renderTimeline(messages: ChatMessageDto[], focusTarget: ChatMessageDto 
 			messages,
 			loading: false,
 			focusTarget,
-			onLoadMore: vi.fn()
+			onLoadMore: vi.fn(),
+			askAvailable: true,
+			communityId: 'community-1'
 		}
 	});
 }
@@ -67,6 +75,103 @@ describe('MessageTimeline focus scroll', () => {
 		// The page arrives: the effect re-runs on `messages` and scrolls.
 		await rerender({ messages: [target], focusTarget: target });
 		expect(scrollSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('highlights the focused message row', () => {
+		const target = message();
+		renderTimeline([target], target);
+		const row = document.querySelector(`[data-message-id="${target.message_id}"]`);
+		expect(row?.className).toContain('bg-primary/10');
+	});
+});
+
+describe('MessageTimeline message rendering', () => {
+	it('shows the author display name when present', () => {
+		renderTimeline([
+			message({
+				author: { display_name: 'Ada Lovelace', avatar_url: null, is_current_user: false }
+			})
+		]);
+		expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+	});
+
+	it('falls back to unknown author label when author is missing', () => {
+		renderTimeline([message({ author: null })]);
+		expect(screen.getByText('Unknown Buzz user')).toBeTruthy();
+	});
+
+	it('shows a shortened author pubkey hint', () => {
+		renderTimeline([message({ author_pubkey: 'abcdef1234567890' })]);
+		expect(screen.getByText('abcdef12')).toBeTruthy();
+	});
+
+	it('shows a formatted local timestamp with full ISO in title', () => {
+		renderTimeline([message({ event_created_at: '2026-08-12T20:04:00Z' })]);
+		const time = screen.getByTitle('2026-08-12T20:04:00Z');
+		expect(time).toBeTruthy();
+		expect(time.tagName).toBe('TIME');
+	});
+
+	it('renders a date separator when messages span days', () => {
+		const today = new Date().toISOString();
+		const yesterdayDate = new Date();
+		yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+		const yesterday = yesterdayDate.toISOString();
+		renderTimeline([
+			message({ message_id: 'm-1', event_id: 'e-1', event_created_at: yesterday }),
+			message({ message_id: 'm-2', event_id: 'e-2', event_created_at: today })
+		]);
+		expect(screen.getByText('Today')).toBeTruthy();
+		expect(screen.getByText('Yesterday')).toBeTruthy();
+	});
+
+	it('groups consecutive messages from the same author within 5 minutes', () => {
+		renderTimeline([
+			message({
+				message_id: 'm-1',
+				event_id: 'e-1',
+				author: { display_name: 'Ada', avatar_url: null, is_current_user: false },
+				event_created_at: '2026-08-12T10:00:00Z',
+				body: 'first'
+			}),
+			message({
+				message_id: 'm-2',
+				event_id: 'e-2',
+				author: { display_name: 'Ada', avatar_url: null, is_current_user: false },
+				author_pubkey: 'pk-a',
+				event_created_at: '2026-08-12T10:02:00Z',
+				body: 'second'
+			})
+		]);
+		// Only the first grouped message shows the author name.
+		const names = screen.getAllByText('Ada');
+		expect(names).toHaveLength(1);
+		expect(screen.getByText('first')).toBeTruthy();
+		expect(screen.getByText('second')).toBeTruthy();
+	});
+
+	it('starts a new group after 5 minutes from the same author', () => {
+		renderTimeline([
+			message({
+				message_id: 'm-1',
+				event_id: 'e-1',
+				author: { display_name: 'Ada', avatar_url: null, is_current_user: false },
+				event_created_at: '2026-08-12T10:00:00Z'
+			}),
+			message({
+				message_id: 'm-2',
+				event_id: 'e-2',
+				author: { display_name: 'Ada', avatar_url: null, is_current_user: false },
+				author_pubkey: 'pk-a',
+				event_created_at: '2026-08-12T10:10:00Z'
+			})
+		]);
+		expect(screen.getAllByText('Ada')).toHaveLength(2);
+	});
+
+	it('shows the empty state when no messages are present', () => {
+		renderTimeline([]);
+		expect(screen.getByText('No messages yet')).toBeTruthy();
 	});
 });
 
@@ -106,15 +211,15 @@ describe('MessageTimeline attachment affordance', () => {
 				]
 			})
 		]);
-		const chips = screen.getAllByRole('button', { name: /Attachment/ });
+		const chips = screen.getAllByRole('button', { name: /Open attachment/ });
 		expect(chips).toHaveLength(2);
-		expect(screen.getByText('Attachment 1')).toBeTruthy();
-		expect(screen.getByText('Attachment 2')).toBeTruthy();
+		expect(screen.getByText('f-1')).toBeTruthy();
+		expect(screen.getByText('f-2')).toBeTruthy();
 	});
 
 	it('renders no affordance without attachments', () => {
 		renderTimeline([message({ attachments: [] })]);
-		expect(screen.queryByRole('button', { name: /Attachment/ })).toBeNull();
+		expect(screen.queryByRole('button', { name: /Open attachment/ })).toBeNull();
 	});
 
 	it('treats refs differing only by version as distinct attachments', () => {
@@ -136,7 +241,7 @@ describe('MessageTimeline attachment affordance', () => {
 				]
 			})
 		]);
-		expect(screen.getAllByRole('button', { name: /Attachment/ })).toHaveLength(2);
+		expect(screen.getAllByRole('button', { name: /Open attachment/ })).toHaveLength(2);
 	});
 
 	it('pins the server wire shape end-to-end: camelCase attachment fields reach the open endpoint intact', async () => {
@@ -162,7 +267,7 @@ describe('MessageTimeline attachment affordance', () => {
 		}`) as ChatMessageDto;
 		renderTimeline([wire]);
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Attachment' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Open attachment' }));
 		await waitFor(() => expect(mocks.openChatAttachment).toHaveBeenCalledTimes(1));
 		const sent = mocks.openChatAttachment.mock.calls[0][0];
 		expect(JSON.stringify(sent)).toBe(
@@ -180,7 +285,7 @@ describe('MessageTimeline attachment affordance', () => {
 		};
 		renderTimeline([message({ attachments: [attachment] })]);
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Attachment' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Open attachment' }));
 		await waitFor(() => expect(mocks.openChatAttachment).toHaveBeenCalledTimes(1));
 		expect(mocks.openChatAttachment).toHaveBeenCalledWith(attachment);
 		await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
@@ -206,10 +311,47 @@ describe('MessageTimeline attachment affordance', () => {
 			})
 		]);
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Attachment' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Open attachment' }));
 		await waitFor(() => expect(mocks.openChatAttachment).toHaveBeenCalledTimes(1));
 		expect(clickSpy).not.toHaveBeenCalled();
 		// Nothing leaks into the DOM either.
 		expect(screen.queryByText(/unavailable|error/i)).toBeNull();
+	});
+});
+
+describe('MessageTimeline hover menu', () => {
+	it('shows Ask and Copy link items when Ask is available', async () => {
+		renderTimeline([message({ message_id: 'm-1', channel_id: 'general' })]);
+		await fireEvent.click(screen.getByRole('button', { name: 'Message actions' }));
+		expect(screen.getByRole('menuitem', { name: 'Ask Elembra about this' })).toBeTruthy();
+		expect(screen.getByRole('menuitem', { name: 'Copy message link' })).toBeTruthy();
+	});
+
+	it(' Ask Elembra item is disabled when Ask is unavailable', async () => {
+		const { rerender } = render(MessageTimeline, {
+			props: {
+				messages: [message({ message_id: 'm-1' })],
+				loading: false,
+				focusTarget: null,
+				onLoadMore: vi.fn(),
+				askAvailable: false,
+				communityId: 'community-1'
+			}
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Message actions' }));
+		const item = screen.getByRole('menuitem', { name: 'Ask Elembra about this' });
+		expect(item.className).toContain('cursor-not-allowed');
+	});
+
+	it('copies a deep link to the message when Copy message link is clicked', async () => {
+		vi.mocked(mocks.copyToClipboard).mockReset();
+		renderTimeline([message({ message_id: 'm-1', channel_id: 'general' })]);
+		await fireEvent.click(screen.getByRole('button', { name: 'Message actions' }));
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy message link' }));
+		await waitFor(() =>
+			expect(mocks.copyToClipboard).toHaveBeenCalledWith(
+				expect.stringContaining('?channel=general&message=m-1')
+			)
+		);
 	});
 });

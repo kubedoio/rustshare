@@ -8,123 +8,81 @@
 		isUuid,
 		type NostrTag
 	} from '$lib/chat/nostr';
-	import {
-		hasChatKey,
-		loadChatKey,
-		importChatKey,
-		exportChatKey,
-		clearChatKey
-	} from '$lib/chat/keys';
+	import { getSigningKey } from '$lib/chat/session';
 	import AttachmentPicker from './AttachmentPicker.svelte';
+	import ChatIdentityMenu from './ChatIdentityMenu.svelte';
+	import { Send, Smile } from 'lucide-svelte';
 
 	interface Props {
 		relayUrl: string;
 		channelId: string;
-		// The bound Buzz pubkey comes from the parent's Chat status (already
-		// loaded and reactive there), so the composer does not re-fetch status
-		// and never races an unloaded query on the first send.
-		boundPubkey: string | null;
+		channelName: string;
+		// The bound Buzz pubkey comes from the parent's Chat status. The composer
+		// assumes the Chat identity session is already unlocked and only verifies
+		// that the in-memory key matches this pubkey before signing.
+		boundPubkey: string;
 		onSendFailure: (message: string) => void;
 		onSent?: (eventId: string) => void;
 	}
 
-	let { relayUrl, channelId, boundPubkey, onSendFailure, onSent = () => {} }: Props = $props();
+	let {
+		relayUrl,
+		channelId,
+		channelName,
+		boundPubkey,
+		onSendFailure,
+		onSent = () => {}
+	}: Props = $props();
 
 	let draft = $state('');
 	let sending = $state(false);
-	let passphrase = $state('');
-	let needsPassphrase = $state(false);
 	let attachmentTag = $state<NostrTag | null>(null);
+	let textarea = $state<HTMLTextAreaElement | null>(null);
 
-	// A bound identity without a local key is the multi-device dead-end: the
-	// backend binding/admission are server state, so a second browser reaches
-	// the composer but holds no key. Importing the encrypted backup is the only
-	// recovery path (ADR-0034: no silent server custody).
-	let keyMissing = $state(!hasChatKey());
-	let backupJson = $state('');
-	let importPassphrase = $state('');
-	let importing = $state(false);
-	let importNotice = $state('');
-	let importError = $state('');
+	const signingKey = $derived(getSigningKey());
+	const canSend = $derived(
+		!sending && signingKey !== null && (draft.trim().length > 0 || attachmentTag !== null)
+	);
 
-	async function importKey(): Promise<void> {
-		if (!backupJson.trim()) {
-			importError = 'paste the backup copied from your other device first';
-			return;
-		}
-		importing = true;
-		importError = '';
-		importNotice = '';
-		try {
-			const secretKey = await importChatKey(backupJson.trim(), importPassphrase);
-			passphrase = importPassphrase;
-			backupJson = '';
-			importPassphrase = '';
-			if (publicKeyOf(secretKey) !== boundPubkey) {
-				// Wrong-identity backup: discard the just-imported envelope and
-				// keep the panel open, so the user can paste the correct backup
-				// instead of being stranded with a stored key that never sends.
-				clearChatKey();
-				keyMissing = true;
-				importError =
-					'That backup is not the identity bound to this account, so it was not saved. Paste the backup from your original device, or ask an administrator to rotate the binding.';
-			} else {
-				keyMissing = false;
-				importNotice = 'Key imported — you can send as your bound identity.';
-				onSendFailure('');
-			}
-		} catch (err) {
-			importError =
-				err instanceof Error ? err.message : 'import failed — check the backup and passphrase';
-		} finally {
-			importing = false;
-		}
-	}
-
-	async function exportBackup(): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(exportChatKey());
-			importNotice = 'Backup copied to clipboard.';
-			importError = '';
-		} catch {
-			importError = 'could not copy the backup';
-		}
+	function adjustHeight(): void {
+		if (!textarea) return;
+		textarea.style.height = 'auto';
+		const maxHeight = 240;
+		const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+		textarea.style.height = `${nextHeight}px`;
 	}
 
 	async function send(): Promise<void> {
-		if (sending) return; // guard against double-publish via Enter during an in-flight send
+		if (sending) return;
 		const content = draft.trim();
 		if (!content && !attachmentTag) return;
-		// A send attempt means the user has moved past the import flow.
-		importNotice = '';
-		if (keyMissing) {
-			onSendFailure('no chat key on this device — import your backup to send');
+
+		const secretKey = signingKey;
+		if (!secretKey) {
+			onSendFailure('Chat identity is locked.');
 			return;
 		}
-		if (!boundPubkey) return;
-		// Latch BEFORE the first await: unlockKey runs the full PBKDF2 (hundreds
-		// of ms) and two rapid Enters must not both reach publishEvent.
+
+		// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
+		// kind-9 stream messages are channel-scoped by the NIP-29 `["h",
+		// "<channel-uuid>"]` tag. The relay parses `h` strictly as a channel UUID,
+		// so the stream publish is gated on the active channel id being a canonical
+		// UUID. Name-based channels (observation-derived ids like 'general') fall
+		// back to a legacy kind-1 note with no h tag, served by the observation
+		// path. Thread/reply e-tags are a later feature (issue #243), so no thread
+		// tags are emitted here.
+		const streamScoped = isUuid(channelId);
+		const tags: NostrTag[] = [];
+		if (streamScoped) tags.push(['h', channelId]);
+		if (attachmentTag) tags.push(attachmentTag);
+
 		sending = true;
 		try {
-			const secretKey = await unlockKey();
-			if (!secretKey) return;
 			if (publicKeyOf(secretKey) !== boundPubkey) {
-				onSendFailure('local key does not match your bound Buzz identity');
+				onSendFailure('Local Chat key does not match your bound Buzz identity.');
 				return;
 			}
-			// Canonical chat wire format (spec: "Canonical publish tags and kinds"):
-			// kind-9 stream messages are channel-scoped by the NIP-29 `h` tag. The
-			// relay parses `h` strictly as a channel UUID, so the stream publish is
-			// gated on the active channel id being a canonical UUID — which it only
-			// is once the authoritative channel registry (relay /channels) supplies
-			// UUIDs. Name-based channels (the current observation-derived ids like
-			// 'general') fall back to a legacy kind-1 note with no h tag, served by
-			// the observation path. Thread/reply e-tags are a later feature
-			// (issue #243), so no thread tags are emitted here.
-			const streamScoped = isUuid(channelId);
-			const tags: NostrTag[] = [];
-			if (streamScoped) tags.push(['h', channelId]);
-			if (attachmentTag) tags.push(attachmentTag);
+
 			const result = await publishEvent(
 				relayUrl,
 				await buildUnsignedEvent(
@@ -135,151 +93,91 @@
 				),
 				secretKey
 			);
+
 			if (result.ok) {
 				draft = '';
 				attachmentTag = null;
+				requestAnimationFrame(adjustHeight);
 				onSendFailure('');
 				onSent(result.event_id);
 			} else if (result.reason === 'rejected') {
 				const detail = result.detail ? `: ${result.detail.slice(0, 200)}` : '';
-				onSendFailure(`relay rejected the message${detail}`);
+				onSendFailure(`Relay rejected the message${detail}`);
 			} else {
-				onSendFailure('relay unreachable');
+				onSendFailure('Relay unreachable');
 			}
 		} catch (err) {
-			// Defensive: publishEvent never throws, but a malformed stored key
-			// can make publicKeyOf throw — surface it instead of an unhandled
-			// rejection with no feedback.
-			onSendFailure(err instanceof Error ? err.message : 'send failed — try again');
+			// Defensive: publicKeyOf or buildUnsignedEvent can throw on a malformed
+			// key; surface it instead of leaving the user with no feedback.
+			onSendFailure(err instanceof Error ? err.message : 'Send failed — try again');
 		} finally {
 			sending = false;
 		}
 	}
-
-	async function unlockKey(): Promise<string | null> {
-		if (!hasChatKey()) {
-			// Vault emptied after mount (storage cleared, scope dropped) — the
-			// import UI is the recovery path, same as the corrupt-key case.
-			keyMissing = true;
-			onSendFailure('no chat key on this device — import your backup to send');
-			return null;
-		}
-		try {
-			return await loadChatKey(passphrase || '');
-		} catch (err) {
-			const message = err instanceof Error ? err.message : '';
-			if (message === 'no stored chat key') {
-				// The vault scope or entry vanished after mount (logged out,
-				// storage cleared, or a stale hasChatKey snapshot) — surface the
-				// import UI so the user can recover instead of being stuck.
-				keyMissing = true;
-				onSendFailure('no chat key on this device — import your backup to send');
-				return null;
-			}
-			if (message === 'unsupported chat key format') {
-				// Stored envelope is corrupt or from a newer format: no local
-				// key is usable, so re-importing the backup is the only path.
-				keyMissing = true;
-				onSendFailure('stored chat key format is unsupported — re-import your backup');
-				return null;
-			}
-			// Decrypt failure: most likely a wrong passphrase.
-			needsPassphrase = true;
-			return null;
-		}
-	}
 </script>
 
-<div class="border-t border-base-300 p-3">
-	{#if keyMissing}
-		<div class="mb-2 text-sm">
-			<p class="mb-1 text-base-content/60">
-				No chat key on this device. Import the backup copied from your original device to keep your
-				identity — without it, an administrator must rotate your binding.
-			</p>
-			<label class="mb-1 block text-xs" for="chat-key-backup">Key backup</label>
-			<textarea
-				id="chat-key-backup"
-				rows={2}
-				class="textarea textarea-sm mb-1 w-full font-mono text-xs"
-				placeholder={'Paste the "Export key backup" contents'}
-				bind:value={backupJson}></textarea>
-			<div class="flex gap-2">
-				<input
-					id="chat-key-passphrase"
-					type="password"
-					class="input input-sm flex-1"
-					placeholder="backup passphrase"
-					aria-label="backup passphrase"
-					bind:value={importPassphrase}
-				/>
-				<button
-					type="button"
-					class="btn btn-sm btn-primary"
-					disabled={importing}
-					onclick={importKey}
-				>
-					{importing ? 'Importing…' : 'Import key'}
-				</button>
-			</div>
-		</div>
-	{/if}
-	{#if importError}<p class="mb-1 text-sm text-error">{importError}</p>{/if}
-	{#if importNotice}<p class="mb-1 text-sm text-success">{importNotice}</p>{/if}
+<div class="border-t border-base-300 bg-base-100 p-3">
 	{#if attachmentTag}
-		<div class="mb-1 text-xs text-base-content/60">
-			Attachment: {attachmentTag[1]}
-			<button type="button" class="ml-2 text-error" onclick={() => (attachmentTag = null)}>
+		<div
+			class="mb-2 inline-flex items-center gap-2 rounded-lg bg-base-200 px-2 py-1 text-xs text-base-content/80"
+		>
+			<span class="truncate max-w-[16rem]">Attachment: {attachmentTag[1]}</span>
+			<button
+				type="button"
+				class="text-error hover:underline"
+				onclick={() => (attachmentTag = null)}
+			>
 				remove
 			</button>
 		</div>
 	{/if}
-	{#if needsPassphrase}
-		<div class="mb-1 flex gap-2">
-			<input
-				type="password"
-				class="input input-sm"
-				placeholder="key passphrase"
-				bind:value={passphrase}
-			/>
-			<button
-				type="button"
-				class="btn btn-sm"
-				onclick={async () => {
-					needsPassphrase = false;
-					await send();
-				}}
-			>
-				unlock
-			</button>
-		</div>
-	{/if}
-	<div class="flex items-end gap-2">
-		{#if !keyMissing}
-			<button
-				type="button"
-				class="btn btn-sm"
-				title="Copy the encrypted key backup for another device"
-				aria-label="Export key backup"
-				onclick={exportBackup}
-			>
-				Export key
-			</button>
-		{/if}
-		<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} />
+	<div
+		class="flex items-end gap-3 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50"
+	>
 		<textarea
-			class="textarea textarea-sm min-h-0 flex-1"
-			rows={2}
-			placeholder="Message #{channelId}"
+			bind:this={textarea}
+			class="textarea textarea-ghost min-h-[44px] max-h-[240px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-relaxed focus:outline-none"
+			rows={1}
+			placeholder="Message #{channelName}"
+			aria-label="Message text"
 			bind:value={draft}
+			oninput={adjustHeight}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && !e.shiftKey) {
 					e.preventDefault();
-					send();
+					if (canSend) send();
 				}
 			}}></textarea>
-		<button type="button" class="btn btn-sm btn-primary" disabled={sending} onclick={send}>
-			{sending ? 'Sending…' : 'Send'}
+	</div>
+
+	<div class="mt-2 flex items-center justify-between px-1">
+		<div class="flex items-center gap-1">
+			<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} iconOnly />
+			<button
+				type="button"
+				class="btn btn-ghost btn-xs h-8 w-8 rounded-lg p-0"
+				aria-label="Add emoji"
+				title="Emoji (coming soon)"
+				disabled
+			>
+				<Smile size={16} class="text-base-content/60" />
+			</button>
+			<ChatIdentityMenu />
+		</div>
+
+		<button
+			type="button"
+			class="btn btn-sm btn-primary inline-flex items-center gap-1.5 rounded-xl px-4"
+			disabled={!canSend}
+			aria-label="Send message"
+			onclick={send}
+		>
+			{#if sending}
+				<span class="loading loading-xs loading-spinner"></span>
+				Sending…
+			{:else}
+				<Send size={16} />
+			{/if}
 		</button>
 	</div>
 </div>
