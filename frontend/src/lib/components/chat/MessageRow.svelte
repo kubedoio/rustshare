@@ -47,7 +47,8 @@
 	}
 
 	function copyLink(): void {
-		const base = window.location.href.split('?')[0].split('#')[0];
+		const base =
+			typeof window !== 'undefined' ? window.location.href.split('?')[0].split('#')[0] : '';
 		const link = `${base}?channel=${encodeURIComponent(message.channel_id)}&message=${encodeURIComponent(message.message_id)}`;
 		copyToClipboard(link);
 	}

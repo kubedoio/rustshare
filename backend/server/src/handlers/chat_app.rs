@@ -645,20 +645,24 @@ pub async fn get_message(
         return Err(AppError::not_found("resource unavailable"));
     }
 
-    let author = chat_identity
-        .resolve_authors_by_pubkeys(ctx.tenant_id, std::slice::from_ref(&latest.author_pubkey))
-        .await
-        .map_err(|e| AppError::internal(format!("chat author resolution failed: {e}")))?
-        .into_iter()
-        .next()
-        .map(|author| ChatAuthorDto {
-            display_name: author.display_name,
-            avatar_url: author
-                .avatar_path
-                .as_ref()
-                .map(|_| format!("/users/{}/avatar", author.principal_id.0)),
-            is_current_user: author.principal_id.0 == auth.user_id,
-        });
+    let author = if latest.author_pubkey.is_empty() {
+        None
+    } else {
+        chat_identity
+            .resolve_authors_by_pubkeys(ctx.tenant_id, std::slice::from_ref(&latest.author_pubkey))
+            .await
+            .map_err(|e| AppError::internal(format!("chat author resolution failed: {e}")))?
+            .into_iter()
+            .next()
+            .map(|author| ChatAuthorDto {
+                display_name: author.display_name,
+                avatar_url: author
+                    .avatar_path
+                    .as_ref()
+                    .map(|_| format!("/users/{}/avatar", author.principal_id.0)),
+                is_current_user: author.principal_id.0 == auth.user_id,
+            })
+    };
 
     Ok(Json(ChatMessageDto {
         message_id: latest.message_id.clone(),
