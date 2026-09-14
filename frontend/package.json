@@ -44,7 +44,7 @@
 		"svelte": "^5.57.0",
 		"svelte-check": "^4.7.6",
 		"tailwindcss": "^4.2.2",
-		"typescript": "^7.0.2",
+		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.70.0",
 		"vite": "^8.3.0",
 		"vitest": "^5.0.0"
@@ -52,7 +52,7 @@
 	"dependencies": {
 		"@excalidraw/excalidraw": "^0.18.1",
 		"@noble/curves": "^2.4.0",
-		"@tanstack/svelte-query": "^6.1.48",
+		"@tanstack/svelte-query": "^6.1.38",
 		"@tiptap/core": "^3.31.3",
 		"@tiptap/extension-image": "^3.31.3",
 		"@tiptap/extension-link": "^3.22.5",

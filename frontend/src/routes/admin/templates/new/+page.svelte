@@ -413,7 +413,7 @@
 					<div>
 						<div class="mb-2 flex items-center justify-between">
 							<span class="text-xs font-semibold text-base-content/70">Columns</span>
-							<button type="button" class="btn btn-ghost btn-xs gap-1" onclick={addKanbanColumn}>
+							<button type="button" class="btn gap-1 btn-ghost btn-xs" onclick={addKanbanColumn}>
 								<Plus size={12} />
 								<span>Add Column</span>
 							</button>
@@ -422,19 +422,19 @@
 							{#each ensureKanbanConfig().columns as column, i}
 								<div class="flex items-center gap-2">
 									<input
-										class="input-bordered input input-sm w-28"
+										class="input-bordered input w-28 input-sm"
 										value={column.title}
 										oninput={(e) => updateKanbanColumn(i, 'title', e.currentTarget.value)}
 										placeholder="Title"
 									/>
 									<input
-										class="input-bordered input input-sm w-28"
+										class="input-bordered input w-28 input-sm"
 										value={column.slug}
 										oninput={(e) => updateKanbanColumn(i, 'slug', e.currentTarget.value)}
 										placeholder="Slug"
 									/>
 									<input
-										class="input-bordered input input-sm w-16"
+										class="input-bordered input w-16 input-sm"
 										type="number"
 										value={column.order}
 										oninput={(e) =>
@@ -442,7 +442,7 @@
 										placeholder="Order"
 									/>
 									<select
-										class="select-bordered select select-sm w-28"
+										class="select-bordered select w-28 select-sm"
 										value={column.status}
 										onchange={(e) => updateKanbanColumn(i, 'status', e.currentTarget.value)}
 									>
@@ -454,7 +454,7 @@
 									</select>
 									<button
 										type="button"
-										class="btn btn-ghost btn-xs text-error"
+										class="btn btn-ghost text-error btn-xs"
 										onclick={() => removeKanbanColumn(i)}
 									>
 										<Trash2 size={12} />
@@ -468,7 +468,7 @@
 					<div>
 						<div class="mb-2 flex items-center justify-between">
 							<span class="text-xs font-semibold text-base-content/70">Labels</span>
-							<button type="button" class="btn btn-ghost btn-xs gap-1" onclick={addKanbanLabel}>
+							<button type="button" class="btn gap-1 btn-ghost btn-xs" onclick={addKanbanLabel}>
 								<Plus size={12} />
 								<span>Add Label</span>
 							</button>
@@ -477,13 +477,13 @@
 							{#each ensureKanbanConfig().labels as label, i}
 								<div class="flex items-center gap-2">
 									<input
-										class="input-bordered input input-sm w-32"
+										class="input-bordered input w-32 input-sm"
 										value={label.name}
 										oninput={(e) => updateKanbanLabel(i, 'name', e.currentTarget.value)}
 										placeholder="Name"
 									/>
 									<select
-										class="select-bordered select select-sm w-24"
+										class="select-bordered select w-24 select-sm"
 										value={label.color}
 										onchange={(e) => updateKanbanLabel(i, 'color', e.currentTarget.value)}
 									>
@@ -497,7 +497,7 @@
 									</select>
 									<button
 										type="button"
-										class="btn btn-ghost btn-xs text-error"
+										class="btn btn-ghost text-error btn-xs"
 										onclick={() => removeKanbanLabel(i)}
 									>
 										<Trash2 size={12} />
@@ -545,7 +545,7 @@
 			<a href="/admin/templates" class="btn btn-ghost btn-sm">Cancel</a>
 			<button
 				type="submit"
-				class="btn btn-sm btn-primary"
+				class="btn btn-primary btn-sm"
 				disabled={$createTemplateMutation.isPending}
 			>
 				{#if $createTemplateMutation.isPending}

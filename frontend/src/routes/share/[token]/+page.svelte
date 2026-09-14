@@ -533,7 +533,7 @@
 												/>
 												<button
 													type="button"
-													class="btn btn-sm btn-primary"
+													class="btn btn-primary btn-sm"
 													onclick={promptFolderUpload}
 													disabled={isUploading}
 												>
@@ -682,7 +682,7 @@
 												/>
 												<button
 													type="button"
-													class="btn btn-sm btn-primary"
+													class="btn btn-primary btn-sm"
 													onclick={promptFolderUpload}
 													disabled={isUploading}
 												>
@@ -774,7 +774,7 @@
 														<td>
 															<button
 																type="button"
-																class="btn px-0 normal-case btn-ghost btn-sm"
+																class="btn btn-ghost px-0 normal-case btn-sm"
 																onclick={() => openFolder(folder.id)}
 															>
 																📁 {folder.name}
@@ -799,7 +799,7 @@
 														<td class="text-right">
 															<button
 																type="button"
-																class="btn btn-sm btn-primary"
+																class="btn btn-primary btn-sm"
 																onclick={() => handleFolderFileDownload(file)}
 																disabled={isDownloading}
 															>

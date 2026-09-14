@@ -156,7 +156,7 @@
 		</div>
 	</form>
 
-	{#if error}<div class="alert alert-warning mt-5" role="alert"><span>{error}</span></div>{/if}
+	{#if error}<div class="mt-5 alert alert-warning" role="alert"><span>{error}</span></div>{/if}
 	{#if response}
 		<article class="mt-8" aria-live="polite">
 			<div class="mb-4 flex items-center gap-2 text-sm font-medium text-base-content/60">
@@ -167,7 +167,7 @@
 						? 'Insufficient evidence'
 						: 'Answer not grounded'}
 			</div>
-			<p class="whitespace-pre-wrap text-lg leading-8 text-base-content">{response.answer}</p>
+			<p class="text-lg leading-8 whitespace-pre-wrap text-base-content">{response.answer}</p>
 			{#if response.citations.length}
 				<div class="mt-8 border-t border-base-300/70 pt-5">
 					<h2 class="mb-3 text-sm font-semibold text-base-content">

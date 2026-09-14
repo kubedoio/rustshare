@@ -216,11 +216,11 @@
 				</div>
 
 				<div class="flex gap-2">
-					<button class="btn px-4 btn-ghost btn-sm" onclick={() => dispatch('close')}>
+					<button class="btn btn-ghost px-4 btn-sm" onclick={() => dispatch('close')}>
 						<X size={16} />
 						<span>Cancel</span>
 					</button>
-					<button class="btn px-6 btn-sm btn-primary" onclick={handleSave}>
+					<button class="btn px-6 btn-primary btn-sm" onclick={handleSave}>
 						<Save size={16} />
 						<span>{initialData ? 'Update Sketch' : 'Insert Sketch'}</span>
 					</button>

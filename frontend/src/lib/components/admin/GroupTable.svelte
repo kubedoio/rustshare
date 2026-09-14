@@ -30,7 +30,7 @@
 		<span class="text-sm text-base-content/60"
 			>{groups.length} group{groups.length !== 1 ? 's' : ''}</span
 		>
-		<button class="btn btn-sm btn-primary" onclick={onCreate}>New Group</button>
+		<button class="btn btn-primary btn-sm" onclick={onCreate}>New Group</button>
 	</div>
 
 	<div class="overflow-x-auto rounded-lg border border-base-300">
@@ -62,7 +62,7 @@
 						<td>
 							<div class="flex gap-1">
 								<a href="/admin/groups/{group.id}" class="btn btn-ghost btn-xs">Edit</a>
-								<button class="btn text-error btn-ghost btn-xs" onclick={() => handleDelete(group)}>
+								<button class="btn btn-ghost text-error btn-xs" onclick={() => handleDelete(group)}>
 									Delete
 								</button>
 							</div>
@@ -80,7 +80,7 @@
 </div>
 
 {#if confirmDelete}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Delete Group</h3>
 			<p class="py-4">

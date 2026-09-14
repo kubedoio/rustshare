@@ -243,7 +243,7 @@
 <ApplicationPageShell title="Notes" subtitle="Write and keep file-backed notes in your workspace.">
 	<div slot="primaryAction">
 		<button
-			class="btn gap-2 btn-sm btn-primary"
+			class="btn gap-2 btn-primary btn-sm"
 			onclick={handleNewNote}
 			disabled={isCreating || !module.defaultTemplate}
 		>
@@ -289,7 +289,7 @@
 							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
 						/>
 						<input
-							class="input-bordered input input-sm w-full pl-9"
+							class="input-bordered input w-full pl-9 input-sm"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
@@ -441,7 +441,7 @@
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<ul
 			tabindex="0"
-			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+			class="menu dropdown-content z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
 		>
 			<li>
 				<button onclick={() => handleShowAttachments(note)}>

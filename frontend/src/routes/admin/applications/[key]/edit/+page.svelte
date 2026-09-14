@@ -330,7 +330,7 @@
 							<input
 								id="application-id"
 								type="text"
-								class="input-bordered input input-sm bg-base-200/50"
+								class="input-bordered input bg-base-200/50 input-sm"
 								value={key}
 								disabled
 							/>
@@ -900,7 +900,7 @@
 
 			<div class="flex items-center justify-end gap-3">
 				<a href="/admin/applications" class="btn btn-ghost btn-sm">Cancel</a>
-				<button type="submit" class="btn btn-sm btn-primary" disabled={$updateMutation.isPending}>
+				<button type="submit" class="btn btn-primary btn-sm" disabled={$updateMutation.isPending}>
 					{#if $updateMutation.isPending}
 						<span class="loading loading-xs loading-spinner"></span>
 					{:else}

@@ -209,7 +209,7 @@
 									</button>
 
 									<button
-										class="btn text-error btn-ghost btn-sm"
+										class="btn btn-ghost text-error btn-sm"
 										onclick={() => $deleteNotificationMutation.mutate(notification.id)}
 										disabled={$deleteNotificationMutation.isPending}
 									>

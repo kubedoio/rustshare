@@ -59,7 +59,7 @@
 				<AlertCircle size={32} />
 				<h1>Note not found</h1>
 				<p>This note may have been removed or made private.</p>
-				<a href="/" class="btn mt-4 btn-sm btn-primary">Go to RustShare</a>
+				<a href="/" class="btn mt-4 btn-primary btn-sm">Go to RustShare</a>
 			</div>
 		{:else if note}
 			<article class="public-note">

@@ -254,7 +254,7 @@
 	subtitle="Record important decisions with context and rationale."
 >
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateDecision}>
+		<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateDecision}>
 			<Plus size={14} />
 			<span>New decision</span>
 		</button>
@@ -292,7 +292,7 @@
 							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
 						/>
 						<input
-							class="input-bordered input input-sm w-full pl-9"
+							class="input-bordered input w-full pl-9 input-sm"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
@@ -342,7 +342,7 @@
 							>
 								<a href={`/apps/${module.key}/${decision.id}`} class="block">
 									<div
-										class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 mb-3"
+										class="mb-3 flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500"
 									>
 										<FileText size={16} />
 									</div>
@@ -395,7 +395,7 @@
 											{/if}
 										</div>
 									</div>
-									<span class="hidden lg:block max-w-xs truncate text-xs text-base-content/55">
+									<span class="hidden max-w-xs truncate text-xs text-base-content/55 lg:block">
 										{decision.metadata?.category || 'General'}
 									</span>
 								</a>
@@ -430,7 +430,7 @@
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<ul
 			tabindex="0"
-			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+			class="menu dropdown-content z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
 		>
 			<li>
 				<button onclick={() => handleShowAttachments(item)}>

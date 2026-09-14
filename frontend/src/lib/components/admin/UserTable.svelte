@@ -78,7 +78,7 @@
 		<input
 			type="text"
 			placeholder="Search users..."
-			class="input-bordered input input-sm w-64"
+			class="input-bordered input w-64 input-sm"
 			value={searchValue}
 			oninput={handleSearchInput}
 		/>
@@ -130,7 +130,7 @@
 								<a href="/admin/users/{user.id}" class="btn btn-ghost btn-xs">Edit</a>
 								{#if user.disabled_at}
 									<button
-										class="btn text-success btn-ghost btn-xs"
+										class="btn btn-ghost text-success btn-xs"
 										onclick={() => $enableMutation.mutate(user.id)}
 										disabled={$enableMutation.isPending}
 									>
@@ -138,7 +138,7 @@
 									</button>
 								{:else}
 									<button
-										class="btn text-warning btn-ghost btn-xs"
+										class="btn btn-ghost text-warning btn-xs"
 										onclick={() => $disableMutation.mutate(user.id)}
 										disabled={$disableMutation.isPending}
 									>
@@ -146,7 +146,7 @@
 									</button>
 								{/if}
 								<button
-									class="btn text-error btn-ghost btn-xs"
+									class="btn btn-ghost text-error btn-xs"
 									onclick={() => (confirmDelete = user.id)}
 								>
 									Delete
@@ -188,7 +188,7 @@
 
 <!-- Delete confirmation modal -->
 {#if confirmDelete}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Delete User</h3>
 			<p class="py-4">Are you sure you want to delete this user? This action cannot be undone.</p>

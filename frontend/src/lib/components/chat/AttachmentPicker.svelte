@@ -74,5 +74,5 @@
 		</ul>
 	{/if}
 	{#if error}<p class="mt-2 text-sm text-error">{error}</p>{/if}
-	<button type="button" class="btn btn-sm mt-2" onclick={() => (open = false)}>Cancel</button>
+	<button type="button" class="btn mt-2 btn-sm" onclick={() => (open = false)}>Cancel</button>
 </ModalBase>

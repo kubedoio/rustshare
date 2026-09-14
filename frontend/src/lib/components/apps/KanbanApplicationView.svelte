@@ -610,7 +610,7 @@
 {:else if ($boardsQuery.data ?? []).length === 0}
 	<ApplicationPageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
 		<div slot="primaryAction">
-			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+			<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New board</span>
 			</button>
@@ -632,7 +632,7 @@
 {:else if viewMode === 'overview'}
 	<ApplicationPageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
 		<div slot="primaryAction">
-			<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+			<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New board</span>
 			</button>
@@ -659,7 +659,7 @@
 	>
 		<div slot="primaryAction">
 			<button
-				class="btn gap-2 btn-sm btn-primary"
+				class="btn gap-2 btn-primary btn-sm"
 				onclick={handleAddCardToFirstColumn}
 				disabled={!selectedBoard || selectedBoard.columns.length === 0}
 				title={!selectedBoard || selectedBoard.columns.length === 0
@@ -679,7 +679,7 @@
 		<div slot="overflowActions">
 			<div class="relative">
 				<button
-					class="btn p-1 btn-ghost btn-sm"
+					class="btn btn-ghost p-1 btn-sm"
 					aria-label="Board menu"
 					onclick={() => (showBoardMenu = !showBoardMenu)}
 				>

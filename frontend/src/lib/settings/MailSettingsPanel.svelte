@@ -398,8 +398,8 @@
 			<div class="flex flex-col gap-0.5 p-2">
 				{#if mailAccountsLoading}
 					<div class="flex flex-col gap-1.5 p-1" aria-label="Loading accounts">
-						<div class="skeleton h-10 w-full"></div>
-						<div class="skeleton h-10 w-full opacity-70"></div>
+						<div class="h-10 w-full skeleton"></div>
+						<div class="h-10 w-full skeleton opacity-70"></div>
 					</div>
 				{:else if mailAccounts.length === 0}
 					<p class="px-2 py-3 text-xs text-base-content/50">No mail account configured.</p>
@@ -431,7 +431,7 @@
 			<div class="border-t border-[var(--rs-border)] p-2">
 				<button
 					type="button"
-					class="btn btn-sm btn-outline w-full gap-1.5"
+					class="btn w-full gap-1.5 btn-outline btn-sm"
 					onclick={openAddAccountForm}
 				>
 					<Plus size={14} /> Add account
@@ -460,7 +460,7 @@
 							<label class="label py-1 text-xs font-semibold" for="add-provider">Provider</label>
 							<select
 								id="add-provider"
-								class="select select-sm select-bordered"
+								class="select-bordered select select-sm"
 								value={provider}
 								onchange={(event) =>
 									applyProvider((event.target as HTMLSelectElement).value as Provider)}
@@ -473,7 +473,7 @@
 							<label class="label py-1 text-xs font-semibold" for="add-name">Account name</label>
 							<input
 								id="add-name"
-								class="input input-sm input-bordered"
+								class="input-bordered input input-sm"
 								placeholder="My Email"
 								bind:value={imapForm.name}
 								required
@@ -487,7 +487,7 @@
 							</label>
 							<input
 								id="add-username"
-								class="input input-sm input-bordered"
+								class="input-bordered input input-sm"
 								placeholder="user@example.com"
 								bind:value={imapForm.username}
 								required
@@ -500,7 +500,7 @@
 							<input
 								id="add-password"
 								type="password"
-								class="input input-sm input-bordered"
+								class="input-bordered input input-sm"
 								bind:value={imapForm.password}
 								required
 								autocomplete="new-password"
@@ -514,7 +514,7 @@
 								<label class="label py-1 text-xs font-semibold" for="add-host">IMAP host</label>
 								<input
 									id="add-host"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="imap.example.com"
 									bind:value={imapForm.host}
 									required
@@ -525,7 +525,7 @@
 								<input
 									id="add-port"
 									type="number"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={imapForm.port}
 									required
 								/>
@@ -535,7 +535,7 @@
 							<label class="label py-1 text-xs font-semibold" for="add-tls">Security</label>
 							<select
 								id="add-tls"
-								class="select select-sm select-bordered"
+								class="select-bordered select select-sm"
 								bind:value={imapForm.tls_mode}
 							>
 								<option value="tls">SSL/TLS</option>
@@ -548,13 +548,13 @@
 					>
 						<button
 							type="button"
-							class="btn btn-sm btn-outline"
+							class="btn btn-outline btn-sm"
 							onclick={() => (showAddAccountForm = false)}
 						>
 							Cancel
 						</button>
-						<button type="submit" class="btn btn-sm btn-primary" disabled={addingAccount}>
-							{#if addingAccount}<span class="loading loading-spinner loading-xs"></span>{/if}
+						<button type="submit" class="btn btn-primary btn-sm" disabled={addingAccount}>
+							{#if addingAccount}<span class="loading loading-xs loading-spinner"></span>{/if}
 							Save account
 						</button>
 					</div>
@@ -596,7 +596,7 @@
 								</label>
 								<input
 									id="mail-account-name"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={imapForm.name}
 								/>
 							</div>
@@ -606,7 +606,7 @@
 								</label>
 								<input
 									id="mail-account-display"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="My Display Name"
 									bind:value={smtpForm.from_name}
 								/>
@@ -632,7 +632,7 @@
 								<label class="label py-1 text-xs font-semibold" for="imap-host">IMAP host</label>
 								<input
 									id="imap-host"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={imapForm.host}
 								/>
 							</div>
@@ -641,7 +641,7 @@
 								<input
 									id="imap-port"
 									type="number"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={imapForm.port}
 								/>
 							</div>
@@ -651,7 +651,7 @@
 								<label class="label py-1 text-xs font-semibold" for="imap-security">Security</label>
 								<select
 									id="imap-security"
-									class="select select-sm select-bordered"
+									class="select-bordered select select-sm"
 									bind:value={imapForm.tls_mode}
 								>
 									<option value="tls">SSL/TLS</option>
@@ -663,7 +663,7 @@
 								</label>
 								<input
 									id="imap-username"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={imapForm.username}
 								/>
 							</div>
@@ -679,7 +679,7 @@
 									</span>
 									<button
 										type="button"
-										class="btn btn-sm btn-outline"
+										class="btn btn-outline btn-sm"
 										onclick={() => (replaceImapPassword = true)}
 									>
 										Replace password
@@ -689,7 +689,7 @@
 								<div class="flex items-center gap-2">
 									<input
 										type="password"
-										class="input input-sm input-bordered flex-1"
+										class="input-bordered input flex-1 input-sm"
 										placeholder="Enter new password"
 										aria-label="New IMAP password"
 										bind:value={imapForm.password}
@@ -697,7 +697,7 @@
 									/>
 									<button
 										type="button"
-										class="btn btn-sm btn-ghost"
+										class="btn btn-ghost btn-sm"
 										onclick={() => {
 											replaceImapPassword = false;
 											imapForm.password = '';
@@ -723,7 +723,7 @@
 								<label class="label py-1 text-xs font-semibold" for="smtp-host">SMTP host</label>
 								<input
 									id="smtp-host"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="smtp.example.com"
 									bind:value={smtpForm.host}
 								/>
@@ -733,7 +733,7 @@
 								<input
 									id="smtp-port"
 									type="number"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={smtpForm.port}
 								/>
 							</div>
@@ -745,7 +745,7 @@
 								</label>
 								<input
 									id="smtp-username"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="user@example.com"
 									bind:value={smtpForm.username}
 								/>
@@ -754,7 +754,7 @@
 								<label class="label py-1 text-xs font-semibold" for="smtp-tls">Security</label>
 								<select
 									id="smtp-tls"
-									class="select select-sm select-bordered"
+									class="select-bordered select select-sm"
 									bind:value={smtpForm.tls_mode}
 								>
 									<option value="starttls">STARTTLS</option>
@@ -773,7 +773,7 @@
 									</span>
 									<button
 										type="button"
-										class="btn btn-sm btn-outline"
+										class="btn btn-outline btn-sm"
 										onclick={() => (replaceSmtpPassword = true)}
 									>
 										Replace password
@@ -783,7 +783,7 @@
 								<div class="flex items-center gap-2">
 									<input
 										type="password"
-										class="input input-sm input-bordered flex-1"
+										class="input-bordered input flex-1 input-sm"
 										placeholder={selectedSmtp
 											? 'Enter new password'
 											: 'Password for the SMTP server'}
@@ -795,7 +795,7 @@
 									{#if selectedSmtp}
 										<button
 											type="button"
-											class="btn btn-sm btn-ghost"
+											class="btn btn-ghost btn-sm"
 											onclick={() => {
 												replaceSmtpPassword = false;
 												smtpForm.password = '';
@@ -813,7 +813,7 @@
 								<input
 									id="smtp-from"
 									type="email"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									bind:value={smtpForm.from_address}
 								/>
 							</div>
@@ -824,7 +824,7 @@
 								<input
 									id="smtp-replyto"
 									type="email"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="reply@example.com"
 									bind:value={smtpForm.reply_to}
 								/>
@@ -866,7 +866,7 @@
 								</label>
 								<input
 									id="smtp-sent-folder"
-									class="input input-sm input-bordered"
+									class="input-bordered input input-sm"
 									placeholder="Sent"
 									bind:value={smtpForm.sent_folder}
 								/>
@@ -876,7 +876,7 @@
 							{#if selectedSmtp}
 								<button
 									type="button"
-									class="btn btn-sm btn-outline btn-error"
+									class="btn btn-outline btn-error btn-sm"
 									onclick={handleDeleteSmtp}
 								>
 									Delete SMTP settings
@@ -884,7 +884,7 @@
 							{/if}
 							<button
 								type="button"
-								class="btn btn-sm btn-error gap-1.5"
+								class="btn gap-1.5 btn-error btn-sm"
 								onclick={() => selectedAccount && handleDeleteAccount(selectedAccount.id)}
 							>
 								<Trash2 size={14} /> Delete this mail account
@@ -899,30 +899,30 @@
 				>
 					<button
 						type="button"
-						class="btn btn-sm btn-outline"
+						class="btn btn-outline btn-sm"
 						disabled={testingImap || saving}
 						onclick={handleTestImap}
 					>
-						{#if testingImap}<span class="loading loading-spinner loading-xs"></span>{/if}
+						{#if testingImap}<span class="loading loading-xs loading-spinner"></span>{/if}
 						Test incoming mail
 					</button>
 					<button
 						type="button"
-						class="btn btn-sm btn-outline"
+						class="btn btn-outline btn-sm"
 						disabled={!selectedSmtp || testingSmtp || saving}
 						title={selectedSmtp ? 'Test the saved SMTP settings' : 'Save SMTP settings first'}
 						onclick={handleTestSmtp}
 					>
-						{#if testingSmtp}<span class="loading loading-spinner loading-xs"></span>{/if}
+						{#if testingSmtp}<span class="loading loading-xs loading-spinner"></span>{/if}
 						Test outgoing mail
 					</button>
 					<button
 						type="button"
-						class="btn btn-sm btn-primary"
+						class="btn btn-primary btn-sm"
 						disabled={saving}
 						onclick={handleSaveAll}
 					>
-						{#if saving}<span class="loading loading-spinner loading-xs"></span>{/if}
+						{#if saving}<span class="loading loading-xs loading-spinner"></span>{/if}
 						Save changes
 					</button>
 				</div>
@@ -933,7 +933,7 @@
 					<p class="mt-1 text-xs text-base-content/60">
 						Add an IMAP account to use RustShare Mail.
 					</p>
-					<button type="button" class="btn btn-sm btn-primary mt-4" onclick={openAddAccountForm}>
+					<button type="button" class="btn mt-4 btn-primary btn-sm" onclick={openAddAccountForm}>
 						Add mail account
 					</button>
 				</div>

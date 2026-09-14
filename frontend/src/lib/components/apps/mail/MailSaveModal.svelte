@@ -38,7 +38,7 @@
 					{#if importedMessageId}
 						<a
 							href="/apps/mail/messages/{importedMessageId}"
-							class="link link-primary text-sm"
+							class="link text-sm link-primary"
 							onclick={onClose}
 						>
 							Open saved copy

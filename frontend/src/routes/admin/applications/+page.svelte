@@ -168,7 +168,7 @@
 									</button>
 									<a
 										href="/admin/applications/{module.application_id}/edit"
-										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+										class="btn btn-ghost text-base-content/50 btn-xs hover:text-base-content"
 										title="Edit"
 									>
 										<Edit size={14} />
@@ -176,7 +176,7 @@
 									{#if module.application_id === 'io.elembra.chat'}
 										<a
 											href="/admin/applications/chat"
-											class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+											class="btn btn-ghost text-base-content/50 btn-xs hover:text-base-content"
 										>
 											Chat settings
 										</a>

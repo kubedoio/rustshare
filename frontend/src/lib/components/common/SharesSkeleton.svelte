@@ -1,6 +1,6 @@
 <div class="mx-auto max-w-6xl space-y-6 p-4 lg:p-6" aria-busy="true" aria-label="Loading shares">
 	<!-- Header skeleton -->
-	<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 lg:p-8 shadow-panel">
+	<div class="rounded-[2rem] border border-base-300/70 bg-base-100 p-6 shadow-panel lg:p-8">
 		<div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
 			<div class="max-w-2xl space-y-4">
 				<div class="h-4 w-40 animate-pulse rounded-full bg-base-200"></div>

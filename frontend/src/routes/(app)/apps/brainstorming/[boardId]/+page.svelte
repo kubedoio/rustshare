@@ -363,12 +363,12 @@
 				</span>
 			{/if}
 
-			<button class="btn gap-2 btn-sm btn-outline" onclick={() => (showShareModal = true)}>
+			<button class="btn gap-2 btn-outline btn-sm" onclick={() => (showShareModal = true)}>
 				<Share2 size={14} />
 				<span>Share</span>
 			</button>
 			<button
-				class="btn gap-2 btn-sm btn-primary"
+				class="btn gap-2 btn-primary btn-sm"
 				onclick={handleSave}
 				disabled={isSaving || !hasChanges}
 			>

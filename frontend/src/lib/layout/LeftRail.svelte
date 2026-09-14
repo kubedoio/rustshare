@@ -149,7 +149,7 @@
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">
-						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+						<span class="text-xs font-semibold tracking-wider text-base-content/40 uppercase"
 							>Applications</span
 						>
 					</div>
@@ -167,7 +167,7 @@
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="px-3 py-1.5">
-						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+						<span class="text-xs font-semibold tracking-wider text-base-content/40 uppercase"
 							>Applications</span
 						>
 					</div>
@@ -202,7 +202,7 @@
 			<div class="my-2 border-t border-base-300/50 pt-2">
 				{#if railExpanded}
 					<div class="mb-1 px-3 py-1.5">
-						<span class="text-xs font-semibold uppercase tracking-wider text-base-content/40"
+						<span class="text-xs font-semibold tracking-wider text-base-content/40 uppercase"
 							>Applications</span
 						>
 					</div>

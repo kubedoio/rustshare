@@ -73,7 +73,7 @@
 				Manage predefined and custom templates for workspace Applications.
 			</p>
 		</div>
-		<a href="/admin/templates/new" class="btn btn-sm btn-primary">
+		<a href="/admin/templates/new" class="btn btn-primary btn-sm">
 			<Plus size={14} />
 			<span>New Template</span>
 		</a>
@@ -151,13 +151,13 @@
 								<div class="flex items-center justify-end gap-1">
 									<a
 										href="/admin/templates/{template.template_key}/edit"
-										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+										class="btn btn-ghost text-base-content/50 btn-xs hover:text-base-content"
 										title="Edit"
 									>
 										<Edit size={14} />
 									</a>
 									<button
-										class="btn text-base-content/50 btn-ghost btn-xs hover:text-base-content"
+										class="btn btn-ghost text-base-content/50 btn-xs hover:text-base-content"
 										title="Duplicate"
 										onclick={() => handleDuplicate(template.template_key)}
 										disabled={$duplicateMutation.isPending}
@@ -166,7 +166,7 @@
 									</button>
 									{#if !template.system_template}
 										<button
-											class="btn text-error/60 btn-ghost btn-xs hover:text-error"
+											class="btn btn-ghost text-error/60 btn-xs hover:text-error"
 											title="Delete"
 											onclick={() => handleDelete(template.template_key, template.name)}
 											disabled={$deleteMutation.isPending}

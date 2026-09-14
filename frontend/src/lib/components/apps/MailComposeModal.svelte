@@ -191,7 +191,7 @@
 				<h2 class="text-sm font-semibold text-base-content">Compose</h2>
 				<button
 					type="button"
-					class="btn btn-ghost btn-sm btn-square"
+					class="btn btn-square btn-ghost btn-sm"
 					aria-label="Close compose"
 					onclick={handleClose}
 				>
@@ -212,8 +212,8 @@
 						send mail.
 					</p>
 					<div class="flex justify-center gap-2">
-						<button type="button" class="btn btn-sm btn-outline" onclick={onClose}>Close</button>
-						<a href="/settings?tab=mail" class="btn btn-sm btn-primary">Open Mail settings</a>
+						<button type="button" class="btn btn-outline btn-sm" onclick={onClose}>Close</button>
+						<a href="/settings?tab=mail" class="btn btn-primary btn-sm">Open Mail settings</a>
 					</div>
 				</div>
 			{:else}
@@ -229,7 +229,7 @@
 						<div class="flex items-center gap-3 px-4">
 							<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">To</span>
 							<input
-								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+								class="input w-full rounded-none input-ghost px-0 input-sm focus:bg-transparent"
 								type="text"
 								placeholder="To"
 								aria-label="To"
@@ -262,7 +262,7 @@
 							<div class="flex items-center gap-3 px-4">
 								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Cc</span>
 								<input
-									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									class="input w-full rounded-none input-ghost px-0 input-sm focus:bg-transparent"
 									type="text"
 									placeholder="Cc"
 									aria-label="Cc"
@@ -274,7 +274,7 @@
 							<div class="flex items-center gap-3 px-4">
 								<span class="w-12 shrink-0 py-2 text-xs font-medium text-base-content/55">Bcc</span>
 								<input
-									class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+									class="input w-full rounded-none input-ghost px-0 input-sm focus:bg-transparent"
 									type="text"
 									placeholder="Bcc"
 									aria-label="Bcc"
@@ -287,7 +287,7 @@
 								Subject
 							</span>
 							<input
-								class="input input-sm input-ghost w-full rounded-none px-0 focus:bg-transparent"
+								class="input w-full rounded-none input-ghost px-0 input-sm focus:bg-transparent"
 								placeholder="Subject"
 								aria-label="Subject"
 								bind:value={draft.subject}
@@ -321,7 +321,7 @@
 						{/each}
 						<div class="ml-auto flex items-center gap-1.5">
 							<select
-								class="select select-xs select-bordered max-w-52"
+								class="select-bordered select max-w-52 select-xs"
 								aria-label="Select workspace file to attach"
 								bind:value={selectedFileIdToAdd}
 							>
@@ -334,7 +334,7 @@
 							</select>
 							<button
 								type="button"
-								class="btn btn-xs btn-outline"
+								class="btn btn-outline btn-xs"
 								onclick={addAttachment}
 								disabled={!selectedFileIdToAdd}
 							>
@@ -367,7 +367,7 @@
 						{#if draftId && onDiscard}
 							<button
 								type="button"
-								class="btn btn-sm btn-ghost text-error"
+								class="btn btn-ghost text-error btn-sm"
 								disabled={discarding || sending || saving}
 								onclick={() => {
 									if (confirm('Discard this draft permanently?')) onDiscard?.(draftId);
@@ -377,12 +377,12 @@
 								{discarding ? 'Discarding...' : 'Discard'}
 							</button>
 						{/if}
-						<button type="button" class="btn btn-sm btn-ghost" onclick={handleClose}>
+						<button type="button" class="btn btn-ghost btn-sm" onclick={handleClose}>
 							Cancel
 						</button>
 						<button
 							type="button"
-							class="btn btn-sm btn-outline gap-1.5"
+							class="btn gap-1.5 btn-outline btn-sm"
 							disabled={saving ||
 								sending ||
 								discarding ||
@@ -400,7 +400,7 @@
 						</button>
 						<button
 							type="submit"
-							class="btn btn-sm btn-primary gap-1.5"
+							class="btn gap-1.5 btn-primary btn-sm"
 							disabled={sending || saving || discarding}
 						>
 							<Send size={14} />

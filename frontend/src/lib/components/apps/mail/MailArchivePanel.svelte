@@ -90,7 +90,7 @@
 			<label class="label py-0.5 text-xs font-semibold" for="archive-folder">Folder</label>
 			<select
 				id="archive-folder"
-				class="select select-sm select-bordered"
+				class="select-bordered select select-sm"
 				bind:value={archiveFolderName}
 				required
 			>
@@ -103,7 +103,7 @@
 			<label class="label py-0.5 text-xs font-semibold" for="archive-since">Archive since</label>
 			<input
 				id="archive-since"
-				class="input input-sm input-bordered"
+				class="input-bordered input input-sm"
 				type="date"
 				bind:value={archiveSince}
 			/>
@@ -112,7 +112,7 @@
 			<label class="label py-0.5 text-xs font-semibold" for="archive-before">Archive before</label>
 			<input
 				id="archive-before"
-				class="input input-sm input-bordered"
+				class="input-bordered input input-sm"
 				type="date"
 				bind:value={archiveBefore}
 			/>
@@ -123,7 +123,7 @@
 			</label>
 			<input
 				id="archive-retention"
-				class="input input-sm input-bordered"
+				class="input-bordered input input-sm"
 				type="number"
 				min="1"
 				max="36500"
@@ -134,7 +134,7 @@
 		<div class="flex items-end justify-end">
 			<button
 				type="submit"
-				class="btn btn-sm btn-outline gap-1.5"
+				class="btn gap-1.5 btn-outline btn-sm"
 				disabled={!accountId || !archiveFolderName || $archiveMutation.isPending}
 			>
 				<Archive size={13} />
@@ -148,7 +148,7 @@
 			<h4 class="text-xs font-semibold text-base-content/70">Archive jobs</h4>
 			<button
 				type="button"
-				class="btn btn-xs btn-ghost gap-1"
+				class="btn gap-1 btn-ghost btn-xs"
 				onclick={() => $archiveJobsQuery.refetch()}
 			>
 				<RefreshCw size={11} /> Refresh
@@ -176,7 +176,7 @@
 							{#if ['pending', 'running'].includes(job.status)}
 								<button
 									type="button"
-									class="btn btn-xs btn-outline"
+									class="btn btn-outline btn-xs"
 									onclick={() => cancelArchiveMutation.mutate(job.id)}
 								>
 									Cancel

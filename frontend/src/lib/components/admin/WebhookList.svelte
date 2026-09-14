@@ -61,7 +61,7 @@
 		<span class="text-sm text-base-content/60">
 			{webhooks.length} webhook{webhooks.length !== 1 ? 's' : ''}
 		</span>
-		<button class="btn btn-sm btn-primary" onclick={onCreate}>Add Webhook</button>
+		<button class="btn btn-primary btn-sm" onclick={onCreate}>Add Webhook</button>
 	</div>
 
 	{#if webhooks.length === 0}
@@ -112,7 +112,7 @@
 						>
 							Test
 						</button>
-						<button class="btn text-error btn-ghost btn-xs" onclick={() => (confirmDelete = wh.id)}>
+						<button class="btn btn-ghost text-error btn-xs" onclick={() => (confirmDelete = wh.id)}>
 							Delete
 						</button>
 					</div>
@@ -134,7 +134,7 @@
 </div>
 
 {#if confirmDelete}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Delete Webhook</h3>
 			<p class="py-4">Are you sure you want to delete this webhook?</p>

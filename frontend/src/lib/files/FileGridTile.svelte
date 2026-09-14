@@ -338,7 +338,7 @@
 		ondrop={handleDrop}
 	>
 		{#if !isFolder && colorBarClass}
-			<div class="absolute left-0 top-0 bottom-0 w-1.5 {colorBarClass}" aria-hidden="true"></div>
+			<div class="absolute top-0 bottom-0 left-0 w-1.5 {colorBarClass}" aria-hidden="true"></div>
 		{/if}
 		<!-- Checkbox (selection mode) -->
 		{#if selectionMode}

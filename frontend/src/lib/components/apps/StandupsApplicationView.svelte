@@ -266,7 +266,7 @@ What needs follow-up or support?
 	subtitle="Capture daily team updates, blockers, and follow-up items."
 >
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={handleNewStandup} disabled={isCreating}>
+		<button class="btn gap-2 btn-primary btn-sm" onclick={handleNewStandup} disabled={isCreating}>
 			<Plus size={14} />
 			<span>New standup</span>
 		</button>
@@ -309,7 +309,7 @@ What needs follow-up or support?
 							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
 						/>
 						<input
-							class="input-bordered input input-sm w-full pl-9"
+							class="input-bordered input w-full pl-9 input-sm"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
@@ -357,7 +357,7 @@ What needs follow-up or support?
 							>
 								<a href={`/apps/${module.key}/${standup.id}`} class="block">
 									<div
-										class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 mb-3"
+										class="mb-3 flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500"
 									>
 										<CalendarDays size={16} />
 									</div>
@@ -398,7 +398,7 @@ What needs follow-up or support?
 											{new Date(standup.modified_at).toLocaleDateString()}
 										</span>
 									</div>
-									<span class="hidden sm:block text-xs text-base-content/55">
+									<span class="hidden text-xs text-base-content/55 sm:block">
 										{new Date(standup.modified_at).toLocaleDateString()}
 									</span>
 								</a>
@@ -433,7 +433,7 @@ What needs follow-up or support?
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<ul
 			tabindex="0"
-			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+			class="menu dropdown-content z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
 		>
 			<li>
 				<button onclick={() => handleShowAttachments(item)}>

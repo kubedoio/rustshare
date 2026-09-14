@@ -130,7 +130,7 @@
 	subtitle="Capture sketches, flows, and early ideas as visual workspace boards."
 >
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={handleCreateBoard}>
+		<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 			<Plus size={14} />
 			<span>New idea board</span>
 		</button>
@@ -167,12 +167,12 @@
 							class="absolute top-1/2 left-3 -translate-y-1/2 text-base-content/35"
 						/>
 						<input
-							class="input-bordered input input-sm w-full pl-9"
+							class="input-bordered input w-full pl-9 input-sm"
 							placeholder={searchPlaceholder}
 							bind:value={searchTerm}
 						/>
 					</label>
-					<button class="btn justify-between btn-sm btn-outline lg:w-36" disabled
+					<button class="btn justify-between btn-outline btn-sm lg:w-36" disabled
 						>{filterLabel}</button
 					>
 					<div class="ml-auto flex items-center gap-2">
@@ -322,7 +322,7 @@
 				Cancel
 			</button>
 			<button
-				class="btn btn-sm btn-primary"
+				class="btn btn-primary btn-sm"
 				onclick={handleSubmit}
 				disabled={$createBoardMutation.isPending}
 			>
