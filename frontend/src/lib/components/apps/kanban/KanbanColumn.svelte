@@ -100,7 +100,7 @@
 				<input
 					type="text"
 					placeholder="Card title"
-					class="input-bordered input input-sm w-full"
+					class="input-bordered input w-full input-sm"
 					value={newCardTitle}
 					oninput={(e) => onNewCardTitleChange(e.currentTarget.value)}
 					onkeydown={(e) => {
@@ -109,14 +109,14 @@
 					}}
 				/>
 				<div class="flex gap-2">
-					<button class="btn flex-1 btn-xs btn-primary" onclick={() => onAddCard(newCardTitle)}>
+					<button class="btn flex-1 btn-primary btn-xs" onclick={() => onAddCard(newCardTitle)}>
 						Add
 					</button>
 					<button class="btn btn-ghost btn-xs" onclick={onCancelAddCard}> Cancel </button>
 				</div>
 			</div>
 		{:else}
-			<button class="btn w-full text-base-content/60 btn-ghost btn-xs" onclick={onShowAddCard}>
+			<button class="btn w-full btn-ghost text-base-content/60 btn-xs" onclick={onShowAddCard}>
 				<Plus size={12} />
 				Add card
 			</button>

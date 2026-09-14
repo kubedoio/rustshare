@@ -152,7 +152,7 @@
 				<span>{scannerError}</span>
 			</div>
 			<div class="flex justify-center gap-2">
-				<button class="btn btn-sm btn-primary" onclick={handleRetry}>Try Again</button>
+				<button class="btn btn-primary btn-sm" onclick={handleRetry}>Try Again</button>
 				<button class="btn btn-ghost btn-sm" onclick={handleClose}>Back</button>
 			</div>
 		{:else}

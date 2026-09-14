@@ -119,7 +119,7 @@
 </script>
 
 {#if open && fileId}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box max-w-3xl">
 			<h3 class="mb-4 text-lg font-bold">Version History: {fileName}</h3>
 
@@ -198,7 +198,7 @@
 
 <!-- Restore Confirmation Modal -->
 {#if showRestoreConfirm}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box">
 			<h3 class="mb-4 text-lg font-bold">Confirm Restore</h3>
 

@@ -44,7 +44,7 @@
 		{#each COLOR_PALETTE as color}
 			<button
 				type="button"
-				class="h-6 w-6 rounded-full {color.bgClass} ring-offset-2 hover:ring-2 hover:ring-base-content/30 focus:outline-hidden focus:ring-2 focus:ring-base-content/30"
+				class="h-6 w-6 rounded-full {color.bgClass} ring-offset-2 hover:ring-2 hover:ring-base-content/30 focus:ring-2 focus:ring-base-content/30 focus:outline-hidden"
 				class:ring-2={value === color.key}
 				class:ring-base-content={value === color.key}
 				aria-label={color.label}

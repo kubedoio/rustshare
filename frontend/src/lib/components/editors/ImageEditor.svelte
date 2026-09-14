@@ -289,7 +289,7 @@
 
 		{#if isCropping}
 			<div class="ml-auto flex items-center gap-1">
-				<button class="btn btn-ghost btn-sm btn-error" onclick={cancelCrop}>
+				<button class="btn btn-ghost btn-error btn-sm" onclick={cancelCrop}>
 					<X size={18} />
 					Cancel
 				</button>
@@ -351,7 +351,7 @@
 
 <!-- Resize Modal -->
 {#if showResizeModal}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box">
 			<h3 class="mb-4 text-lg font-bold">Resize Image</h3>
 

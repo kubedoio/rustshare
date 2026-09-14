@@ -434,7 +434,7 @@
 						{/if}
 						<div class="prose max-w-none">{@html body.content}</div>
 					{:else if body.type === 'text'}
-						<pre class="whitespace-pre-wrap font-mono text-sm">{body.content}</pre>
+						<pre class="font-mono text-sm whitespace-pre-wrap">{body.content}</pre>
 					{:else}
 						<EmptyState
 							icon="📄"
@@ -495,7 +495,7 @@
 					}}
 				>
 					<select
-						class="select select-sm select-bordered"
+						class="select-bordered select select-sm"
 						bind:value={linkTargetType}
 						onchange={() => (linkTargetId = '')}
 					>
@@ -504,7 +504,7 @@
 						{/each}
 					</select>
 					{#if linkTargetType === 'file'}
-						<select class="select select-sm select-bordered" bind:value={linkTargetId} required>
+						<select class="select-bordered select select-sm" bind:value={linkTargetId} required>
 							<option value="">Select a file</option>
 							{#each $filesQuery.data ?? [] as file}
 								<option value={file.id}>{file.name}</option>
@@ -512,14 +512,14 @@
 						</select>
 					{:else}
 						<input
-							class="input input-sm input-bordered"
+							class="input-bordered input input-sm"
 							bind:value={linkTargetId}
 							placeholder="Artifact UUID"
 							required
 						/>
 					{/if}
 					<button
-						class="btn btn-sm btn-primary"
+						class="btn btn-primary btn-sm"
 						type="submit"
 						disabled={$createLinkMutation.isPending}
 					>
@@ -556,7 +556,7 @@
 								</div>
 								<button
 									type="button"
-									class="btn btn-error btn-xs btn-outline"
+									class="btn btn-outline btn-error btn-xs"
 									onclick={() => deleteLinkMutation.mutate(link.id)}
 									aria-label="Remove link"
 								>

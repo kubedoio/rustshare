@@ -61,7 +61,7 @@
 					{message.thread_root_id ? ' · reply' : ''}
 				</div>
 				{#if message.body != null}
-					<div class="whitespace-pre-wrap text-sm">{message.body}</div>
+					<div class="text-sm whitespace-pre-wrap">{message.body}</div>
 				{:else}
 					<div class="text-sm text-base-content/50 italic">
 						Content unavailable in Elembra (reference-only message).
@@ -72,7 +72,7 @@
 						{#each message.attachments as attachment, index (attachment.application + attachment.resourceType + attachment.resourceId + (attachment.version ?? ''))}
 							<button
 								type="button"
-								class="badge badge-outline gap-1 text-xs"
+								class="badge gap-1 badge-outline text-xs"
 								title="Open attachment"
 								onclick={() => openAttachment(attachment)}
 							>

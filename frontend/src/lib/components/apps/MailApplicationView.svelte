@@ -688,7 +688,7 @@
 
 <ApplicationPageShell title="Mail" subtitle={module.description}>
 	<div slot="primaryAction">
-		<button type="button" class="btn btn-primary btn-sm gap-2" onclick={openCompose}>
+		<button type="button" class="btn gap-2 btn-primary btn-sm" onclick={openCompose}>
 			<Send size={14} /> Compose
 		</button>
 	</div>
@@ -712,7 +712,7 @@
 					No mail account configured — mail you import is still available in Saved to RustShare
 					below.
 				</p>
-				<a href="/settings?tab=mail" class="btn btn-primary btn-sm shrink-0">Open Mail settings</a>
+				<a href="/settings?tab=mail" class="btn shrink-0 btn-primary btn-sm">Open Mail settings</a>
 			</div>
 		{/if}
 		<section
@@ -722,7 +722,7 @@
 				{#if hasAccounts}
 					<div class="min-w-48">
 						<select
-							class="select select-bordered select-sm w-full"
+							class="select-bordered select w-full select-sm"
 							aria-label="Mail account"
 							bind:value={selectedAccountId}
 							onchange={() => {
@@ -752,10 +752,10 @@
 				<form class="relative min-w-44 flex-1" onsubmit={submitSearch}>
 					<Search
 						size={14}
-						class="pointer-events-none absolute left-3 top-2.5 text-base-content/40"
+						class="pointer-events-none absolute top-2.5 left-3 text-base-content/40"
 					/>
 					<input
-						class="input input-bordered input-sm w-full pl-9"
+						class="input-bordered input w-full pl-9 input-sm"
 						placeholder="Search mail"
 						aria-label="Search mail"
 						bind:value={searchInput}
@@ -763,7 +763,7 @@
 				</form>
 				<button
 					type="button"
-					class="btn btn-ghost btn-sm btn-square"
+					class="btn btn-square btn-ghost btn-sm"
 					aria-label={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
 					title={sortOrder === 'date_desc' ? 'Sort: newest first' : 'Sort: oldest first'}
 					onclick={toggleSortOrder}
@@ -775,7 +775,7 @@
 				{#if hasAccounts}
 					<button
 						type="button"
-						class="btn btn-ghost btn-sm btn-square"
+						class="btn btn-square btn-ghost btn-sm"
 						aria-label="Synchronize mail"
 						onclick={syncMailbox}
 						disabled={syncing}
@@ -786,7 +786,7 @@
 				<div class="relative">
 					<button
 						type="button"
-						class="btn btn-ghost btn-sm btn-square"
+						class="btn btn-square btn-ghost btn-sm"
 						aria-label="More mail actions"
 						onclick={() => (overflowOpen = !overflowOpen)}
 					>
@@ -798,15 +798,15 @@
 						>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm w-full justify-start"
+								class="btn w-full justify-start btn-ghost btn-sm"
 								onclick={() => uploadInput?.click()}><Download size={14} /> Upload .eml</button
 							>
-							<a class="btn btn-ghost btn-sm w-full justify-start" href="/settings?tab=mail"
+							<a class="btn w-full justify-start btn-ghost btn-sm" href="/settings?tab=mail"
 								><Folder size={14} /> Manage mail accounts</a
 							>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm w-full justify-start"
+								class="btn w-full justify-start btn-ghost btn-sm"
 								onclick={() => {
 									activityOpen = true;
 									overflowOpen = false;
@@ -839,7 +839,7 @@
 					aria-label="Mailboxes"
 				>
 					<div class="p-2">
-						<p class="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-base-content/45">
+						<p class="px-2 py-1 text-xs font-semibold tracking-wide text-base-content/45 uppercase">
 							Mailboxes
 						</p>
 						{#if $foldersQuery.isError}
@@ -847,7 +847,7 @@
 								<p>Folders could not be synchronized.</p>
 								<button
 									type="button"
-									class="btn btn-xs btn-ghost mt-2"
+									class="btn mt-2 btn-ghost btn-xs"
 									onclick={() => $foldersQuery.refetch()}>Retry</button
 								>
 							</div>
@@ -870,7 +870,7 @@
 											size={15}
 										/>{/if}
 									<span class="min-w-0 flex-1 truncate">{folder.display_name}</span>
-									{#if folder.unseen}<span class="badge badge-primary badge-sm"
+									{#if folder.unseen}<span class="badge badge-sm badge-primary"
 											>{folder.unseen}</span
 										>{/if}
 								</button>
@@ -918,7 +918,7 @@
 					>
 						<button
 							type="button"
-							class="btn btn-ghost btn-xs btn-square lg:hidden"
+							class="btn btn-square btn-ghost btn-xs lg:hidden"
 							aria-label="Back to mailboxes"
 							onclick={() => (mobilePane = 'folders')}><ArrowLeft size={15} /></button
 						>
@@ -950,7 +950,7 @@
 							</div>
 						{:else if $accountMessagesQuery.isError}<div class="p-6 text-center text-sm text-error">
 								Messages could not be loaded.<button
-									class="btn btn-xs btn-ghost ml-2"
+									class="btn ml-2 btn-ghost btn-xs"
 									onclick={() => $accountMessagesQuery.refetch()}>Retry</button
 								>
 							</div>
@@ -970,14 +970,14 @@
 									>
 										<input
 											type="checkbox"
-											class="checkbox checkbox-sm mt-2"
+											class="checkbox mt-2 checkbox-sm"
 											aria-label="Select message {message.subject ?? '(No subject)'}"
 											checked={selectedUids.includes(message.uid)}
 											onchange={() => toggleUid(message.uid)}
 										/>
 										<button
 											type="button"
-											class="min-w-0 flex-1 rounded text-left focus:outline-none focus:ring-2 focus:ring-brand-500"
+											class="min-w-0 flex-1 rounded text-left focus:ring-2 focus:ring-brand-500 focus:outline-none"
 											onclick={() => selectRemoteMessage(message)}
 										>
 											<div class="flex items-center gap-2">
@@ -1050,7 +1050,7 @@
 						>
 							<button
 								type="button"
-								class="btn btn-ghost btn-xs btn-square lg:hidden"
+								class="btn btn-square btn-ghost btn-xs lg:hidden"
 								aria-label="Back to messages"
 								onclick={() => (mobilePane = 'list')}><ArrowLeft size={15} /></button
 							>
@@ -1075,7 +1075,7 @@
 							<div class="flex-1"></div>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm btn-square"
+								class="btn btn-square btn-ghost btn-sm"
 								aria-label={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
 								title={selectedMessage.is_flagged ? 'Remove star' : 'Star message'}
 								disabled={actionPending}
@@ -1087,14 +1087,14 @@
 							>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm btn-square"
+								class="btn btn-square btn-ghost btn-sm"
 								aria-label="Save to RustShare"
 								title="Save to RustShare"
 								disabled={actionPending}
 								onclick={() => (saveOpen = true)}><Check size={15} /></button
 							>
 							<a
-								class="btn btn-ghost btn-sm btn-square"
+								class="btn btn-square btn-ghost btn-sm"
 								aria-label="Download .eml"
 								download
 								href={mailApi.remoteSourceUrl(
@@ -1106,7 +1106,7 @@
 							>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm btn-square"
+								class="btn btn-square btn-ghost btn-sm"
 								aria-label="Move message"
 								title="Move message"
 								disabled={actionPending}
@@ -1114,7 +1114,7 @@
 							>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm btn-square"
+								class="btn btn-square btn-ghost btn-sm"
 								aria-label="Archive message"
 								title="Archive message"
 								disabled={actionPending}
@@ -1122,7 +1122,7 @@
 							>
 							<button
 								type="button"
-								class="btn btn-ghost btn-sm btn-square text-error"
+								class="btn btn-square btn-ghost text-error btn-sm"
 								aria-label="Delete message"
 								title="Delete message"
 								disabled={actionPending}
@@ -1141,7 +1141,7 @@
 							</div>
 						{:else if $remoteBodyQuery.isError}<div class="p-8 text-center text-sm text-error">
 								Message body could not be loaded.<button
-									class="btn btn-xs btn-ghost ml-2"
+									class="btn ml-2 btn-ghost btn-xs"
 									onclick={() => $remoteBodyQuery.refetch()}>Retry</button
 								>
 							</div>
@@ -1188,9 +1188,9 @@
 										</div>
 									{/if}
 								{/if}
-								<div class="prose mt-6 max-w-none text-sm">
+								<div class="mt-6 prose max-w-none text-sm">
 									{#if safeBodyHtml}{@html safeBodyHtml}{:else}<pre
-											class="whitespace-pre-wrap font-sans">{$remoteBodyQuery.data.text ||
+											class="font-sans whitespace-pre-wrap">{$remoteBodyQuery.data.text ||
 												'This message has no readable body.'}</pre>{/if}
 								</div>
 								{#if $remoteBodyQuery.data.attachments.length}<div
@@ -1199,7 +1199,7 @@
 										<h3 class="mb-2 text-sm font-semibold">Attachments</h3>
 										<div class="flex flex-wrap gap-2">
 											{#each $remoteBodyQuery.data.attachments as attachment, attachmentIndex}<a
-													class="btn btn-outline btn-sm max-w-full"
+													class="btn max-w-full btn-outline btn-sm"
 													title={attachment.filename || `Attachment ${attachment.index + 1}`}
 													href={mailApi.remoteAttachmentUrl(
 														selectedAccountId!,
@@ -1212,7 +1212,7 @@
 														>{attachment.filename || `Attachment ${attachment.index + 1}`}</span
 													>
 													{#if hasDuplicateFilename($remoteBodyQuery.data.attachments, attachmentIndex)}<span
-															class="badge badge-ghost badge-sm shrink-0"
+															class="badge shrink-0 badge-ghost badge-sm"
 															>#{attachment.index + 1}</span
 														>{/if}
 													<span class="shrink-0 text-base-content/45"
@@ -1281,7 +1281,7 @@
 						>Archive</button
 					>
 					<button
-						class="btn btn-ghost btn-sm text-error"
+						class="btn btn-ghost text-error btn-sm"
 						disabled={actionPending}
 						onclick={() =>
 							runForSelection(

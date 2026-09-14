@@ -529,7 +529,7 @@
 							Code expires in {formatTime(countdown)}
 						</span>
 						<button
-							class="btn text-xs btn-ghost btn-sm"
+							class="btn btn-ghost text-xs btn-sm"
 							onclick={handleRetry}
 							disabled={countdown > 30}
 						>

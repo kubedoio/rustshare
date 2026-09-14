@@ -451,7 +451,7 @@
 	<div class="modal-box max-w-2xl">
 		<h3 class="mb-4 text-lg font-bold">Share "{resourceName}"</h3>
 
-		<div class="tabs-boxed mb-6 tabs">
+		<div class="tabs-boxed tabs mb-6">
 			<button
 				type="button"
 				class:tab-active={activeTab === 'public'}
@@ -590,7 +590,7 @@
 												<div class="mb-2 flex items-center gap-2">
 													<input
 														type="text"
-														class="input-bordered input input-sm flex-1 font-mono text-sm"
+														class="input-bordered input flex-1 font-mono text-sm input-sm"
 														value={getShareUrl(share.share_token)}
 														readonly
 													/>
@@ -648,7 +648,7 @@
 										<!-- Revoke button -->
 										<button
 											type="button"
-											class="btn btn-sm btn-error"
+											class="btn btn-error btn-sm"
 											onclick={() => handleRevoke(share.id, 'public')}
 											disabled={isLoading}
 										>
@@ -832,7 +832,7 @@
 										</button>
 										<button
 											type="button"
-											class="btn btn-ghost btn-sm btn-error"
+											class="btn btn-ghost btn-error btn-sm"
 											onclick={() => handleRemoveRecipient(recipient)}
 											disabled={isLoading}
 											title="Remove access"
@@ -876,7 +876,7 @@
 									</div>
 									<button
 										type="button"
-										class="btn btn-ghost btn-sm btn-error"
+										class="btn btn-ghost btn-error btn-sm"
 										onclick={() => handleRevoke(groupShare.share_id, 'group')}
 										disabled={isLoading}
 										title="Remove group access"

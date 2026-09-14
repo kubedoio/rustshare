@@ -644,7 +644,7 @@
 		</div>
 	{:else if item}
 		{#if conflict}
-			<div class="alert alert-warning mb-2 rounded-lg" role="alert">
+			<div class="mb-2 alert rounded-lg alert-warning" role="alert">
 				<AlertTriangle size={18} />
 				<div class="flex-1">
 					<strong class="font-semibold">Conflict: {conflict.kind}</strong>

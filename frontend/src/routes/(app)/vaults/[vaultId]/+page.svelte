@@ -204,7 +204,7 @@
 			</label>
 			<select
 				id="vault-write-policy"
-				class="mt-1 select select-sm select-bordered font-data text-sm"
+				class="select-bordered select mt-1 font-data text-sm select-sm"
 				value={vault.write_policy}
 				onchange={onPolicyChange}
 				disabled={$updatePolicyMutation.isPending}

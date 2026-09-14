@@ -218,7 +218,7 @@
 			<div class="border-t border-neutral-700 p-4">
 				<a
 					href="/files"
-					class="btn btn-block border-neutral-500 text-neutral-content btn-outline btn-sm hover:border-neutral-400 hover:bg-neutral-700"
+					class="btn btn-block border-neutral-500 btn-outline text-neutral-content btn-sm hover:border-neutral-400 hover:bg-neutral-700"
 				>
 					Back to App
 				</a>
@@ -233,7 +233,7 @@
 			>
 				<button
 					type="button"
-					class="btn btn-ghost btn-sm btn-square md:hidden"
+					class="btn btn-square btn-ghost btn-sm md:hidden"
 					aria-label="Open admin navigation"
 					onclick={() => (sidebarOpen = true)}
 				>

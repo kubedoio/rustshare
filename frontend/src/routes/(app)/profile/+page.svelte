@@ -229,7 +229,7 @@
 
 						{#if selectedFile}
 							<button
-								class="btn w-full btn-sm btn-primary"
+								class="btn w-full btn-primary btn-sm"
 								onclick={handleAvatarUpload}
 								disabled={uploadingAvatar}
 							>
@@ -242,7 +242,7 @@
 
 						{#if profile.avatar_path}
 							<button
-								class="btn w-full btn-outline btn-sm btn-error"
+								class="btn w-full btn-outline btn-error btn-sm"
 								onclick={handleAvatarDelete}
 								disabled={deletingAvatar}
 							>

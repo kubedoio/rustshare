@@ -201,21 +201,21 @@
 			<textarea
 				id="chat-key-backup"
 				rows={2}
-				class="textarea textarea-sm mb-1 w-full font-mono text-xs"
+				class="textarea mb-1 w-full font-mono text-xs textarea-sm"
 				placeholder={'Paste the "Export key backup" contents'}
 				bind:value={backupJson}></textarea>
 			<div class="flex gap-2">
 				<input
 					id="chat-key-passphrase"
 					type="password"
-					class="input input-sm flex-1"
+					class="input flex-1 input-sm"
 					placeholder="backup passphrase"
 					aria-label="backup passphrase"
 					bind:value={importPassphrase}
 				/>
 				<button
 					type="button"
-					class="btn btn-sm btn-primary"
+					class="btn btn-primary btn-sm"
 					disabled={importing}
 					onclick={importKey}
 				>
@@ -268,7 +268,7 @@
 		{/if}
 		<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} />
 		<textarea
-			class="textarea textarea-sm min-h-0 flex-1"
+			class="textarea min-h-0 flex-1 textarea-sm"
 			rows={2}
 			placeholder="Message #{channelId}"
 			bind:value={draft}
@@ -278,7 +278,7 @@
 					send();
 				}
 			}}></textarea>
-		<button type="button" class="btn btn-sm btn-primary" disabled={sending} onclick={send}>
+		<button type="button" class="btn btn-primary btn-sm" disabled={sending} onclick={send}>
 			{sending ? 'Sending…' : 'Send'}
 		</button>
 	</div>

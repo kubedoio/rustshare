@@ -123,7 +123,7 @@
 			>
 			<button
 				type="submit"
-				class="btn btn-sm btn-primary"
+				class="btn btn-primary btn-sm"
 				disabled={!boardName.trim() || isSubmitting}
 			>
 				{#if isSubmitting}

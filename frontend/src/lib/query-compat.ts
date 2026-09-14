@@ -8,7 +8,8 @@ import {
 	type QueryObserverResult,
 	type MutationObserverOptions,
 	type MutationObserverResult,
-	type MutateOptions
+	type MutateOptions,
+	type MutateFunction
 } from '@tanstack/query-core';
 import { queryClient } from '$lib/query-client';
 
@@ -21,14 +22,8 @@ type QueryMethods<TQueryFnData, TError, TData, TQueryData, TQueryKey extends Que
 };
 
 type MutationMethods<TData, TError, TVariables, TContext> = {
-	mutate: (
-		variables: TVariables,
-		options?: MutateOptions<TData, TError, TVariables, TContext>
-	) => Promise<TData>;
-	mutateAsync: (
-		variables: TVariables,
-		options?: MutateOptions<TData, TError, TVariables, TContext>
-	) => Promise<TData>;
+	mutate: MutateFunction<TData, TError, TVariables, TContext>;
+	mutateAsync: MutateFunction<TData, TError, TVariables, TContext>;
 	reset: () => void;
 };
 
@@ -168,11 +163,15 @@ export function createMutation<
 	const observer = new MutationObserver<TData, TError, TVariables, TContext>(queryClient, options);
 	let prevResult: MutationObserverResult<TData, TError, TVariables, TContext> | undefined;
 
-	const methods: MutationMethods<TData, TError, TVariables, TContext> = {
-		mutate: (variables, mutateOptions) => observer.mutate(variables, mutateOptions),
-		mutateAsync: (variables, mutateOptions) => observer.mutate(variables, mutateOptions),
+	const methods = {
+		mutate: (variables: TVariables, options?: MutateOptions<TData, TError, TVariables, TContext>) =>
+			observer.mutate(variables, options),
+		mutateAsync: (
+			variables: TVariables,
+			options?: MutateOptions<TData, TError, TVariables, TContext>
+		) => observer.mutate(variables, options),
 		reset: () => observer.reset()
-	};
+	} as MutationMethods<TData, TError, TVariables, TContext>;
 
 	function emitResult(
 		result: MutationObserverResult<TData, TError, TVariables, TContext>,

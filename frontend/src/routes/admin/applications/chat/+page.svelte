@@ -103,7 +103,7 @@
 		<section class="rounded-2xl border border-base-300/50 bg-base-100 p-6 shadow-sm">
 			<h2 class="text-lg font-semibold text-base-content">Status</h2>
 			{#if $statusQuery.isLoading}
-				<div class="loading loading-spinner loading-md mt-4 text-brand-500"></div>
+				<div class="loading mt-4 loading-md loading-spinner text-brand-500"></div>
 			{:else if chatEnabled}
 				<p class="mt-2 text-sm text-success">Chat is enabled for this workspace.</p>
 			{:else}
@@ -118,7 +118,7 @@
 				Community mapping
 			</h3>
 			{#if $mappingQuery.isLoading}
-				<div class="loading loading-spinner loading-md mt-4 text-brand-500"></div>
+				<div class="loading mt-4 loading-md loading-spinner text-brand-500"></div>
 			{:else if $mappingQuery.isError}
 				<p class="mt-2 text-sm text-error">Could not load the current community mapping.</p>
 			{:else if mapping}
@@ -147,12 +147,12 @@
 				</dl>
 				<button
 					type="button"
-					class="btn btn-outline btn-sm mt-4"
+					class="btn mt-4 btn-outline btn-sm"
 					disabled={$mappingQuery.isFetching || $statusQuery.isFetching}
 					onclick={verifyConnection}
 				>
 					{#if $mappingQuery.isFetching || $statusQuery.isFetching}
-						<span class="loading loading-spinner loading-sm"></span>
+						<span class="loading loading-sm loading-spinner"></span>
 					{/if}
 					Verify relay connection
 				</button>
@@ -170,7 +170,7 @@
 			{#if !hasMapping}
 				<button
 					type="button"
-					class="btn btn-primary mt-4"
+					class="btn mt-4 btn-primary"
 					disabled={workspaceId === '' || $provisionMutation.isPending}
 					onclick={() => {
 						// Errors are surfaced via onError → provisionError; swallow the
@@ -179,7 +179,7 @@
 					}}
 				>
 					{#if $provisionMutation.isPending}
-						<span class="loading loading-spinner loading-sm"></span>
+						<span class="loading loading-sm loading-spinner"></span>
 					{/if}
 					Set up automatically
 				</button>
@@ -194,7 +194,7 @@
 
 				<button
 					type="button"
-					class="btn btn-outline mt-4"
+					class="btn mt-4 btn-outline"
 					onclick={() => (showConnectForm = !showConnectForm)}
 				>
 					Connect existing Chat deployment
@@ -217,7 +217,7 @@
 						<label class="block text-sm">
 							<span class="text-base-content/70">relay_url (ws/wss)</span>
 							<input
-								class="input input-bordered mt-1 w-full"
+								class="input-bordered input mt-1 w-full"
 								type="text"
 								placeholder="wss://relay.example"
 								bind:value={relayUrl}
@@ -226,7 +226,7 @@
 						<label class="block text-sm">
 							<span class="text-base-content/70">community_id</span>
 							<input
-								class="input input-bordered mt-1 w-full"
+								class="input-bordered input mt-1 w-full"
 								type="text"
 								placeholder="00000000-0000-0000-0000-000000000000"
 								bind:value={communityId}
@@ -235,7 +235,7 @@
 						<label class="block text-sm">
 							<span class="text-base-content/70">relay_pubkey (optional)</span>
 							<input
-								class="input input-bordered mt-1 w-full"
+								class="input-bordered input mt-1 w-full"
 								type="text"
 								placeholder="64 lowercase hex (optional)"
 								bind:value={relayPubkey}
@@ -247,7 +247,7 @@
 							disabled={!relayUrl.trim() || !communityId.trim() || $connectMutation.isPending}
 						>
 							{#if $connectMutation.isPending}
-								<span class="loading loading-spinner loading-sm"></span>
+								<span class="loading loading-sm loading-spinner"></span>
 							{/if}
 							Connect
 						</button>

@@ -88,7 +88,7 @@
 </script>
 
 {#if open}
-	<div class="modal-open modal">
+	<div class="modal modal-open">
 		<div class="modal-box w-full max-w-md">
 			<h3 class="mb-4 text-lg font-bold">Add Webhook</h3>
 

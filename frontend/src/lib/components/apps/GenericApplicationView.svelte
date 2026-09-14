@@ -107,7 +107,7 @@
 <ApplicationPageShell title={module.displayName} subtitle={module.description}>
 	<div slot="primaryAction">
 		<button
-			class="btn gap-2 btn-sm btn-primary"
+			class="btn gap-2 btn-primary btn-sm"
 			onclick={handleCreateFromTemplate}
 			disabled={!module.defaultTemplate}
 		>

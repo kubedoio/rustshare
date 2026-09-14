@@ -334,7 +334,7 @@
 							<input
 								id="template-key"
 								type="text"
-								class="input-bordered input input-sm bg-base-200/50"
+								class="input-bordered input bg-base-200/50 input-sm"
 								value={key}
 								disabled
 							/>
@@ -502,7 +502,7 @@
 								<span class="text-xs font-semibold text-base-content/70">Columns</span>
 								<button
 									type="button"
-									class="btn btn-ghost btn-xs gap-1"
+									class="btn gap-1 btn-ghost btn-xs"
 									onclick={addKanbanColumn}
 									disabled={isSystemTemplate}
 								>
@@ -514,21 +514,21 @@
 								{#each ensureKanbanConfig().columns as column, i}
 									<div class="flex items-center gap-2">
 										<input
-											class="input-bordered input input-sm w-28"
+											class="input-bordered input w-28 input-sm"
 											value={column.title}
 											oninput={(e) => updateKanbanColumn(i, 'title', e.currentTarget.value)}
 											placeholder="Title"
 											disabled={isSystemTemplate}
 										/>
 										<input
-											class="input-bordered input input-sm w-28"
+											class="input-bordered input w-28 input-sm"
 											value={column.slug}
 											oninput={(e) => updateKanbanColumn(i, 'slug', e.currentTarget.value)}
 											placeholder="Slug"
 											disabled={isSystemTemplate}
 										/>
 										<input
-											class="input-bordered input input-sm w-16"
+											class="input-bordered input w-16 input-sm"
 											type="number"
 											value={column.order}
 											oninput={(e) =>
@@ -537,7 +537,7 @@
 											disabled={isSystemTemplate}
 										/>
 										<select
-											class="select-bordered select select-sm w-28"
+											class="select-bordered select w-28 select-sm"
 											value={column.status}
 											onchange={(e) => updateKanbanColumn(i, 'status', e.currentTarget.value)}
 											disabled={isSystemTemplate}
@@ -551,7 +551,7 @@
 										{#if !isSystemTemplate}
 											<button
 												type="button"
-												class="btn btn-ghost btn-xs text-error"
+												class="btn btn-ghost text-error btn-xs"
 												onclick={() => removeKanbanColumn(i)}
 											>
 												<Trash2 size={12} />
@@ -568,7 +568,7 @@
 								<span class="text-xs font-semibold text-base-content/70">Labels</span>
 								<button
 									type="button"
-									class="btn btn-ghost btn-xs gap-1"
+									class="btn gap-1 btn-ghost btn-xs"
 									onclick={addKanbanLabel}
 									disabled={isSystemTemplate}
 								>
@@ -580,14 +580,14 @@
 								{#each ensureKanbanConfig().labels as label, i}
 									<div class="flex items-center gap-2">
 										<input
-											class="input-bordered input input-sm w-32"
+											class="input-bordered input w-32 input-sm"
 											value={label.name}
 											oninput={(e) => updateKanbanLabel(i, 'name', e.currentTarget.value)}
 											placeholder="Name"
 											disabled={isSystemTemplate}
 										/>
 										<select
-											class="select-bordered select select-sm w-24"
+											class="select-bordered select w-24 select-sm"
 											value={label.color}
 											onchange={(e) => updateKanbanLabel(i, 'color', e.currentTarget.value)}
 											disabled={isSystemTemplate}
@@ -603,7 +603,7 @@
 										{#if !isSystemTemplate}
 											<button
 												type="button"
-												class="btn btn-ghost btn-xs text-error"
+												class="btn btn-ghost text-error btn-xs"
 												onclick={() => removeKanbanLabel(i)}
 											>
 												<Trash2 size={12} />
@@ -656,7 +656,7 @@
 
 			<div class="flex items-center justify-end gap-3">
 				<a href="/admin/templates" class="btn btn-ghost btn-sm">Cancel</a>
-				<button type="submit" class="btn btn-sm btn-primary" disabled={$updateMutation.isPending}>
+				<button type="submit" class="btn btn-primary btn-sm" disabled={$updateMutation.isPending}>
 					{#if $updateMutation.isPending}
 						<span class="loading loading-xs loading-spinner"></span>
 					{:else}

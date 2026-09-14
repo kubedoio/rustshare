@@ -516,7 +516,7 @@
 						{/if}
 					</button>
 					<ul
-						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+						class="menu dropdown-content z-[100] mt-2 w-48 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 					>
 						<li class="menu-title text-[10px] tracking-wider text-base-content/40 uppercase">
 							Purpose Color
@@ -619,7 +619,7 @@
 						<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 						<ul
 							tabindex="0"
-							class="dropdown-content menu z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
+							class="menu dropdown-content z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
 						>
 							<li>
 								<button onclick={handleExportMarkdown}>
@@ -644,7 +644,7 @@
 					<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 					<ul
 						tabindex="0"
-						class="dropdown-content menu z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
+						class="menu dropdown-content z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
 					>
 						<li>
 							<button onclick={toggleAttachments}>

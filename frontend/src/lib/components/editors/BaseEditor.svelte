@@ -181,7 +181,7 @@
 							type="text"
 							placeholder="Change description (optional)"
 							bind:value={changeDescription}
-							class="input-bordered input input-sm w-full"
+							class="input-bordered input w-full input-sm"
 							disabled={isSaving}
 						/>
 					</div>
@@ -201,7 +201,7 @@
 					<div class="dropdown dropdown-end dropdown-top">
 						<button
 							type="button"
-							class="btn btn-sm btn-primary"
+							class="btn btn-primary btn-sm"
 							disabled={!canSave}
 							onclick={() => handleSave()}
 						>

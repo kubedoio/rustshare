@@ -266,7 +266,7 @@
 			<header class="detail-header">
 				<div class="header-main">
 					<div class="title-row">
-						<Layout size={20} class="text-base-content/50 mt-1.5 flex-shrink-0" />
+						<Layout size={20} class="mt-1.5 flex-shrink-0 text-base-content/50" />
 						<input
 							type="text"
 							bind:value={card.title}
@@ -466,7 +466,7 @@
 					</div>
 					{#if checklistStats.total > 0}
 						<progress
-							class="progress progress-primary w-full mb-3"
+							class="progress mb-3 w-full progress-primary"
 							value={checklistPercent}
 							max="100"
 						></progress>
@@ -562,7 +562,7 @@
 								}}></textarea>
 							<div class="comment-actions">
 								<button
-									class="btn btn-sm btn-primary gap-1"
+									class="btn gap-1 btn-primary btn-sm"
 									onclick={submitComment}
 									disabled={!newCommentText.trim()}
 								>
@@ -578,12 +578,12 @@
 			<!-- Footer -->
 			<footer class="detail-footer">
 				<div class="footer-left">
-					<button class="btn btn-sm btn-ghost gap-1" onclick={() => console.log('share')}>
+					<button class="btn gap-1 btn-ghost btn-sm" onclick={() => console.log('share')}>
 						<Share2 size={14} />
 						Share
 					</button>
-					<button class="btn btn-sm btn-outline" onclick={onArchive}>Archive</button>
-					<button class="btn btn-sm btn-outline btn-error" onclick={onDelete}>Delete</button>
+					<button class="btn btn-outline btn-sm" onclick={onArchive}>Archive</button>
+					<button class="btn btn-outline btn-error btn-sm" onclick={onDelete}>Delete</button>
 				</div>
 				<div class="footer-right">
 					{#if saveStatus === 'saving'}
@@ -593,8 +593,8 @@
 					{:else if saveStatus === 'error'}
 						<span class="text-xs text-red-600">Error saving</span>
 					{/if}
-					<button class="btn btn-sm btn-ghost" onclick={onClose}>Cancel</button>
-					<button class="btn btn-sm btn-primary" disabled={savingDetail} onclick={onSave}>
+					<button class="btn btn-ghost btn-sm" onclick={onClose}>Cancel</button>
+					<button class="btn btn-primary btn-sm" disabled={savingDetail} onclick={onSave}>
 						{#if savingDetail}
 							<span class="loading loading-xs loading-spinner"></span>
 						{/if}

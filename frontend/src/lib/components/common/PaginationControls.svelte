@@ -65,7 +65,7 @@
 <div class="flex h-10 items-center gap-3" data-testid="pagination-controls">
 	<button
 		type="button"
-		class="btn flex items-center gap-1 px-2 btn-ghost btn-sm"
+		class="btn flex items-center gap-1 btn-ghost px-2 btn-sm"
 		disabled={currentPage <= 1}
 		aria-label="Previous page"
 		onclick={handlePrevious}
@@ -103,7 +103,7 @@
 
 	<button
 		type="button"
-		class="btn flex items-center gap-1 px-2 btn-ghost btn-sm"
+		class="btn flex items-center gap-1 btn-ghost px-2 btn-sm"
 		disabled={currentPage >= totalPages}
 		aria-label="Next page"
 		onclick={handleNext}
@@ -116,7 +116,7 @@
 		<label for="page-size" class="text-ink-muted text-meta">Items per page</label>
 		<select
 			id="page-size"
-			class="select-bordered select select-sm font-data text-sm"
+			class="select-bordered select font-data text-sm select-sm"
 			value={pageSize}
 			onchange={handlePageSizeChange}
 		>

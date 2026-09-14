@@ -103,7 +103,7 @@
 
 <ApplicationPageShell title="Shares" subtitle="Manage items shared from your workspace.">
 	<div slot="primaryAction">
-		<button class="btn gap-2 btn-sm btn-primary" onclick={handleNewShare}>
+		<button class="btn gap-2 btn-primary btn-sm" onclick={handleNewShare}>
 			<Plus size={14} />
 			<span>New share</span>
 		</button>
@@ -139,7 +139,7 @@
 						<div class="flex flex-wrap gap-2">
 							<button
 								class="btn rounded-full btn-sm {shareFilter === 'all'
-									? 'text-brand-600 btn-outline'
+									? 'btn-outline text-brand-600'
 									: 'btn-ghost'}"
 								onclick={() => (shareFilter = 'all')}
 							>
@@ -147,7 +147,7 @@
 							</button>
 							<button
 								class="btn rounded-full btn-sm {shareFilter === 'internal'
-									? 'text-brand-600 btn-outline'
+									? 'btn-outline text-brand-600'
 									: 'btn-ghost'}"
 								onclick={() => (shareFilter = shareFilter === 'internal' ? 'all' : 'internal')}
 							>
@@ -155,7 +155,7 @@
 							</button>
 							<button
 								class="btn rounded-full btn-sm {shareFilter === 'links'
-									? 'text-brand-600 btn-outline'
+									? 'btn-outline text-brand-600'
 									: 'btn-ghost'}"
 								onclick={() => (shareFilter = shareFilter === 'links' ? 'all' : 'links')}
 							>
@@ -310,7 +310,7 @@
 								Copy link
 							</button>
 							<button
-								class="btn gap-2 btn-outline btn-sm btn-error"
+								class="btn gap-2 btn-outline btn-error btn-sm"
 								onclick={() => handleRevoke(selectedShare.id)}
 							>
 								<Trash2 size={14} />
@@ -338,7 +338,7 @@
 			<button class="btn btn-ghost btn-sm" onclick={() => (showNewShareModal = false)}
 				>Cancel</button
 			>
-			<button class="btn btn-sm btn-primary" onclick={handleBrowseFiles}> Open Files </button>
+			<button class="btn btn-primary btn-sm" onclick={handleBrowseFiles}> Open Files </button>
 		</div>
 	</div>
 </ModalBase>

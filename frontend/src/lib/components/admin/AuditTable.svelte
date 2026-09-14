@@ -92,7 +92,7 @@
 					<input
 						id="audit-user"
 						type="text"
-						class="input-bordered input input-sm w-44"
+						class="input-bordered input w-44 input-sm"
 						bind:value={userSearch}
 						placeholder="Filter by user..."
 						oninput={applyFilters}

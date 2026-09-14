@@ -94,7 +94,7 @@
 			placeholder="key passphrase"
 			bind:value={passphrase}
 		/>
-		<button type="button" class="btn btn-sm btn-primary" disabled={busy} onclick={bind}>
+		<button type="button" class="btn btn-primary btn-sm" disabled={busy} onclick={bind}>
 			{busy ? 'Binding…' : 'Generate key & bind'}
 		</button>
 	</div>
