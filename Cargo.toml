@@ -49,7 +49,7 @@ serde_json = "1.0"
 toml = "1.1"
 
 # Crypto
-argon2 = "0.5"
+argon2 = "0.6"
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
 rand = "0.10"
 sha2 = "0.11"
@@ -64,7 +64,7 @@ aws-sdk-s3 = "1.17"
 aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
-aws-smithy-types = "=1.6.3"
+aws-smithy-types = "=1.6.4"
 time = "=0.3.55"
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls-tls"], default-features = false }
@@ -93,7 +93,7 @@ pathdiff = "0.2"
 
 # Configuration
 clap = { version = "4.6", features = ["derive", "env"] }
-dirs = "6.0"
+dirs = "7.0"
 
 # Process management
 nix = { version = "0.31", features = ["process", "signal"] }
