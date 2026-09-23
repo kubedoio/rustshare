@@ -294,12 +294,29 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(mocks.getChatMessage).toHaveBeenCalledWith('m-1'));
 	});
 
-	it('loads earlier pages with the next_before cursor', async () => {
+	it('loads earlier pages with the next_before cursor and renders the older messages', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus());
 		mocks.getChatChannels.mockResolvedValue(CHANNELS);
 		mocks.getChatMessages.mockImplementation(async (channelId: string, before?: string | null) =>
 			before === 't2'
-				? { messages: [], next_before: null }
+				? {
+						messages: [
+							{
+								message_id: 'm-0',
+								event_id: 'e-0',
+								community_id: 'community-1',
+								channel_id: 'general',
+								channel_kind: 'topic',
+								author_pubkey: 'pk-a',
+								author: null,
+								event_created_at: '2026-08-12T09:00:00Z',
+								thread_root_id: null,
+								attachments: [],
+								body: 'older page message'
+							}
+						],
+						next_before: null
+					}
 				: {
 						messages: [
 							{
@@ -323,6 +340,85 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(screen.getByText('Load earlier messages')).toBeTruthy());
 		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
 		await waitFor(() => expect(mocks.getChatMessages).toHaveBeenCalledWith('general', 't2'));
+		// The older page must actually reach the timeline — not just be fetched.
+		await waitFor(() => expect(screen.getByText('older page message')).toBeTruthy());
+		expect(screen.getByText('first page message')).toBeTruthy();
+		// Page 2's next_before is null: the oldest page is reached, so the
+		// control must disappear.
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: 'Load earlier messages' })).toBeNull()
+		);
+	});
+
+	it('retries a failed older-page fetch when Load earlier is clicked again', async () => {
+		mocks.getChatStatus.mockResolvedValue(activeStatus());
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		let pageTwoFailures = 0;
+		let pageTwoAllowed = false;
+		mocks.getChatMessages.mockImplementation(async (channelId: string, before?: string | null) => {
+			if (before === 't2') {
+				if (!pageTwoAllowed) {
+					pageTwoFailures += 1;
+					throw new Error('network down');
+				}
+				return {
+					messages: [
+						{
+							message_id: 'm-0',
+							event_id: 'e-0',
+							community_id: 'community-1',
+							channel_id: 'general',
+							channel_kind: 'topic',
+							author_pubkey: 'pk-a',
+							author: null,
+							event_created_at: '2026-08-12T09:00:00Z',
+							thread_root_id: null,
+							attachments: [],
+							body: 'older page message'
+						}
+					],
+					next_before: null
+				};
+			}
+			return {
+				messages: [
+					{
+						message_id: 'm-1',
+						event_id: 'e-1',
+						community_id: 'community-1',
+						channel_id: 'general',
+						channel_kind: 'topic',
+						author_pubkey: 'pk-a',
+						author: null,
+						event_created_at: '2026-08-12T10:00:00Z',
+						thread_root_id: null,
+						attachments: [],
+						body: 'first page message'
+					}
+				],
+				next_before: 't2'
+			};
+		});
+		renderView();
+		await waitFor(() => expect(screen.getByText('Load earlier messages')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
+		// retry:1 plus our explicit refetch means the failed page is attempted
+		// twice before the query settles as errored.
+		await waitFor(
+			() => {
+				expect(pageTwoFailures).toBeGreaterThanOrEqual(2);
+			},
+			{ timeout: 5000 }
+		);
+		// The control stays visible after the failure and a second click retries.
+		await waitFor(() => expect(screen.getByText('Load earlier messages')).toBeTruthy(), {
+			timeout: 5000
+		});
+		pageTwoAllowed = true;
+		await fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
+		await waitFor(() => expect(screen.getByText('older page message')).toBeTruthy(), {
+			timeout: 5000
+		});
 	});
 
 	it('shows a Back to latest control after paging and returns to the newest page', async () => {

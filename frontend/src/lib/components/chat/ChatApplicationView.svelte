@@ -121,13 +121,21 @@
 	let syncState = $state<'idle' | 'waiting' | 'observed' | 'warning'>('idle');
 	let accumulatedMessages = $state<ChatMessageDto[]>([]);
 	// Accumulate older message pages when paginating backward.
-	// Uses a module-closure variable (not $state) for the previous cursor
-	// to avoid effect_update_depth_exceeded from reading and writing the
-	// same reactive dependency within one $effect.
+	// `prevCursor` uses a module-closure variable (not $state) to avoid
+	// effect_update_depth_exceeded from reading and writing the same reactive
+	// dependency within one $effect; `lastNextBefore` is write-only in the
+	// effect, so it can be reactive for the template.
 	let prevCursor: string | null = null;
+	let lastNextBefore = $state<string | null>(null);
 	$effect(() => {
 		const page = $messagesQuery.data;
 		if (!page) return;
+		if ($messagesQuery.isPlaceholderData) {
+			// keepPreviousData shows the previous page while an older page is
+			// loading; accumulating it would prepend the current page onto
+			// itself and swallow the real older page when it arrives.
+			return;
+		}
 		if (cursor === null) {
 			// Latest page or channel switch: replace
 			accumulatedMessages = page.messages;
@@ -143,6 +151,7 @@
 			return;
 		}
 		prevCursor = cursor;
+		lastNextBefore = page.next_before;
 	});
 
 	// The success banner is informational: auto-clear it shortly after the
@@ -205,7 +214,7 @@
 			? $focusedMessageQuery.data
 			: null
 	);
-	const hasMoreMessages = $derived($messagesQuery.data?.next_before != null);
+	const hasMoreMessages = $derived(lastNextBefore != null);
 </script>
 
 {#if $statusQuery.isLoading}
@@ -288,7 +297,15 @@
 				communityId={status.mapping?.community_id ?? ''}
 				onLoadMore={() => {
 					if ($messagesQuery.isFetching) return;
-					cursor = $messagesQuery.data?.next_before ?? null;
+					const next = lastNextBefore;
+					if (next == null) return;
+					if ($messagesQuery.isError) {
+						// The fetch for the current cursor failed; re-assigning
+						// the same cursor would be a no-op, so refetch explicitly.
+						messagesQuery.refetch();
+					} else {
+						cursor = next;
+					}
 				}}
 			/>
 			{#if $chatSessionStore.state === 'unlocked'}
