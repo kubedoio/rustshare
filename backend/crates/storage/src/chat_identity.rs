@@ -598,6 +598,7 @@ impl ChatIdentityStore {
              FROM chat_identity_bindings b
              JOIN users u ON u.id = b.principal_id
              WHERE b.tenant_id = $1
+               AND u.tenant_id = $1
                AND b.buzz_pubkey = ANY($2)
              ORDER BY b.buzz_pubkey,
                       CASE WHEN b.status = 'active' AND b.revoked_at IS NULL THEN 0 ELSE 1 END,
