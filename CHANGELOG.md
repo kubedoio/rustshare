@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Elembra Chat usable-experience pass: Slack-like lean timeline with
+  human-readable channel names and author display, browser-held identity
+  import/export with an explicit lock/unlock session (the passphrase never
+  leaves memory), and NIP-42 publish aligned with the Buzz relay's proven
+  auth flow.
 - Release pipeline hardening: released Docker tags (`X.Y.Z`, `X.Y`, `X`,
   `latest`, `sha-<short>`) are now promoted only after the candidate image
   passes the boot smoke test, and a version that already has a GitHub release
@@ -24,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Elembra Chat "Load earlier messages" no longer silently drops fetched older
+  pages (the oldest messages were unreachable), and a failed page fetch can be
+  retried from the same control instead of freezing until the next poll.
 - Elembra Chat first-use deadlock: `GET /applications/chat/status` now returns
   an active workspace/community mapping even when the caller has no identity
   binding, so the Chat UI can render the `BindingPanel` instead of the
@@ -146,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index, and re-projects the Memory catalog idempotently without touching the
   durable outbox or consumer receipts. Community mappings gain an admin
   relay-pin rotation endpoint (`PATCH
-  /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
+/api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
   `relay_url` and `relay_pubkey` always written — omitting `relay_pubkey`
   unpins and fails closed), so a relay signing-key rotation no longer bricks
   buzz-mode reads, and the Memory-catalog fold is tombstone-immutable:
