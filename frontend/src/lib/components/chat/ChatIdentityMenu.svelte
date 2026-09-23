@@ -10,10 +10,14 @@
 	let error = $state('');
 
 	const unlocked = $derived($chatSessionStore.state === 'unlocked');
-	const keyPresent = $derived(hasChatKey());
+	// hasChatKey() reads localStorage, which is not a tracked dependency, so
+	// re-check it every time the menu opens (and after removal) instead of a
+	// $derived that would evaluate once and go stale.
+	let keyPresent = $state(hasChatKey());
 
 	function toggle(): void {
 		open = !open;
+		if (open) keyPresent = hasChatKey();
 	}
 
 	function close(): void {
@@ -45,6 +49,7 @@
 	function confirmRemoveKey(): void {
 		clearChatKey();
 		lock();
+		keyPresent = hasChatKey();
 		confirmRemove = false;
 	}
 </script>

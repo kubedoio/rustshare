@@ -97,10 +97,20 @@
 			?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	});
 
-	// Preserve scroll position when older messages are prepended.
+	// Preserve scroll position when older messages are prepended. A prepend
+	// keeps the previous first message in the list but shifts it down; a
+	// wholesale replace (channel switch, latest-page refresh) or an append
+	// must not trigger an adjustment.
+	let prevFirstMessageId: string | null = null;
 	$effect(() => {
 		const currentCount = messages.length;
-		if (container && scrollAnchor && currentCount > prevMessageCount && prevMessageCount > 0) {
+		const prevId = prevFirstMessageId;
+		const isPrepend =
+			prevId != null &&
+			currentCount > prevMessageCount &&
+			messages[0]?.event_id !== prevId &&
+			messages.some((m) => m.event_id === prevId);
+		if (container && scrollAnchor && isPrepend && prevMessageCount > 0) {
 			requestAnimationFrame(() => {
 				if (!scrollAnchor || !container) return;
 				const anchorRect = scrollAnchor.getBoundingClientRect();
@@ -109,6 +119,7 @@
 			});
 		}
 		prevMessageCount = currentCount;
+		prevFirstMessageId = messages[0]?.event_id ?? null;
 	});
 </script>
 

@@ -93,6 +93,12 @@ export async function publishEvent(
 	const signed = await signEvent(unsigned, secretKey);
 	return await new Promise<PublishResult>((resolve) => {
 		let settled = false;
+		// The relay answers a pre-auth publish with an auth-flavored OK false
+		// (NIP-42 demand). Only the FIRST such rejection is that demand; after
+		// AUTH + re-send, a further auth-flavored rejection is genuine (e.g. the
+		// relay rejected our AUTH) and must surface instead of hanging to the
+		// transport timeout.
+		let sawAuthRejection = false;
 		const finish = (result: PublishResult) => {
 			if (settled) return;
 			settled = true;
@@ -111,51 +117,52 @@ export async function publishEvent(
 		socket.onopen = () => {
 			socket.send(JSON.stringify(['EVENT', signed]));
 		};
-		socket.onmessage = async (raw) => {
-			let message: unknown;
-			try {
-				message = JSON.parse(String(raw.data));
-			} catch {
-				return;
-			}
-			if (!Array.isArray(message)) return;
-			if (message[0] === 'AUTH' && typeof message[1] === 'string') {
-				const auth = await signEvent(
-					await buildUnsignedEvent(
-						NOSTR_KIND_AUTH,
-						'',
-						[
-							['relay', relayUrl],
-							['challenge', message[1]]
-						],
-						unsigned.pubkey
-					),
-					secretKey
-				);
-				socket.send(JSON.stringify(['AUTH', auth]));
-				socket.send(JSON.stringify(['EVENT', signed]));
-			}
-			if (message[0] === 'OK' && message[1] === signed.id) {
-				// An auth-required rejection is the relay demanding NIP-42 auth;
-				// the AUTH + re-send above answers it and a later OK for the same
-				// event id carries the real outcome.
-				if (
-					message[2] === false &&
-					typeof message[3] === 'string' &&
-					message[3].toLowerCase().includes('auth')
-				) {
+		socket.onmessage = (raw) => {
+			void (async () => {
+				let message: unknown;
+				try {
+					message = JSON.parse(String(raw.data));
+				} catch {
 					return;
 				}
-				finish(
-					message[2] === true
-						? { ok: true, event_id: signed.id }
-						: {
-								ok: false,
-								reason: 'rejected',
-								detail: typeof message[3] === 'string' ? message[3] : undefined
-							}
-				);
-			}
+				if (!Array.isArray(message)) return;
+				if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+					const auth = await signEvent(
+						await buildUnsignedEvent(
+							NOSTR_KIND_AUTH,
+							'',
+							[
+								['relay', relayUrl],
+								['challenge', message[1]]
+							],
+							unsigned.pubkey
+						),
+						secretKey
+					);
+					socket.send(JSON.stringify(['AUTH', auth]));
+					socket.send(JSON.stringify(['EVENT', signed]));
+				}
+				if (message[0] === 'OK' && message[1] === signed.id) {
+					if (
+						!sawAuthRejection &&
+						message[2] === false &&
+						typeof message[3] === 'string' &&
+						message[3].toLowerCase().includes('auth')
+					) {
+						sawAuthRejection = true;
+						return;
+					}
+					finish(
+						message[2] === true
+							? { ok: true, event_id: signed.id }
+							: {
+									ok: false,
+									reason: 'rejected',
+									detail: typeof message[3] === 'string' ? message[3] : undefined
+								}
+					);
+				}
+			})().catch(() => finish({ ok: false, reason: 'transport' }));
 		};
 		socket.onerror = () => finish({ ok: false, reason: 'transport' });
 		socket.onclose = () => finish({ ok: false, reason: 'transport' });

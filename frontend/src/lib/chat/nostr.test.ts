@@ -62,6 +62,8 @@ class FakeWebSocket {
 	static okValue = true;
 	static okMessage = '';
 	static challengeOnEvent = true;
+	// Set false to script every OK frame manually from the test.
+	static autoOkOnEvent = true;
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -87,7 +89,7 @@ class FakeWebSocket {
 			// Buzz relay behavior: an unauthenticated EVENT provokes the NIP-42
 			// AUTH challenge instead of an immediate OK.
 			this.reply(['AUTH', 'challenge-1']);
-		} else if (frame[0] === 'EVENT') {
+		} else if (frame[0] === 'EVENT' && FakeWebSocket.autoOkOnEvent) {
 			const event = frame[1] as { id: string };
 			this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]);
 		}
@@ -115,6 +117,8 @@ describe('publishEvent', () => {
 		FakeWebSocket.instances = [];
 		FakeWebSocket.okValue = true;
 		FakeWebSocket.okMessage = '';
+		FakeWebSocket.challengeOnEvent = true;
+		FakeWebSocket.autoOkOnEvent = true;
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 	});
 
@@ -160,6 +164,42 @@ describe('publishEvent', () => {
 		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
 	});
 
+	it('surfaces a persistent auth-flavored rejection instead of swallowing it forever', async () => {
+		// Relay demands auth (AUTH challenge + auth-flavored OK false for the
+		// pre-auth publish), then rejects the re-sent event with another
+		// auth-flavored OK false — e.g. it refused our AUTH. Only the first
+		// rejection is the auth demand; the second must resolve as 'rejected'.
+		FakeWebSocket.okValue = false;
+		FakeWebSocket.okMessage = 'auth failed: rejected by relay';
+		FakeWebSocket.challengeOnEvent = false;
+		FakeWebSocket.autoOkOnEvent = false;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const promise = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		await vi.waitFor(() => expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(1));
+		const eventId = (ws.sent[0][1] as { id: string }).id;
+		// Demand for auth: challenge plus an auth-flavored rejection of the
+		// pre-auth publish. The first such rejection is swallowed as the demand.
+		ws.reply(['AUTH', 'challenge-1']);
+		ws.reply(['OK', eventId, false, 'auth required: authentication needed']);
+		await vi.waitFor(() => expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(2));
+		// The relay also rejects the re-sent (post-AUTH) event with an
+		// auth-flavored reason: that second rejection is genuine and must surface.
+		ws.reply(['OK', eventId, false, 'auth failed: rejected by relay']);
+
+		const result = await promise;
+
+		expect(result).toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'auth failed: rejected by relay'
+		});
+	});
+
 	it('resolves rejected with the relay message when the relay answers OK false', async () => {
 		FakeWebSocket.okValue = false;
 		FakeWebSocket.okMessage = 'blocked: not admitted';
@@ -167,7 +207,6 @@ describe('publishEvent', () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
-
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
 		expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'blocked: not admitted' });

@@ -53,6 +53,14 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 				'Stored Chat key is corrupted or uses an unsupported format.'
 			);
 		}
+		if (message === 'no stored chat key') {
+			// TOCTOU after the hasChatKey() guard (e.g. storage cleared):
+			// the key is gone, not the passphrase wrong.
+			throw new ChatSessionError(
+				'NO_KEY',
+				'No Chat identity found. Import a key backup from your original device.'
+			);
+		}
 		// Any other failure from loadChatKey is treated as a wrong passphrase.
 		throw new ChatSessionError('WRONG_PASSPHRASE', 'Passphrase is incorrect.');
 	}
