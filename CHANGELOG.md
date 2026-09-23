@@ -154,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index, and re-projects the Memory catalog idempotently without touching the
   durable outbox or consumer receipts. Community mappings gain an admin
   relay-pin rotation endpoint (`PATCH
-/api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
+  /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
   `relay_url` and `relay_pubkey` always written — omitting `relay_pubkey`
   unpins and fails closed), so a relay signing-key rotation no longer bricks
   buzz-mode reads, and the Memory-catalog fold is tombstone-immutable:

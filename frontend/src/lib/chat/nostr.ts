@@ -97,7 +97,11 @@ export async function publishEvent(
 		// (NIP-42 demand). Only the FIRST such rejection is that demand; after
 		// AUTH + re-send, a further auth-flavored rejection is genuine (e.g. the
 		// relay rejected our AUTH) and must surface instead of hanging to the
-		// transport timeout.
+		// transport timeout. Residual case: a relay that challenges WITHOUT
+		// rejecting the pre-auth EVENT, then rejects the re-sent event with an
+		// auth-flavored reason, still hangs to the timeout — the two are
+		// indistinguishable without relay-side state; the Buzz relay always
+		// pairs its challenge with the rejection, so this is theoretical there.
 		let sawAuthRejection = false;
 		const finish = (result: PublishResult) => {
 			if (settled) return;

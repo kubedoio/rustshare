@@ -191,7 +191,14 @@ describe('publishEvent', () => {
 		// auth-flavored reason: that second rejection is genuine and must surface.
 		ws.reply(['OK', eventId, false, 'auth failed: rejected by relay']);
 
-		const result = await promise;
+		// Fail fast if a regression re-introduces the hang instead of waiting
+		// out the 10s transport timer inside publishEvent.
+		const result = await Promise.race([
+			promise,
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error('publishEvent hung on a post-AUTH rejection')), 2000)
+			)
+		]);
 
 		expect(result).toMatchObject({
 			ok: false,

@@ -147,7 +147,9 @@
 				...accumulatedMessages
 			];
 		} else {
-			// cursor === prevCursor: same page loaded again (polling), keep accumulation
+			// cursor === prevCursor: same page loaded again (polling), keep
+			// accumulation but refresh the cursor for the next older page.
+			lastNextBefore = page.next_before;
 			return;
 		}
 		prevCursor = cursor;
