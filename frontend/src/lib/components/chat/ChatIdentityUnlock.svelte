@@ -47,6 +47,10 @@
 					mode = 'mismatch';
 					return;
 				}
+				if (err.code === 'SESSION_CHANGED') {
+					unlockError = err.message;
+					return;
+				}
 				mode = 'missing';
 				return;
 			}

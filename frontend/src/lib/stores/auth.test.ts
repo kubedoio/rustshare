@@ -33,6 +33,7 @@ vi.mock('../query-client', () => ({
 
 import { login as loginRequest, logout as logoutRequest } from '../api/auth';
 import { getUserProfile } from '../api/users';
+import { hasChatKey, setChatKeyUser } from '../chat/keys';
 import { authStore, currentUser } from './auth';
 
 describe('Auth Store Race Condition', () => {
@@ -114,6 +115,45 @@ describe('Auth Store Race Condition', () => {
 
 		// The store should STILL have User B, not User A
 		expect(get(currentUser)?.display_name).toBe('User B');
+	});
+
+	it('does not clear the current Chat key when a stale bootstrap fails', async () => {
+		const mockLoginRequest = vi.mocked(loginRequest);
+		const mockGetUserProfile = vi.mocked(getUserProfile);
+		const mockLogoutRequest = vi.mocked(logoutRequest);
+		mockLogoutRequest.mockResolvedValue(undefined);
+
+		let rejectBootstrap!: (error: Error) => void;
+		const staleBootstrap = new Promise<never>((_, reject) => {
+			rejectBootstrap = reject;
+		});
+		mockGetUserProfile.mockImplementation(() => staleBootstrap);
+		const bootstrap = authStore.refreshSession();
+
+		mockLoginRequest.mockResolvedValue({
+			user: { id: 'user-b', email: 'user-b@example.com', display_name: 'User B', is_admin: false }
+		});
+		mockGetUserProfile.mockResolvedValue({
+			id: 'user-b',
+			tenant_id: 'tenant-b',
+			email: 'user-b@example.com',
+			display_name: 'User B',
+			is_admin: false,
+			storage_quota: 0,
+			storage_used: 0,
+			theme: 'system',
+			username: 'userb',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString()
+		});
+		await authStore.login('user-b@example.com', 'password');
+
+		setChatKeyUser('user-b');
+		localStorage.setItem('elembra.chat.key.v1.user-b', 'encrypted-key');
+		rejectBootstrap(new Error('stale request failed'));
+		await bootstrap;
+
+		expect(hasChatKey()).toBe(true);
 	});
 
 	it('should ignore stale login results after logout', async () => {

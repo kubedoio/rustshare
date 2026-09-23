@@ -52,6 +52,19 @@ describe('chat session', () => {
 		await expect(unlock('pass', pk)).resolves.toBeUndefined();
 	});
 
+	it('does not restore the key when locked during an unlock', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+
+		const pendingUnlock = unlock('pass', pk);
+		lock();
+
+		await expect(pendingUnlock).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+		expect(getSigningKey()).toBeNull();
+	});
+
 	it('clear is an alias for lock', async () => {
 		setChatKeyUser('user-1');
 		const sk = generateSecretKey();

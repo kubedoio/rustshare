@@ -10,7 +10,8 @@ export type ChatSessionState =
 
 export class ChatSessionError extends Error {
 	constructor(
-		public readonly code: 'NO_KEY' | 'WRONG_PASSPHRASE' | 'CORRUPT_KEY' | 'PUBKEY_MISMATCH',
+		public readonly code:
+			'NO_KEY' | 'WRONG_PASSPHRASE' | 'CORRUPT_KEY' | 'PUBKEY_MISMATCH' | 'SESSION_CHANGED',
 		message: string
 	) {
 		super(message);
@@ -19,6 +20,7 @@ export class ChatSessionError extends Error {
 }
 
 let memorySecretKey: string | null = null;
+let sessionGeneration = 0;
 
 const internal = writable<ChatSessionState>({ state: 'locked' });
 
@@ -35,6 +37,7 @@ export function getSigningKey(): string | null {
 }
 
 export async function unlock(passphrase: string, boundPubkey: string): Promise<void> {
+	const generation = sessionGeneration;
 	if (!hasChatKey()) {
 		throw new ChatSessionError(
 			'NO_KEY',
@@ -46,6 +49,12 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 	try {
 		secretKey = await loadChatKey(passphrase);
 	} catch (err) {
+		if (generation !== sessionGeneration) {
+			throw new ChatSessionError(
+				'SESSION_CHANGED',
+				'Chat session changed while unlocking. Try again.'
+			);
+		}
 		const message = err instanceof Error ? err.message : '';
 		if (message === 'unsupported chat key format') {
 			throw new ChatSessionError(
@@ -64,6 +73,12 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 		// Any other failure from loadChatKey is treated as a wrong passphrase.
 		throw new ChatSessionError('WRONG_PASSPHRASE', 'Passphrase is incorrect.');
 	}
+	if (generation !== sessionGeneration) {
+		throw new ChatSessionError(
+			'SESSION_CHANGED',
+			'Chat session changed while unlocking. Try again.'
+		);
+	}
 
 	const pubkey = publicKeyOf(secretKey);
 	if (pubkey !== boundPubkey) {
@@ -78,6 +93,7 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 }
 
 export function lock(): void {
+	sessionGeneration += 1;
 	memorySecretKey = null;
 	internal.set({ state: 'locked' });
 }

@@ -78,6 +78,7 @@ function createAuthStore() {
 				console.error('Failed to initialize WebSocket during bootstrap:', error);
 			}
 		} catch (error: unknown) {
+			if (myGeneration !== sessionGeneration) return;
 			if (!isApiError(error) || error.status !== 401) {
 				console.error('Failed to bootstrap session:', error);
 			}
@@ -87,7 +88,6 @@ function createAuthStore() {
 			clearLegacyWebSocketToken();
 			clearChatSession();
 			setChatKeyUser(null);
-			if (myGeneration !== sessionGeneration) return;
 			set({
 				user: null,
 				isAuthenticated: false,
