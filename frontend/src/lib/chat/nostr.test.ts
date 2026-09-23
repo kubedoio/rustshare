@@ -207,6 +207,28 @@ describe('publishEvent', () => {
 		});
 	});
 
+	it('surfaces a rejection when the relay challenges before sending an OK', async () => {
+		// Some relays send AUTH immediately and only answer the resent EVENT.
+		// That rejection must not be mistaken for the initial auth demand.
+		FakeWebSocket.autoOkOnEvent = false;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const promise = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		await vi.waitFor(() => expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2));
+		const eventId = (ws.sent[0][1] as { id: string }).id;
+		ws.reply(['OK', eventId, false, 'auth failed: rejected by relay']);
+
+		await expect(promise).resolves.toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'auth failed: rejected by relay'
+		});
+	});
+
 	it('resolves rejected with the relay message when the relay answers OK false', async () => {
 		FakeWebSocket.okValue = false;
 		FakeWebSocket.okMessage = 'blocked: not admitted';
