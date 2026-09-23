@@ -56,7 +56,7 @@
 {#if iconOnly}
 	<button
 		type="button"
-		class="btn btn-ghost btn-xs h-8 w-8 rounded-lg p-0"
+		class="btn h-8 w-8 rounded-lg btn-ghost p-0 btn-xs"
 		aria-label="Attach file"
 		title="Attach file"
 		onclick={() => (open = true)}
@@ -66,7 +66,7 @@
 {:else}
 	<button
 		type="button"
-		class="btn btn-sm inline-flex items-center gap-1.5"
+		class="btn inline-flex items-center gap-1.5 btn-sm"
 		aria-label="Attach file"
 		onclick={() => (open = true)}
 	>

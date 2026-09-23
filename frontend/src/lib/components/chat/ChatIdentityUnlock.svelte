@@ -115,7 +115,7 @@
 		<div class="flex gap-2">
 			<input
 				type="password"
-				class="input input-sm flex-1"
+				class="input flex-1 input-sm"
 				placeholder="key passphrase"
 				aria-label="key passphrase"
 				bind:value={passphrase}
@@ -126,7 +126,7 @@
 					}
 				}}
 			/>
-			<button type="button" class="btn btn-sm btn-primary" disabled={unlocking} onclick={tryUnlock}>
+			<button type="button" class="btn btn-primary btn-sm" disabled={unlocking} onclick={tryUnlock}>
 				{unlocking ? 'Unlocking…' : 'Unlock'}
 			</button>
 		</div>
@@ -136,18 +136,18 @@
 		<textarea
 			id="chat-key-backup"
 			rows={2}
-			class="textarea textarea-sm mb-2 w-full font-mono text-xs"
+			class="textarea mb-2 w-full font-mono text-xs textarea-sm"
 			placeholder={`Paste the "Export key backup" contents`}
 			bind:value={backupJson}></textarea>
 		<div class="flex gap-2">
 			<input
 				type="password"
-				class="input input-sm flex-1"
+				class="input flex-1 input-sm"
 				placeholder="backup passphrase"
 				aria-label="backup passphrase"
 				bind:value={importPassphrase}
 			/>
-			<button type="button" class="btn btn-sm btn-primary" disabled={importing} onclick={tryImport}>
+			<button type="button" class="btn btn-primary btn-sm" disabled={importing} onclick={tryImport}>
 				{importing ? 'Importing…' : 'Import key'}
 			</button>
 		</div>

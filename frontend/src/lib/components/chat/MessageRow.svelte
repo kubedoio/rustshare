@@ -85,7 +85,7 @@
 <svelte:window onclick={() => menuOpen && closeMenu()} />
 
 <div
-	class="group relative px-4 py-1 hover:bg-base-200/40 focus-within:bg-base-200/40 {isFocused
+	class="group relative px-4 py-1 focus-within:bg-base-200/40 hover:bg-base-200/40 {isFocused
 		? 'bg-primary/10 ring-1 ring-primary/20'
 		: ''}"
 	data-message-id={message.message_id}
@@ -126,7 +126,7 @@
 			{/if}
 
 			{#if message.body != null}
-				<div class="whitespace-pre-wrap text-sm text-base-content">{message.body}</div>
+				<div class="text-sm whitespace-pre-wrap text-base-content">{message.body}</div>
 			{:else}
 				<div class="text-sm text-base-content/50 italic">Content unavailable in Elembra.</div>
 			{/if}
@@ -136,7 +136,7 @@
 					{#each message.attachments as attachment (attachment.application + attachment.resourceType + attachment.resourceId + (attachment.version ?? ''))}
 						<button
 							type="button"
-							class="badge badge-outline badge-sm inline-flex items-center gap-1 text-xs"
+							class="badge inline-flex items-center gap-1 badge-outline text-xs badge-sm"
 							aria-label="Open attachment"
 							title="Open attachment"
 							onclick={(e) => openAttachment(attachment, e)}
@@ -157,7 +157,7 @@
 		<div class="relative">
 			<button
 				type="button"
-				class="btn btn-ghost btn-xs h-7 w-7 rounded-lg p-0"
+				class="btn h-7 w-7 rounded-lg btn-ghost p-0 btn-xs"
 				aria-label="Message actions"
 				aria-expanded={menuOpen}
 				onclick={toggleMenu}

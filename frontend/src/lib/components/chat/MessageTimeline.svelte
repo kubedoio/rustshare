@@ -134,7 +134,7 @@
 				<div class="px-4 pb-2">
 					<button
 						type="button"
-						class="btn btn-ghost btn-sm w-full text-sm text-primary"
+						class="btn w-full btn-ghost text-sm text-primary btn-sm"
 						disabled={loading}
 						onclick={onLoadMore}
 					>

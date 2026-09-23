@@ -52,7 +52,7 @@
 <div class="relative">
 	<button
 		type="button"
-		class="btn btn-sm btn-ghost"
+		class="btn btn-ghost btn-sm"
 		aria-label="Chat identity options"
 		aria-expanded={open}
 		aria-haspopup="menu"
@@ -63,7 +63,7 @@
 
 	{#if open}
 		<div
-			class="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl shadow-black/20"
+			class="absolute right-0 bottom-full z-50 mb-1 w-56 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl shadow-black/20"
 			role="menu"
 		>
 			{#if unlocked}

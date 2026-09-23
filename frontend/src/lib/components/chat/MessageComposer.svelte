@@ -121,7 +121,7 @@
 		<div
 			class="mb-2 inline-flex items-center gap-2 rounded-lg bg-base-200 px-2 py-1 text-xs text-base-content/80"
 		>
-			<span class="truncate max-w-[16rem]">Attachment: {attachmentTag[1]}</span>
+			<span class="max-w-[16rem] truncate">Attachment: {attachmentTag[1]}</span>
 			<button
 				type="button"
 				class="text-error hover:underline"
@@ -132,11 +132,11 @@
 		</div>
 	{/if}
 	<div
-		class="flex items-end gap-3 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50"
+		class="flex items-end gap-3 rounded-2xl border border-base-300 bg-base-100 p-2 shadow-sm focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/30"
 	>
 		<textarea
 			bind:this={textarea}
-			class="textarea textarea-ghost min-h-[44px] max-h-[240px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-relaxed focus:outline-none"
+			class="textarea max-h-[240px] min-h-[44px] flex-1 resize-none border-0 textarea-ghost bg-transparent px-2 py-2 text-sm leading-relaxed focus:outline-none"
 			rows={1}
 			placeholder="Message #{channelName}"
 			aria-label="Message text"
@@ -155,7 +155,7 @@
 			<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} iconOnly />
 			<button
 				type="button"
-				class="btn btn-ghost btn-xs h-8 w-8 rounded-lg p-0"
+				class="btn h-8 w-8 rounded-lg btn-ghost p-0 btn-xs"
 				aria-label="Add emoji"
 				title="Emoji (coming soon)"
 				disabled
@@ -167,7 +167,7 @@
 
 		<button
 			type="button"
-			class="btn btn-sm btn-primary inline-flex items-center gap-1.5 rounded-xl px-4"
+			class="btn inline-flex items-center gap-1.5 rounded-xl px-4 btn-primary btn-sm"
 			disabled={!canSend}
 			aria-label="Send message"
 			onclick={send}

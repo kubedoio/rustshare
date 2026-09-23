@@ -22,7 +22,7 @@
 
 <aside class="flex h-full w-60 shrink-0 flex-col border-r border-base-300 bg-base-100">
 	<div class="px-3 py-3">
-		<h2 class="text-xs font-bold uppercase tracking-wider text-base-content/50">Channels</h2>
+		<h2 class="text-xs font-bold tracking-wider text-base-content/50 uppercase">Channels</h2>
 	</div>
 	<div class="flex-1 overflow-y-auto px-2 pb-2">
 		{#if loading}

@@ -62,7 +62,7 @@
 	{#if askAvailable}
 		<a
 			href={askHrefWithChannel()}
-			class="btn btn-sm btn-primary inline-flex shrink-0 items-center gap-1.5"
+			class="btn inline-flex shrink-0 items-center gap-1.5 btn-primary btn-sm"
 		>
 			<Sparkles size={14} />
 			Ask Elembra
@@ -74,7 +74,7 @@
 		>
 			<button
 				type="button"
-				class="btn btn-sm btn-primary inline-flex items-center gap-1.5"
+				class="btn inline-flex items-center gap-1.5 btn-primary btn-sm"
 				disabled
 			>
 				<Sparkles size={14} />
