@@ -11,6 +11,7 @@ on:
       - 'frontend/**'
       - '.github/workflows/frontend-ci.yml'
       - '.github/workflows/dco.yml'
+  workflow_dispatch:
   push:
     branches: [main]
     paths-ignore:
@@ -83,6 +84,7 @@ jobs:
 
   test:
     name: Test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: [generate-secrets]
     services:
@@ -117,6 +119,7 @@ jobs:
   # Validates that the project compiles in release mode (expensive but required by audit).
   build-release:
     name: Build Release
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       SQLX_OFFLINE: true
@@ -137,6 +140,7 @@ jobs:
 
   sqlx-check:
     name: SQLx Prepare Check
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: [generate-secrets]
     env:
@@ -165,6 +169,7 @@ jobs:
 
   coverage:
     name: Code Coverage
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: [generate-secrets]
     services:

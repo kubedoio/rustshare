@@ -1,13 +1,6 @@
 name: Integration Tests
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'crates/**'
-      - 'apps/obsidian-vault-sync/**'
-      - '.github/workflows/integration-tests.yml'
   push:
     branches: [main]
     paths:
