@@ -1,19 +1,6 @@
 name: Pilot Release
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/pilot-release.yml'
-      - 'docker-compose.yml'
-      - 'docker-compose.pilot.yml'
-      - 'docker/backend.Dockerfile'
-      - 'backend/**'
-      - 'frontend/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/**'
-      - 'apps/**'
-      - 'rust-toolchain.toml'
   push:
     branches:
       - main
@@ -128,7 +115,7 @@ jobs:
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml down -v
 
   publish-pilot-image:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push'
     needs: pilot-compose-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 80

@@ -45,6 +45,13 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
     { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
+    # h2 0.3.27 — final 0.3.x; upstream patched only the 0.4 line (RUSTSEC-2026-0258).
+    # Reached only via the AWS SDK client path (aws-smithy-http-client -> hyper 0.14 ->
+    # RustFS/S3). Low-severity DoS (unbounded empty DATA frames) that requires a
+    # malicious direct HTTP/2 peer; the peer on that path is RustFS/S3, a service this
+    # deployment operates. Re-evaluate when the AWS SDK default moves to hyper 1.x.
+    # The 0.4 instance is updated to 0.4.19 in this same PR.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 via AWS SDK hyper-0.14 path; no patched 0.3.x exists (see #281)" },
 ]
 
 [bans]
