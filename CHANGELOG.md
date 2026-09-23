@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cargo Deny security advisories: bumped `h2` to 0.4.19 (RUSTSEC-2026-0258),
+  `rustls` to 0.23.45 (RUSTSEC-2026-0285), and replaced the yanked `chacha20`
+  0.10.0 with 0.10.2; documented risk acceptance for the unmaintained h2
+  0.3.27 line, reachable only via the AWS SDK hyper-0.14 client path.
 - Elembra Chat first-use deadlock: `GET /applications/chat/status` now returns
   an active workspace/community mapping even when the caller has no identity
   binding, so the Chat UI can render the `BindingPanel` instead of the
