@@ -50,9 +50,18 @@ function createAuthStore() {
 	});
 
 	let sessionGeneration = 0;
+	let activeChatUserId: string | null = null;
 
 	function nextGeneration(): number {
 		return ++sessionGeneration;
+	}
+
+	function setChatUser(userId: string): void {
+		if (activeChatUserId !== null && activeChatUserId !== userId) {
+			clearChatSession();
+		}
+		activeChatUserId = userId;
+		setChatKeyUser(userId);
 	}
 
 	async function bootstrapSession() {
@@ -63,7 +72,7 @@ function createAuthStore() {
 
 			const user = toAuthUser(profile);
 
-			setChatKeyUser(profile.id);
+			setChatUser(profile.id);
 			set({
 				user,
 				isAuthenticated: true,
@@ -87,6 +96,7 @@ function createAuthStore() {
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
 			clearChatSession();
+			activeChatUserId = null;
 			setChatKeyUser(null);
 			set({
 				user: null,
@@ -120,7 +130,7 @@ function createAuthStore() {
 				});
 
 				queryClient.invalidateQueries();
-				setChatKeyUser(user.id);
+				setChatUser(user.id);
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -151,6 +161,7 @@ function createAuthStore() {
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
 			clearChatSession();
+			activeChatUserId = null;
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
 			setChatKeyUser(null);

@@ -33,7 +33,9 @@ vi.mock('../query-client', () => ({
 
 import { login as loginRequest, logout as logoutRequest } from '../api/auth';
 import { getUserProfile } from '../api/users';
-import { hasChatKey, setChatKeyUser } from '../chat/keys';
+import { hasChatKey, saveChatKey, setChatKeyUser } from '../chat/keys';
+import { getSigningKey, unlock } from '../chat/session';
+import { generateSecretKey, publicKeyOf } from '../chat/nostr';
 import { authStore, currentUser } from './auth';
 
 describe('Auth Store Race Condition', () => {
@@ -216,5 +218,56 @@ describe('Auth Store Race Condition', () => {
 		// Store should still be logged out
 		expect(get(authStore).isAuthenticated).toBe(false);
 		expect(get(authStore).user).toBeNull();
+	});
+
+	it('locks the previous Chat identity when logging into another user', async () => {
+		const mockLoginRequest = vi.mocked(loginRequest);
+		const mockGetUserProfile = vi.mocked(getUserProfile);
+		const mockLogoutRequest = vi.mocked(logoutRequest);
+		mockLogoutRequest.mockResolvedValue(undefined);
+
+		mockLoginRequest.mockResolvedValue({
+			user: { id: 'user-a', email: 'a@example.com', display_name: 'User A', is_admin: false }
+		});
+		mockGetUserProfile.mockResolvedValue({
+			id: 'user-a',
+			tenant_id: 'tenant-a',
+			email: 'a@example.com',
+			display_name: 'User A',
+			is_admin: false,
+			storage_quota: 0,
+			storage_used: 0,
+			theme: 'system',
+			username: 'usera',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString()
+		});
+		await authStore.login('a@example.com', 'password');
+
+		const secretKey = generateSecretKey();
+		const pubkey = publicKeyOf(secretKey);
+		await saveChatKey(secretKey, pubkey, 'passphrase');
+		await unlock('passphrase', pubkey);
+		expect(getSigningKey()).toBe(secretKey);
+
+		mockLoginRequest.mockResolvedValue({
+			user: { id: 'user-b', email: 'b@example.com', display_name: 'User B', is_admin: false }
+		});
+		mockGetUserProfile.mockResolvedValue({
+			id: 'user-b',
+			tenant_id: 'tenant-b',
+			email: 'b@example.com',
+			display_name: 'User B',
+			is_admin: false,
+			storage_quota: 0,
+			storage_used: 0,
+			theme: 'system',
+			username: 'userb',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString()
+		});
+		await authStore.login('b@example.com', 'password');
+
+		expect(getSigningKey()).toBeNull();
 	});
 });
