@@ -6,7 +6,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
 #     -f docker-compose.dogfood.yml up -d
 #
-# Services added: buzz-postgres, buzz-redis, buzz-minio(+init) — the relay's
+# Services added: buzz-postgres, buzz-redis, buzz-rustfs(+init) — the relay's
 # backing services — and buzz-relay (the authoritative Chat engine). The
 # observation bridge (relay -> Elembra webhook) is a host-side Node process
 # started separately (scripts/start-buzz-observer.sh); it must connect to the
@@ -19,8 +19,10 @@
 # Required .env additions (see .env.example):
 #   BUZZ_RELAY_OWNER_PUBKEY  relay owner / Elembra bridge public key (64 hex)
 #   BUZZ_RELAY_PRIVATE_KEY   the relay's own identity private key (64 hex)
-# Optional: BUZZ_RELAY_IMAGE, BUZZ_POSTGRES_PASSWORD, BUZZ_MINIO_USER/PASSWORD,
+# Optional: BUZZ_POSTGRES_PASSWORD, BUZZ_RUSTFS_ACCESS_KEY/SECRET_KEY,
 # BUZZ_RELAY_URL (advertised relay URL, default ws://localhost:7447).
+# Load config/buzz-compatibility.env before using this file so the relay image
+# is pinned to the supported Buzz implementation.
 #
 # Teardown:
 #   docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
@@ -61,7 +63,7 @@ services:
       ELEMBRA_LLM_TIMEOUT_SECS: ${ELEMBRA_LLM_TIMEOUT_SECS:-30}
 
   buzz-postgres:
-    image: postgres:17-alpine
+    image: postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     restart: unless-stopped
     environment:
       POSTGRES_USER: buzz
@@ -77,7 +79,7 @@ services:
       retries: 5
 
   buzz-redis:
-    image: redis:7-alpine
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -85,51 +87,53 @@ services:
       timeout: 5s
       retries: 5
 
-  buzz-minio:
-    image: minio/minio:latest
+  buzz-rustfs:
+    # Buzz's startup conformance probe exercises concurrent conditional S3
+    # writes; RustFS 1.0.0 is the first supported baseline used here.
+    image: rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${BUZZ_MINIO_USER:-buzz_dev}
-      MINIO_ROOT_PASSWORD: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+      RUSTFS_ROOT_USER: ${BUZZ_RUSTFS_ACCESS_KEY:-buzz_dev}
+      RUSTFS_ROOT_PASSWORD: ${BUZZ_RUSTFS_SECRET_KEY:-buzz_dev_secret}
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
     volumes:
-      - buzz_minio_data:/data
+      - buzz_rustfs_data:/data
+      - buzz_rustfs_logs:/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  buzz-minio-init:
-    image: minio/mc:latest
+  buzz-rustfs-init:
+    image: rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699
     restart: "no"
     depends_on:
-      buzz-minio:
+      buzz-rustfs:
         condition: service_healthy
     environment:
-      BUZZ_MINIO_USER: ${BUZZ_MINIO_USER:-buzz_dev}
-      BUZZ_MINIO_PASSWORD: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+      BUZZ_RUSTFS_ACCESS_KEY: ${BUZZ_RUSTFS_ACCESS_KEY:-buzz_dev}
+      BUZZ_RUSTFS_SECRET_KEY: ${BUZZ_RUSTFS_SECRET_KEY:-buzz_dev_secret}
     entrypoint: /bin/sh
     command:
       - -c
       - >-
-        mc alias set local http://buzz-minio:9000
-        $${BUZZ_MINIO_USER:-buzz_dev} $${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
-        && mc mb --ignore-existing local/buzz-media
+        rc alias set local http://buzz-rustfs:9000
+        $${BUZZ_RUSTFS_ACCESS_KEY:-buzz_dev} $${BUZZ_RUSTFS_SECRET_KEY:-buzz_dev_secret}
+        && rc bucket create local/buzz-media --ignore-existing --quiet
 
   buzz-relay:
     # The relay image MUST contain the v1alpha1 authorization API (access
     # check/check-batch, channels, state events, community identity).
-    # The supported image is built from merged kubedoio/buzz main (8ce4dac)
-    # and pinned to its immutable sha tag; provenance is verifiable with
-    # `gh attestation verify oci://ghcr.io/kubedoio/buzz:sha-8ce4dac --owner kubedoio`.
-    # Never use a floating upstream (block/buzz) image — its API contract may differ.
+    # The supported image is loaded from config/buzz-compatibility.env and is
+    # pinned by OCI digest. Never use a floating upstream image here.
     # The relay has NO published ports in this file: the dogfood layout
     # shares the backend's network namespace (docker-compose.dogfood.yml)
     # and the standalone conformance layout publishes them
     # (docker-compose.conformance.yml). The engine rejects port publishing
     # on a container using network_mode service:<x>.
-    image: ${BUZZ_RELAY_IMAGE:-ghcr.io/kubedoio/buzz:sha-8ce4dac}
+    image: ${BUZZ_RELAY_IMAGE:?load config/buzz-compatibility.env before starting the Alpha stack}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://buzz:${BUZZ_POSTGRES_PASSWORD:-buzz_dev}@buzz-postgres:5432/buzz
@@ -150,20 +154,21 @@ services:
       # and buzz mode cannot run.
       RELAY_TRUSTED_SERVICE_PUBKEYS: ${BUZZ_RELAY_OWNER_PUBKEY:?set BUZZ_RELAY_OWNER_PUBKEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
       BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set BUZZ_RELAY_PRIVATE_KEY in .env (node frontend/scripts/alpha-gen-buzz-keys.mjs)}
-      BUZZ_S3_ENDPOINT: http://buzz-minio:9000
-      BUZZ_S3_ACCESS_KEY: ${BUZZ_MINIO_USER:-buzz_dev}
-      BUZZ_S3_SECRET_KEY: ${BUZZ_MINIO_PASSWORD:-buzz_dev_secret}
+      BUZZ_S3_ENDPOINT: http://buzz-rustfs:9000
+      BUZZ_S3_ACCESS_KEY: ${BUZZ_RUSTFS_ACCESS_KEY:-buzz_dev}
+      BUZZ_S3_SECRET_KEY: ${BUZZ_RUSTFS_SECRET_KEY:-buzz_dev_secret}
       BUZZ_S3_BUCKET: buzz-media
     depends_on:
       buzz-postgres:
         condition: service_healthy
       buzz-redis:
         condition: service_healthy
-      buzz-minio:
+      buzz-rustfs:
         condition: service_healthy
-      buzz-minio-init:
+      buzz-rustfs-init:
         condition: service_completed_successfully
 
 volumes:
   buzz_postgres_data:
-  buzz_minio_data:
+  buzz_rustfs_data:
+  buzz_rustfs_logs:

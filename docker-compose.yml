@@ -4,7 +4,7 @@
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     restart: unless-stopped
     environment:
       POSTGRES_DB: rustshare
@@ -14,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${RUSTSHARE_POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustshare"]
       interval: 10s
@@ -35,8 +35,8 @@ services:
       - rustfs_data:/data
       - rustfs_logs:/logs
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${RUSTSHARE_RUSTFS_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${RUSTSHARE_RUSTFS_CONSOLE_HOST_PORT:-9001}:9001"
     healthcheck:
       test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
       interval: 10s

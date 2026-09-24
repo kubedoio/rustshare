@@ -1,8 +1,8 @@
 //! LIVE conformance suite: Elembra against a REAL Buzz relay (v1alpha1
 //! upstream authorization contract, `docs/specs/buzz-upstream-authorization-v1alpha1.md`).
 //!
-//! Unlike the fake-relay suites, this suite runs against the real relay built
-//! from the merged Buzz main worktree (see
+//! Unlike the fake-relay suites, this suite runs against the pinned supported
+//! Buzz image selected by `config/buzz-compatibility.env` (see
 //! `scripts/run-buzz-conformance.sh`): real NIP-98-authenticated access
 //! checks, real kind-19030 signed responses, real channel registry and real
 //! stream-message state.
@@ -25,8 +25,8 @@
 //!   RUSTSHARE_BUZZ_LIVE_RELAY_PUBKEY  the relay's identity pubkey (64 hex pin)
 //!   RUSTSHARE_BUZZ_LIVE_METRICS_URL   relay metrics endpoint (default http://127.0.0.1:9102)
 //!
-//! Run (script): `scripts/run-buzz-conformance.sh` — builds the relay image,
-//! brings up the stack with `RELAY_TRUSTED_SERVICE_PUBKEYS=<service pk>` and
+//! Run (script): `scripts/run-buzz-conformance.sh` — brings up the pinned
+//! stack with `RELAY_TRUSTED_SERVICE_PUBKEYS=<service pk>` and
 //! `RELAY_URL=ws://127.0.0.1:7447`, then:
 //!
 //!   set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \

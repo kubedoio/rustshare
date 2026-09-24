@@ -16,8 +16,9 @@ keeps the explicit admin path unchanged.
 
 ## 1. Buzz provisioning model (verified against the buzz worktree)
 
-These facts are verified against the `kubedoio/buzz` codebase (`main` at
-`8ce4dac`, which includes the merged community-identity contract):
+These facts are verified against the supported Buzz source recorded in
+`config/buzz-compatibility.env`, which includes the merged community-identity
+contract:
 
 - **`communities` has no name.** The table is
   `communities(id UUID PRIMARY KEY DEFAULT gen_random_uuid(), host VARCHAR(255)
@@ -151,16 +152,13 @@ response.
 
 ## 4. Image strategy
 
-- **Supported image:** `ghcr.io/kubedoio/buzz`, built **from merged
-  `kubedoio/buzz` main** by the fork's CI (`docker.yml`). A main push publishes
-  two tags — `:main` (floating) and `:sha-<7>` (immutable 7-hex commit tag) —
-  and the build carries a provenance attestation verifiable with
-  `gh attestation verify oci://ghcr.io/kubedoio/buzz:sha-<7> --owner kubedoio`.
-- **Pin to the SHA tag.** `BUZZ_RELAY_IMAGE` must be pinned to the `sha-<7>`
-  tag of the merged-main build that includes the v1alpha1 API and the
-  community-identity endpoint. The alpha compose default tracks the fork build
-  (`ghcr.io/kubedoio/buzz:main`) and its comment instructs operators to pin
-  once the merged build exists.
+- **Supported image:** `ghcr.io/kubedoio/buzz`, built from the merged
+  `kubedoio/buzz` source by the fork's CI. The exact source commit, contract,
+  and OCI digest are recorded in `config/buzz-compatibility.env`.
+- **Pin to the compatibility manifest.** The Alpha Compose stack and the
+  blocking conformance gate load `BUZZ_RELAY_IMAGE` from that manifest. The
+  manifest must be changed deliberately when the supported Buzz contract is
+  upgraded; neither path follows Buzz `main`.
 - **Why not floating/upstream tags.** Upstream `ghcr.io/block/buzz` predates
   the v1alpha1 authorization API and the discovery endpoint — its contract is
   stale or absent, and a "relay-v\*" tag there is a different lineage. A
@@ -168,11 +166,10 @@ response.
   immutable `sha-<7>` tag identifies the exact main commit the image was built
   from, so the pinned contract is reproducible and auditable.
 
-**Current status (2026-08-16):** the community-identity endpoint and the fork
-image publishing are merged in `kubedoio/buzz` main (`8ce4dac`, PR #2). The
-supported image is `ghcr.io/kubedoio/buzz:sha-8ce4dac` (built from the merged
-main by the fork CI; see `docker-compose.alpha.yml`'s `BUZZ_RELAY_IMAGE`
-default). No dependence on floating upstream tags, no stale images.
+**Current status:** the community-identity endpoint and the fork image
+publishing are merged. The supported Buzz commit, image digest, and v1alpha1
+contract are the values in `config/buzz-compatibility.env`; no supported gate
+depends on a floating Buzz ref.
 
 ---
 

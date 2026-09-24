@@ -17,7 +17,7 @@ onboards real users who can use Files + Chat + Memory + Ask together.
 Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │            rustfs :9000
                               │
-Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-minio
+Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-rustfs
                               ▲
         buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards the observed
                                   kinds — stream messages 9/40002 and legacy
@@ -32,7 +32,7 @@ Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
 |---|---|---|
 | Elembra backend/frontend | this repo (`docker/backend.Dockerfile`) | `docker compose up -d` |
 | Postgres / RustFS / nginx | `docker-compose.yml` | same |
-| Buzz relay + backing services | `ghcr.io/kubedoio/buzz` (main-built; pin a `sha-<7>` tag, see §3) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
+| Buzz relay + backing services | pinned by `config/buzz-compatibility.env` (see §3) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
 | Observation bridge | `frontend/scripts/buzz-observer.mjs` | host process via `scripts/start-buzz-observer.sh` |
 
 **Why the observer runs on the host:** Buzz resolves the community from the
@@ -48,12 +48,10 @@ same community; an internal container network cannot present that Host value.
 
 - Docker Engine + Compose plugin (validated matrix: Ubuntu 22.04/24.04, Debian 12)
 - Node.js 22+ (for the observer and E2E driver)
-- An image of the Buzz relay: `ghcr.io/kubedoio/buzz`, built from merged
-  `kubedoio/buzz` main and published by the fork's `docker.yml` workflow with
-  `:main` + immutable `:sha-<7>` tags and provenance attestation. Pin
-  `BUZZ_RELAY_IMAGE` to the `sha-<7>` tag of the merged-main build (see §3);
-  never use a floating upstream `block/buzz` image — its API contract is stale
-  or absent.
+- The committed `config/buzz-compatibility.env` manifest, which selects the
+  supported Buzz commit, v1alpha1 contract, and immutable OCI image digest.
+  Load it before the Alpha Compose command:
+  `set -a; . config/buzz-compatibility.env; set +a`.
 
 ### 2.2 Bring up
 
@@ -272,14 +270,14 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
 | `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
 | `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
-| `BUZZ_RELAY_IMAGE` | relay image; supported: `ghcr.io/kubedoio/buzz` built from merged `kubedoio/buzz` main — pin the immutable `sha-<7>` tag of that build; never a floating upstream `block/buzz` image | `ghcr.io/kubedoio/buzz:sha-8ce4dac` |
+| `BUZZ_RELAY_IMAGE` | relay image loaded from `config/buzz-compatibility.env`; the supported value is immutable by OCI digest | manifest |
 | `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
 | `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
 | `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
 | `BUZZ_COMMUNITY_ID` | community id forwarded by the observer; must equal the mapping | — |
 | `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | relay UUID-keyed channel ids (kind-9007 registry rows, created by `run-alpha-dogfood.sh`, open visibility) | `585e55c7-97d9-43ad-bbe3-a355cad93082` / `4bec90c0-4c14-48cc-8958-da8c258f9759` |
-| `BUZZ_POSTGRES_PASSWORD`, `BUZZ_MINIO_USER`, `BUZZ_MINIO_PASSWORD` | relay backing services | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
+| `BUZZ_POSTGRES_PASSWORD`, `BUZZ_RUSTFS_ACCESS_KEY`, `BUZZ_RUSTFS_SECRET_KEY` | dedicated Buzz RustFS runtime and `buzz-media` bucket | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
 | `ELEMBRA_LLM_API_KEY` | OpenAI-compatible Ask provider key (DeepSeek, OpenAI, …); leave unset to keep Ask gated (`ask_available=false`, #244) | empty |
 | `ELEMBRA_LLM_BASE_URL` | provider base URL, e.g. `https://api.deepseek.com/v1` | empty |
 | `ELEMBRA_LLM_MODEL` | provider model id, e.g. `deepseek-chat` | `gpt-4o-mini` (app fallback) |
@@ -293,12 +291,20 @@ mode). Set the four variables in `.env` (never commit credentials), then
 backend service passes them through from the environment.
 
 The relay image must contain the v1alpha1 authorization API and the
-community-identity discovery endpoint (ADR-0035/0036). The supported image is
-`ghcr.io/kubedoio/buzz`, built from merged `kubedoio/buzz` main (`8ce4dac`, PR
-#2 merged) and published by the fork's CI with `:main` + `:sha-<7>` tags and
-provenance attestation. The compose default pins `BUZZ_RELAY_IMAGE` to the
-immutable `sha-8ce4dac` tag of the merged build; verify provenance with
-`gh attestation verify oci://ghcr.io/kubedoio/buzz:sha-8ce4dac --owner kubedoio`.
+community-identity discovery endpoint (ADR-0035/0036). The supported image,
+source commit, contract version, and OCI digest are recorded in
+`config/buzz-compatibility.env`; the blocking gate never follows Buzz `main`.
+
+### 3.1 Object-storage boundary
+
+Classification: **B — shared RustFS is technically safe but should be a later
+isolated migration.** Buzz only needs the S3 data plane and currently uses a
+dedicated `buzz-media` bucket. RustFS supports IAM/service-account
+credentials, so a future deployment can provision a Buzz-only credential on
+Elembra's existing RustFS without sharing the Elembra `rustshare-files`
+namespace. This baseline keeps a separate pinned RustFS service and
+credentials (RustFS 1.0.0 GA; pinned by OCI digest) to avoid changing storage
+ownership, lifecycle, or migration semantics while repairing conformance.
 
 Generate all keys once: `node frontend/scripts/alpha-gen-buzz-keys.mjs`. The
 relay owner key is the bridge identity: its public half is
@@ -397,7 +403,7 @@ It never prints private secrets.
 ## 7. Backup considerations
 
 - Elembra data: `scripts/backup-stack.sh` (postgres dump + RustFS + config).
-- Relay state: `buzz_postgres_data` / `buzz_minio_data` volumes — back these up
+- Relay state: `buzz_postgres_data` / `buzz_rustfs_data` volumes — back these up
   for message-history continuity. A relay reset loses the **relay's** event
   history; Elembra's observation index (its own Postgres) survives, and on
   observer reconnect the relay replays whatever events it still holds (deduped
@@ -433,7 +439,7 @@ Full classification: Alpha readiness doc §8. Relevant here:
 
 ```bash
 # Stop the dogfood additions, keep Elembra:
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml stop buzz-relay buzz-postgres buzz-redis buzz-minio
+docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml stop buzz-relay buzz-postgres buzz-redis buzz-rustfs
 pkill -f start-buzz-observer.sh
 
 # Full reset (nuclear):
@@ -499,16 +505,17 @@ The following are operator-visible today (proven during this goal):
   is the reply/thread COMPOSER feature (reply UI in the message composer),
   which stays open as a separate follow-up.
 - #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
-  ADR-0035 relay capability is implemented and MERGED (kubedoio/buzz PR #1,
-  now on `kubedoio/buzz` main) and the live conformance suite is green
-  (`scripts/run-buzz-conformance.sh`, 12 live proofs incl. `live_p10`
-  one-batch-round-trip, `live_p11` latency budget, `live_p12` tombstone
-  reconciliation, `live_p13` bootstrap identity discovery). Issue #245's four acceptance criteria: relay endpoints
+  ADR-0035 relay capability is implemented and merged, and the supported
+  runtime source is pinned in `config/buzz-compatibility.env`. The live gate
+  (`scripts/run-buzz-conformance.sh`) executes the real relay and its 12 live
+  proofs, including `live_p10` one-batch-round-trip, `live_p11` latency budget,
+  `live_p12` tombstone reconciliation, and `live_p13` bootstrap identity
+  discovery. Issue #245's four acceptance criteria: relay endpoints
   implemented ✅; live-relay conformance replaces the fake ✅; buzz-mode
   authorization enabled in production ✅ (kubedoio/rustshare PR #249 merged;
   enabled by default in the Alpha/dogfood stack); large-timeline latency
   regression test passes within budget ✅ (`live_p11`, observed median
-  192 ms against the 500 ms budget, re-certified against merged Buzz main).
+  192 ms against the 500 ms budget, re-certified against the pinned source).
   Elembra does not emulate either upstream dependency.
 
 ## 12. Live Buzz conformance suite (production-authority proofs)
@@ -516,9 +523,9 @@ The following are operator-visible today (proven during this goal):
 The live conformance suite (`backend/tests/buzz_live_conformance_test.rs`)
 proves Elembra uses Buzz as the REAL production authority, fail-closed: an
 in-process Elembra (AppState with the Buzz gateway authority + `buzz_gateway`
-wired, same as the fake-relay suites) runs against the REAL relay built from
-the merged Buzz main worktree (`.worktrees/buzz`), with the
-dev Elembra DB as the store. The suite seeds the relay itself over its public
+wired, same as the fake-relay suites) runs against the REAL relay selected by
+`config/buzz-compatibility.env`, with a fresh Elembra DB as the store. The
+suite seeds the relay itself over its public
 HTTP surface (`POST /events`) and ingests the same signed events through the
 real in-process observation bridge.
 
@@ -555,14 +562,11 @@ Run it:
 ./scripts/run-buzz-conformance.sh
 ```
 
-The script builds the relay image from the worktree (skips when present),
-brings up the relay stack (`docker compose -f docker-compose.yml -f
-docker-compose.alpha.yml -f docker-compose.conformance.yml up -d buzz-relay`)
-with `RELAY_URL=ws://127.0.0.1:7447` (so the suite's Host header binds the
-seeded community) and `RELAY_TRUSTED_SERVICE_PUBKEYS=<Elembra service pk>`
-(the v1alpha1 authorization API's trusted-service gate), generates the
-service/relay keys when unset, waits for relay health, runs the suite with
-the live env vars, and reports PASS/FAIL. Set `RUSTSHARE_BUZZ_CONFORMANCE_KEEP=1`
-to leave the stack running. The suite requires the dev Elembra DB
-(`backend/.env` DATABASE_URL) and fails with a clear message when a leftover
-container holds the relay ports (7447/8088/9102).
+The script loads the compatibility manifest, generates keys and ephemeral
+credentials when unset, starts fresh Elembra PostgreSQL/RustFS plus the
+separate Buzz PostgreSQL/Redis/RustFS stack, runs migrations, waits for
+dependency and relay readiness, runs the suite, emits secret-safe diagnostics
+on failure, and removes its Compose project and volumes. Set
+`RUSTSHARE_BUZZ_CONFORMANCE_KEEP=1` only when debugging a failed run. Its
+isolated host ports default to 15432, 19000, 19001, 17447, 18088, and 19102,
+so an existing Alpha stack on 5432/9000/9001/7447 is not reused or modified.

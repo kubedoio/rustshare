@@ -8,7 +8,7 @@
 # relay's own admin CLI, so revocation is not automated here (the Elembra-side
 # read-gate half is automated in backend/tests/chat_app_read_test.rs).
 # Required env:
-#   BUZZ_RELAY_IMAGE   docker image of the Buzz relay (e.g. ghcr.io/.../buzz-relay:main)
+#   BUZZ_RELAY_IMAGE   pinned Buzz relay image; use config/buzz-compatibility.env
 #   BUZZ_RELAY_WS      wss:// or ws:// URL of the started relay
 #   BUZZ_SERVICE_SK    hex service/bridge key with relay admin authority
 # Optional:

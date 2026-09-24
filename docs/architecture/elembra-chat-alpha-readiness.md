@@ -244,7 +244,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 | — | *new*: Recipient-side attachment tags (projection) | DELIVERED — shipped in the Alpha (migration `20260810000007`, timeline DTO, Files-reauthorized open) |
 | — | *new*: Reply/thread composer (blocked on wire format) | CREATE |
 | — | *new*: Ask availability gating when LLM provider not configured | CREATE |
-| — | ~~Buzz-mode production readiness (access/check, batch, channel registry — upstream)~~ | **resolved — production-authority pass (E1–E7); pending deploy** |
+| — | ~~Buzz-mode production readiness (access/check, batch, channel registry — upstream)~~ | **resolved — production-authority pass (E1–E7); pinned runtime revalidation tracked by the Buzz baseline gate** |
 
 No duplicate issues existed; none closed. Existing open issues are narrow; none need a giant "Chat v2" catch-all.
 

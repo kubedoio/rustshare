@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Buzz Live Conformance now uses a pinned Buzz compatibility manifest and a
+  self-contained, fresh RustFS-backed Compose stack; it no longer follows Buzz
+  `main` or Docker Hub MinIO images.
 - Elembra Chat usable-experience pass: Slack-like lean timeline with
   human-readable channel names and author display, browser-held identity
   import/export with an explicit lock/unlock session (the passphrase never
