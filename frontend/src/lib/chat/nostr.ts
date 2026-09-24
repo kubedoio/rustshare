@@ -93,63 +93,80 @@ export async function publishEvent(
 	const signed = await signEvent(unsigned, secretKey);
 	return await new Promise<PublishResult>((resolve) => {
 		let settled = false;
+		// The relay answers a pre-auth publish with an auth-flavored OK false
+		// (NIP-42 demand). Only the FIRST such rejection is that demand; after
+		// AUTH + re-send, a further auth-flavored rejection is genuine (e.g. the
+		// relay rejected our AUTH) and must surface instead of hanging to the
+		// transport timeout. A challenge itself also marks the re-send as
+		// post-auth, even if the relay does not send a pre-auth rejection.
+		let sawAuthRejection = false;
+		let authSent = false;
 		const finish = (result: PublishResult) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			clearTimeout(authGrace);
 			socket.close();
 			resolve(result);
 		};
 		const timer = setTimeout(() => finish({ ok: false, reason: 'transport' }), 10_000);
 		const socket = new WebSocket(relayUrl);
-		let authGrace: ReturnType<typeof setTimeout> | undefined;
 
+		// NIP-42 flow proven against the Buzz relay: publish the event first so
+		// the relay answers with an AUTH challenge when authentication is
+		// required; authenticate, then re-send the event. An initial REQ probe
+		// does NOT provoke a challenge on the Buzz relay, so publishing without
+		// auth first would always be rejected with "auth required".
 		socket.onopen = () => {
-			// Ask for the AUTH challenge by sending an empty subscription.
-			socket.send(JSON.stringify(['REQ', 'auth-probe', { limit: 0 }]));
-			// Some relays never challenge; give them a short grace, then
-			// publish anyway so a challenge-less relay still works.
-			authGrace = setTimeout(() => {
-				socket.send(JSON.stringify(['EVENT', signed]));
-			}, 1500);
+			socket.send(JSON.stringify(['EVENT', signed]));
 		};
-		socket.onmessage = async (raw) => {
-			let message: unknown;
-			try {
-				message = JSON.parse(String(raw.data));
-			} catch {
-				return;
-			}
-			if (!Array.isArray(message)) return;
-			if (message[0] === 'AUTH' && typeof message[1] === 'string') {
-				clearTimeout(authGrace);
-				const auth = await signEvent(
-					await buildUnsignedEvent(
-						NOSTR_KIND_AUTH,
-						'',
-						[
-							['relay', relayUrl],
-							['challenge', message[1]]
-						],
-						unsigned.pubkey
-					),
-					secretKey
-				);
-				socket.send(JSON.stringify(['AUTH', auth]));
-				socket.send(JSON.stringify(['EVENT', signed]));
-			}
-			if (message[0] === 'OK' && message[1] === signed.id) {
-				finish(
-					message[2] === true
-						? { ok: true, event_id: signed.id }
-						: {
-								ok: false,
-								reason: 'rejected',
-								detail: typeof message[3] === 'string' ? message[3] : undefined
-							}
-				);
-			}
+		socket.onmessage = (raw) => {
+			void (async () => {
+				let message: unknown;
+				try {
+					message = JSON.parse(String(raw.data));
+				} catch {
+					return;
+				}
+				if (!Array.isArray(message)) return;
+				if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+					const auth = await signEvent(
+						await buildUnsignedEvent(
+							NOSTR_KIND_AUTH,
+							'',
+							[
+								['relay', relayUrl],
+								['challenge', message[1]]
+							],
+							unsigned.pubkey
+						),
+						secretKey
+					);
+					authSent = true;
+					socket.send(JSON.stringify(['AUTH', auth]));
+					socket.send(JSON.stringify(['EVENT', signed]));
+				}
+				if (message[0] === 'OK' && message[1] === signed.id) {
+					if (
+						!authSent &&
+						!sawAuthRejection &&
+						message[2] === false &&
+						typeof message[3] === 'string' &&
+						message[3].toLowerCase().includes('auth')
+					) {
+						sawAuthRejection = true;
+						return;
+					}
+					finish(
+						message[2] === true
+							? { ok: true, event_id: signed.id }
+							: {
+									ok: false,
+									reason: 'rejected',
+									detail: typeof message[3] === 'string' ? message[3] : undefined
+								}
+					);
+				}
+			})().catch(() => finish({ ok: false, reason: 'transport' }));
 		};
 		socket.onerror = () => finish({ ok: false, reason: 'transport' });
 		socket.onclose = () => finish({ ok: false, reason: 'transport' });

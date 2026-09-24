@@ -5,12 +5,14 @@
 	import { apiClient } from '$lib/api/client';
 	import type { NostrTag } from '$lib/chat/nostr';
 	import ModalBase from '$lib/components/common/ModalBase.svelte';
+	import { Paperclip } from 'lucide-svelte';
 
 	interface Props {
 		onSelect: (tag: NostrTag) => void;
+		iconOnly?: boolean;
 	}
 
-	let { onSelect }: Props = $props();
+	let { onSelect, iconOnly = false }: Props = $props();
 
 	let open = $state(false);
 	let files = $state<File[]>([]);
@@ -51,7 +53,27 @@
 	}
 </script>
 
-<button type="button" class="btn btn-sm" onclick={() => (open = true)}>Attach file</button>
+{#if iconOnly}
+	<button
+		type="button"
+		class="btn h-8 w-8 rounded-lg btn-ghost p-0 btn-xs"
+		aria-label="Attach file"
+		title="Attach file"
+		onclick={() => (open = true)}
+	>
+		<Paperclip size={16} class="text-base-content/60" />
+	</button>
+{:else}
+	<button
+		type="button"
+		class="btn inline-flex items-center gap-1.5 btn-sm"
+		aria-label="Attach file"
+		onclick={() => (open = true)}
+	>
+		<Paperclip size={16} />
+		Attach file
+	</button>
+{/if}
 
 <ModalBase {open} title="Attach a file" onClose={() => (open = false)} showCloseButton={false}>
 	{#if loading}

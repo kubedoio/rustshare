@@ -42,7 +42,13 @@ describe('chat key custody', () => {
 		await saveChatKey(sk, publicKeyOf(sk), 'correct horse');
 		const raw = localStorage.getItem(`${LEGACY_KEY}.user-1`)!;
 		const parsed = JSON.parse(raw);
-		parsed.ciphertext = '00' + parsed.ciphertext.slice(2);
+		// XOR the first ciphertext byte with 0xff so the tamper is a change on
+		// every run (a fixed byte like '00' is a no-op ~1/256 of the time,
+		// which made this test flaky). AES-GCM then fails tag validation.
+		const first = (parseInt(parsed.ciphertext.slice(0, 2), 16) ^ 0xff)
+			.toString(16)
+			.padStart(2, '0');
+		parsed.ciphertext = first + parsed.ciphertext.slice(2);
 		localStorage.setItem(`${LEGACY_KEY}.user-1`, JSON.stringify(parsed));
 		await expect(loadChatKey('correct horse')).rejects.toThrow();
 	});

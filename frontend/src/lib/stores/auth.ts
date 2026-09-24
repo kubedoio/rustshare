@@ -7,6 +7,7 @@ import { themeStore } from './theme';
 import { initializeWebSocket, cleanupWebSocket } from '../websocket/manager';
 import { queryClient } from '../query-client';
 import { setChatKeyUser } from '../chat/keys';
+import { clear as clearChatSession } from '../chat/session';
 
 interface AuthState {
 	user: User | null;
@@ -49,9 +50,18 @@ function createAuthStore() {
 	});
 
 	let sessionGeneration = 0;
+	let activeChatUserId: string | null = null;
 
 	function nextGeneration(): number {
 		return ++sessionGeneration;
+	}
+
+	function setChatUser(userId: string): void {
+		if (activeChatUserId !== null && activeChatUserId !== userId) {
+			clearChatSession();
+		}
+		activeChatUserId = userId;
+		setChatKeyUser(userId);
 	}
 
 	async function bootstrapSession() {
@@ -62,7 +72,7 @@ function createAuthStore() {
 
 			const user = toAuthUser(profile);
 
-			setChatKeyUser(profile.id);
+			setChatUser(profile.id);
 			set({
 				user,
 				isAuthenticated: true,
@@ -77,6 +87,7 @@ function createAuthStore() {
 				console.error('Failed to initialize WebSocket during bootstrap:', error);
 			}
 		} catch (error: unknown) {
+			if (myGeneration !== sessionGeneration) return;
 			if (!isApiError(error) || error.status !== 401) {
 				console.error('Failed to bootstrap session:', error);
 			}
@@ -84,8 +95,9 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			clearChatSession();
+			activeChatUserId = null;
 			setChatKeyUser(null);
-			if (myGeneration !== sessionGeneration) return;
 			set({
 				user: null,
 				isAuthenticated: false,
@@ -118,7 +130,7 @@ function createAuthStore() {
 				});
 
 				queryClient.invalidateQueries();
-				setChatKeyUser(user.id);
+				setChatUser(user.id);
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -148,6 +160,8 @@ function createAuthStore() {
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
+			clearChatSession();
+			activeChatUserId = null;
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
 			setChatKeyUser(null);

@@ -61,6 +61,9 @@ class FakeWebSocket {
 	static instances: FakeWebSocket[] = [];
 	static okValue = true;
 	static okMessage = '';
+	static challengeOnEvent = true;
+	// Set false to script every OK frame manually from the test.
+	static autoOkOnEvent = true;
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -68,6 +71,7 @@ class FakeWebSocket {
 	onerror: (() => void) | null = null;
 	onclose: (() => void) | null = null;
 	closed = false;
+	authenticated = false;
 
 	constructor() {
 		FakeWebSocket.instances.push(this);
@@ -79,9 +83,13 @@ class FakeWebSocket {
 	send(data: string) {
 		const frame = JSON.parse(data) as unknown[];
 		this.sent.push(frame);
-		if (frame[0] === 'REQ') {
+		if (frame[0] === 'AUTH') {
+			this.authenticated = true;
+		} else if (frame[0] === 'EVENT' && FakeWebSocket.challengeOnEvent && !this.authenticated) {
+			// Buzz relay behavior: an unauthenticated EVENT provokes the NIP-42
+			// AUTH challenge instead of an immediate OK.
 			this.reply(['AUTH', 'challenge-1']);
-		} else if (frame[0] === 'EVENT') {
+		} else if (frame[0] === 'EVENT' && FakeWebSocket.autoOkOnEvent) {
 			const event = frame[1] as { id: string };
 			this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]);
 		}
@@ -109,6 +117,8 @@ describe('publishEvent', () => {
 		FakeWebSocket.instances = [];
 		FakeWebSocket.okValue = true;
 		FakeWebSocket.okMessage = '';
+		FakeWebSocket.challengeOnEvent = true;
+		FakeWebSocket.autoOkOnEvent = true;
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 	});
 
@@ -116,7 +126,7 @@ describe('publishEvent', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('sends the EVENT frame after AUTH and resolves ok on OK true', async () => {
+	it('sends the EVENT frame first, authenticates on the AUTH challenge, and re-sends it', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -126,19 +136,106 @@ describe('publishEvent', () => {
 
 		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
-		expect(ws.sent[0][0]).toBe('REQ');
+		// Proven Buzz flow: EVENT first (no REQ probe), then AUTH, then EVENT again.
+		expect(ws.sent[0][0]).toBe('EVENT');
+		const authFrame = ws.sent.find((frame) => frame[0] === 'AUTH');
+		expect(authFrame).toBeTruthy();
+		expect((authFrame![1] as { tags: string[][] }).tags[0]).toEqual(['relay', 'wss://relay.test']);
 		const eventFrame = ws.sent.find((frame) => frame[0] === 'EVENT');
 		expect(eventFrame).toBeTruthy();
 		expect((eventFrame![1] as { id: string }).id).toBe(expected.id);
 	});
 
-	it('resolves rejected with the relay message when the relay answers OK false', async () => {
-		FakeWebSocket.okValue = false;
-		FakeWebSocket.okMessage = 'blocked: not admitted';
+	it('retries after an auth-required rejection and resolves ok on the re-send', async () => {
+		// Relay answers the first (unauthenticated) EVENT with OK false
+		// "auth required" before/after the challenge; the client must not
+		// treat that as the final rejection and must resolve from the
+		// post-AUTH OK instead.
+		FakeWebSocket.challengeOnEvent = true;
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
+		const ws = FakeWebSocket.instances[0];
+		expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2);
+		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
+	});
+
+	it('surfaces a persistent auth-flavored rejection instead of swallowing it forever', async () => {
+		// Relay demands auth (AUTH challenge + auth-flavored OK false for the
+		// pre-auth publish), then rejects the re-sent event with another
+		// auth-flavored OK false — e.g. it refused our AUTH. Only the first
+		// rejection is the auth demand; the second must resolve as 'rejected'.
+		FakeWebSocket.okValue = false;
+		FakeWebSocket.okMessage = 'auth failed: rejected by relay';
+		FakeWebSocket.challengeOnEvent = false;
+		FakeWebSocket.autoOkOnEvent = false;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const promise = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		await vi.waitFor(() => expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(1));
+		const eventId = (ws.sent[0][1] as { id: string }).id;
+		// Demand for auth: challenge plus an auth-flavored rejection of the
+		// pre-auth publish. The first such rejection is swallowed as the demand.
+		ws.reply(['AUTH', 'challenge-1']);
+		ws.reply(['OK', eventId, false, 'auth required: authentication needed']);
+		await vi.waitFor(() => expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(2));
+		// The relay also rejects the re-sent (post-AUTH) event with an
+		// auth-flavored reason: that second rejection is genuine and must surface.
+		ws.reply(['OK', eventId, false, 'auth failed: rejected by relay']);
+
+		// Fail fast if a regression re-introduces the hang instead of waiting
+		// out the 10s transport timer inside publishEvent.
+		const result = await Promise.race([
+			promise,
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error('publishEvent hung on a post-AUTH rejection')), 2000)
+			)
+		]);
+
+		expect(result).toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'auth failed: rejected by relay'
+		});
+	});
+
+	it('surfaces a rejection when the relay challenges before sending an OK', async () => {
+		// Some relays send AUTH immediately and only answer the resent EVENT.
+		// That rejection must not be mistaken for the initial auth demand.
+		FakeWebSocket.autoOkOnEvent = false;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const promise = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		await vi.waitFor(() => expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2));
+		const eventId = (ws.sent[0][1] as { id: string }).id;
+		ws.reply(['OK', eventId, false, 'auth failed: rejected by relay']);
+
+		await expect(promise).resolves.toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'auth failed: rejected by relay'
+		});
+	});
+
+	it('resolves rejected with the relay message when the relay answers OK false', async () => {
+		FakeWebSocket.okValue = false;
+		FakeWebSocket.okMessage = 'blocked: not admitted';
+		FakeWebSocket.challengeOnEvent = false; // no auth dance for this rejection
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
 		const result = await publishEvent('wss://relay.test', unsigned, sk);
 
 		expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'blocked: not admitted' });
@@ -177,7 +274,7 @@ describe('publishEvent without an AUTH challenge', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('publishes via the grace timer when the relay never challenges', async () => {
+	it('publishes immediately when the relay answers OK without challenging', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -187,5 +284,7 @@ describe('publishEvent without an AUTH challenge', () => {
 		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
+		// No auth dance on a challenge-less relay.
+		expect(ws.sent.some((frame) => frame[0] === 'AUTH')).toBe(false);
 	});
 });

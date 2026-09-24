@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Elembra Chat usable-experience pass: Slack-like lean timeline with
+  human-readable channel names and author display, browser-held identity
+  import/export with an explicit lock/unlock session (the passphrase never
+  leaves memory), and NIP-42 publish aligned with the Buzz relay's proven
+  auth flow.
 - Release pipeline hardening: released Docker tags (`X.Y.Z`, `X.Y`, `X`,
   `latest`, `sha-<short>`) are now promoted only after the candidate image
   passes the boot smoke test, and a version that already has a GitHub release
@@ -24,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Elembra Chat "Load earlier messages" no longer silently drops fetched older
+  pages (the oldest messages were unreachable), and a failed page fetch can be
+  retried from the same control instead of freezing until the next poll.
 - Cargo Deny security advisories: bumped `h2` to 0.4.19 (RUSTSEC-2026-0258),
   `rustls` to 0.23.45 (RUSTSEC-2026-0285), and replaced the yanked `chacha20`
   0.10.0 with 0.10.2; documented risk acceptance for the unmaintained h2
