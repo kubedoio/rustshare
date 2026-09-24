@@ -2013,8 +2013,9 @@ async fn live_p13_bootstrap_identity_discovery() {
 }
 
 /// P14. The relay's public authorization API requires NIP-98 service
-/// authentication: missing and malformed authorization headers are rejected
-/// before any community state is disclosed.
+/// authentication: missing and malformed authorization headers, plus a valid
+/// event signed by an untrusted key, are rejected before any community state
+/// is disclosed.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires live Buzz relay (scripts/run-buzz-conformance.sh)"]
 async fn live_p14_nip98_service_authentication_is_required() {
