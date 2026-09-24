@@ -11,20 +11,33 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 COMPATIBILITY_FILE="${REPO_ROOT}/config/buzz-compatibility.env"
-COMPOSE_PROJECT="${RUSTSHARE_BUZZ_CONFORMANCE_PROJECT:-rustshare-buzz-conformance}"
-COMPOSE_ARGS=(-p "${COMPOSE_PROJECT}" -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.conformance.yml)
+COMPOSE_PROJECT="rustshare-buzz-conformance"
+COMPOSE_ARGS=(--env-file /dev/null -p "${COMPOSE_PROJECT}" -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.conformance.yml)
 DIAGNOSTICS_FILE="${TMPDIR:-/tmp}/buzz-conformance-diagnostics.log"
-COMPOSE_OUTPUT="${TMPDIR:-/tmp}/buzz-conformance-compose.log"
-MIGRATION_OUTPUT="${TMPDIR:-/tmp}/buzz-conformance-migrations.log"
-SUITE_OUTPUT="${TMPDIR:-/tmp}/buzz-conformance-suite.log"
+umask 077
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/buzz-conformance.XXXXXX")"
+rm -f -- "${DIAGNOSTICS_FILE}"
+COMPOSE_OUTPUT="${RUN_DIR}/compose.log"
+MIGRATION_OUTPUT="${RUN_DIR}/migrations.log"
+SUITE_OUTPUT="${RUN_DIR}/suite.log"
 PHASE="preflight"
 FAILURE_CLASS="unknown"
-export RUSTSHARE_POSTGRES_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_POSTGRES_PORT:-15432}"
-export RUSTSHARE_RUSTFS_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RUSTFS_PORT:-19000}"
-export RUSTSHARE_RUSTFS_CONSOLE_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RUSTFS_CONSOLE_PORT:-19001}"
-export BUZZ_RELAY_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RELAY_PORT:-17447}"
-export BUZZ_HEALTH_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_HEALTH_PORT:-18088}"
-export BUZZ_METRICS_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_METRICS_PORT:-19102}"
+KEEP_STACK="${RUSTSHARE_BUZZ_CONFORMANCE_KEEP:-0}"
+POSTGRES_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_POSTGRES_PORT:-15432}"
+RUSTFS_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RUSTFS_PORT:-19000}"
+RUSTFS_CONSOLE_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RUSTFS_CONSOLE_PORT:-19001}"
+RELAY_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_RELAY_PORT:-17447}"
+HEALTH_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_HEALTH_PORT:-18088}"
+METRICS_HOST_PORT="${RUSTSHARE_BUZZ_CONFORMANCE_METRICS_PORT:-19102}"
+for variable in ${!RUSTSHARE_@}; do
+	unset "${variable}"
+done
+export RUSTSHARE_POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT}"
+export RUSTSHARE_RUSTFS_HOST_PORT="${RUSTFS_HOST_PORT}"
+export RUSTSHARE_RUSTFS_CONSOLE_HOST_PORT="${RUSTFS_CONSOLE_HOST_PORT}"
+export BUZZ_RELAY_HOST_PORT="${RELAY_HOST_PORT}"
+export BUZZ_HEALTH_HOST_PORT="${HEALTH_HOST_PORT}"
+export BUZZ_METRICS_HOST_PORT="${METRICS_HOST_PORT}"
 
 compose() {
 	docker compose "${COMPOSE_ARGS[@]}" "$@"
@@ -34,6 +47,8 @@ redact() {
 	sed -E \
 		-e 's/(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=([^[:space:]]+)/\1=<redacted>/g' \
 		-e 's/("(password|secret|token|private_key|access_key)"[[:space:]]*:[[:space:]]*)"[^"]*"/\1"<redacted>"/Ig' \
+		-e 's/((PASSWORD|SECRET|TOKEN|PRIVATE_KEY|ACCESS_KEY)[[:space:]]*:[[:space:]]*)[^,[:space:]}]+/\1<redacted>/Ig' \
+		-e 's#((postgres(ql)?://[^:/[:space:]]+):)[^@[:space:]]+@#\1<redacted>@#Ig' \
 		-e 's/[0-9a-fA-F]{64}/<redacted-hex>/g'
 }
 
@@ -61,7 +76,14 @@ dump_diagnostics() {
 			if curl -fsS --max-time 3 "$url" >/dev/null 2>&1; then
 				echo "ready ${url}"
 			else
-				echo "not-ready ${url}"
+			echo "not-ready ${url}"
+			fi
+		done
+		for log_file in "${COMPOSE_OUTPUT}" "${MIGRATION_OUTPUT}" "${SUITE_OUTPUT}"; do
+			if [[ -f "${log_file}" ]]; then
+				echo
+				echo "== ${log_file} (last 120 lines) =="
+				tail -n 120 "${log_file}"
 			fi
 		done
 	} 2>&1 | redact >"${DIAGNOSTICS_FILE}" || true
@@ -69,7 +91,7 @@ dump_diagnostics() {
 }
 
 cleanup() {
-	if [[ "${RUSTSHARE_BUZZ_CONFORMANCE_KEEP:-0}" == "1" ]]; then
+	if [[ "${KEEP_STACK}" == "1" ]]; then
 		echo "== keeping conformance stack (RUSTSHARE_BUZZ_CONFORMANCE_KEEP=1) =="
 		return
 	fi
@@ -83,6 +105,7 @@ on_exit() {
 		dump_diagnostics
 	fi
 	cleanup
+	rm -rf -- "${RUN_DIR}"
 	if (( status != 0 )); then
 		echo "FAIL: Buzz conformance ${FAILURE_CLASS} during ${PHASE}" >&2
 	fi
@@ -108,7 +131,11 @@ wait_for_tcp() {
 		echo "  waiting for ${name} (${attempt}/60)…"
 		sleep 2
 	done
-	FAILURE_CLASS="dependency-readiness-failure"
+	if [[ "${name}" == "Buzz relay" ]]; then
+		FAILURE_CLASS="Buzz readiness failure"
+	else
+		FAILURE_CLASS="dependency-readiness-failure"
+	fi
 	echo "FAIL: ${name} did not become ready at ${host}:${port}" >&2
 	exit 1
 }
@@ -133,22 +160,21 @@ if [[ ! -r "${COMPATIBILITY_FILE}" ]]; then
 fi
 
 set -a
-if [[ -f .env ]]; then
-	# shellcheck disable=SC1091
-	. ./.env
-fi
-# The compatibility manifest deliberately loads last: the blocking gate must
-# not inherit a floating or stale BUZZ_RELAY_IMAGE from a local .env.
+# The blocking gate deliberately ignores .env: local shell code and stale
+# endpoint overrides must not change the implementation under test.
 # shellcheck disable=SC1090
 . "${COMPATIBILITY_FILE}"
 set +a
 
 : "${BUZZ_SUPPORTED_COMMIT:?BUZZ_SUPPORTED_COMMIT is required in ${COMPATIBILITY_FILE}}"
 : "${BUZZ_SUPPORTED_IMAGE:?BUZZ_SUPPORTED_IMAGE is required in ${COMPATIBILITY_FILE}}"
+: "${BUZZ_SUPPORTED_IMAGE_TAG:?BUZZ_SUPPORTED_IMAGE_TAG is required in ${COMPATIBILITY_FILE}}"
 : "${BUZZ_SUPPORTED_IMAGE_DIGEST:?BUZZ_SUPPORTED_IMAGE_DIGEST is required in ${COMPATIBILITY_FILE}}"
 : "${BUZZ_CONTRACT_VERSION:?BUZZ_CONTRACT_VERSION is required in ${COMPATIBILITY_FILE}}"
+: "${BUZZ_RELAY_IMAGE:?BUZZ_RELAY_IMAGE is required in ${COMPATIBILITY_FILE}}"
 if [[ ! "${BUZZ_SUPPORTED_COMMIT}" =~ ^[0-9a-f]{40}$ \
 	|| ! "${BUZZ_SUPPORTED_IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ \
+	|| "${BUZZ_SUPPORTED_IMAGE_TAG}" != "sha-${BUZZ_SUPPORTED_COMMIT:0:7}" \
 	|| "${BUZZ_RELAY_IMAGE}" != "${BUZZ_SUPPORTED_IMAGE}@${BUZZ_SUPPORTED_IMAGE_DIGEST}" ]]; then
 	FAILURE_CLASS="configuration-failure"
 	echo "FAIL: invalid Buzz compatibility manifest" >&2
@@ -165,10 +191,30 @@ random_hex() {
 
 # The conformance stack is intentionally fresh and host-local. Do not inherit
 # a developer's external DB or object-store endpoint into the live proof.
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(random_hex 32)}"
+unset BUZZ_SERVICE_SK BUZZ_RELAY_PRIVATE_KEY BUZZ_RELAY_OWNER_PUBKEY BUZZ_RELAY_PUBKEY
+unset POSTGRES_PASSWORD DATABASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+unset RUSTFS_ROOT_USER RUSTFS_ROOT_PASSWORD JWT_SECRET RUSTSHARE_SECRET_ENCRYPTION_KEY
+unset RUSTSHARE_CHAT_WEBHOOK_SECRET RUSTSHARE_ADMIN_PASSWORD RUSTSHARE_DEMO_VIEWER_PASSWORD
+unset BUZZ_POSTGRES_PASSWORD BUZZ_RUSTFS_ACCESS_KEY BUZZ_RUSTFS_SECRET_KEY
+unset ELEMBRA_LLM_API_KEY ELEMBRA_LLM_BASE_URL ELEMBRA_LLM_MODEL ELEMBRA_LLM_TEMPERATURE ELEMBRA_LLM_TIMEOUT_SECS
+unset RUSTSHARE_CHAT_AUTHORITY RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY RUSTSHARE_CHAT_PROVISIONING
+unset OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_REDIRECT_URL OIDC_LOGIN_LABEL OIDC_SCOPES
+unset OIDC_MOBILE_CLIENT_ID OIDC_MOBILE_CLIENT_SECRET OIDC_MOBILE_REDIRECT_URIS PASSWORD_LOGIN_ENABLED
+
+PHASE="dependency installation"
+FAILURE_CLASS="configuration-failure"
+echo "== installing frontend key-generation dependencies =="
+npm ci --prefix frontend --no-audit --no-fund
+SQLX_CLI_VERSION=0.8.6
+if ! command -v sqlx >/dev/null 2>&1 || ! sqlx --version 2>/dev/null | grep -q "^sqlx-cli ${SQLX_CLI_VERSION}($|[[:space:]])"; then
+	echo "== installing sqlx-cli =="
+	cargo install sqlx-cli --version "${SQLX_CLI_VERSION}" --features postgres --locked --force
+fi
+
+export POSTGRES_PASSWORD="$(random_hex 32)"
 export DATABASE_URL="postgres://rustshare:${POSTGRES_PASSWORD}@127.0.0.1:${RUSTSHARE_POSTGRES_HOST_PORT}/rustshare"
-export RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-rs$(random_hex 10)}"
-export RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD:-$(random_hex 32)}"
+export RUSTFS_ROOT_USER="rs$(random_hex 10)"
+export RUSTFS_ROOT_PASSWORD="$(random_hex 32)"
 export AWS_ACCESS_KEY_ID="${RUSTFS_ROOT_USER}"
 export AWS_SECRET_ACCESS_KEY="${RUSTFS_ROOT_PASSWORD}"
 export RUSTFS_ENDPOINT="http://127.0.0.1:${RUSTSHARE_RUSTFS_HOST_PORT}"
@@ -176,27 +222,29 @@ export RUSTFS_PUBLIC_ENDPOINT="http://127.0.0.1:${RUSTSHARE_RUSTFS_HOST_PORT}"
 export RUSTFS_REGION="us-east-1"
 export RUSTFS_BUCKET="rustshare-files"
 export RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET="true"
-export JWT_SECRET="${JWT_SECRET:-$(random_hex 32)}"
-export RUSTSHARE_SECRET_ENCRYPTION_KEY="${RUSTSHARE_SECRET_ENCRYPTION_KEY:-$(random_hex 32)}"
-export RUSTSHARE_CHAT_WEBHOOK_SECRET="${RUSTSHARE_CHAT_WEBHOOK_SECRET:-$(random_hex 32)}"
-export RUSTSHARE_ADMIN_PASSWORD="${RUSTSHARE_ADMIN_PASSWORD:-$(random_hex 32)}"
-export RUSTSHARE_DEMO_VIEWER_PASSWORD="${RUSTSHARE_DEMO_VIEWER_PASSWORD:-$(random_hex 32)}"
-export BUZZ_POSTGRES_PASSWORD="${BUZZ_POSTGRES_PASSWORD:-$(random_hex 32)}"
-export BUZZ_RUSTFS_ACCESS_KEY="${BUZZ_RUSTFS_ACCESS_KEY:-buzz$(random_hex 10)}"
-export BUZZ_RUSTFS_SECRET_KEY="${BUZZ_RUSTFS_SECRET_KEY:-$(random_hex 32)}"
-export BUZZ_RELAY_URL="${RUSTSHARE_BUZZ_CONFORMANCE_RELAY_URL:-ws://127.0.0.1:${BUZZ_RELAY_HOST_PORT}}"
-export BUZZ_RELAY_WS="${RUSTSHARE_BUZZ_CONFORMANCE_RELAY_URL:-ws://127.0.0.1:${BUZZ_RELAY_HOST_PORT}}"
+export JWT_SECRET="$(random_hex 32)"
+export RUSTSHARE_SECRET_ENCRYPTION_KEY="$(random_hex 32)"
+export RUSTSHARE_CHAT_WEBHOOK_SECRET="$(random_hex 32)"
+export RUSTSHARE_ADMIN_PASSWORD="$(random_hex 32)"
+export RUSTSHARE_DEMO_VIEWER_PASSWORD="$(random_hex 32)"
+export BUZZ_POSTGRES_PASSWORD="$(random_hex 32)"
+export BUZZ_RUSTFS_ACCESS_KEY="buzz$(random_hex 10)"
+export BUZZ_RUSTFS_SECRET_KEY="$(random_hex 32)"
+export BUZZ_RELAY_URL="ws://127.0.0.1:${BUZZ_RELAY_HOST_PORT}"
+export BUZZ_RELAY_WS="ws://127.0.0.1:${BUZZ_RELAY_HOST_PORT}"
+export RUSTSHARE_CHAT_AUTHORITY="buzz"
+export RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY="true"
+export RUSTSHARE_CHAT_PROVISIONING="auto"
+export ELEMBRA_LLM_API_KEY=""
+export ELEMBRA_LLM_BASE_URL=""
+export ELEMBRA_LLM_MODEL=""
+export ELEMBRA_LLM_TEMPERATURE=""
+export ELEMBRA_LLM_TIMEOUT_SECS=""
 
 PHASE="key preparation"
-if [[ -z "${BUZZ_SERVICE_SK:-}" || -z "${BUZZ_RELAY_PRIVATE_KEY:-}" ]]; then
-	if [[ ! -d frontend/node_modules ]]; then
-		echo "== installing frontend key-generation dependencies =="
-		npm ci --prefix frontend --no-audit --no-fund
-	fi
-	KEYS_OUT="$(node frontend/scripts/alpha-gen-buzz-keys.mjs)"
-	BUZZ_SERVICE_SK="${BUZZ_SERVICE_SK:-$(extract_key BUZZ_SERVICE_SK "${KEYS_OUT}")}"
-	BUZZ_RELAY_PRIVATE_KEY="${BUZZ_RELAY_PRIVATE_KEY:-$(extract_key BUZZ_RELAY_PRIVATE_KEY "${KEYS_OUT}")}"
-fi
+KEYS_OUT="$(node frontend/scripts/alpha-gen-buzz-keys.mjs)"
+BUZZ_SERVICE_SK="$(extract_key BUZZ_SERVICE_SK "${KEYS_OUT}")"
+BUZZ_RELAY_PRIVATE_KEY="$(extract_key BUZZ_RELAY_PRIVATE_KEY "${KEYS_OUT}")"
 
 if [[ ! "${BUZZ_SERVICE_SK:-}" =~ ^[0-9a-f]{64}$ || ! "${BUZZ_RELAY_PRIVATE_KEY:-}" =~ ^[0-9a-f]{64}$ ]]; then
 	FAILURE_CLASS="configuration-failure"
@@ -232,7 +280,7 @@ compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 PHASE="dependency startup"
 echo "== starting Elembra and Buzz dependencies =="
 set +e
-compose up -d postgres rustfs buzz-relay 2>&1 | tee "${COMPOSE_OUTPUT}"
+compose up -d postgres rustfs buzz-relay 2>&1 | redact | tee "${COMPOSE_OUTPUT}"
 COMPOSE_EXIT="${PIPESTATUS[0]}"
 set -e
 if [[ "${COMPOSE_EXIT}" != "0" ]]; then
@@ -259,12 +307,8 @@ wait_for_tcp "Elembra RustFS console" 127.0.0.1 "${RUSTSHARE_RUSTFS_CONSOLE_HOST
 wait_for_tcp "Buzz relay" 127.0.0.1 "${BUZZ_RELAY_HOST_PORT}"
 
 PHASE="Elembra migration/setup"
-if ! command -v sqlx >/dev/null 2>&1; then
-	echo "== installing sqlx-cli =="
-	cargo install sqlx-cli --features postgres --locked
-fi
 set +e
-sqlx migrate run --source backend/migrations 2>&1 | tee "${MIGRATION_OUTPUT}"
+sqlx migrate run --source backend/migrations 2>&1 | redact | tee "${MIGRATION_OUTPUT}"
 MIGRATION_EXIT="${PIPESTATUS[0]}"
 set -e
 if [[ "${MIGRATION_EXIT}" != "0" ]]; then
@@ -293,13 +337,10 @@ echo "== running live Buzz conformance suite (${BUZZ_CONTRACT_VERSION}) =="
 export RUSTSHARE_BUZZ_LIVE_RELAY_URL="${BUZZ_RELAY_URL}"
 export RUSTSHARE_BUZZ_LIVE_SERVICE_SK="${BUZZ_SERVICE_SK}"
 export RUSTSHARE_BUZZ_LIVE_RELAY_PUBKEY="${BUZZ_RELAY_PUBKEY}"
-export RUSTSHARE_BUZZ_LIVE_METRICS_URL="${RUSTSHARE_BUZZ_LIVE_METRICS_URL:-http://127.0.0.1:${BUZZ_METRICS_HOST_PORT}}"
+export RUSTSHARE_BUZZ_LIVE_METRICS_URL="http://127.0.0.1:${BUZZ_METRICS_HOST_PORT}"
 TEST_ARGS=(--ignored --test-threads=1)
-if [[ -n "${RUSTSHARE_BUZZ_CONFORMANCE_TEST_FILTER:-}" ]]; then
-	TEST_ARGS+=("${RUSTSHARE_BUZZ_CONFORMANCE_TEST_FILTER}")
-fi
 set +e
-SQLX_OFFLINE=true cargo test -p rustshare-server --test buzz_live_conformance_test -- "${TEST_ARGS[@]}" 2>&1 | tee "${SUITE_OUTPUT}"
+SQLX_OFFLINE=true cargo test -p rustshare-server --test buzz_live_conformance_test -- "${TEST_ARGS[@]}" 2>&1 | redact | tee "${SUITE_OUTPUT}"
 SUITE_EXIT="${PIPESTATUS[0]}"
 set -e
 if [[ "${SUITE_EXIT}" != "0" ]]; then

@@ -6,7 +6,7 @@ Date: 2026-08-16
 ## Context
 
 ADR-0034 established the Elembra/Buzz boundary and ADR-0035 proved production
-authorization: the live conformance suite (P1–P12) runs Elembra against the
+authorization: the live conformance suite (13 proofs: P1–P7 and P9–P14) runs Elembra against the
 real relay, and the alpha stack runs `buzz` mode. But obtaining the
 Workspace↔Community mapping itself was still a manual operator step: the admin
 `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`

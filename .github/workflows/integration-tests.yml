@@ -7,9 +7,29 @@ on:
       - 'backend/**'
       - 'crates/**'
       - 'apps/obsidian-vault-sync/**'
+      - 'frontend/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/integration-tests.yml'
       - 'config/buzz-compatibility.env'
       - 'docker-compose*.yml'
+      - 'scripts/guard-buzz-no-acl.sh'
+      - 'scripts/run-buzz-conformance.sh'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'crates/**'
+      - 'apps/obsidian-vault-sync/**'
+      - 'frontend/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/integration-tests.yml'
+      - 'config/buzz-compatibility.env'
+      - 'docker-compose*.yml'
+      - 'scripts/guard-buzz-no-acl.sh'
       - 'scripts/run-buzz-conformance.sh'
   workflow_dispatch:
 
@@ -125,7 +145,7 @@ jobs:
           exit 1
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --features postgres --locked
+        run: cargo install sqlx-cli --version 0.8.6 --features postgres --locked
 
       - name: Run migrations
         run: sqlx migrate run --source backend/migrations
@@ -152,30 +172,10 @@ jobs:
     # from config/buzz-compatibility.env, over the v1alpha1 upstream contract
     # (docs/specs/buzz-upstream-authorization-v1alpha1.md).
     runs-on: ubuntu-latest
-    needs: [generate-secrets]
     timeout-minutes: 90
 
     env:
       CARGO_TERM_COLOR: always
-      # Per-run cryptographically random secrets. These are not real secrets;
-      # they are generated for each run and discarded afterwards.
-      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
-      DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare
-      JWT_SECRET: ${{ needs.generate-secrets.outputs.jwt_secret }}
-      RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ needs.generate-secrets.outputs.encryption_key }}
-      RUSTSHARE_ADMIN_PASSWORD: ${{ needs.generate-secrets.outputs.admin_password }}
-      RUSTFS_ROOT_USER: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
-      RUSTFS_ROOT_PASSWORD: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
-      AWS_ACCESS_KEY_ID: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
-      AWS_SECRET_ACCESS_KEY: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
-      RUSTFS_ENDPOINT: http://127.0.0.1:9000
-      RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
-      RUSTFS_REGION: us-east-1
-      RUSTFS_BUCKET: rustshare-files
-      RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
-      RUSTSHARE_ADMIN_EMAIL: admin@localhost
-      RUSTSHARE_ADMIN_USERNAME: admin
-      PASSWORD_LOGIN_ENABLED: true
 
     steps:
       - name: Checkout
@@ -183,6 +183,11 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -198,8 +203,9 @@ jobs:
       - name: Buzz conformance diagnostics
         if: failure()
         run: |
-          if [ -f /tmp/buzz-conformance-diagnostics.log ]; then
-            sed -n '1,320p' /tmp/buzz-conformance-diagnostics.log
+          diagnostics_file="${TMPDIR:-/tmp}/buzz-conformance-diagnostics.log"
+          if [ -f "${diagnostics_file}" ]; then
+            sed -n '1,320p' "${diagnostics_file}"
           else
-            echo 'No Buzz diagnostics file was produced.'
+            echo "No Buzz diagnostics file was produced at ${diagnostics_file}."
           fi

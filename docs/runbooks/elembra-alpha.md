@@ -507,10 +507,11 @@ The following are operator-visible today (proven during this goal):
 - #245 is resolved at the RELAY-CAPABILITY and CONFORMANCE level: the Buzz
   ADR-0035 relay capability is implemented and merged, and the supported
   runtime source is pinned in `config/buzz-compatibility.env`. The live gate
-  (`scripts/run-buzz-conformance.sh`) executes the real relay and its 12 live
+  (`scripts/run-buzz-conformance.sh`) executes the real relay and its 13 live
   proofs, including `live_p10` one-batch-round-trip, `live_p11` latency budget,
-  `live_p12` tombstone reconciliation, and `live_p13` bootstrap identity
-  discovery. Issue #245's four acceptance criteria: relay endpoints
+  `live_p12` tombstone reconciliation, `live_p13` bootstrap identity
+  discovery, and `live_p14` NIP-98 rejection checks. Issue #245's four
+  acceptance criteria: relay endpoints
   implemented ✅; live-relay conformance replaces the fake ✅; buzz-mode
   authorization enabled in production ✅ (kubedoio/rustshare PR #249 merged;
   enabled by default in the Alpha/dogfood stack); large-timeline latency
@@ -551,10 +552,17 @@ Proofs covered (each a `#[tokio::test]`):
 10. a 64-message page authorizes in exactly ONE relay batch round-trip
     (counted via the relay's own metrics endpoint; the latency budget itself
     is tracked separately);
-11. bootstrap identity discovery (`live_p13`, ADR-0036): the community-identity
-    endpoint returns the deployment community and the relay pubkey, the
-    pubkey matches the harness pin, the response signature verifies, and
-    authorization still works with the discovered identity.
+11. timeline authorization latency stays within the 500 ms budget
+    (`live_p11`, observed median 192 ms in the pinned baseline);
+12. relay deletion is applied by reconciliation (`live_p12`) and the deleted
+    message remains existence-hidden;
+13. bootstrap identity discovery (`live_p13`, ADR-0036): the
+    community-identity endpoint returns the deployment community and relay
+    pubkey, the pubkey matches the harness pin, the response signature
+    verifies, and authorization still works with the discovered identity;
+14. NIP-98 service authentication is required (`live_p14`): missing and
+    malformed authorization headers, plus a valid event signed by an untrusted
+    key, receive `401` before community state is disclosed.
 
 Run it:
 

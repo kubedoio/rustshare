@@ -37,8 +37,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use axum::extract::State;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
-use nostr::{Event as NostrEvent, EventBuilder, Keys, Kind, Tag};
+use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::Client;
 use rustshare_core::domain::{
     ActionCapability, ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
@@ -2008,5 +2009,68 @@ async fn live_p13_bootstrap_identity_discovery() {
             BuzzReadDecision::Allow | BuzzReadDecision::Deny | BuzzReadDecision::NotFound
         ),
         "unexpected decision: {decision:?}"
+    );
+}
+
+/// P14. The relay's public authorization API requires NIP-98 service
+/// authentication: missing and malformed authorization headers are rejected
+/// before any community state is disclosed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires live Buzz relay (scripts/run-buzz-conformance.sh)"]
+async fn live_p14_nip98_service_authentication_is_required() {
+    let _guard = SERIAL.lock().await;
+    let Some(env) = LiveEnv::load() else {
+        eprintln!("SKIP live_p14: RUSTSHARE_BUZZ_LIVE_SERVICE_SK / RELAY_PUBKEY not set");
+        return;
+    };
+    let url = format!("{}/api/v1/relay/community", env.relay_http);
+    let client = Client::new();
+
+    let missing = client
+        .get(&url)
+        .send()
+        .await
+        .expect("missing-auth request must receive an HTTP response");
+    assert_eq!(
+        missing.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "community discovery must reject missing NIP-98 authentication"
+    );
+
+    let malformed = client
+        .get(&url)
+        .header("Authorization", "Nostr not-a-valid-event")
+        .send()
+        .await
+        .expect("malformed-auth request must receive an HTTP response");
+    assert_eq!(
+        malformed.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "community discovery must reject malformed NIP-98 authentication"
+    );
+
+    let untrusted_keys = Keys::generate();
+    let nonce = Uuid::new_v4().to_string();
+    let untrusted_event = EventBuilder::new(Kind::HttpAuth, "")
+        .tags([
+            Tag::parse(["u", url.as_str()]).expect("u tag"),
+            Tag::parse(["method", "GET"]).expect("method tag"),
+            Tag::parse(["nonce", &nonce]).expect("nonce tag"),
+        ])
+        .sign_with_keys(&untrusted_keys)
+        .expect("sign untrusted NIP-98 event");
+    let untrusted = client
+        .get(&url)
+        .header(
+            "Authorization",
+            format!("Nostr {}", STANDARD.encode(untrusted_event.as_json())),
+        )
+        .send()
+        .await
+        .expect("untrusted-auth request must receive an HTTP response");
+    assert_eq!(
+        untrusted.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "a valid NIP-98 event signed by an untrusted key must be rejected"
     );
 }
