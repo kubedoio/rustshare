@@ -24,7 +24,9 @@ if [[ -f .env ]]; then
 fi
 if [[ -f config/buzz-compatibility.env ]]; then
 	# shellcheck disable=SC1091
+	set -a
 	. ./config/buzz-compatibility.env
+	set +a
 fi
 set -u
 

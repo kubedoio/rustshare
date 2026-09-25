@@ -101,7 +101,9 @@ cd "${PROJECT_ROOT}"
 
 if [[ "${WITH_CHAT}" == true && -f config/buzz-compatibility.env ]]; then
 	# shellcheck disable=SC1091
+	set -a
 	. ./config/buzz-compatibility.env
+	set +a
 fi
 
 compose() {

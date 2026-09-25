@@ -102,7 +102,9 @@ cd "${PROJECT_ROOT}"
 
 if [[ "${WITH_CHAT}" == true ]]; then
 	# shellcheck disable=SC1091
+	set -a
 	. ./config/buzz-compatibility.env
+	set +a
 	BUZZ_POSTGRES_SERVICE="${BUZZ_POSTGRES_SERVICE:-buzz-postgres}"
 	BUZZ_RUSTFS_SERVICE="${BUZZ_RUSTFS_SERVICE:-buzz-rustfs}"
 fi
