@@ -1,5 +1,16 @@
 services:
   backend:
-    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/kubedoio/rustshare-backend:latest}
-    pull_policy: ${RUSTSHARE_BACKEND_PULL_POLICY:-missing}
+    image: ${RUSTSHARE_BACKEND_IMAGE:?release profile requires an immutable RUSTSHARE_BACKEND_IMAGE}
+    # Customer release defaults to always pulling the configured digest. The
+    # Pilot Release workflow explicitly sets this to never for its local smoke
+    # image, which remains a deliberate CI-only override.
+    pull_policy: ${RUSTSHARE_BACKEND_PULL_POLICY:-always}
     build: null
+
+  chat-observer:
+    image: ${ELEMBRA_CHAT_OBSERVER_IMAGE:-chat-observer:source}
+    pull_policy: always
+
+  chat-bootstrap:
+    image: ${ELEMBRA_CHAT_OBSERVER_IMAGE:-chat-observer:source}
+    pull_policy: always

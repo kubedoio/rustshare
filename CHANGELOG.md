@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Customer Alpha operations now include a secret-safe `./scripts/elembra.sh
+  support-bundle` command, an immutable release-profile lifecycle for the
+  backend and managed observer, complete bundled-Chat backup/restore, and a
+  checked-in machine-readable Alpha gate evidence record.
 - Alpha Buzz key validation: `frontend/scripts/alpha-validate-buzz-config.mjs`
   checks that `BUZZ_SERVICE_SK`, `BUZZ_RELAY_OWNER_PUBKEY`,
   `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY`, and `BUZZ_RELAY_PRIVATE_KEY` are

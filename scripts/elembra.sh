@@ -9,14 +9,16 @@ cd "${ROOT}"
 
 usage() {
 	cat <<'EOF'
-Usage: ./scripts/elembra.sh <init|up|status|down|reset|rotate-chat-keys>
+Usage: ./scripts/elembra.sh <init|up|status|down|reset|rotate-chat-keys|support-bundle>
 
   init [--with-chat]       create .env and, when requested, bootstrap Chat identities
+      [--release]          use the immutable published Elembra image from RUSTSHARE_BACKEND_IMAGE
   up                       start the supported Elembra + bundled Buzz stack
   status                   show service and Chat observer health
   down                     stop services without deleting data
   reset --yes              destroy Compose volumes and generated Chat state
   rotate-chat-keys --yes   deliberately replace the deployment identities
+  support-bundle [dir]     collect secret-safe diagnostics for support
 EOF
 }
 
@@ -36,14 +38,25 @@ load_env() {
 	fi
 	set +a
 	export ELEMBRA_HOST_UID="$(id -u)" ELEMBRA_HOST_GID="$(id -g)"
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		if [[ ! "${RUSTSHARE_BACKEND_IMAGE:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "Release profile requires RUSTSHARE_BACKEND_IMAGE pinned by OCI digest." >&2
+			exit 2
+		fi
+		if [[ ! "${ELEMBRA_CHAT_OBSERVER_IMAGE:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "Release profile requires ELEMBRA_CHAT_OBSERVER_IMAGE pinned by OCI digest." >&2
+			exit 2
+		fi
+	fi
 }
 
 compose() {
-	docker compose \
-		-f docker-compose.yml \
-		-f docker-compose.alpha.yml \
-		-f docker-compose.dogfood.yml \
-		"$@"
+	local files=(-f docker-compose.yml)
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		files+=(-f docker-compose.pilot.yml)
+	fi
+	files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
+	docker compose "${files[@]}" "$@"
 }
 
 wait_for_chat() {
@@ -60,15 +73,63 @@ wait_for_chat() {
 
 init() {
 	local with_chat=false
-	[[ "${1:-}" == "--with-chat" ]] && with_chat=true
-	if [[ "${1:-}" != "" && "${1:-}" != "--with-chat" ]]; then usage; exit 2; fi
+	local release=false
+	while (($#)); do
+		case "$1" in
+			--with-chat) with_chat=true ;;
+			--release) release=true ;;
+			*) usage; exit 2 ;;
+		esac
+		shift
+	done
 	if [[ ! -f .env ]]; then cp .env.example .env; fi
+	if [[ "${release}" == true ]]; then
+		local backend_image="${RUSTSHARE_BACKEND_IMAGE:-}"
+		local observer_image="${ELEMBRA_CHAT_OBSERVER_IMAGE:-}"
+		if [[ -z "${backend_image}" ]]; then
+			backend_image="$(sed -n 's/^RUSTSHARE_BACKEND_IMAGE=//p' .env | tail -n 1)"
+		fi
+		if [[ -z "${observer_image}" ]]; then
+			observer_image="$(sed -n 's/^ELEMBRA_CHAT_OBSERVER_IMAGE=//p' .env | tail -n 1)"
+		fi
+		if [[ -z "${backend_image}" ]]; then
+			echo "--release requires RUSTSHARE_BACKEND_IMAGE=registry/image@sha256:<digest>." >&2
+			exit 2
+		fi
+		if [[ ! "${backend_image}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "RUSTSHARE_BACKEND_IMAGE must be pinned by OCI digest; tags are not supported." >&2
+			exit 2
+		fi
+		if [[ ! "${observer_image}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "ELEMBRA_CHAT_OBSERVER_IMAGE must be pinned by OCI digest; tags are not supported." >&2
+			exit 2
+		fi
+		if grep -q '^RUSTSHARE_BACKEND_IMAGE=' .env; then
+			sed -i "s|^RUSTSHARE_BACKEND_IMAGE=.*|RUSTSHARE_BACKEND_IMAGE=${backend_image}|" .env
+		else
+			printf '\nRUSTSHARE_BACKEND_IMAGE=%s\n' "${backend_image}" >>.env
+		fi
+		if grep -q '^ELEMBRA_CHAT_OBSERVER_IMAGE=' .env; then
+			sed -i "s|^ELEMBRA_CHAT_OBSERVER_IMAGE=.*|ELEMBRA_CHAT_OBSERVER_IMAGE=${observer_image}|" .env
+		else
+			printf 'ELEMBRA_CHAT_OBSERVER_IMAGE=%s\n' "${observer_image}" >>.env
+		fi
+		if grep -q '^ELEMBRA_DEPLOYMENT_PROFILE=' .env; then
+			sed -i 's|^ELEMBRA_DEPLOYMENT_PROFILE=.*|ELEMBRA_DEPLOYMENT_PROFILE=release|' .env
+		else
+			printf 'ELEMBRA_DEPLOYMENT_PROFILE=release\n' >>.env
+		fi
+	fi
 	./scripts/pre-flight.sh >/dev/null
 	if [[ "${with_chat}" == true ]]; then
 		mkdir -p "${STATE_DIR}"
 		chmod 700 "${STATE_DIR}"
 		load_env
-		compose --profile chat-init build chat-bootstrap >/dev/null
+		if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+			compose --profile chat-init pull chat-bootstrap >/dev/null
+		else
+			compose --profile chat-init build chat-bootstrap >/dev/null
+		fi
 		RUSTSHARE_CHAT_AUTHORITY=buzz RUSTSHARE_CHAT_PROVISIONING=auto \
 			ELEMBRA_CHAT_ROTATE=false compose --profile chat-init run --rm --no-deps chat-bootstrap
 		chmod 600 "${CHAT_ENV}"
@@ -89,7 +150,11 @@ case "${1:-}" in
 			init --with-chat
 			load_env
 		fi
-		compose --profile chat up -d --build --remove-orphans
+		if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+			compose --profile chat up -d --remove-orphans
+		else
+			compose --profile chat up -d --build --remove-orphans
+		fi
 		wait_for_chat
 		;;
 	status)
@@ -120,6 +185,10 @@ case "${1:-}" in
 			ELEMBRA_CHAT_ROTATE=true compose --profile chat-init run --rm --no-deps chat-bootstrap
 		chmod 600 "${CHAT_ENV}"
 		echo "Chat identities rotated; existing Buzz admissions and mappings require deliberate reprovisioning."
+		;;
+	support-bundle)
+		load_env
+		./scripts/support-bundle.sh "${2:-}"
 		;;
 	*)
 		usage

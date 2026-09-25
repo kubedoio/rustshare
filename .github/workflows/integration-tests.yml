@@ -1,42 +1,13 @@
 name: Integration Tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - 'crates/**'
-      - 'apps/obsidian-vault-sync/**'
-      - 'frontend/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/integration-tests.yml'
-      - 'config/buzz-compatibility.env'
-      - 'docker-compose*.yml'
-      - 'scripts/guard-buzz-no-acl.sh'
-      - 'scripts/run-buzz-conformance.sh'
-      - 'scripts/elembra.sh'
-      - 'scripts/run-alpha-dogfood.sh'
-      - 'docker/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - 'crates/**'
-      - 'apps/obsidian-vault-sync/**'
-      - 'frontend/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/integration-tests.yml'
-      - 'config/buzz-compatibility.env'
-      - 'docker-compose*.yml'
-      - 'scripts/guard-buzz-no-acl.sh'
-      - 'scripts/run-buzz-conformance.sh'
-      - 'scripts/elembra.sh'
-      - 'scripts/run-alpha-dogfood.sh'
-      - 'docker/**'
   workflow_dispatch:
 
 concurrency:

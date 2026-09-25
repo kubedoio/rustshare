@@ -36,6 +36,11 @@ This keeps the production runtime simple: one backend container serves both the 
 
 ## Quick Start
 
+For the customer-facing Alpha operating contract, use the concise
+[Customer Alpha Operations Runbook](runbooks/customer-alpha.md). It defines
+the supported single-host topology, immutable artifact requirement, TLS/OIDC,
+backup/restore, upgrade, and support workflow.
+
 The documented Docker Compose workflow has been validated on Ubuntu 22.04 LTS,
 Ubuntu 24.04 LTS, and Debian 12. Other distributions with a supported Docker
 Engine and Docker Compose plugin may work but are not part of the validated
@@ -215,12 +220,19 @@ docker compose up -d --force-recreate backend
 
 ### Pilot stack (`docker-compose.pilot.yml`)
 
-Use this to run a pre-built backend image instead of building from source.
+Use this only for a published release bundle. Customer Alpha operators should
+use [`docs/runbooks/customer-alpha.md`](runbooks/customer-alpha.md), which
+also pins the managed observer and Buzz images.
 
 ```bash
-export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend:latest
+export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<published-digest>
 docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d
 ```
+
+The bundled Chat release path must additionally set
+`ELEMBRA_CHAT_OBSERVER_IMAGE` to its published immutable digest and use
+`./scripts/elembra.sh init --with-chat --release`; do not use this low-level
+Compose command for a customer deployment.
 
 ### Development override (`docker-compose.dev.yml`)
 
@@ -425,9 +437,11 @@ Before deploying to production:
    - [ ] Run `curl -I https://yourdomain.com` and inspect response headers
 
 6. **Verify backups and restore**
-   - Run `./scripts/backup-stack.sh`
-   - Run `./scripts/run-restore-drill.sh`
-   - Confirm data is recoverable
+   - Run `./scripts/backup-stack.sh --with-chat` for the bundled Chat profile
+   - Run `./scripts/run-restore-drill.sh` for the core-only isolated drill
+   - Separately rehearse `./scripts/restore-stack.sh --with-chat <backup-dir>`
+     on an isolated Alpha host to verify bundled Chat recovery
+   - Confirm Elembra and Buzz data are recoverable
 
 7. **Run the deployment test**
    ```bash
