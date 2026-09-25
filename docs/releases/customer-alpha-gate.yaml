@@ -29,7 +29,7 @@ gates:
     evidence: Buzz digest is immutable and attested; Elembra backend and managed observer release artifacts are not selected
   clean_install:
     status: PENDING
-    evidence: exact post-merge main workflow still running
+    evidence: post-merge Chat Product Acceptance passed in run 36173044927; exact published release artifacts have not been exercised on a clean customer host
   tls_wss:
     status: NOT_RUN
     evidence: requires the selected customer hostname and reverse proxy
@@ -82,3 +82,9 @@ known_limitations:
   - no HA, multi-region, or zero-downtime upgrade claim
   - external penetration testing is not represented by this evidence file
   - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
+
+release_blockers:
+  - post-merge main CI run 36173045164 failed OpenAPI freshness; PR 299 carries the generated fix but is not merged
+  - Elembra backend and managed observer immutable release artifacts, SBOMs, and attestations are not yet selected
+  - real customer TLS/WSS, OIDC, backup/restore, upgrade, monitoring, alert-routing, and adversarial evidence is absent
+  - GitHub Dependabot still reports open critical/high records despite the current lockfile being patched and local npm audit reporting zero vulnerabilities; do not dismiss until GitHub refreshes or the records are independently reconciled
