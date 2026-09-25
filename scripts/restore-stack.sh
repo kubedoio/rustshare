@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Pinned multi-architecture helper used only for RustFS volume restores.
+ARCHIVE_HELPER_IMAGE="alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507"
 
 usage() {
 	cat <<'EOF'
@@ -190,7 +192,7 @@ compose stop "${RUSTFS_SERVICE}"
 
 docker run --rm -i \
 	-v "${RUSTFS_VOLUME_NAME}:/data" \
-	alpine:3.21 \
+	"${ARCHIVE_HELPER_IMAGE}" \
 	sh -lc 'rm -rf /data/* /data/.[!.]* /data/..?* 2>/dev/null || true; tar -xzf - -C /data' \
 	<"${BACKUP_DIR}/rustfs-data.tar.gz"
 
@@ -218,7 +220,7 @@ if [[ "${WITH_CHAT}" == true ]]; then
 	compose stop "${BUZZ_RUSTFS_SERVICE}"
 	docker run --rm -i \
 		-v "${BUZZ_RUSTFS_VOLUME_NAME}:/data" \
-		alpine:3.21 \
+		"${ARCHIVE_HELPER_IMAGE}" \
 		sh -lc 'rm -rf /data/* /data/.[!.]* /data/..?* 2>/dev/null || true; tar -xzf - -C /data' \
 		<"${BACKUP_DIR}/buzz-rustfs-data.tar.gz"
 fi

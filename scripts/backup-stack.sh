@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Pinned multi-architecture helper used only for RustFS volume snapshots.
+ARCHIVE_HELPER_IMAGE="alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507"
 
 usage() {
 	cat <<'EOF'
@@ -77,7 +79,7 @@ snapshot_volume() {
 	volume_name="$(require_named_volume_for_mount "${container_id}" "${mount_path}")"
 	docker run --rm \
 		-v "${volume_name}:${mount_path}:ro" \
-		alpine:3.21 \
+		"${ARCHIVE_HELPER_IMAGE}" \
 		sh -lc "tar -czf - -C '${mount_path}' ." >"${output_file}"
 }
 
