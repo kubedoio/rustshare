@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Buzz Live Conformance now uses a pinned Buzz compatibility manifest and a
+  self-contained, fresh RustFS-backed Compose stack; it no longer follows Buzz
+  `main` or Docker Hub MinIO images.
 - Elembra Chat usable-experience pass: Slack-like lean timeline with
   human-readable channel names and author display, browser-held identity
   import/export with an explicit lock/unlock session (the passphrase never
@@ -168,8 +171,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Elembra Chat: zero-config bootstrap — enabling Chat auto-provisions the
   deployment Buzz community (auto mode), admin provisioning page, neutral
-  user-facing state copy, supported relay image pinned to the merged
-  kubedoio/buzz main build (`ghcr.io/kubedoio/buzz:sha-8ce4dac`).
+  user-facing state copy, and the supported relay image pinned by
+  `config/buzz-compatibility.env`
+  (`ghcr.io/kubedoio/buzz:sha-8ce4dac`, immutable digest).
 
 ### Changed
 
@@ -187,7 +191,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round-trip (`AUTHORIZATION_BATCH_CONCURRENCY`-bounded) with a documented
   500 ms latency budget. A live conformance suite
   (`backend/tests/buzz_live_conformance_test.rs`, `scripts/run-buzz-conformance.sh`)
-  proves the ten production-authority proofs against the real relay (#245).
+  proves the 13 production-authority proofs (P1–P7 and P9–P14) against the
+  real pinned relay (#245).
 
 - **Canonical chat wire format:** stream-message kinds 9
   (`KIND_STREAM_MESSAGE`) and 40002 (`KIND_STREAM_MESSAGE_V2`) are accepted

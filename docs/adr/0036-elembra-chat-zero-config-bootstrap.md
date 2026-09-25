@@ -6,7 +6,7 @@ Date: 2026-08-16
 ## Context
 
 ADR-0034 established the Elembra/Buzz boundary and ADR-0035 proved production
-authorization: the live conformance suite (P1–P12) runs Elembra against the
+authorization: the live conformance suite (13 proofs: P1–P7 and P9–P14) runs Elembra against the
 real relay, and the alpha stack runs `buzz` mode. But obtaining the
 Workspace↔Community mapping itself was still a manual operator step: the admin
 `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`
@@ -91,13 +91,12 @@ inserts the mapping with the relay pubkey pinned. Manual mode is unchanged.**
    already fails closed on sharing (partial unique index on active mappings
    per community).
 
-7. **Image strategy.** The Buzz fork CI publishes the supported image to
-   `ghcr.io/kubedoio/buzz` — built from merged `kubedoio/buzz` main with
-   `:main` + immutable `:sha-<7>` tags and provenance attestation. RustShare
-   pins `BUZZ_RELAY_IMAGE` to the `sha-<7>` tag; floating/upstream
-   (`block/buzz`) images are never used because their API contract is stale or
-   absent. Until the merged build exists, local E2E builds the relay image from
-   the worktree branch.
+7. **Image strategy.** The supported Buzz implementation is recorded in
+   `config/buzz-compatibility.env`, including the full upstream commit, OCI
+   image digest, and contract version. RustShare loads that manifest for the
+   blocking live gate; floating/upstream images are never used because their
+   API contract is stale or absent. Upstream `main` is diagnostic drift input,
+   not a release compatibility source.
 
 8. **UX scope.** The user-facing "No Buzz community is mapped…" string becomes
    the neutral "Chat is being configured for this workspace." The admin page
@@ -204,8 +203,8 @@ are sufficient and simpler.
   Ask/Search workspace security matrix stay green; live conformance extended
   with the bootstrap discovery proof (live_p13) and the dogfood script with
   auto-path + restart-persistence proofs.
-- [x] Image: fork CI publishes `ghcr.io/kubedoio/buzz` (`:main` + `:sha-<7>`,
-  provenance attestation) — pending PR merge; alpha compose default updated.
+- [x] Image: the supported Buzz image and commit are pinned by
+  `config/buzz-compatibility.env`; alpha compose consumes that manifest.
 
 ## References
 
