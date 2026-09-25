@@ -6,7 +6,7 @@
 # committed here.
 release_candidate: UNSET
 decision: NO-GO
-recorded_at_utc: 2026-09-25T19:10:11Z
+recorded_at_utc: 2026-09-25T19:18:58Z
 
 source:
   elembra_sha: b23c938aedf301b1a95236c5d13d5dd459c57bc5
@@ -70,11 +70,11 @@ gates:
     status: NOT_RUN
     evidence: bounded Alpha adversarial review required
   buzz_conformance:
-    status: PENDING
-    evidence: post-merge exact-head run must complete
+    status: PASS
+    evidence: post-merge main Integration Tests run 36173044927 and PR 299 exact-head Buzz Live Conformance both passed
   structural_guard:
-    status: PENDING
-    evidence: post-merge exact-head run must complete
+    status: PASS
+    evidence: ./scripts/guard-buzz-no-acl.sh passed on the release-gate branch; the live suite remains separately counted at 13 proofs
 
 known_limitations:
   - single-host Docker Compose only
