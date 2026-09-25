@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bundled Buzz Chat now has one supported `scripts/elembra.sh` lifecycle,
+  containerized observer, automatic deployment-key bootstrap, signed community
+  and channel discovery, and bounded state recovery. Buzz keeps its dedicated
+  RustFS, PostgreSQL, and Redis runtime.
 - Buzz Live Conformance now uses a pinned Buzz compatibility manifest and a
   self-contained, fresh RustFS-backed Compose stack; it no longer follows Buzz
   `main` or Docker Hub MinIO images.

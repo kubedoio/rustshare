@@ -1,97 +1,105 @@
-// frontend/scripts/buzz-observer.mjs
-// Relay → Elembra observation bridge for the Alpha dogfooding stack.
+// Relay -> Elembra observation bridge for the bundled Chat deployment.
 //
-// The upstream Buzz relay has no webhook delivery, so "push-only observation"
-// (Elembra's `POST /api/v1/integrations/buzz/events`) needs a small runtime
-// bridge in front of the relay: this script subscribes to the relay as a
-// NIP-01 client (authenticating with NIP-42 as the bridge/owner identity),
-// and forwards every signed kind-1/kind-9/kind-40002 event to Elembra's
-// observation webhook, carrying the shared webhook HMAC. Elembra's webhook
-// endpoint stays the authoritative verifier: HMAC + replay window + Nostr
-// id/Schnorr signature + community/author mapping. This bridge only relays;
-// it never verifies on behalf of Elembra and never reads or stores private
-// keys beyond the bridge service key it needs to authenticate to the relay.
-//
-// Usage (node 22+; run from anywhere, module resolution needs the workspace
-// frontend node_modules for @noble/curves):
-//   BUZZ_RELAY_WS=ws://localhost:7447 \
-//   RUSTSHARE_CHAT_WEBHOOK_SECRET=<shared secret> \
-//   BUZZ_SERVICE_SK=<64-hex bridge service secret key> \
-//   BUZZ_COMMUNITY_ID=<community id> \
-//   ELEMBRA_WEBHOOK_URL=http://localhost/api/v1/integrations/buzz/events \
-//   node scripts/buzz-observer.mjs
-//
-// Env:
-//   BUZZ_RELAY_WS                relay websocket URL (required)
-//   RUSTSHARE_CHAT_WEBHOOK_SECRET  shared webhook HMAC secret (required)
-//   BUZZ_SERVICE_SK              64-hex bridge/owner secret key for NIP-42 AUTH (required)
-//   BUZZ_COMMUNITY_ID            community id forwarded in the context (required;
-//                                must equal the Elembra workspace↔community mapping)
-//   BUZZ_CHANNEL_ID              channel id forwarded in the context (default
-//                                the alpha channel's relay UUID; a stream-kind
-//                                event's `h` tag wins)
-//   BUZZ_CHANNEL2_ID             second channel id (default the alpha-ops
-//                                channel's relay UUID); both ids are
-//                                subscribed via the `#h` filter when they are
-//                                UUIDs
-//   ELEMBRA_WEBHOOK_URL          default http://localhost/api/v1/integrations/buzz/events
-//   BUZZ_SINCE                   optional unix seconds; only events after this are forwarded
-//   BUZZ_MAX_RECONNECT_BACKOFF_S default 30
-//   BUZZ_HTTP_TIMEOUT_MS         default 10000
-import { createHmac, randomUUID } from 'node:crypto';
+// This process is transport only. Elembra verifies the webhook HMAC, the
+// signed Buzz event, the workspace mapping, and the event's author binding.
+// The bridge authenticates to Buzz as the dedicated service identity, uses
+// Buzz's signed public registry/state APIs, and forwards the resulting events.
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
 
-const relayUrl = process.env.BUZZ_RELAY_WS;
+const relayWs = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
 const serviceSk = process.env.BUZZ_SERVICE_SK;
-const communityId = process.env.BUZZ_COMMUNITY_ID;
-// The relay's authoritative channel registry is UUID-keyed (kind-9007 rows),
-// so the default is the alpha channel's relay UUID — same id the dogfood
-// driver publishes to and the workspace mapping covers.
-const channelId = process.env.BUZZ_CHANNEL_ID || '585e55c7-97d9-43ad-bbe3-a355cad93082';
-const channel2Id = process.env.BUZZ_CHANNEL2_ID || '4bec90c0-4c14-48cc-8958-da8c258f9759';
+const pinnedRelayPubkey = process.env.BUZZ_RELAY_PUBKEY;
 const webhookUrl =
-	process.env.ELEMBRA_WEBHOOK_URL || 'http://localhost/api/v1/integrations/buzz/events';
-const sinceRaw = process.env.BUZZ_SINCE ? Number(process.env.BUZZ_SINCE) : undefined;
-if (sinceRaw !== undefined && !Number.isFinite(sinceRaw)) {
+	process.env.ELEMBRA_WEBHOOK_URL || 'http://localhost:8080/api/v1/integrations/buzz/events';
+const healthPort = Number(process.env.BUZZ_OBSERVER_HEALTH_PORT || 8091);
+const pollMs = Math.max(5000, Number(process.env.BUZZ_CHANNEL_POLL_MS || 15000));
+const maxBackoffS = Math.max(1, Number(process.env.BUZZ_MAX_RECONNECT_BACKOFF_S || 30));
+const httpTimeoutMs = Math.max(1000, Number(process.env.BUZZ_HTTP_TIMEOUT_MS || 10000));
+const since = process.env.BUZZ_SINCE ? Number(process.env.BUZZ_SINCE) : undefined;
+
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const hex64Re = /^[0-9a-f]{64}$/;
+const hex128Re = /^[0-9a-f]{128}$/;
+const required = [
+	['BUZZ_RELAY_WS', relayWs],
+	['RUSTSHARE_CHAT_WEBHOOK_SECRET', webhookSecret],
+	['BUZZ_SERVICE_SK', serviceSk],
+	['BUZZ_RELAY_PUBKEY', pinnedRelayPubkey]
+]
+	.filter(([, value]) => !value)
+	.map(([name]) => name);
+if (required.length) {
+	console.error(`buzz-observer: missing required configuration: ${required.join(', ')}`);
+	process.exit(2);
+}
+if (!hex64Re.test(pinnedRelayPubkey)) {
+	console.error('buzz-observer: BUZZ_RELAY_PUBKEY must be 64 lowercase hexadecimal characters');
+	process.exit(2);
+}
+if (since !== undefined && !Number.isFinite(since)) {
 	console.error('buzz-observer: BUZZ_SINCE must be a unix-seconds number');
 	process.exit(2);
 }
-const since = sinceRaw;
-const parsedMaxBackoff = Number(process.env.BUZZ_MAX_RECONNECT_BACKOFF_S || 30);
-const maxBackoffS =
-	Number.isFinite(parsedMaxBackoff) && parsedMaxBackoff > 0 ? parsedMaxBackoff : 30;
-const parsedHttpTimeout = Number(process.env.BUZZ_HTTP_TIMEOUT_MS || 10000);
-const httpTimeoutMs =
-	Number.isFinite(parsedHttpTimeout) && parsedHttpTimeout > 0 ? parsedHttpTimeout : 10000;
 
-let missing = [];
-if (!relayUrl) missing.push('BUZZ_RELAY_WS');
-if (!webhookSecret) missing.push('RUSTSHARE_CHAT_WEBHOOK_SECRET');
-if (!serviceSk) missing.push('BUZZ_SERVICE_SK');
-if (!communityId) missing.push('BUZZ_COMMUNITY_ID');
-if (missing.length) {
-	console.error(`buzz-observer: missing required env: ${missing.join(', ')}`);
+let servicePubkey;
+try {
+	const keyBytes = hexToBytes(serviceSk);
+	if (keyBytes.length !== 32) throw new Error('invalid length');
+	servicePubkey = bytesToHex(schnorr.getPublicKey(keyBytes));
+} catch {
+	console.error('buzz-observer: BUZZ_SERVICE_SK must be a valid 64-hex Schnorr scalar');
 	process.exit(2);
 }
-const servicePubkey = (() => {
-	try {
-		const keyBytes = hexToBytes(serviceSk);
-		if (keyBytes.length !== 32) throw new Error('invalid key length');
-		return bytesToHex(schnorr.getPublicKey(keyBytes));
-	} catch {
-		console.error('buzz-observer: BUZZ_SERVICE_SK must be 64 hex chars (scalar in [1, n-1])');
-		process.exit(1);
-	}
-})();
 
-const sha256Hex = async (input) => {
-	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const relayHttp = new URL(relayWs);
+if (relayHttp.protocol === 'ws:') relayHttp.protocol = 'http:';
+else if (relayHttp.protocol === 'wss:') relayHttp.protocol = 'https:';
+else {
+	console.error('buzz-observer: BUZZ_RELAY_WS must use ws:// or wss://');
+	process.exit(2);
+}
+relayHttp.pathname = '/';
+relayHttp.search = '';
+relayHttp.hash = '';
+
+const state = {
+	connection: 'starting',
+	auth: 'starting',
+	community: null,
+	registry: 'starting',
+	lastRecoveryAt: null,
+	lastEventAt: null,
+	lastError: null,
+	observation: 'starting',
+	changedCommunity: false
 };
+let shuttingDown = false;
+let socket = null;
+let pollTimer = null;
+let reconcileTimer = null;
+let healthServer = null;
+let reconcileRunning = false;
+let reconnectAttempt = 0;
+let forwardChain = Promise.resolve();
+let discoveredChannels = new Set();
+let lastReconcileSince = since;
+const deliveredEventKeys = new Set();
+const pendingEventKeys = new Set();
+const pendingDeliveries = new Map();
+const MAX_DELIVERED_KEYS = 10000;
 
-const signEvent = async (kind, tags, content = '') => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function logError(message, error) {
+	state.lastError = message;
+	console.error(`buzz-observer: ${message}${error ? `: ${error.message}` : ''}`);
+}
+
+function signedEvent(kind, tags, content = '') {
 	const event = {
 		pubkey: servicePubkey,
 		created_at: Math.floor(Date.now() / 1000),
@@ -99,67 +107,167 @@ const signEvent = async (kind, tags, content = '') => {
 		tags,
 		content
 	};
-	const id = await sha256Hex(
-		JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content])
-	);
-	return { ...event, id, sig: bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(serviceSk))) };
-};
+	const id = createHash('sha256')
+		.update(
+			JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content])
+		)
+		.digest('hex');
+	return {
+		...event,
+		id,
+		sig: bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(serviceSk)))
+	};
+}
 
-// Serializes forwards so event order is preserved; failures are retried with
-// backoff and logged (Elembra deduplicates by event id, so retries are safe).
-let forwardChain = Promise.resolve();
-const forwardEvent = (event) => {
-	forwardChain = forwardChain.then(() => deliver(event));
-	return forwardChain;
-};
+async function nip98Header(method, url) {
+	const auth = await signedEvent(27235, [
+		['u', url],
+		['method', method],
+		['nonce', randomUUID()]
+	]);
+	return `Nostr ${Buffer.from(JSON.stringify(auth), 'utf8').toString('base64')}`;
+}
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function verifyRelayEnvelope(raw, requireFresh = true) {
+	if (!raw || typeof raw !== 'object' || raw.kind !== 19030) {
+		throw new Error('relay response is not a kind-19030 event');
+	}
+	if (raw.pubkey !== pinnedRelayPubkey || !hex64Re.test(raw.pubkey)) {
+		throw new Error('relay response pubkey does not match the pinned relay identity');
+	}
+	const expectedId = createHash('sha256')
+		.update(JSON.stringify([0, raw.pubkey, raw.created_at, raw.kind, raw.tags, raw.content]))
+		.digest('hex');
+	if (!hex64Re.test(raw.id) || raw.id !== expectedId)
+		throw new Error('relay response event id verification failed');
+	if (!hex128Re.test(raw.sig)) throw new Error('relay response signature is malformed');
+	if (!schnorr.verify(hexToBytes(raw.sig), hexToBytes(raw.id), hexToBytes(raw.pubkey)))
+		throw new Error('relay response signature verification failed');
+	let content;
+	try {
+		content = JSON.parse(raw.content);
+	} catch {
+		throw new Error('relay response content is not JSON');
+	}
+	if (requireFresh) {
+		const age = Math.floor(Date.now() / 1000) - Number(content.evaluated_at);
+		if (!Number.isInteger(content.evaluated_at) || age < 0 || age > 60) {
+			throw new Error(
+				`relay response is stale or from the future (evaluated_at=${content.evaluated_at})`
+			);
+		}
+	}
+	return content;
+}
 
-async function deliver(event) {
-	// Channel attribution is bridge-side. Kind-9/kind-40002 stream messages
-	// carry the authoritative channel in the NIP-29 `h` tag (canonical wire
-	// format, spec: "Canonical publish tags and kinds"; 40002 is the V2
-	// stream kind, same channel scoping) — it wins over the `channel` tag and
-	// the configured default. Kind-1 legacy notes keep the `channel` tag /
-	// default attribution unchanged.
-	const findTag = (name) =>
+async function relayGet(path, options = {}) {
+	const url = new URL(path, relayHttp).toString();
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), httpTimeoutMs);
+	try {
+		const response = await fetch(url, {
+			headers: { Authorization: await nip98Header('GET', url) },
+			signal: controller.signal
+		});
+		if (!response.ok) throw new Error(`relay HTTP ${response.status}`);
+		return verifyRelayEnvelope(await response.json(), options.requireFresh !== false);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function discoverCommunity() {
+	const identity = await relayGet('/api/v1/relay/community');
+	if (!uuidRe.test(identity.community_id) || identity.relay_pubkey !== pinnedRelayPubkey) {
+		throw new Error('signed community discovery does not match the configured relay identity');
+	}
+	if (state.community && state.community !== identity.community_id) {
+		state.changedCommunity = true;
+		logError(
+			`relay community changed from ${state.community} to ${identity.community_id}; Elembra mapping must be reprovisioned`
+		);
+	}
+	state.community = identity.community_id;
+}
+
+async function discoverChannels() {
+	const query = `/api/v1/relay/channels?pubkey=${encodeURIComponent(servicePubkey)}`;
+	const registry = await relayGet(query);
+	if (registry.pubkey !== servicePubkey || !Array.isArray(registry.channels)) {
+		throw new Error('signed channel registry is malformed');
+	}
+	const channels = new Set();
+	for (const channel of registry.channels) {
+		if (channel && typeof channel.channel_id === 'string' && uuidRe.test(channel.channel_id)) {
+			channels.add(channel.channel_id);
+		}
+	}
+	state.registry = 'ready';
+	discoveredChannels = channels;
+	applySubscriptions();
+}
+
+function contextForEvent(event, channelId, override = {}) {
+	const tag = (name) =>
 		Array.isArray(event.tags)
 			? event.tags.find(
-					(tag) => Array.isArray(tag) && tag[0] === name && typeof tag[1] === 'string'
+					(item) => Array.isArray(item) && item[0] === name && typeof item[1] === 'string'
 				)
 			: undefined;
-	const hTag = event.kind === 9 || event.kind === 40002 ? findTag('h') : undefined;
-	const channelTag = findTag('channel');
-	const context = {
-		community_id: communityId,
-		channel_id: hTag ? hTag[1] : channelTag ? channelTag[1] : channelId,
+	const h = event.kind === 9 || event.kind === 40002 ? tag('h') : undefined;
+	return {
+		community_id: state.community,
+		channel_id: h?.[1] || tag('channel')?.[1] || channelId,
 		channel_kind: 'workspace',
 		thread_root_id: null,
 		message_id: event.id,
 		event_type: 'created',
-		supersedes_event_id: null
+		supersedes_event_id: null,
+		...override
 	};
-	const body = JSON.stringify({ event, context });
+}
 
-	// Attempts are capped so a single undeliverable event cannot stall the
-	// forward chain (and grow memory) forever; the relay replays history on a
-	// reconnect and Elembra dedupes by event id, so a dropped event is
-	// recoverable that way.
-	const MAX_FORWARD_ATTEMPTS = 10;
-	for (let attempt = 1; attempt <= MAX_FORWARD_ATTEMPTS; attempt++) {
-		// Re-sign on every attempt: the backend rejects signatures older than
-		// its replay window (RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS, default 300s),
-		// so a retry that waited out a backend outage must carry a fresh
-		// timestamp — otherwise the retry machinery would drop the events it
-		// exists to deliver.
-		// WebhookSigner::sign_with_timestamp: HMAC-SHA256 over `<ts>.<hex(body)>`
+function forwardEvent(event, context = contextForEvent(event)) {
+	if (!event?.id || state.changedCommunity) return Promise.resolve(false);
+	const eventKey = `${event.id}:${context.event_type || 'created'}`;
+	if (deliveredEventKeys.has(eventKey)) return Promise.resolve(true);
+	const pending = pendingDeliveries.get(eventKey);
+	if (pending) return pending;
+	pendingEventKeys.add(eventKey);
+	const delivery = forwardChain
+		.then(async () => {
+			const delivered = await deliver(event, context);
+			pendingEventKeys.delete(eventKey);
+			if (!delivered) return false;
+			deliveredEventKeys.add(eventKey);
+			if (deliveredEventKeys.size > MAX_DELIVERED_KEYS)
+				deliveredEventKeys.delete(deliveredEventKeys.values().next().value);
+			return true;
+		})
+		.catch((error) => {
+			pendingEventKeys.delete(eventKey);
+			state.observation = 'degraded';
+			logError('forward chain failed', error);
+			return false;
+		});
+	pendingDeliveries.set(eventKey, delivery);
+	forwardChain = delivery;
+	delivery.then(() => {
+		if (pendingDeliveries.get(eventKey) === delivery) pendingDeliveries.delete(eventKey);
+	});
+	return delivery;
+}
+
+async function deliver(event, context) {
+	const body = JSON.stringify({ event, context });
+	for (let attempt = 1; attempt <= 10; attempt += 1) {
 		const timestamp = Math.floor(Date.now() / 1000);
-		const signed = `${timestamp}.${Buffer.from(body, 'utf8').toString('hex')}`;
-		const signature = createHmac('sha256', webhookSecret).update(signed).digest('hex');
-		let controller;
+		const signature = createHmac('sha256', webhookSecret)
+			.update(`${timestamp}.${Buffer.from(body, 'utf8').toString('hex')}`)
+			.digest('hex');
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), httpTimeoutMs);
 		try {
-			controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), httpTimeoutMs);
 			const response = await fetch(webhookUrl, {
 				method: 'POST',
 				headers: {
@@ -169,243 +277,294 @@ async function deliver(event) {
 				body,
 				signal: controller.signal
 			});
-			clearTimeout(timeout);
-			const text = await response.text();
 			if (response.ok) {
-				console.log(
-					`forwarded ${event.id.slice(0, 12)} kind=${event.kind} channel=${context.channel_id} -> ${response.status} ${text.trim()}`
-				);
-				return;
+				state.observation = 'ready';
+				state.lastError = null;
+				state.lastEventAt = new Date().toISOString();
+				return true;
 			}
-			// 4xx are permanent (bad config, unknown community, unbound author);
-			// retrying would only churn the logs. 5xx are transient.
 			if (response.status < 500) {
-				console.error(
-					`forward failed ${event.id.slice(0, 12)} (permanent ${response.status}): ${text.trim()}`
-				);
-				return;
+				state.observation = 'degraded';
+				logError(`Elembra rejected event ${event.id.slice(0, 12)} with HTTP ${response.status}`);
+				return false;
 			}
-			console.error(
-				`forward failed ${event.id.slice(0, 12)} (transient ${response.status}), retry ${attempt}`
-			);
+			if (attempt === 10) {
+				state.observation = 'degraded';
+				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`);
+			}
 		} catch (error) {
-			console.error(
-				`forward failed ${event.id.slice(0, 12)} (transport: ${error.message}), retry ${attempt}`
-			);
+			if (attempt === 10) {
+				state.observation = 'degraded';
+				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`, error);
+			}
+		} finally {
+			clearTimeout(timer);
 		}
-		if (attempt === MAX_FORWARD_ATTEMPTS) {
-			console.error(
-				`forward failed ${event.id.slice(0, 12)} (dropping after ${MAX_FORWARD_ATTEMPTS} attempts); reconnect replay recovers relay history`
-			);
-			return;
+		await sleep(Math.min(15000, 2 ** attempt * 1000));
+	}
+	return false;
+}
+
+async function reconcile() {
+	if (reconcileRunning || !state.community || state.changedCommunity) return;
+	reconcileRunning = true;
+	try {
+		let cursor;
+		let pages = 0;
+		let newest = lastReconcileSince;
+		const deliveries = [];
+		do {
+			const query = new URL('/api/v1/relay/state/events', relayHttp);
+			if (lastReconcileSince !== undefined)
+				query.searchParams.set('since', String(lastReconcileSince));
+			query.searchParams.set('limit', '500');
+			if (cursor) query.searchParams.set('cursor', cursor);
+			const page = await relayGet(`${query.pathname}${query.search}`, {
+				requireFresh: false
+			});
+			if (!Array.isArray(page.entries)) throw new Error('signed state page is malformed');
+			for (const entry of page.entries) {
+				if (!entry?.event || !entry.context || entry.context.community_id !== state.community)
+					continue;
+				deliveries.push(forwardEvent(entry.event, entry.context));
+				const created = Number(entry.event.created_at);
+				if (Number.isFinite(created)) newest = Math.max(newest ?? created, created);
+			}
+			cursor = page.complete ? undefined : page.cursor;
+			if (!page.complete && !cursor) throw new Error('incomplete state page has no cursor');
+			pages += 1;
+		} while (cursor && pages < 100);
+		if (cursor) throw new Error('state reconciliation exceeded the 100-page limit');
+		// Readiness means the bounded replay has reached Elembra, not merely that
+		// its events have been placed behind a potentially slow delivery chain.
+		const delivered = await Promise.all(deliveries);
+		if (delivered.some((ok) => !ok)) {
+			throw new Error('one or more reconciled events were not delivered');
 		}
-		const backoff = Math.min(2 ** attempt, 15) * 1000;
-		await sleep(backoff);
+		lastReconcileSince = newest;
+		state.lastRecoveryAt = new Date().toISOString();
+		if (state.observation !== 'degraded') {
+			state.observation = 'ready';
+			state.lastError = null;
+		}
+	} catch (error) {
+		logError('Buzz state reconciliation failed', error);
+	} finally {
+		reconcileRunning = false;
 	}
 }
 
-let reconnectAttempt = 0;
-
-// A bridge that cannot open a connection for CONNECT_FAIL_LIMIT consecutive
-// attempts exits (status 1) so the supervisor restarts it fresh in 3s — a
-// wedged child must not sit in a failed-connect loop while the relay is back
-// up (the dogfood matrix depends on observation continuity; the since=all
-// replay on reconnect plus Elembra's event-id dedupe make a restart lossless).
-const CONNECT_FAIL_LIMIT = 3;
-
-// Registered once at module scope so reconnects do not accumulate listeners.
-let shuttingDown = false;
-const shutdown = () => {
-	shuttingDown = true;
-	console.log('shutting down');
-	process.exit(0);
-};
-process.once('SIGINT', shutdown);
-process.once('SIGTERM', shutdown);
-
-// A bridge process must never die silently: log and continue. Node >= 15
-// terminates on unhandled rejections by default; the async relay handler must
-// not take the observation bridge down with it.
-process.on('unhandledRejection', (reason) => {
-	console.error(
-		`unhandled rejection (continuing): ${reason instanceof Error ? reason.stack : reason}`
-	);
-});
-process.on('uncaughtException', (error) => {
-	// Node state may be corrupt after an uncaught exception; exit and let the
-	// supervisor restart (which reconnects and replays relay history).
-	console.error(`uncaught exception: ${error.stack}`);
-	process.exit(1);
-});
+function applySubscriptions() {
+	if (!socket || socket.readyState !== WebSocket.OPEN || !socket.authenticated) return;
+	const wanted = new Set(discoveredChannels);
+	for (const [channelId, subscriptionId] of socket.subscriptions) {
+		if (!wanted.has(channelId)) {
+			try {
+				socket.send(JSON.stringify(['CLOSE', subscriptionId]));
+			} catch {
+				/* reconnect handles it */
+			}
+			socket.subscriptions.delete(channelId);
+		}
+	}
+	for (const channelId of wanted) {
+		if (socket.subscriptions.has(channelId)) continue;
+		const subscriptionId = `${socket.requestId}-${channelId.slice(0, 8)}`;
+		socket.subscriptions.set(channelId, subscriptionId);
+		const filter = { kinds: [9, 40002], '#h': [channelId] };
+		if (since !== undefined) filter.since = since;
+		try {
+			socket.send(JSON.stringify(['REQ', subscriptionId, filter]));
+		} catch (error) {
+			socket.subscriptions.delete(channelId);
+			logError('channel subscription failed', error);
+		}
+	}
+}
 
 function connect() {
-	const socket = new WebSocket(relayUrl);
-	let subscribed = false;
+	if (shuttingDown) return;
+	const ws = new WebSocket(relayWs);
+	ws.requestId = `buzz-observer-${randomUUID().slice(0, 8)}`;
+	ws.subscriptions = new Map();
+	ws.authenticated = false;
+	ws.authEventId = null;
+	socket = ws;
+	state.connection = 'connecting';
+	state.auth = 'starting';
 	let eoseSeen = false;
-	let closing = shuttingDown;
-	const reqId = `buzz-observer-${randomUUID().slice(0, 8)}`;
-
-	const subscribe = () => {
-		if (subscribed) return;
-		subscribed = true;
-		// One REQ per channel UUID: the relay registers a subscription in its
-		// live fan-out channel indexes ONLY when the filter carries exactly one
-		// `#h` value — a multi-#h filter is treated as global and never
-		// receives channel-scoped events live (only the connect-time replay).
-		// The sub id is `<reqId>-<channel-prefix>` so EOSE/CLOSED matching
-		// stays unambiguous. Legacy kind-1 notes (no UUID channel) keep the
-		// single global subscription.
-		const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-		const hChannels = [...new Set([channelId, channel2Id].filter((v) => uuidRe.test(v)))];
-		const baseFilter = { kinds: [1, 9, 40002] }; // 9/40002 = KIND_STREAM_MESSAGE(_V2)
-		if (since !== undefined) baseFilter.since = since;
-		try {
-			if (hChannels.length > 0) {
-				for (const ch of hChannels) {
-					socket.send(
-						JSON.stringify(['REQ', `${reqId}-${ch.slice(0, 8)}`, { ...baseFilter, '#h': [ch] }])
-					);
-				}
-			} else {
-				socket.send(JSON.stringify(['REQ', reqId, baseFilter]));
-			}
-			console.log(
-				`subscribed ${reqId} kinds=[1,9,40002] since=${since ?? 'all'}${hChannels.length ? ` #h=[${hChannels.join(',')}] (one REQ per channel)` : ''}`
-			);
-		} catch (error) {
-			subscribed = false;
-			console.error(`REQ send failed: ${error.message}`);
-		}
-	};
-
-	socket.onmessage = async (raw) => {
-		try {
-			if (typeof raw.data !== 'string') {
-				console.warn(`relay sent non-text frame (${typeof raw.data}); ignoring`);
-				return;
-			}
-			let message;
-			try {
-				message = JSON.parse(raw.data);
-			} catch {
-				return;
-			}
-			if (!Array.isArray(message)) return;
-			const [kind] = message;
-			if (kind === 'AUTH' && typeof message[1] === 'string') {
-				const auth = await signEvent(
-					22242,
-					[
-						['relay', relayUrl],
-						['challenge', message[1]]
-					],
-					''
-				);
-				try {
-					socket.send(JSON.stringify(['AUTH', auth]));
-					console.log('authenticated with relay challenge (NIP-42)');
-					// The pre-auth REQ was rejected (NOTICE + CLOSED for the
-					// subscription); re-issue it now that this connection is
-					// authenticated (same pattern as the Buzz bridge re-sending
-					// its command after AUTH).
-					subscribed = false;
-					subscribe();
-				} catch (error) {
-					console.error(`AUTH send failed: ${error.message}`);
-				}
-			} else if (kind === 'EVENT') {
-				// NIP-01 frame shape: ["EVENT", <subscription-id>, <event>]
-				const event = message[2];
-				// 9/40002 = channel-scoped stream kinds (V2 = 40002); 1 = legacy notes.
-				if (
-					event &&
-					typeof event === 'object' &&
-					(event.kind === 1 || event.kind === 9 || event.kind === 40002)
-				) {
-					// Forward without awaiting: ordering is preserved by the promise chain.
-					forwardEvent(event).catch((error) => {
-						console.error(`unexpected forward error: ${error.message}`);
-					});
-				}
-			} else if (kind === 'NOTICE' || kind === 'OK') {
-				console.log(`relay ${kind}: ${JSON.stringify(message).slice(0, 300)}`);
-			} else if (kind === 'EOSE') {
-				// One REQ per channel: match by the shared reqId prefix.
-				if (message[1] && message[1].startsWith(reqId)) eoseSeen = true;
-				console.log(`relay EOSE for ${message[1]}`);
-			} else if (kind === 'CLOSED') {
-				// A CLOSED before EOSE is the normal pre-auth REQ rejection that
-				// the AUTH + re-subscribe flow resolves — ignoring it keeps the
-				// handshake from looping. A CLOSED for the live subscription
-				// (post-EOSE) means the relay killed it: force a reconnect,
-				// which re-subscribes and replays history.
-				if (message[1] && message[1].startsWith(reqId) && eoseSeen) {
-					console.error(`relay closed live subscription ${reqId}; reconnecting to recover`);
-					try {
-						socket.close();
-					} catch {
-						// already closed
-					}
-				} else {
-					console.log(`relay CLOSED: ${JSON.stringify(message).slice(0, 300)}`);
-				}
-			}
-		} catch (error) {
-			console.error(`relay frame handler error: ${error.message}`);
-		}
-	};
-
-	socket.onerror = (event) => {
-		console.error(`websocket error: ${event.message || 'unknown'}`);
-		// A rejected upgrade or network failure may not be followed by an
-		// onclose event; force the close so the reconnect loop always runs.
-		try {
-			socket.close();
-		} catch {
-			// already closed
-		}
-	};
-
-	// Watchdog: if the connection neither opens nor closes within the window
-	// (half-open socket), force a close so the reconnect loop progresses.
-	const connectWatchdog = setTimeout(() => {
-		if (!closing && socket.readyState !== WebSocket.OPEN) {
-			console.error('websocket connect watchdog: forcing close');
-			try {
-				socket.close();
-			} catch {
-				// already closed
-			}
-		}
-	}, 15_000);
-
-	socket.onopen = () => {
-		clearTimeout(connectWatchdog);
-		reconnectAttempt = 0;
-		console.log(`connected to ${relayUrl}`);
-		// Some relays deliver the AUTH challenge only after a first REQ.
-		subscribe();
-	};
-
-	socket.onclose = () => {
-		clearTimeout(connectWatchdog);
-		if (closing || shuttingDown) return;
-		reconnectAttempt++;
-		if (reconnectAttempt >= CONNECT_FAIL_LIMIT) {
-			console.error(
-				`failed to connect after ${CONNECT_FAIL_LIMIT} consecutive attempts; exiting for supervisor restart`
-			);
+	let reconnectScheduled = false;
+	const scheduleReconnect = () => {
+		if (reconnectScheduled) return;
+		reconnectScheduled = true;
+		clearTimeout(watchdog);
+		if (shuttingDown) return;
+		state.connection = state.auth === 'failed' ? 'auth_failed' : 'reconnecting';
+		reconnectAttempt += 1;
+		if (reconnectAttempt >= 3) {
+			logError('relay unavailable after three attempts; exiting for Compose restart');
 			process.exit(1);
 		}
 		const backoff = Math.min(2 ** reconnectAttempt, maxBackoffS) * 1000;
-		console.log(
-			`websocket closed; reconnecting in ${backoff / 1000}s (attempt ${reconnectAttempt})`
-		);
 		setTimeout(connect, backoff);
+	};
+	const watchdog = setTimeout(() => {
+		if (ws.readyState !== WebSocket.OPEN) {
+			logError('relay connection watchdog expired');
+			try {
+				ws.close();
+			} catch {
+				/* already closed */
+			}
+			setTimeout(scheduleReconnect, 1000);
+		}
+	}, 15000);
+	ws.onopen = () => {
+		clearTimeout(watchdog);
+		reconnectAttempt = 0;
+		state.connection = 'connected';
+		try {
+			ws.send(JSON.stringify(['REQ', ws.requestId, { kinds: [9], limit: 1 }]));
+		} catch (error) {
+			logError('relay authentication request failed', error);
+		}
+		applySubscriptions();
+		void reconcile();
+	};
+	ws.onmessage = async (raw) => {
+		try {
+			const message = JSON.parse(String(raw.data));
+			if (!Array.isArray(message)) return;
+			if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+				const auth = await signedEvent(22242, [
+					['relay', relayWs],
+					['challenge', message[1]]
+				]);
+				ws.send(JSON.stringify(['AUTH', auth]));
+				ws.authEventId = auth.id;
+				state.auth = 'pending';
+				return;
+			}
+			if (message[0] === 'OK' && message[1] === ws.authEventId) {
+				if (message[2] !== true) {
+					state.auth = 'failed';
+					state.connection = 'auth_failed';
+					logError('relay rejected observer authentication');
+					ws.close();
+					return;
+				}
+				ws.authenticated = true;
+				state.auth = 'authenticated';
+				if (state.observation !== 'degraded') state.lastError = null;
+				applySubscriptions();
+				void reconcile();
+				return;
+			}
+			if (message[0] === 'EVENT') {
+				const event = message[2];
+				const subscriptionId = message[1];
+				const liveSubscription = [...ws.subscriptions.values()].includes(subscriptionId);
+				if (liveSubscription && event && (event.kind === 9 || event.kind === 40002))
+					forwardEvent(event);
+				return;
+			}
+			if (message[0] === 'EOSE') {
+				eoseSeen = true;
+				return;
+			}
+			if (message[0] === 'CLOSED' && eoseSeen) {
+				logError('relay closed a live subscription; reconnecting');
+				try {
+					ws.close();
+				} catch {
+					/* already closed */
+				}
+			}
+		} catch (error) {
+			logError('relay frame handler failed', error);
+		}
+	};
+	ws.onerror = () => {
+		try {
+			ws.close();
+		} catch {
+			/* already closed */
+		}
+	};
+	ws.onclose = () => {
+		scheduleReconnect();
 	};
 }
 
-console.log(
-	`buzz-observer starting: relay=${relayUrl} community=${communityId} channel=${channelId} channel2=${channel2Id} webhook=${webhookUrl.split('?')[0]}`
-);
-connect();
+function startHealthServer() {
+	healthServer = createServer((request, response) => {
+		if (request.url !== '/health' && request.url !== '/ready') {
+			response.writeHead(404).end();
+			return;
+		}
+		const ready =
+			state.connection === 'connected' &&
+			state.auth === 'authenticated' &&
+			state.registry === 'ready' &&
+			!!state.community &&
+			state.observation !== 'degraded' &&
+			!state.changedCommunity;
+		const body = JSON.stringify({
+			status: ready ? 'ready' : 'degraded',
+			connection: state.connection,
+			auth: state.auth,
+			registry: state.registry,
+			community_discovered: !!state.community,
+			last_recovery_at: state.lastRecoveryAt,
+			last_event_at: state.lastEventAt,
+			last_error: state.lastError,
+			observation: state.observation,
+			community_changed: state.changedCommunity
+		});
+		response.writeHead(request.url === '/ready' && !ready ? 503 : 200, {
+			'content-type': 'application/json',
+			'cache-control': 'no-store'
+		});
+		response.end(body);
+	});
+	healthServer.listen(healthPort, '0.0.0.0');
+}
+
+async function refresh() {
+	try {
+		await discoverCommunity();
+		await discoverChannels();
+		await reconcile();
+	} catch (error) {
+		state.registry = 'degraded';
+		logError('Buzz discovery failed', error);
+	}
+}
+
+async function shutdown() {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	clearInterval(pollTimer);
+	clearInterval(reconcileTimer);
+	try {
+		socket?.close();
+	} catch {
+		/* already closed */
+	}
+	if (healthServer) await new Promise((resolve) => healthServer.close(resolve));
+}
+process.once('SIGINT', () => void shutdown().finally(() => process.exit(0)));
+process.once('SIGTERM', () => void shutdown().finally(() => process.exit(0)));
+process.on('uncaughtException', (error) => {
+	logError('uncaught observer exception', error);
+	process.exit(1);
+});
+process.on('unhandledRejection', (error) => logError('unhandled observer rejection', error));
+
+startHealthServer();
+void (async () => {
+	await refresh();
+	connect();
+	pollTimer = setInterval(() => void refresh(), pollMs);
+	reconcileTimer = setInterval(() => void reconcile(), pollMs);
+})();

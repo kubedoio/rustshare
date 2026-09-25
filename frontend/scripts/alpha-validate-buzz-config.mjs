@@ -1,4 +1,5 @@
 // frontend/scripts/alpha-validate-buzz-config.mjs
+// Proof/dogfood helper; supported deployments use scripts/elembra.sh.
 // Validates alpha/dogfood Buzz key consistency so the backend's bridge identity
 // cannot silently diverge from the relay's trusted-service allowlist.
 //
@@ -124,8 +125,10 @@ function main() {
 		for (const err of errors) {
 			console.error(`  - ${err}`);
 		}
-		console.error('\nFix the variables above and re-run, or generate a fresh set of keys with:');
-		console.error('  node frontend/scripts/alpha-gen-buzz-keys.mjs');
+		console.error(
+			'\nFix the variables above and re-run, or bootstrap the supported deployment with:'
+		);
+		console.error('  ./scripts/elembra.sh init --with-chat');
 		process.exit(1);
 	}
 	console.log('Buzz configuration is consistent.');

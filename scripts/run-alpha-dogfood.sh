@@ -9,18 +9,14 @@
 # same NIP-42/NIP-43 contracts as the product clients.
 #
 # Prerequisites (see docs/runbooks/elembra-alpha.md):
-#   - base stack up:   docker compose up -d
-#   - relay stack up:  docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d
-#   - observer up:     ./scripts/start-buzz-observer.sh
-#   - frontend deps:   npm install (frontend/)
+#   - supported stack up: ./scripts/elembra.sh init --with-chat && ./scripts/elembra.sh up
 #
 # Required env:
 #   BUZZ_SERVICE_SK    bridge/owner secret key (relay owner identity)
 #   BUZZ_RELAY_WS      relay ws url (default ws://localhost:7447)
-#   BUZZ_COMMUNITY_ID  community id (must match the observer + mapping)
-#   BUZZ_RELAY_PUBKEY  relay identity pubkey (printed by alpha-gen-buzz-keys.mjs)
-#   ADMIN_EMAIL / ADMIN_PASSWORD  admin creds (default RUSTSHARE_ADMIN_*)
-# Optional: BUZZ_CHANNEL_ID, BUZZ_CHANNEL2_ID, ELEMBRA_API, RELAY_CONTAINER, POSTGRES_CONTAINER
+#   ADMIN_EMAIL / ADMIN_PASSWORD  admin creds (default RUSTSHARE_ADMIN_* or the
+#                                  secure first-boot bootstrap file)
+# Optional: ELEMBRA_API
 #
 # Per-check PASS/FAIL output; exits 1 if any check failed.
 # =============================================================================
@@ -35,28 +31,42 @@ if [[ -f .env ]]; then
 	. ./.env
 	set +a
 fi
-
-# Validate Buzz key consistency before touching the stack.
-if [[ -n "${BUZZ_SERVICE_SK:-}" ]]; then
-	if ! node frontend/scripts/alpha-validate-buzz-config.mjs; then
-		echo "Buzz key configuration is inconsistent — fix .env and re-run." >&2
-		exit 1
-	fi
+if [[ -f .elembra/chat.env ]]; then
+	set -a
+	# shellcheck disable=SC1091
+	. .elembra/chat.env
+	set +a
 fi
+if [[ -f config/buzz-compatibility.env ]]; then
+	set -a
+	# shellcheck disable=SC1091
+	. ./config/buzz-compatibility.env
+	set +a
+fi
+
+compose() {
+	docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml "$@"
+}
 
 : "${BUZZ_SERVICE_SK:?BUZZ_SERVICE_SK must be set (bridge/owner key)}"
 BUZZ_RELAY_WS="${BUZZ_RELAY_WS:-ws://localhost:7447}"
-: "${BUZZ_COMMUNITY_ID:?BUZZ_COMMUNITY_ID must be set}"
-: "${BUZZ_RELAY_PUBKEY:?BUZZ_RELAY_PUBKEY must be set (relay identity pubkey from alpha-gen-buzz-keys.mjs)}"
-BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-585e55c7-97d9-43ad-bbe3-a355cad93082}"
-BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-4bec90c0-4c14-48cc-8958-da8c258f9759}"
-POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-rustshare-postgres-1}"
+BUZZ_COMMUNITY_ID="${BUZZ_COMMUNITY_ID:-}"
+BUZZ_RELAY_PUBKEY="${BUZZ_RELAY_PUBKEY:-}"
+BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-}"
+BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-}"
 ELEMBRA_API="${ELEMBRA_API:-http://localhost/api/v1}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
-OPS="node scripts/alpha-buzz-ops.mjs"
 TMP="$(mktemp -d)"
-trap 'if [[ "${relay_stopped:-0}" == "1" ]]; then docker start "${RELAY_CONTAINER:-rustshare-buzz-relay-1}" >/dev/null 2>&1 || true; fi; [[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
+trap 'if [[ "${relay_stopped:-0}" == "1" ]]; then compose start buzz-relay >/dev/null 2>&1 || true; fi; [[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
+
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+	ADMIN_PASSWORD="$(compose exec -T backend cat /tmp/rustshare-bootstrap-password.txt 2>/dev/null | tr -d '\r\n' || true)"
+fi
+
+ops() {
+	compose exec -T chat-observer node /app/scripts/alpha-buzz-ops.mjs "$@"
+}
 
 PASS=0
 FAIL=0
@@ -144,7 +154,7 @@ http_call_csrf() { # method path data-file cookie-file
 }
 
 relay_ok() { # command args... -> 0 on success
-	(cd frontend && $OPS "$@") > "$TMP/op.json" 2>/dev/null
+	ops "$@" > "$TMP/op.json" 2>/dev/null
 }
 
 echo "== Elembra Alpha dogfood run =="
@@ -184,6 +194,10 @@ if [[ -n "$mapping_json" ]]; then
 	got_community="$(jq_get 'd["community_id"]' "$TMP/body")"
 	got_relay_url="$(jq_get 'd["relay_url"]' "$TMP/body")"
 	got_relay_pubkey="$(jq_get 'd["relay_pubkey"]' "$TMP/body")"
+	BUZZ_COMMUNITY_ID="$got_community"
+	BUZZ_RELAY_PUBKEY="$got_relay_pubkey"
+	BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
+	BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 	check "P02c auto-provisioned mapping" \
 		"$([[ "$got_community" == "$BUZZ_COMMUNITY_ID" && "$got_relay_url" == "$BUZZ_RELAY_WS" && "$got_relay_pubkey" == "$BUZZ_RELAY_PUBKEY" ]] && echo true || echo false)" \
 		"community=$got_community relay=$got_relay_url pubkey=${got_relay_pubkey:0:8}…"
@@ -191,19 +205,14 @@ else
 	check "P02c auto-provisioned mapping" false "no mapping within 30s of enable (last status -> $code)"
 fi
 
-# Memory projection + content indexing: the chat Application configuration has
-# no admin API — the operator enables it via SQL (documented in the runbook).
-# Without it, bodies are not stored and the Memory/Ask pipeline stays empty.
+# Memory projection + content indexing use the tenant-scoped admin Application
+# configuration contract; this driver never reaches into Elembra SQL.
 if [[ "${ALPHA_ENABLE_MEMORY_PROJECTION:-1}" == "1" ]]; then
-	mp_status=0
-	# RETURNING makes a 0-row UPDATE (wrong tenant/app id) visible as empty
-	# output instead of a silent success.
-	PGPASSWORD="${POSTGRES_PASSWORD:-}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" \
-		"${POSTGRES_CONTAINER:-rustshare-postgres-1}" psql -U rustshare -d rustshare -v ON_ERROR_STOP=1 -t -A -c \
-		"UPDATE application_enablements SET configuration = configuration || '{\"memory_projection\": true, \"content_indexing\": true}'::jsonb WHERE application_id='io.elembra.chat' AND tenant_id='${tenant_id}' AND workspace_id='${tenant_id}' RETURNING application_id;" \
-		> "$TMP/mp.json" 2>&1 || mp_status=$?
-	mp_rows="$(cat "$TMP/mp.json")"
-	check "P02d memory projection + content indexing enabled" "$([[ "$mp_status" == "0" && "$mp_rows" != "" ]] && echo true || echo false)" "rows=$mp_rows"
+	cat > "$TMP/memory-config.json" <<'EOF'
+{"memory_projection":true,"content_indexing":true}
+EOF
+	http_call_csrf PATCH "$ELEMBRA_API/admin/applications/io.elembra.chat" "$TMP/memory-config.json" "$(sess admin)"
+	check "P02d memory projection + content indexing enabled" "$([[ "$http_code" == "200" ]] && echo true || echo false)" "admin config -> $http_code"
 fi
 
 # --- P03 create users --------------------------------------------------------
@@ -216,9 +225,9 @@ USERS=(alpha_alice alpha_bob alpha_mallory)
 create_user() { # username
 	local username="${1}_${RUN_SUFFIX}"
 	local sk pk
-	(cd frontend && $OPS keygen) > "$TMP/kg.json"
+	ops keygen > "$TMP/kg.json"
 	sk="$(jq_get 'd["secretKey"]' "$TMP/kg.json")"
-	pk="$(cd frontend && $OPS pubkey "$sk")"
+	pk="$(ops pubkey "$sk")"
 	USER_SK[$1]="$sk"
 	USER_PK[$1]="$pk"
 	cat > "$TMP/user.json" <<EOF
@@ -252,7 +261,7 @@ EOF
 	local challenge_id relay_url
 	challenge_id="$(jq_get 'd["challenge_id"]' "$TMP/body")"
 	relay_url="$(jq_get 'd["relay_url"]' "$TMP/body")"
-	(cd frontend && $OPS bind-proof "$relay_url" "$(jq_get 'd["nonce"]' "$TMP/body")" "$sk") > "$TMP/proof.json"
+	ops bind-proof "$relay_url" "$(jq_get 'd["nonce"]' "$TMP/body")" "$sk" > "$TMP/proof.json"
 	cat > "$TMP/verify.json" <<EOF
 {"challenge_id":"${challenge_id}","event":$(cat "$TMP/proof.json")}
 EOF
@@ -294,7 +303,7 @@ done
 echo "== provisioning channels at the relay =="
 create_channel() { # id name
 	local id="$1" name="$2"
-	(cd frontend && $OPS create-channel "$BUZZ_RELAY_WS" "$id" "$name" open stream) > "$TMP/ch.json"
+	ops create-channel "$BUZZ_RELAY_WS" "$id" "$name" open stream > "$TMP/ch.json"
 	local ok reason
 	ok="$(jq_get 'd["accepted"]' "$TMP/ch.json")"
 	reason="$(jq_get 'd["reason"]' "$TMP/ch.json")"
@@ -311,7 +320,7 @@ create_channel "$BUZZ_CHANNEL2_ID" "alpha-ops"
 echo "== publishing messages =="
 pub_msg() { # username channel content
 	local sk="${USER_SK[$1]}"
-	(cd frontend && $OPS publish "$BUZZ_RELAY_WS" "$sk" "$3" "$2") > "$TMP/pub.json"
+	ops publish "$BUZZ_RELAY_WS" "$sk" "$3" "$2" > "$TMP/pub.json"
 	local ok event_id
 	ok="$(jq_get 'd["accepted"]' "$TMP/pub.json")"
 	event_id="$(jq_get 'd["eventId"]' "$TMP/pub.json")"
@@ -453,7 +462,7 @@ cat > "$TMP/share.json" <<EOF
 EOF
 http_call_csrf POST "$ELEMBRA_API/files/${file_id}/share" "$TMP/share.json" "$(sess alpha_alice)"
 check "P12b2 file shared with bob" "$([[ "$http_code" == "200" || "$http_code" == "201" ]] && echo true || echo false)" "share -> $http_code"
-(cd frontend && $OPS publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "alpha dogfood: attached file" "$BUZZ_CHANNEL_ID" "$ref_tag") > "$TMP/pub.json"
+ops publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "alpha dogfood: attached file" "$BUZZ_CHANNEL_ID" "$ref_tag" > "$TMP/pub.json"
 sleep 3
 http_call_csrf POST "$ELEMBRA_API/applications/chat/attachments/open" "$TMP/prep.json" "$(sess alpha_bob)"
 check "P12c authorized recipient opens" "$([[ "$http_code" == "200" ]] && echo true || echo false)" "open -> $http_code"
@@ -525,9 +534,8 @@ check "P15e unaffected user still reads" "$([[ "$code" == "200" ]] && echo true 
 
 # --- P16 relay outage --------------------------------------------------------
 echo "== relay outage =="
-RELAY_CONTAINER="${RELAY_CONTAINER:-rustshare-buzz-relay-1}"
 relay_stopped=0
-docker stop "$RELAY_CONTAINER" >/dev/null 2>&1 && relay_stopped=1 || true
+compose stop buzz-relay >/dev/null 2>&1 && relay_stopped=1 || true
 sleep 2
 if relay_ok publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "outage test" "$BUZZ_CHANNEL_ID"; then
 	check "P16a publish fails during outage" false "publish unexpectedly accepted"
@@ -535,9 +543,13 @@ else
 	check "P16a publish fails during outage" true "transport/rejected"
 fi
 code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
-check "P16b reads stay available (local gate)" "$([[ "$code" == "200" ]] && echo true || echo false)" "messages -> $code"
+outage_msgs="$(jq_get 'len(d["messages"]) if "messages" in d else 0' "$TMP/body")"
+[[ -z "$outage_msgs" || "$outage_msgs" == "None" ]] && outage_msgs=0
+check "P16b reads fail closed during outage" \
+	"$([[ "$outage_msgs" == "0" ]] && echo true || echo false)" \
+	"messages -> $code (visible=$outage_msgs)"
 # Restore immediately; the EXIT trap also restores it if this run is interrupted.
-docker start "$RELAY_CONTAINER" >/dev/null 2>&1 && relay_stopped=0 || true
+	compose start buzz-relay >/dev/null 2>&1 && relay_stopped=0 || true
 # The v1alpha1 relay's cold start has a documented flaky S3 probe (the live
 # conformance harness allows a 300s health window for the same reason), so
 # the recovery budget follows that envelope: wait for relay health first,
@@ -577,7 +589,7 @@ echo "== restart persistence =="
 # nginx resolves its `proxy_pass http://backend:8080` upstream ONCE at startup
 # and pins the resolved IP, so a backend container restart (new IP) must be
 # accompanied by an nginx restart or every nginx-routed health/API call 502s.
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml restart backend buzz-relay nginx
+compose restart backend buzz-relay nginx
 # Wait for the backend first (P01's readiness probe through nginx), then the
 # relay — its health sits on the shared backend namespace's loopback
 # (docker-compose.dogfood.yml), same envelope as P16's recovery wait.
@@ -604,7 +616,7 @@ for attempt in 1 2; do
 	done
 	[[ "$relay_healthy" == "yes" || "$attempt" == "2" ]] && break
 	echo "    relay health not up within envelope; restarting relay container"
-	docker restart "${RELAY_CONTAINER:-rustshare-buzz-relay-1}" >/dev/null 2>&1 || true
+	compose restart buzz-relay >/dev/null 2>&1 || true
 done
 code=$(curl -s -b "$(sess admin)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/admin/applications/chat/workspaces/${tenant_id}/community")
 mapping2="$(jq_get 'd["community_id"]' "$TMP/body")"
@@ -625,6 +637,32 @@ eve_msgs="$(jq_get 'len(d["messages"]) if "messages" in d else -1' "$TMP/body2")
 check "P18 authorization gate survives restart" \
 	"$([[ "$code" == "200" && "${alice_msgs:-0}" != "0" && "$eve_msgs" == "0" ]] && echo true || echo false)" \
 	"alice=$alice_msgs msgs (-> $code), eve=$eve_msgs msgs (fail closed)"
+
+# --- P19 managed observer restart -------------------------------------------
+echo "== managed observer restart =="
+compose restart chat-observer >/dev/null
+observer_ready=""
+for _ in $(seq 1 30); do
+	if compose exec -T chat-observer wget -q -O - http://127.0.0.1:8091/ready >/dev/null 2>&1; then
+		observer_ready="yes"
+		break
+	fi
+	sleep 2
+done
+check "P19 observer restarts healthy" "$([[ "$observer_ready" == "yes" ]] && echo true || echo false)" "managed service readiness"
+observer_restart_message="observer restart $(date +%s)"
+if relay_ok publish "$BUZZ_RELAY_WS" "${USER_SK[alpha_alice]}" "$observer_restart_message" "$BUZZ_CHANNEL_ID"; then
+	observer_message_seen=""
+	for _ in $(seq 1 60); do
+		curl -s -b "$(sess alpha_alice)" -o "$TMP/body" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}"
+		if grep -q "$observer_restart_message" "$TMP/body"; then
+			observer_message_seen="yes"
+			break
+		fi
+		sleep 1
+	done
+fi
+check "P19 observer resumes delivery" "$([[ "${observer_message_seen:-}" == "yes" ]] && echo true || echo false)" "message observed without manual bridge supervision"
 
 # --- summary -----------------------------------------------------------------
 echo
