@@ -78,9 +78,9 @@ RUN mkdir -p target/release \
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM debian:bookworm-slim
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 
-RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates libssl3 wget \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates libssl3t64 wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binaries and frontend build
