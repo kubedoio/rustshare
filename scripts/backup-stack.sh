@@ -97,7 +97,11 @@ BACKUP_ROOT="${1:-${PROJECT_ROOT}/backups}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 TARGET_DIR="${BACKUP_ROOT%/}/${TIMESTAMP}"
 
-mkdir -p "${TARGET_DIR}"
+mkdir -p "${BACKUP_ROOT}"
+if ! mkdir "${TARGET_DIR}"; then
+	echo "Backup target already exists: ${TARGET_DIR}" >&2
+	exit 1
+fi
 
 cd "${PROJECT_ROOT}"
 
