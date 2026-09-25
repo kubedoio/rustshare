@@ -18,6 +18,7 @@ source:
   buzz_image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
   elembra_image: PENDING_RELEASE_ARTIFACT
   elembra_image_attestation: PENDING_RELEASE_ARTIFACT
+  chat_observer_image: PENDING_RELEASE_ARTIFACT
 
 gates:
   repository_governance:
@@ -25,7 +26,7 @@ gates:
     evidence: GitHub branch protection API verified required checks, one review, stale approval dismissal, admin enforcement, no force pushes, no branch deletion, and conversation resolution on 2026-09-25
   immutable_release_artifacts:
     status: FAIL
-    evidence: Buzz digest is immutable and attested; Elembra release artifact is not selected
+    evidence: Buzz digest is immutable and attested; Elembra backend and managed observer release artifacts are not selected
   clean_install:
     status: PENDING
     evidence: exact post-merge main workflow still running

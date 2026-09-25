@@ -220,12 +220,19 @@ docker compose up -d --force-recreate backend
 
 ### Pilot stack (`docker-compose.pilot.yml`)
 
-Use this to run a pre-built backend image instead of building from source.
+Use this only for a published release bundle. Customer Alpha operators should
+use [`docs/runbooks/customer-alpha.md`](runbooks/customer-alpha.md), which
+also pins the managed observer and Buzz images.
 
 ```bash
-export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend:latest
+export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<published-digest>
 docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d
 ```
+
+The bundled Chat release path must additionally set
+`ELEMBRA_CHAT_OBSERVER_IMAGE` to its published immutable digest and use
+`./scripts/elembra.sh init --with-chat --release`; do not use this low-level
+Compose command for a customer deployment.
 
 ### Development override (`docker-compose.dev.yml`)
 

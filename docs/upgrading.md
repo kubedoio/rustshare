@@ -12,9 +12,10 @@ Follow this sequence for every upgrade:
 
 1. **Create a backup**
    ```bash
-   ./scripts/backup-stack.sh
+   ./scripts/backup-stack.sh --with-chat
    ```
-   Verify the backup bundle contains `postgres.sql.gz`, `rustfs-data.tar.gz`, `config.tar.gz`, and `manifest.env`.
+   Verify the bundle contains the Elembra and, for bundled Chat, Buzz
+   PostgreSQL/RustFS artifacts, plus `config.tar.gz` and `manifest.env`.
 
 2. **Review the changelog**
    - Read [`CHANGELOG.md`](../CHANGELOG.md) for the target version.
@@ -27,7 +28,8 @@ Follow this sequence for every upgrade:
    ```
    Or, if using the pilot profile:
    ```bash
-   export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend:X.Y.Z
+   export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<release-digest>
+   export ELEMBRA_CHAT_OBSERVER_IMAGE=ghcr.io/kubedoio/rustshare-chat-observer@sha256:<release-digest>
    docker compose -f docker-compose.yml -f docker-compose.pilot.yml pull
    ```
 
@@ -68,7 +70,8 @@ RustShare is currently pre-1.0. While we adhere to SemVer:
 
 **Recommendations:**
 
-- Pin to exact versions in production (`X.Y.Z`, not `X.Y` or `X`).
+- Pin every production image to the release digest recorded by the release
+  evidence; tags alone are not an installation contract.
 - Read `CHANGELOG.md` and this upgrading guide before any MINOR upgrade.
 - Test MINOR upgrades in a staging environment first.
 
@@ -108,7 +111,7 @@ See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md#migration-checksum-fix) for the resolut
 
 ```bash
 # 1. Backup
-./scripts/backup-stack.sh
+./scripts/backup-stack.sh --with-chat
 
 # 2. Pull new images
 docker compose pull
@@ -124,10 +127,11 @@ docker compose up -d
 
 ```bash
 # 1. Backup
-./scripts/backup-stack.sh
+./scripts/backup-stack.sh --with-chat
 
 # 2. Set the target image
-export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend:X.Y.Z
+export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<release-digest>
+export ELEMBRA_CHAT_OBSERVER_IMAGE=ghcr.io/kubedoio/rustshare-chat-observer@sha256:<release-digest>
 
 # 3. Pull and recreate
 docker compose -f docker-compose.yml -f docker-compose.pilot.yml pull
@@ -150,7 +154,7 @@ If an upgrade fails or causes unexpected behavior:
 
 2. **Restore the previous image**
    - For standard stack: rebuild from the previous Git commit.
-   - For pilot stack: revert the `RUSTSHARE_BACKEND_IMAGE` to the previous version tag.
+   - For pilot stack: restore the previous release's recorded image digest.
 
 3. **Restart with the previous image**
    ```bash
@@ -158,13 +162,14 @@ If an upgrade fails or causes unexpected behavior:
    ```
    Or for pilot:
    ```bash
-   export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend:PREVIOUS_VERSION
+   export RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<previous-release-digest>
+   export ELEMBRA_CHAT_OBSERVER_IMAGE=ghcr.io/kubedoio/rustshare-chat-observer@sha256:<previous-release-digest>
    docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d
    ```
 
 4. **If data corruption occurred, restore from backup**
    ```bash
-   ./scripts/restore-stack.sh ./backups/YYYYMMDDTHHMMSS
+   ./scripts/restore-stack.sh --with-chat ./backups/YYYYMMDDTHHMMSS
    ```
    Then run the post-restore smoke test:
    ```bash
@@ -187,10 +192,11 @@ If an upgrade fails or causes unexpected behavior:
 > 3. restore the **object-storage snapshot** if the bundle contains one
 >    (RustFS `/data` volume);
 > 4. redeploy the **previous release** (rebuild from the previous Git tag, or
->    revert `RUSTSHARE_BACKEND_IMAGE` to the previous version tag);
+>    use the previous release's recorded immutable image digest);
 > 5. run `scripts/final-launch-smoke.sh` to verify.
 >
-> Take a backup (`./scripts/backup-stack.sh`) before every upgrade so this path
+> Take a complete bundled-Chat backup (`./scripts/backup-stack.sh --with-chat`)
+> before every upgrade so this path
 > is always available.
 
 ---

@@ -37,11 +37,13 @@ and increase CPU, memory, and storage before approaching the disk threshold.
 
 Install the published deployment bundle at its recorded release SHA. Do not
 build Rust, install npm packages, compile Buzz, or use floating image tags.
-The release bundle must provide an immutable `RUSTSHARE_BACKEND_IMAGE` digest
-and the Buzz digest from `config/buzz-compatibility.env`.
+The release bundle must provide immutable `RUSTSHARE_BACKEND_IMAGE` and
+`ELEMBRA_CHAT_OBSERVER_IMAGE` digests, plus the Buzz digest from
+`config/buzz-compatibility.env`.
 
 ```bash
 RUSTSHARE_BACKEND_IMAGE=ghcr.io/kubedoio/rustshare-backend@sha256:<published-digest> \
+ELEMBRA_CHAT_OBSERVER_IMAGE=ghcr.io/kubedoio/rustshare-chat-observer@sha256:<published-digest> \
   ./scripts/elembra.sh init --with-chat --release
 ./scripts/elembra.sh up
 ./scripts/elembra.sh status

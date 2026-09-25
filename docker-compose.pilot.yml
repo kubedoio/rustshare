@@ -3,3 +3,11 @@ services:
     image: ${RUSTSHARE_BACKEND_IMAGE:?release profile requires an immutable RUSTSHARE_BACKEND_IMAGE}
     pull_policy: always
     build: null
+
+  chat-observer:
+    image: ${ELEMBRA_CHAT_OBSERVER_IMAGE:-chat-observer:source}
+    pull_policy: always
+
+  chat-bootstrap:
+    image: ${ELEMBRA_CHAT_OBSERVER_IMAGE:-chat-observer:source}
+    pull_policy: always

@@ -38,9 +38,15 @@ load_env() {
 	fi
 	set +a
 	export ELEMBRA_HOST_UID="$(id -u)" ELEMBRA_HOST_GID="$(id -g)"
-	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" && ! "${RUSTSHARE_BACKEND_IMAGE:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
-		echo "Release profile requires RUSTSHARE_BACKEND_IMAGE pinned by OCI digest." >&2
-		exit 2
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		if [[ ! "${RUSTSHARE_BACKEND_IMAGE:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "Release profile requires RUSTSHARE_BACKEND_IMAGE pinned by OCI digest." >&2
+			exit 2
+		fi
+		if [[ ! "${ELEMBRA_CHAT_OBSERVER_IMAGE:-}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "Release profile requires ELEMBRA_CHAT_OBSERVER_IMAGE pinned by OCI digest." >&2
+			exit 2
+		fi
 	fi
 }
 
@@ -79,6 +85,13 @@ init() {
 	if [[ ! -f .env ]]; then cp .env.example .env; fi
 	if [[ "${release}" == true ]]; then
 		local backend_image="${RUSTSHARE_BACKEND_IMAGE:-}"
+		local observer_image="${ELEMBRA_CHAT_OBSERVER_IMAGE:-}"
+		if [[ -z "${backend_image}" ]]; then
+			backend_image="$(sed -n 's/^RUSTSHARE_BACKEND_IMAGE=//p' .env | tail -n 1)"
+		fi
+		if [[ -z "${observer_image}" ]]; then
+			observer_image="$(sed -n 's/^ELEMBRA_CHAT_OBSERVER_IMAGE=//p' .env | tail -n 1)"
+		fi
 		if [[ -z "${backend_image}" ]]; then
 			echo "--release requires RUSTSHARE_BACKEND_IMAGE=registry/image@sha256:<digest>." >&2
 			exit 2
@@ -87,10 +100,19 @@ init() {
 			echo "RUSTSHARE_BACKEND_IMAGE must be pinned by OCI digest; tags are not supported." >&2
 			exit 2
 		fi
+		if [[ ! "${observer_image}" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
+			echo "ELEMBRA_CHAT_OBSERVER_IMAGE must be pinned by OCI digest; tags are not supported." >&2
+			exit 2
+		fi
 		if grep -q '^RUSTSHARE_BACKEND_IMAGE=' .env; then
 			sed -i "s|^RUSTSHARE_BACKEND_IMAGE=.*|RUSTSHARE_BACKEND_IMAGE=${backend_image}|" .env
 		else
 			printf '\nRUSTSHARE_BACKEND_IMAGE=%s\n' "${backend_image}" >>.env
+		fi
+		if grep -q '^ELEMBRA_CHAT_OBSERVER_IMAGE=' .env; then
+			sed -i "s|^ELEMBRA_CHAT_OBSERVER_IMAGE=.*|ELEMBRA_CHAT_OBSERVER_IMAGE=${observer_image}|" .env
+		else
+			printf 'ELEMBRA_CHAT_OBSERVER_IMAGE=%s\n' "${observer_image}" >>.env
 		fi
 		if grep -q '^ELEMBRA_DEPLOYMENT_PROFILE=' .env; then
 			sed -i 's|^ELEMBRA_DEPLOYMENT_PROFILE=.*|ELEMBRA_DEPLOYMENT_PROFILE=release|' .env
@@ -103,7 +125,11 @@ init() {
 		mkdir -p "${STATE_DIR}"
 		chmod 700 "${STATE_DIR}"
 		load_env
-		compose --profile chat-init build chat-bootstrap >/dev/null
+		if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+			compose --profile chat-init pull chat-bootstrap >/dev/null
+		else
+			compose --profile chat-init build chat-bootstrap >/dev/null
+		fi
 		RUSTSHARE_CHAT_AUTHORITY=buzz RUSTSHARE_CHAT_PROVISIONING=auto \
 			ELEMBRA_CHAT_ROTATE=false compose --profile chat-init run --rm --no-deps chat-bootstrap
 		chmod 600 "${CHAT_ENV}"
