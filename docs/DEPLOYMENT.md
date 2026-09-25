@@ -36,6 +36,11 @@ This keeps the production runtime simple: one backend container serves both the 
 
 ## Quick Start
 
+For the customer-facing Alpha operating contract, use the concise
+[Customer Alpha Operations Runbook](runbooks/customer-alpha.md). It defines
+the supported single-host topology, immutable artifact requirement, TLS/OIDC,
+backup/restore, upgrade, and support workflow.
+
 The documented Docker Compose workflow has been validated on Ubuntu 22.04 LTS,
 Ubuntu 24.04 LTS, and Debian 12. Other distributions with a supported Docker
 Engine and Docker Compose plugin may work but are not part of the validated

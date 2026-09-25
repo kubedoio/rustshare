@@ -1,0 +1,83 @@
+# Evidence record for the controlled Elembra Customer Alpha gate.
+#
+# This file is intentionally explicit: PENDING/FAIL is not treated as PASS.
+# Update it only with evidence from the exact release candidate and target
+# environment. Secrets, tokens, private keys, and customer data must never be
+# committed here.
+release_candidate: UNSET
+decision: NO-GO
+recorded_at_utc: 2026-09-25T00:00:00Z
+
+source:
+  elembra_sha: b23c938aedf301b1a95236c5d13d5dd459c57bc5
+  buzz_upstream: block/buzz
+  buzz_upstream_tag: relay-v0.2.1
+  buzz_upstream_sha: 6e5c462ac524de60d7edb46c66130fd779cc9006
+  buzz_fork_sha: 853cc331a80b4fb6551ad895f2d9039d8f903758
+  contract: v1alpha1
+  buzz_image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
+  elembra_image: PENDING_RELEASE_ARTIFACT
+  elembra_image_attestation: PENDING_RELEASE_ARTIFACT
+
+gates:
+  repository_governance:
+    status: FAIL
+    evidence: main protection was not enabled when this record was created
+  immutable_release_artifacts:
+    status: FAIL
+    evidence: Buzz digest is immutable and attested; Elembra release artifact is not selected
+  clean_install:
+    status: PENDING
+    evidence: exact post-merge main workflow still running
+  tls_wss:
+    status: NOT_RUN
+    evidence: requires the selected customer hostname and reverse proxy
+  oidc:
+    status: NOT_RUN
+    evidence: requires a real customer-selected OIDC provider
+  files_notes_chat_memory_search_ask:
+    status: NOT_RUN
+    evidence: target-environment product smoke required
+  admin_offboarding:
+    status: NOT_RUN
+    evidence: target-environment HTTP/UI proof required
+  backup:
+    status: NOT_RUN
+    evidence: backup bundle and encrypted off-host copy required
+  restore:
+    status: NOT_RUN
+    evidence: destructive isolated restore rehearsal required
+  upgrade:
+    status: NOT_RUN
+    evidence: old-release to candidate rehearsal required
+  rollback:
+    status: PENDING
+    evidence: Buzz binary rollback is documented; complete Elembra release rollback depends on the selected artifact
+  monitoring:
+    status: PENDING
+    evidence: Prometheus endpoints and thresholds are documented; target alert routing is not configured
+  alerting:
+    status: NOT_RUN
+    evidence: target paging/notification destination required
+  support_bundle:
+    status: PASS
+    evidence: scripts/elembra.sh support-bundle
+  cross_tenant_isolation:
+    status: PENDING
+    evidence: repository/product tests exist; target-environment adversarial campaign required
+  security_review:
+    status: NOT_RUN
+    evidence: bounded Alpha adversarial review required
+  buzz_conformance:
+    status: PENDING
+    evidence: post-merge exact-head run must complete
+  structural_guard:
+    status: PENDING
+    evidence: post-merge exact-head run must complete
+
+known_limitations:
+  - single-host Docker Compose only
+  - web-first Alpha; mobile and desktop are out of scope
+  - no HA, multi-region, or zero-downtime upgrade claim
+  - external penetration testing is not represented by this evidence file
+  - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope

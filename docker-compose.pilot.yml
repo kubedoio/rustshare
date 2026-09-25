@@ -1,5 +1,5 @@
 services:
   backend:
-    image: ${RUSTSHARE_BACKEND_IMAGE:-ghcr.io/kubedoio/rustshare-backend:latest}
-    pull_policy: ${RUSTSHARE_BACKEND_PULL_POLICY:-missing}
+    image: ${RUSTSHARE_BACKEND_IMAGE:?release profile requires an immutable RUSTSHARE_BACKEND_IMAGE}
+    pull_policy: always
     build: null

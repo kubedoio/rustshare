@@ -24497,6 +24497,12 @@
         "properties": {
           "ai_indexing": {},
           "audit": {},
+          "content_indexing": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "default_template": {
             "type": [
               "string",
@@ -24520,6 +24526,13 @@
               "string",
               "null"
             ]
+          },
+          "memory_projection": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Chat Memory projection policy, restricted to the authenticated admin\nApplication configuration contract."
           },
           "permissions": {},
           "renderer": {

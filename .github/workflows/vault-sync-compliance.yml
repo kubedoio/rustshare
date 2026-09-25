@@ -1,22 +1,13 @@
 name: Vault Sync Compliance
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, support-third-party-vault-v1]
-    paths:
-      - 'apps/obsidian-vault-sync/**'
-      - 'frontend/**'
-      - 'docs/**'
-      - 'backend/**'
-      - '.github/workflows/vault-sync-compliance.yml'
   pull_request:
     branches: [main, support-third-party-vault-v1]
-    paths:
-      - 'apps/obsidian-vault-sync/**'
-      - 'frontend/**'
-      - 'docs/**'
-      - 'backend/**'
-      - '.github/workflows/vault-sync-compliance.yml'
 
 jobs:
 
