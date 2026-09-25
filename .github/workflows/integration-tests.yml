@@ -16,6 +16,9 @@ on:
       - 'docker-compose*.yml'
       - 'scripts/guard-buzz-no-acl.sh'
       - 'scripts/run-buzz-conformance.sh'
+      - 'scripts/elembra.sh'
+      - 'scripts/run-alpha-dogfood.sh'
+      - 'docker/**'
   pull_request:
     branches: [main]
     paths:
@@ -31,6 +34,9 @@ on:
       - 'docker-compose*.yml'
       - 'scripts/guard-buzz-no-acl.sh'
       - 'scripts/run-buzz-conformance.sh'
+      - 'scripts/elembra.sh'
+      - 'scripts/run-alpha-dogfood.sh'
+      - 'docker/**'
   workflow_dispatch:
 
 concurrency:
@@ -209,3 +215,42 @@ jobs:
           else
             echo "No Buzz diagnostics file was produced at ${diagnostics_file}."
           fi
+
+  chat-product-acceptance:
+    name: Chat Product Acceptance
+    # This job intentionally starts with only the checkout. The wrapper owns
+    # .env/bootstrap creation; the dogfood driver uses the managed observer's
+    # pinned runtime for Buzz operations, so host Node/npm is not required.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Start clean bundled Chat deployment
+        run: |
+          ./scripts/elembra.sh init --with-chat
+          ./scripts/elembra.sh up
+
+      - name: Run live Chat product acceptance
+        run: ./scripts/run-alpha-dogfood.sh
+
+      - name: Verify data-preserving stop/start
+        run: |
+          ./scripts/elembra.sh down
+          ./scripts/elembra.sh up
+          ./scripts/elembra.sh status
+
+      - name: Chat deployment diagnostics
+        if: failure()
+        run: |
+          set -a
+          . config/buzz-compatibility.env
+          set +a
+          docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml --profile chat ps || true
+          docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml --profile chat logs --no-color --tail=250 backend chat-observer buzz-relay buzz-postgres buzz-redis buzz-rustfs || true
+
+      - name: Clean up Chat deployment
+        if: always()
+        run: ./scripts/elembra.sh down || true

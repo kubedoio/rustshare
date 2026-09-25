@@ -114,6 +114,8 @@ pub struct UpdateApplicationInput {
     pub ai_indexing: Option<serde_json::Value>,
     pub audit: Option<serde_json::Value>,
     pub ui_config: Option<serde_json::Value>,
+    pub memory_projection: Option<bool>,
+    pub content_indexing: Option<bool>,
 }
 
 impl ApplicationService {
@@ -484,7 +486,6 @@ impl ApplicationService {
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
         let application = self.get_application(key, tenant_id).await?;
-
         if application.enabled {
             sqlx::query(
                 "UPDATE application_enablements SET enabled = true, updated_at = now()
@@ -621,6 +622,14 @@ impl ApplicationService {
         tenant_id: Uuid,
     ) -> Result<ApplicationConfig, ApplicationError> {
         let application = self.get_application(key, tenant_id).await?;
+        let existing_configuration: serde_json::Value = sqlx::query_scalar(
+            "SELECT configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2",
+        )
+        .bind(key)
+        .bind(tenant_id)
+        .fetch_one(self.metadata_store.pool())
+        .await?;
 
         let display_name = input.display_name.unwrap_or(application.display_name);
         let description = input.description.unwrap_or(application.description);
@@ -680,7 +689,7 @@ impl ApplicationService {
             Some(input.ui_config.unwrap_or(application.ui_config)),
         );
 
-        let configuration = json!({
+        let mut configuration = json!({
             "displayName": display_name,
             "description": description,
             "rootPath": root_path,
@@ -692,6 +701,25 @@ impl ApplicationService {
             "audit": audit,
             "ui": ui_config
         });
+        if key == "io.elembra.chat" {
+            let Some(policy) = configuration.as_object_mut() else {
+                return Err(ApplicationError::InvalidData(
+                    "application configuration is not an object".to_string(),
+                ));
+            };
+            for (name, requested) in [
+                ("memory_projection", input.memory_projection),
+                ("content_indexing", input.content_indexing),
+            ] {
+                if let Some(value) = requested.or_else(|| {
+                    existing_configuration
+                        .get(name)
+                        .and_then(serde_json::Value::as_bool)
+                }) {
+                    policy.insert(name.to_string(), json!(value));
+                }
+            }
+        }
         sqlx::query(
             "UPDATE application_enablements
              SET configuration = $1, updated_at = now()
@@ -1817,6 +1845,8 @@ mod tests {
             ai_indexing: None,
             audit: None,
             ui_config: Some(json!({"sidebar": {"enabled": true}})),
+            memory_projection: None,
+            content_indexing: None,
         };
         let debug = format!("{:?}", input);
         assert!(debug.contains("Test"));

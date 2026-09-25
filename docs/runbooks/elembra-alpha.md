@@ -18,10 +18,10 @@ Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │            rustfs :9000
                               │
 Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-rustfs
-                              ▲
-        buzz-observer (host) ─┘   (NIP-42 AUTH + REQ, forwards the observed
-                                  kinds — stream messages 9/40002 and legacy
-                                  kind-1 — to POST /api/v1/integrations/buzz/events)
+                                      ▲
+             chat-observer (managed Compose service)
+             └─ signed community/registry discovery + state recovery
+                → HMAC webhook → Elembra observation index
 ```
 
 Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
@@ -32,13 +32,12 @@ Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
 |---|---|---|
 | Elembra backend/frontend | this repo (`docker/backend.Dockerfile`) | `docker compose up -d` |
 | Postgres / RustFS / nginx | `docker-compose.yml` | same |
-| Buzz relay + backing services | pinned by `config/buzz-compatibility.env` (see §3) | `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d` |
-| Observation bridge | `frontend/scripts/buzz-observer.mjs` | host process via `scripts/start-buzz-observer.sh` |
+| Buzz relay + backing services | pinned by `config/buzz-compatibility.env` (see §3) | managed Compose services |
+| Observation bridge | `frontend/scripts/buzz-observer.mjs` in the pinned Node image | managed `chat-observer`, restart-on-failure |
 
-**Why the observer runs on the host:** Buzz resolves the community from the
-connection *host* at row zero (ADR-0034). Browsers connect to
-`ws://localhost:7447`, so the observer must use the same host to observe the
-same community; an internal container network cannot present that Host value.
+The canonical Compose wrapper gives the observer and backend the same network
+namespace, so Buzz's host-derived community remains identical for browser,
+gateway, and observer without a host-side Node process.
 
 ---
 
@@ -47,52 +46,19 @@ same community; an internal container network cannot present that Host value.
 ### 2.1 Prerequisites
 
 - Docker Engine + Compose plugin (validated matrix: Ubuntu 22.04/24.04, Debian 12)
-- Node.js 22+ (for the observer and E2E driver)
-- The committed `config/buzz-compatibility.env` manifest, which selects the
-  supported Buzz commit, v1alpha1 contract, and immutable OCI image digest.
-  Load it before the Alpha Compose command:
-  `set -a; . config/buzz-compatibility.env; set +a`.
+- The committed `config/buzz-compatibility.env` manifest, loaded automatically
+  by `scripts/elembra.sh`, which selects the supported Buzz commit, v1alpha1
+  contract, and immutable OCI image digest.
 
 ### 2.2 Bring up
 
 ```bash
-# 1. Secrets
-cp .env.example .env
-./scripts/pre-flight.sh
+# One supported path. It generates base secrets and Chat identities in a
+# mode-0600 .elembra/chat.env; private keys are never printed.
+./scripts/elembra.sh init --with-chat
+./scripts/elembra.sh up
 
-# 2. Frontend deps (required for the key generator, observer, and E2E driver)
-npm install --prefix frontend
-
-# 3. Generate the Buzz identity keys (prints values; paste into .env)
-node frontend/scripts/alpha-gen-buzz-keys.mjs
-#    -> BUZZ_RELAY_OWNER_PUBKEY, BUZZ_RELAY_PRIVATE_KEY,
-#       BUZZ_RELAY_PUBKEY (labeled informational by the keygen, but REQUIRED
-#       for buzz mode: the workspace mapping pins it),
-#       RUSTSHARE_CHAT_BRIDGE_SECRET_KEY (== BUZZ_SERVICE_SK)
-
-# 4. Configure chat in .env (see §3)
-#    RUSTSHARE_CHAT_PROVISIONING=auto   (alpha default; zero-config bootstrap)
-#    RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL=ws://localhost:7447   (required for auto)
-#    RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true   (only when the relay runs on this host)
-#    RUSTSHARE_ADMIN_PASSWORD=<strong-password>  (set BEFORE first start, see §4)
-
-# 5. Base stack
-docker compose up -d
-
-# 6. Relay runtime
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d
-#    (the dogfood override makes the relay reachable from the containerized
-#    gateway by sharing the backend container's network namespace: the relay
-#    listens on the backend's own loopback, so the gateway's pinned
-#    127.0.0.1 relay address works while the Host-derived community stays
-#    localhost:7447 for gateway, observer, and browsers; the relay's
-#    host-published ports remain loopback-only)
-
-# 7. Observation bridge (foreground; supervise for dogfooding)
-BUZZ_SERVICE_SK=<bridge sk> BUZZ_COMMUNITY_ID=alpha-community \
-  nohup ./scripts/start-buzz-observer.sh >> buzz-observer.log 2>&1 &
-
-# 8. Admin session — required for the enable call (§2.4), which in auto mode
+# Admin session — required for the enable call (§2.4), which in auto mode
 #    (the alpha default) auto-provisions the deployment community
 #    (discover → verify → insert, idempotent; ADR-0036). Mutating API calls
 #    require CSRF double-submit (cookie + X-Rustshare-Csrf header, see §6);
@@ -101,34 +67,29 @@ curl -s -c /tmp/admin.jar -X POST http://localhost/api/v1/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"admin@localhost","password":"<admin-password>"}'
 CSRF="$(awk '$6 == "rustshare_csrf_token" { print $7 }' /tmp/admin.jar)"
-#    Manual deployments (RUSTSHARE_CHAT_PROVISIONING=manual, the default):
+#    External Buzz deployments (RUSTSHARE_CHAT_PROVISIONING=manual):
 #    use the admin page's "Connect existing Chat deployment" form, or the
 #    existing admin API POST .../community with the CSRF header above. The
 #    SSRF guard resolves the relay host, so placeholder hosts fail —
 #    "wss://relay.example.com" is not a real address. Alternatively, use
 #    scripts/run-alpha-dogfood.sh, which provisions everything and runs the
-#    full dogfood matrix. The relay's channel registry is UUID-keyed: the
-#    script creates the alpha channels there (kind-9007, open visibility) and
-#    the observer/E2E driver default to those UUID channel ids
-#    (BUZZ_CHANNEL_ID / BUZZ_CHANNEL2_ID in .env).
+#    full dogfood matrix. In bundled mode the observer discovers channels from
+#    Buzz's signed registry; operators never enter channel UUIDs.
 
-# 9. Verify
+# Verify
 curl -s http://localhost/health/ready
-tail -f buzz-observer.log     # expect "authenticated ... EOSE"
+./scripts/elembra.sh status   # includes chat-observer readiness
 ```
 
-### 2.3 Local-relay note (dev/dogfooding on one host)
+### 2.3 Bundled-relay SSRF trust
 
-The admin mapping API, the binding challenge, AND the Buzz gateway all
-validate the relay URL against the same SSRF guard
-(`resolve_chat_relay_socket_addrs`). A relay on `localhost`/private
-addresses is rejected **unless** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` is
-set (mirrors `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS`; off by default). **The
-flag is required for any localhost relay** — the binding challenge
-re-validates the stored URL (so no row can bypass the guard, however it was
-created), and the gateway needs the flag to reach a same-host relay in buzz
-mode. With the flag set, `ws://localhost:7447` is accepted and the mapping/
-bootstrap path works end to end.
+The bundled path sets `RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL` to exactly
+`ws://localhost:7447`. The Chat URL validator and Buzz gateway allow a private
+destination only when the complete configured URL matches that value. Redirects
+remain disabled, DNS results are pinned for the request, and the signed relay
+identity is still checked by the gateway and observer. Arbitrary loopback,
+RFC1918, link-local, and metadata targets remain rejected. External Buzz mode
+does not use this exception and must use a public/resolvable relay URL.
 
 No direct SQL is needed to create the mapping anymore: in `auto` mode
 enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
@@ -156,26 +117,22 @@ The admin Chat page and `applications/chat/status` distinguish these states.
 binding shows the binding UI; only when all five states are true is Chat ready
 for that user.
 
-- **Relay network namespace**: with the dogfood override, the relay shares
-  the backend container's network namespace (`network_mode: service:backend`).
-  Recreating the backend (e.g. `docker compose up -d backend` after changing
-  .env) orphans the relay; re-attach with
-  `docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml up -d buzz-relay`.
-- **`BUZZ_COMMUNITY_ID` after a relay wipe**: a fresh relay database generates
-  a NEW community id (auto-provisioning discovers it). After wiping the relay
-  volumes, re-read the discovered community id (backend log / chat status) and
-  update `BUZZ_COMMUNITY_ID` in `.env`, then restart the observer — otherwise
-  the observer forwards events that the bridge rejects with "Unknown
-  community" (403).
+- **Relay network namespace**: the supported wrapper recreates the backend,
+  relay, and observer together, preserving the host-derived community.
+- **Relay wipe**: a fresh relay database may generate a new community id. The
+  managed observer reports `community_changed` when this happens during its
+  lifetime; after a restart Elembra rejects the newly discovered community and
+  the observer becomes degraded. Re-enable or reprovision the Workspace↔Community
+  mapping through the admin contract.
 - **Health probes**: the backend exposes `/health` and `/health/ready`
   (not `/api/v1/health`); nginx maps `/api/v1` to the backend only.
 - **Ask provider**: set `ELEMBRA_LLM_API_KEY`/`BASE_URL`/`MODEL` in `.env`
   (see §3); the backend reads them at startup — recreate the backend after
   changing them. Leave the key empty for the documented gated Ask (503).
 
-> **Security note:** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` relaxes the SSRF guard
-> for Chat relay URLs only. Production deployments with public relays must
-> keep it unset (default fail-closed).
+> **Security note:** `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` remains only as an
+> explicit development/test escape hatch. The supported bundled path does not
+> set it.
 
 ### 2.4 Memory projection + content indexing (required)
 
@@ -211,21 +168,19 @@ curl -s -b /tmp/admin.jar -X POST \
   -H "X-Rustshare-Csrf: ${CSRF}"
 ```
 
-There is **no admin API** for the chat Application *configuration*. Without
-`memory_projection` and `content_indexing`, message bodies are not stored and
-the Memory/Ask pipeline stays empty (the company-memory loop is dead). Enable
-them once per tenant via SQL — the UPDATE must match a row; if it matches 0
-rows the Chat application is not enabled for this tenant (run the enable call
-above first):
+Memory projection and content indexing use the tenant-scoped, audited admin
+Application configuration API. Without these flags, message bodies are not
+stored and the Memory/Ask pipeline stays empty:
 
-```sql
-UPDATE application_enablements
-SET configuration = configuration || '{"memory_projection": true, "content_indexing": true}'::jsonb
-WHERE application_id = 'io.elembra.chat'
-  AND tenant_id = '<tenant_id>' AND workspace_id = '<tenant_id>';
+```bash
+curl -s -b /tmp/admin.jar -X PATCH \
+  http://localhost/api/v1/admin/applications/io.elembra.chat \
+  -H "X-Rustshare-Csrf: ${CSRF}" -H 'content-type: application/json' \
+  -d '{"memory_projection":true,"content_indexing":true}'
 ```
 
-`scripts/run-alpha-dogfood.sh` performs this step automatically (P02d).
+`scripts/run-alpha-dogfood.sh` performs this step through the same public
+contract (P02d); direct production setup SQL is not supported.
 
 ### 2.4.1 Chat UI state machine
 
@@ -249,9 +204,8 @@ are shown as "Unknown Buzz user" with a shortened pubkey.
 ### 2.5 Teardown
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml down -v   # relay volumes removed
-docker compose down -v                                                     # base stack + volumes
-pkill -f start-buzz-observer.sh                                             # supervisor INT/TERM trap stops the node child
+./scripts/elembra.sh down        # stops services and preserves all volumes
+./scripts/elembra.sh reset --yes # explicit destructive reset
 ```
 
 `down -v` also drops the Elembra database — for a real dogfooding period keep
@@ -265,18 +219,15 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | Variable | Purpose | Default |
 |---|---|---|
 | `RUSTSHARE_CHAT_AUTHORITY` | `local` (coarse community gate) or `buzz` (upstream access/check) | `local` |
-| `RUSTSHARE_CHAT_PROVISIONING` | chat community provisioning mode: `auto` (zero-config bootstrap, ADR-0036) or `manual` | `manual` |
+| `RUSTSHARE_CHAT_PROVISIONING` | chat community provisioning mode: `auto` (bundled zero-config bootstrap, ADR-0036) or `manual` (external Buzz) | `auto` bundled / `manual` external |
 | `RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL` | relay URL (`ws://`/`wss://`) discovered for auto-provisioning; required when provisioning is `auto` | — |
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
-| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | bridge service key: NIP-43 9030/9031 AND the gateway's NIP-98 service key (== `BUZZ_SERVICE_SK`); its public half is `BUZZ_RELAY_OWNER_PUBKEY`, which the relay also trusts via `RELAY_TRUSTED_SERVICE_PUBKEYS` | empty |
-| `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY` | allow loopback/private relay URLs (dev only) | `false` |
+| `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | internally derived from the managed deployment service identity; external Buzz mode may provide it explicitly | empty |
+| `RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL` | exact bundled relay URL allowed by the narrow private-target trust model | `ws://localhost:7447` (bundled) |
 | `BUZZ_RELAY_IMAGE` | relay image loaded from `config/buzz-compatibility.env`; the supported value is immutable by OCI digest | manifest |
-| `BUZZ_RELAY_OWNER_PUBKEY` | relay owner / bridge public key (relay env `RELAY_OWNER_PUBKEY` + `RELAY_TRUSTED_SERVICE_PUBKEYS`) | — |
-| `BUZZ_RELAY_PRIVATE_KEY` | relay identity private key | — |
-| `BUZZ_SERVICE_SK` | bridge secret key (observer AUTH + E2E driver) | — |
+| `BUZZ_RELAY_OWNER_PUBKEY`, `BUZZ_RELAY_PRIVATE_KEY`, `BUZZ_SERVICE_SK` | generated and persisted in `.elembra/chat.env`; existing valid values are reused | internal |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
-| `BUZZ_COMMUNITY_ID` | community id forwarded by the observer; must equal the mapping | — |
-| `BUZZ_CHANNEL_ID` / `BUZZ_CHANNEL2_ID` | relay UUID-keyed channel ids (kind-9007 registry rows, created by `run-alpha-dogfood.sh`, open visibility) | `585e55c7-97d9-43ad-bbe3-a355cad93082` / `4bec90c0-4c14-48cc-8958-da8c258f9759` |
+| `BUZZ_COMMUNITY_ID`, `BUZZ_CHANNEL_ID`, `BUZZ_CHANNEL2_ID` | not part of the supported operator contract; the observer discovers community and channels from Buzz | none |
 | `BUZZ_POSTGRES_PASSWORD`, `BUZZ_RUSTFS_ACCESS_KEY`, `BUZZ_RUSTFS_SECRET_KEY` | dedicated Buzz RustFS runtime and `buzz-media` bucket | `buzz_dev` / `buzz_dev` / `buzz_dev_secret` |
 | `ELEMBRA_LLM_API_KEY` | OpenAI-compatible Ask provider key (DeepSeek, OpenAI, …); leave unset to keep Ask gated (`ask_available=false`, #244) | empty |
 | `ELEMBRA_LLM_BASE_URL` | provider base URL, e.g. `https://api.deepseek.com/v1` | empty |
@@ -306,25 +257,17 @@ namespace. This baseline keeps a separate pinned RustFS service and
 credentials (RustFS 1.0.0 GA; pinned by OCI digest) to avoid changing storage
 ownership, lifecycle, or migration semantics while repairing conformance.
 
-Generate all keys once: `node frontend/scripts/alpha-gen-buzz-keys.mjs`. The
-relay owner key is the bridge identity: its public half is
+`./scripts/elembra.sh init --with-chat` generates all deployment keys in the
+managed bootstrap container. The relay owner key is the bridge identity: its public half is
 `RELAY_OWNER_PUBKEY` on the relay, its secret half is
 `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` in Elembra and `BUZZ_SERVICE_SK` for the
 observer/E2E.
 
-In the alpha/dogfood deployment there is exactly one canonical source for the
-bridge service secret: `BUZZ_SERVICE_SK`. `docker-compose.alpha.yml` sets
-`RUSTSHARE_CHAT_BRIDGE_SECRET_KEY: ${BUZZ_SERVICE_SK:?...}` directly, so a
-stale explicit `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` cannot silently win. Before
-starting the alpha stack, validate key consistency with:
-
-```bash
-node frontend/scripts/alpha-validate-buzz-config.mjs
-```
-
-`scripts/pre-flight.sh` runs this automatically when `BUZZ_SERVICE_SK` is set;
-`scripts/run-alpha-dogfood.sh` runs it as a pre-check. The validation script
-derives public keys from the configured secrets and checks that:
+In the bundled deployment there is exactly one canonical logical service
+identity. `chat-bootstrap` derives all secondary environment values and fails
+on an inconsistent existing key set. Validation is implicit in the bootstrap
+command; no host-side Node/npm installation is part of the supported path.
+The diagnostic checks cover:
 
 - `BUZZ_SERVICE_SK` derives `BUZZ_RELAY_OWNER_PUBKEY`;
 - `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` equals `BUZZ_SERVICE_SK` when both are set;
@@ -378,9 +321,9 @@ It never prints private secrets.
 |---|---|---|
 | Backend | `curl -s http://localhost/health/ready` | `"status":"ready"` |
 | Relay TCP | `nc -z localhost 7447` (or `bash -c 'exec 3<>/dev/tcp/localhost/7447'` if netcat is missing) | exit 0 |
-| Observer | `tail -n 5 buzz-observer.log` | recent `EOSE` and no reconnect spam |
+| Observer | `./scripts/elembra.sh status` | `chat-observer` is healthy and `/ready` reports `ready` |
 | Ingestion | `docker logs rustshare-backend-1 | grep "buzz event rejected"` | none (or understood) |
-| E2E matrix | `ADMIN_EMAIL=... ADMIN_PASSWORD=... BUZZ_SERVICE_SK=... BUZZ_COMMUNITY_ID=alpha-community ./scripts/run-alpha-dogfood.sh` | all PASS |
+| E2E matrix | `./scripts/run-alpha-dogfood.sh` after the supported install | all PASS |
 
 ---
 
@@ -388,14 +331,14 @@ It never prints private secrets.
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| Message never appears in Elembra | webhook secret drift; observer down; mapping/binding missing | check `buzz-observer.log` for `forward failed (permanent 403)`; check backend log for the rejection category (`Unknown community` / `Unbound author`) |
+| Message never appears in Elembra | webhook secret drift; observer down; mapping/binding missing | run `./scripts/elembra.sh status`; inspect `docker compose logs chat-observer` for the safe rejection category (`Unknown community` / `Unbound author`) |
 | Observer reconnect loop | relay down; `BUZZ_SERVICE_SK` wrong | restart relay; verify key |
 | Publish "relay unreachable" | relay down; wrong `BUZZ_RELAY_WS` | relay health; browser console |
 | Publish "relay rejected: …" | not admitted at the relay; revoked | check relay membership (9030 delivered); run the E2E admit step |
 | Ask 503 | LLM provider not configured | configure provider; status surface `ask_available` (issue #244) |
-| Channel list frozen | observer dead or WS exhaustion (fixed: 15s poll covers channels) | restart observer |
-| Binding challenge 400 "relay_url must resolve to an allowed address" | local relay without `RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY=true` | set flag + restart backend |
-| Buzz 401 / "service identity rejected" | bridge secret (`RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` / `BUZZ_SERVICE_SK`) does not match the relay's `RELAY_TRUSTED_SERVICE_PUBKEYS` allowlist | regenerate keys with `alpha-gen-buzz-keys.mjs`, update `.env`, run `alpha-validate-buzz-config.mjs`, then recreate backend + relay containers |
+| Channel list frozen | observer unhealthy or WS exhaustion | `docker compose logs chat-observer`; Compose restarts it automatically |
+| Binding challenge rejects bundled localhost | deployment URL was changed without changing the explicit trust anchor | restore the exact configured URL or perform an explicit operator configuration change; do not enable the generic local-relay flag |
+| Buzz 401 / "service identity rejected" | generated service identity does not match the relay allowlist | run `./scripts/elembra.sh init --with-chat`; inconsistent existing keys fail closed |
 | 403 on mutating calls | missing CSRF header (browser clients get it automatically) | API tooling: send `X-Rustshare-Csrf` matching the cookie |
 
 ---
@@ -408,8 +351,8 @@ It never prints private secrets.
   history; Elembra's observation index (its own Postgres) survives, and on
   observer reconnect the relay replays whatever events it still holds (deduped
   by event id). Events the relay no longer holds are not re-projected.
-- Keys: the bridge keys live in `.env` (not in the backup bundle — store in a
-  secrets manager). User Buzz keys never leave the browser; backup is the user's
+- Keys: the bridge keys live in `.elembra/chat.env` with mode 0600 (not in the
+  backup bundle — store them in a secrets manager). User Buzz keys never leave the browser; backup is the user's
   encrypted envelope.
 
 ---
@@ -438,14 +381,12 @@ Full classification: Alpha readiness doc §8. Relevant here:
 ## 9. Rollback / reset
 
 ```bash
-# Stop the dogfood additions, keep Elembra:
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml stop buzz-relay buzz-postgres buzz-redis buzz-rustfs
-pkill -f start-buzz-observer.sh
+# Stop the supported deployment and keep data:
+./scripts/elembra.sh down
 
-# Full reset (nuclear):
-docker compose -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml down -v
-docker compose down -v
-# then §2.2 again
+# Full reset (explicitly destructive):
+./scripts/elembra.sh reset --yes
+# then ./scripts/elembra.sh init --with-chat && ./scripts/elembra.sh up
 ```
 
 Relay identity keys: regenerating `BUZZ_RELAY_PRIVATE_KEY` changes the relay's

@@ -167,6 +167,40 @@ pub async fn resolve_chat_relay_socket_addrs(
     resolve_socket_addrs_internal(host, port, allow_internal_chat_relay()).await
 }
 
+/// Resolve a configured Chat relay URL. A private destination is allowed only
+/// when the complete URL equals the explicitly configured deployment-owned
+/// relay URL. The legacy flag remains available for development fixtures, but
+/// it cannot turn arbitrary private URLs into trusted Chat relays.
+pub async fn resolve_chat_relay_socket_addrs_for_url(
+    relay_url: &str,
+) -> Result<Vec<SocketAddr>, String> {
+    let parsed =
+        url::Url::parse(relay_url).map_err(|error| format!("invalid relay URL: {error}"))?;
+    if !matches!(parsed.scheme(), "ws" | "wss")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("Chat relay URL must be a credential-free ws:// or wss:// URL".into());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Chat relay URL must include a host".to_string())?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "Chat relay URL must include a valid port".to_string())?;
+    let configured = std::env::var("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL").ok();
+    let deployment_owned = configured
+        .as_deref()
+        .and_then(|value| url::Url::parse(value).ok())
+        .is_some_and(|value| value == parsed);
+    if (deployment_owned || allow_internal_chat_relay()) && host.eq_ignore_ascii_case("localhost") {
+        return Ok(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)]);
+    }
+    resolve_socket_addrs_internal(host, port, deployment_owned || allow_internal_chat_relay()).await
+}
+
 /// Validate a file or folder name.
 /// Returns Ok(()) if valid, or Err with a descriptive message.
 pub fn validate_name(name: &str) -> Result<(), String> {
@@ -318,6 +352,25 @@ mod tests {
         std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
         let result = resolve_chat_relay_socket_addrs("10.0.0.7", 7447).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn configured_chat_relay_allows_only_the_exact_private_url() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL");
+        let _restore_legacy = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
+        std::env::set_var("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL", "ws://localhost:7447");
+        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "false");
+        assert!(
+            resolve_chat_relay_socket_addrs_for_url("ws://localhost:7447")
+                .await
+                .is_ok()
+        );
+        assert!(
+            resolve_chat_relay_socket_addrs_for_url("ws://127.0.0.1:7447")
+                .await
+                .is_err()
+        );
     }
 
     #[test]

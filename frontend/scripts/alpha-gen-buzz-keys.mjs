@@ -1,4 +1,6 @@
 // frontend/scripts/alpha-gen-buzz-keys.mjs
+// Legacy proof/dogfood helper. Supported deployments generate keys inside the
+// managed chat-bootstrap container via scripts/elembra.sh.
 // Generates the two keypairs a clean Elembra Alpha deployment needs:
 //   1. the relay owner / Elembra bridge service key (RELAY_OWNER_PUBKEY on
 //      the relay side, RUSTSHARE_CHAT_BRIDGE_SECRET_KEY + BUZZ_SERVICE_SK on

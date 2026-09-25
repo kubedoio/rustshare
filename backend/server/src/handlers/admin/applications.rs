@@ -38,6 +38,10 @@ pub struct UpdateApplicationRequest {
     pub ai_indexing: Option<serde_json::Value>,
     pub audit: Option<serde_json::Value>,
     pub ui_config: Option<serde_json::Value>,
+    /// Chat Memory projection policy, restricted to the authenticated admin
+    /// Application configuration contract.
+    pub memory_projection: Option<bool>,
+    pub content_indexing: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +242,8 @@ pub async fn update_application(
                 ai_indexing: body.ai_indexing,
                 audit: body.audit,
                 ui_config: body.ui_config,
+                memory_projection: body.memory_projection,
+                content_indexing: body.content_indexing,
             },
             tenant_id,
         )

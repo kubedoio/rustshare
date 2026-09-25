@@ -115,6 +115,34 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 >
 > **Record the admin password immediately.** The bootstrap file lives in container-local storage and does **not** survive container recreation (`docker compose down`, `--force-recreate`). Once the container is recreated, an unrecorded auto-generated password is unrecoverable. For a durable credential, set `RUSTSHARE_ADMIN_PASSWORD` in `.env` **before first start** (an empty value is treated as unset and triggers auto-generation).
 
+## Bundled Buzz Chat
+
+The supported bundled Chat installation is one operator entry point. It loads
+the pinned compatibility manifest, keeps Buzz PostgreSQL/Redis/RustFS separate
+from Elembra storage, generates missing deployment identities in a container,
+and starts the managed observation bridge. No host Node.js/npm, community UUID,
+channel UUID, or private-key copy/paste is required.
+
+```bash
+./scripts/elembra.sh init --with-chat
+./scripts/elembra.sh up
+./scripts/elembra.sh status
+./scripts/elembra.sh down        # preserves data
+./scripts/elembra.sh reset --yes # explicitly deletes volumes and Chat state
+```
+
+After login, enable Chat from the admin UI. The existing zero-config bootstrap
+discovers and verifies the Buzz community, while the managed observer discovers
+visible channels from Buzz's signed registry and reconciles signed state after
+restart. Buzz remains the Chat authority; Elembra stores only verified derived
+observations and its tenant/application mappings.
+
+For an external compatible Buzz deployment, omit `--with-chat`, keep
+`RUSTSHARE_CHAT_PROVISIONING=manual`, and configure the external `ws://` or
+`wss://` relay through the admin mapping flow. The bundled private-relay trust
+anchor is not applied to external deployments. See the
+[Alpha runbook](runbooks/elembra-alpha.md) for lifecycle and recovery details.
+
 ---
 
 ## TLS / HTTPS Setup

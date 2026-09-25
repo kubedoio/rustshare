@@ -22,7 +22,7 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use nostr::{Event as NostrEvent, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::{Client, Response, StatusCode};
-use rustshare_core::validation::resolve_chat_relay_socket_addrs;
+use rustshare_core::validation::resolve_chat_relay_socket_addrs_for_url;
 use rustshare_resource_auth::{
     BuzzAuthority, BuzzAuthorityError, BuzzChannelInfo, BuzzChannelKind, BuzzReadDecision,
     BuzzReadRequest,
@@ -395,10 +395,7 @@ impl BuzzGatewayClient {
         let host = base
             .host_str()
             .ok_or_else(|| BuzzAuthorityError::Config("relay_url must include a host".into()))?;
-        let port = base.port_or_known_default().ok_or_else(|| {
-            BuzzAuthorityError::Config("relay_url must include a valid port".into())
-        })?;
-        let addrs = resolve_chat_relay_socket_addrs(host, port)
+        let addrs = resolve_chat_relay_socket_addrs_for_url(relay_url)
             .await
             .map_err(|_| {
                 BuzzAuthorityError::Config("relay target failed SSRF validation".into())
