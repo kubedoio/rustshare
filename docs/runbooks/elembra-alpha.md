@@ -530,7 +530,7 @@ suite seeds the relay itself over its public
 HTTP surface (`POST /events`) and ingests the same signed events through the
 real in-process observation bridge.
 
-Proofs covered (each a `#[tokio::test]`):
+Live proofs covered (13 `#[tokio::test]` cases):
 
 1. allowed channel read succeeds (member + available message → Allow + fetch
    returns the message bytes);
@@ -545,24 +545,25 @@ Proofs covered (each a `#[tokio::test]`):
    relay, per-message parity);
 7. channel listing is authoritative (registry lists channels with ZERO
    observations; relay revocation reflected on the next call);
-8. no Elembra ACL / no direct Buzz DB access — structural guard
-   (`scripts/guard-buzz-no-acl.sh`);
-9. Memory/Search/Ask cannot bypass Buzz (message indexed + searchable, but
+8. Memory/Search/Ask cannot bypass Buzz (message indexed + searchable, but
    RAG materialization returns nothing after relay revocation);
-10. a 64-message page authorizes in exactly ONE relay batch round-trip
+9. a 64-message page authorizes in exactly ONE relay batch round-trip
     (counted via the relay's own metrics endpoint; the latency budget itself
     is tracked separately);
-11. timeline authorization latency stays within the 500 ms budget
+10. timeline authorization latency stays within the 500 ms budget
     (`live_p11`, observed median 192 ms in the pinned baseline);
-12. relay deletion is applied by reconciliation (`live_p12`) and the deleted
+11. relay deletion is applied by reconciliation (`live_p12`) and the deleted
     message remains existence-hidden;
-13. bootstrap identity discovery (`live_p13`, ADR-0036): the
+12. bootstrap identity discovery (`live_p13`, ADR-0036): the
     community-identity endpoint returns the deployment community and relay
     pubkey, the pubkey matches the harness pin, the response signature
     verifies, and authorization still works with the discovered identity;
-14. NIP-98 service authentication is required (`live_p14`): missing and
+13. NIP-98 service authentication is required (`live_p14`): missing and
     malformed authorization headers, plus a valid event signed by an untrusted
     key, receive `401` before community state is disclosed.
+
+The no-Elembra-ACL and no-direct-Buzz-DB check is a separate structural guard,
+not one of the live proof cases: `scripts/guard-buzz-no-acl.sh`.
 
 Run it:
 
