@@ -89,6 +89,7 @@ let discoveredChannels = new Set();
 let lastReconcileSince = since;
 const deliveredEventKeys = new Set();
 const pendingEventKeys = new Set();
+const pendingDeliveries = new Map();
 const MAX_DELIVERED_KEYS = 10000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -227,24 +228,34 @@ function contextForEvent(event, channelId, override = {}) {
 }
 
 function forwardEvent(event, context = contextForEvent(event)) {
-	if (!event?.id || state.changedCommunity) return;
+	if (!event?.id || state.changedCommunity) return Promise.resolve(false);
 	const eventKey = `${event.id}:${context.event_type || 'created'}`;
-	if (deliveredEventKeys.has(eventKey) || pendingEventKeys.has(eventKey)) return;
+	if (deliveredEventKeys.has(eventKey)) return Promise.resolve(true);
+	const pending = pendingDeliveries.get(eventKey);
+	if (pending) return pending;
 	pendingEventKeys.add(eventKey);
-	forwardChain = forwardChain
+	const delivery = forwardChain
 		.then(async () => {
 			const delivered = await deliver(event, context);
 			pendingEventKeys.delete(eventKey);
-			if (!delivered) return;
+			if (!delivered) return false;
 			deliveredEventKeys.add(eventKey);
 			if (deliveredEventKeys.size > MAX_DELIVERED_KEYS)
 				deliveredEventKeys.delete(deliveredEventKeys.values().next().value);
+			return true;
 		})
 		.catch((error) => {
 			pendingEventKeys.delete(eventKey);
 			state.observation = 'degraded';
 			logError('forward chain failed', error);
+			return false;
 		});
+	pendingDeliveries.set(eventKey, delivery);
+	forwardChain = delivery;
+	delivery.then(() => {
+		if (pendingDeliveries.get(eventKey) === delivery) pendingDeliveries.delete(eventKey);
+	});
+	return delivery;
 }
 
 async function deliver(event, context) {
@@ -301,6 +312,7 @@ async function reconcile() {
 		let cursor;
 		let pages = 0;
 		let newest = lastReconcileSince;
+		const deliveries = [];
 		do {
 			const query = new URL('/api/v1/relay/state/events', relayHttp);
 			if (lastReconcileSince !== undefined)
@@ -314,7 +326,7 @@ async function reconcile() {
 			for (const entry of page.entries) {
 				if (!entry?.event || !entry.context || entry.context.community_id !== state.community)
 					continue;
-				forwardEvent(entry.event, entry.context);
+				deliveries.push(forwardEvent(entry.event, entry.context));
 				const created = Number(entry.event.created_at);
 				if (Number.isFinite(created)) newest = Math.max(newest ?? created, created);
 			}
@@ -325,7 +337,10 @@ async function reconcile() {
 		if (cursor) throw new Error('state reconciliation exceeded the 100-page limit');
 		// Readiness means the bounded replay has reached Elembra, not merely that
 		// its events have been placed behind a potentially slow delivery chain.
-		await forwardChain;
+		const delivered = await Promise.all(deliveries);
+		if (delivered.some((ok) => !ok)) {
+			throw new Error('one or more reconciled events were not delivered');
+		}
 		lastReconcileSince = newest;
 		state.lastRecoveryAt = new Date().toISOString();
 		if (state.observation !== 'degraded') {
