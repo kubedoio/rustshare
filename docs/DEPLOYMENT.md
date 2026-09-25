@@ -125,7 +125,7 @@ channel UUID, or private-key copy/paste is required.
 
 The manifest currently pins Buzz upstream `relay-v0.2.1` at
 `6e5c462ac524de60d7edb46c66130fd779cc9006`, the Elembra fork at
-`90f3a81b3dc4fa086931fc64a03f3e9508184122`, and the immutable multi-arch
+`e58dc46b59f40ad635677008cf7b7f43eafa4085`, and the immutable multi-arch
 image digest. The manifest is authoritative; do not replace it with a Buzz
 `main` tag or a locally built floating image. The current fork/image values
 are always read from this manifest rather than copied into deployment files.
