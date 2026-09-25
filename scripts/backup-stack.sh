@@ -99,19 +99,35 @@ mkdir -p "${TARGET_DIR}"
 
 cd "${PROJECT_ROOT}"
 
-if [[ "${WITH_CHAT}" == true && -f config/buzz-compatibility.env ]]; then
+if [[ -f .env ]]; then
+	# shellcheck disable=SC1091
+	set -a
+	. ./.env
+	set +a
+fi
+if [[ -f config/buzz-compatibility.env ]]; then
 	# shellcheck disable=SC1091
 	set -a
 	. ./config/buzz-compatibility.env
 	set +a
 fi
+if [[ -f .elembra/chat.env ]]; then
+	# shellcheck disable=SC1091
+	set -a
+	. ./.elembra/chat.env
+	set +a
+fi
 
 compose() {
+	local files=(-f docker-compose.yml)
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		files+=(-f docker-compose.pilot.yml)
+	fi
 	if [[ "${WITH_CHAT}" == true ]]; then
-		docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
-			-f docker-compose.dogfood.yml --profile chat "$@"
+		files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
+		docker compose "${files[@]}" --profile chat "$@"
 	else
-		docker compose "$@"
+		docker compose "${files[@]}" "$@"
 	fi
 }
 

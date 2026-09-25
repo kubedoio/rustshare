@@ -28,15 +28,21 @@ if [[ -f config/buzz-compatibility.env ]]; then
 	. ./config/buzz-compatibility.env
 	set +a
 fi
+if [[ -f .elembra/chat.env ]]; then
+	# shellcheck disable=SC1091
+	set -a
+	. ./.elembra/chat.env
+	set +a
+fi
 set -u
 
 compose() {
-	docker compose \
-		-f docker-compose.yml \
-		-f docker-compose.alpha.yml \
-		-f docker-compose.dogfood.yml \
-		--profile chat \
-		"$@"
+	local files=(-f docker-compose.yml)
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		files+=(-f docker-compose.pilot.yml)
+	fi
+	files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
+	docker compose "${files[@]}" --profile chat "$@"
 }
 
 redact() {

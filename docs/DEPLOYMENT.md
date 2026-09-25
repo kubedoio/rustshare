@@ -438,8 +438,10 @@ Before deploying to production:
 
 6. **Verify backups and restore**
    - Run `./scripts/backup-stack.sh --with-chat` for the bundled Chat profile
-   - Run `./scripts/run-restore-drill.sh`
-   - Confirm data is recoverable
+   - Run `./scripts/run-restore-drill.sh` for the core-only isolated drill
+   - Separately rehearse `./scripts/restore-stack.sh --with-chat <backup-dir>`
+     on an isolated Alpha host to verify bundled Chat recovery
+   - Confirm Elembra and Buzz data are recoverable
 
 7. **Run the deployment test**
    ```bash

@@ -100,21 +100,35 @@ EDGE_SERVICE="${EDGE_SERVICE:-nginx}"
 
 cd "${PROJECT_ROOT}"
 
+if [[ -f .env ]]; then
+	# shellcheck disable=SC1091
+	set -a
+	. ./.env
+	set +a
+fi
 if [[ "${WITH_CHAT}" == true ]]; then
 	# shellcheck disable=SC1091
 	set -a
 	. ./config/buzz-compatibility.env
+	if [[ -f .elembra/chat.env ]]; then
+		# shellcheck disable=SC1091
+		. ./.elembra/chat.env
+	fi
 	set +a
 	BUZZ_POSTGRES_SERVICE="${BUZZ_POSTGRES_SERVICE:-buzz-postgres}"
 	BUZZ_RUSTFS_SERVICE="${BUZZ_RUSTFS_SERVICE:-buzz-rustfs}"
 fi
 
 compose() {
+	local files=(-f docker-compose.yml)
+	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+		files+=(-f docker-compose.pilot.yml)
+	fi
 	if [[ "${WITH_CHAT}" == true ]]; then
-		docker compose -f docker-compose.yml -f docker-compose.alpha.yml \
-			-f docker-compose.dogfood.yml --profile chat "$@"
+		files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
+		docker compose "${files[@]}" --profile chat "$@"
 	else
-		docker compose "$@"
+		docker compose "${files[@]}" "$@"
 	fi
 }
 
@@ -124,6 +138,14 @@ require_file "${BACKUP_DIR}/rustfs-data.tar.gz"
 if [[ "${WITH_CHAT}" == true ]]; then
 	require_file "${BACKUP_DIR}/buzz-postgres.sql.gz"
 	require_file "${BACKUP_DIR}/buzz-rustfs-data.tar.gz"
+fi
+
+echo "Stopping application traffic..."
+compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
+if [[ "${WITH_CHAT}" == true ]]; then
+	# Stop every writer before restoring either Buzz store. In particular, the
+	# relay shares the backend network namespace in the bundled topology.
+	compose stop buzz-relay chat-observer >/dev/null 2>&1 || true
 fi
 
 echo "Starting core services..."
@@ -139,14 +161,6 @@ if [[ "${WITH_CHAT}" == true ]]; then
 	wait_for_healthy "${BUZZ_POSTGRES_SERVICE}"
 	wait_for_healthy "${BUZZ_RUSTFS_SERVICE}"
 	wait_for_healthy buzz-redis
-fi
-
-echo "Stopping application traffic..."
-compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
-if [[ "${WITH_CHAT}" == true ]]; then
-	# Stop every writer before restoring either Buzz store. In particular, the
-	# relay shares the backend network namespace in the bundled topology.
-	compose stop buzz-relay chat-observer >/dev/null 2>&1 || true
 fi
 
 echo "Restoring PostgreSQL database..."

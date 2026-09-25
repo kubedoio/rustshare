@@ -3,7 +3,8 @@
 This document defines how RustShare maintainers cut, publish, and manage releases.
 
 > **Maintainers:** @senolcolak, @zoorpha  
-> **Registry:** `ghcr.io/kubedoio/rustshare-backend`  
+> **Registries:** `ghcr.io/kubedoio/rustshare-backend` and
+> `ghcr.io/kubedoio/rustshare-chat-observer`
 > **CI Workflow:** `.github/workflows/release.yml` (stable + prerelease tags), `.github/workflows/pilot-release.yml` (main/edge)
 
 ---
@@ -203,18 +204,21 @@ tag the stable version.
 `release.yml` publishes images in strict order — the released tags are created
 only after the candidate image has passed the boot gate:
 
-1. **Build candidate** — the image is built (multi-arch, SBOM/provenance
+1. **Build candidates** — the backend and managed Chat observer images are built
+   (multi-arch, SBOM/provenance
    attestations, OCI labels) and pushed under the unadvertised candidate tag
    `candidate-<run_id>` only. The released tags are NOT attached during the
    build.
-2. **Boot smoke test** — the candidate image is booted per platform (exec bit
-   + dynamic linker checks, full exit-code taxonomy and glibc-marker scan).
+2. **Boot smoke test** — the backend candidate is booted per platform (exec
+   bit + dynamic linker checks, full exit-code taxonomy and glibc-marker scan),
+   and the observer candidate runs its entrypoint script syntax check per
+   platform.
 3. **Promote** — only when the boot gate passed, `docker buildx imagetools
-   create` re-tags the verified digest with the released tags (version, and
+   create` re-tags both verified digests with the released tags (version, and
    for stable: `X.Y`, `X`, `latest`) plus `sha-<short>`. No rebuild happens:
-   promotion only creates references to the digest the gate tested.
-4. **SBOM / provenance** — SBOMs for the binaries and the image, and build
-   provenance attestations, are generated from the same digest.
+   promotion only creates references to the digests the gate tested.
+4. **SBOM / provenance** — SBOMs for the binaries and both images, and build
+   provenance attestations, are generated from the same verified digests.
 5. **Release** — the GitHub Release (stable or prerelease) is created from the
    tag.
 
@@ -268,7 +272,9 @@ Before pushing a stable tag, complete every step:
 
 8. **Verify the published artifacts**
    - **GitHub Release:** Auto-generated from the tag.
-   - **Docker tags:** `X.Y.Z`, `X.Y`, `X`, `latest` on `ghcr.io/kubedoio/rustshare-backend`.
+   - **Docker tags:** `X.Y.Z`, `X.Y`, `X`, `latest`, and `sha-<short>` on both
+     `ghcr.io/kubedoio/rustshare-backend` and
+     `ghcr.io/kubedoio/rustshare-chat-observer`.
    - **SBOM & attestation:** Verify attestation is available in the package registry.
    - **Binary artifacts:** Download and sanity-check the Linux `x86_64` and `aarch64` binaries attached to the GitHub Release.
 

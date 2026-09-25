@@ -15,6 +15,7 @@ env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/kubedoio/rustshare-backend
+  OBSERVER_IMAGE_NAME: ghcr.io/kubedoio/rustshare-chat-observer
 
 concurrency:
   group: release-${{ github.ref }}
@@ -239,6 +240,7 @@ jobs:
       packages: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      observer_digest: ${{ steps.build_observer.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -299,6 +301,39 @@ jobs:
             REVISION=${{ needs.validate-tag.outputs.commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract observer Docker metadata
+        id: observer_meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.OBSERVER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=candidate-${{ github.run_id }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.validate-tag.outputs.version }}
+
+      - name: Build and push observer candidate
+        id: build_observer
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/chat-observer.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.observer_meta.outputs.tags }}
+          labels: ${{ steps.observer_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test observer candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${OBSERVER_IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "${platform}" "${IMAGE_REF}" \
+              node --check scripts/buzz-observer.mjs
+          done
 
       - name: Boot smoke test (exec bit + dynamic linker)
         shell: bash
@@ -371,6 +406,7 @@ jobs:
         env:
           RELEASE_TAGS: ${{ needs.validate-tag.outputs.docker_tags }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          OBSERVER_IMAGE_DIGEST: ${{ steps.build_observer.outputs.digest }}
         run: |
           # Reached only when the boot smoke test passed: a failed gate fails
           # the job, so this step (and every downstream job) never runs. The
@@ -395,6 +431,20 @@ jobs:
           TAGS+=(--tag "${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}")
           echo "Promoting ${IMAGE_NAME}:sha-${GITHUB_SHA:0:7}"
           docker buildx imagetools create "${TAGS[@]}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+          OBSERVER_TAGS=()
+          while IFS= read -r entry; do
+            [[ -n "$entry" ]] || continue
+            [[ "$entry" == type=raw,value=* ]] || {
+              echo "::error::unexpected docker_tags entry: $entry"
+              exit 1
+            }
+            tag="${entry#type=raw,value=}"
+            OBSERVER_TAGS+=(--tag "${OBSERVER_IMAGE_NAME}:${tag}")
+          done <<< "$RELEASE_TAGS"
+          OBSERVER_TAGS+=(--tag "${OBSERVER_IMAGE_NAME}:sha-${GITHUB_SHA:0:7}")
+          docker buildx imagetools create "${OBSERVER_TAGS[@]}" \
+            "${OBSERVER_IMAGE_NAME}@${OBSERVER_IMAGE_DIGEST}"
 
   generate-sbom:
     name: Generate SBOMs
@@ -449,6 +499,16 @@ jobs:
           upload-release-assets: false
           artifact-name: sbom-docker
 
+      - name: Generate SBOM for Chat observer image
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ env.OBSERVER_IMAGE_NAME }}@${{ needs.build-and-push-image.outputs.observer_digest }}
+          format: spdx-json
+          output-file: sbom-chat-observer.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+          artifact-name: sbom-chat-observer
+
   attest-artifacts:
     name: Attest artifacts
     needs: [build-binaries, build-and-push-image]
@@ -485,9 +545,16 @@ jobs:
           subject-digest: ${{ needs.build-and-push-image.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest Chat observer image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.OBSERVER_IMAGE_NAME }}
+          subject-digest: ${{ needs.build-and-push-image.outputs.observer_digest }}
+          push-to-registry: true
+
   create-release:
     name: Create GitHub Release
-    needs: [validate-tag, generate-sbom, attest-artifacts]
+    needs: [validate-tag, build-and-push-image, generate-sbom, attest-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -511,6 +578,17 @@ jobs:
           mv ./artifacts/sbom-x86_64 ./artifacts/sbom-x86_64.spdx.json || true
           mv ./artifacts/sbom-aarch64 ./artifacts/sbom-aarch64.spdx.json || true
           mv ./artifacts/sbom-docker ./artifacts/sbom-docker.spdx.json || true
+          mv ./artifacts/sbom-chat-observer ./artifacts/sbom-chat-observer.spdx.json || true
+
+      - name: Record immutable container image references
+        env:
+          BACKEND_DIGEST: ${{ needs.build-and-push-image.outputs.digest }}
+          OBSERVER_DIGEST: ${{ needs.build-and-push-image.outputs.observer_digest }}
+        run: |
+          cat > ./artifacts/container-images.txt <<EOF
+          ${IMAGE_NAME}@${BACKEND_DIGEST}
+          ${OBSERVER_IMAGE_NAME}@${OBSERVER_DIGEST}
+          EOF
 
       - name: Check if release already exists
         id: check_release
@@ -545,3 +623,4 @@ jobs:
           files: |
             ./artifacts/rustshare-server-*
             ./artifacts/sbom-*.spdx.json
+            ./artifacts/container-images.txt

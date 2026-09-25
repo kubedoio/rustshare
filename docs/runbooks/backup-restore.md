@@ -95,8 +95,8 @@ Before any restore operation, verify the bundle integrity:
 2. Chat bundles contain both Buzz artifacts; partial Buzz bundles fail validation.
 3. PostgreSQL dumps are valid gzip archives.
 4. RustFS archives and `config.tar.gz` are valid tar archives.
-4. `manifest.env` contains required keys (`BACKUP_TIMESTAMP`, `GIT_COMMIT`).
-5. `SHA256SUMS` matches when present.
+5. `manifest.env` contains required keys (`BACKUP_TIMESTAMP`, `GIT_COMMIT`).
+6. `SHA256SUMS` matches when present.
 
 **Exit code:** `0` if valid, non-zero if any check fails.
 
