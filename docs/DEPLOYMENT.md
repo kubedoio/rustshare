@@ -437,7 +437,7 @@ Before deploying to production:
    - [ ] Run `curl -I https://yourdomain.com` and inspect response headers
 
 6. **Verify backups and restore**
-   - Run `./scripts/backup-stack.sh`
+   - Run `./scripts/backup-stack.sh --with-chat` for the bundled Chat profile
    - Run `./scripts/run-restore-drill.sh`
    - Confirm data is recoverable
 

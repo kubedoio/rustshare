@@ -314,16 +314,13 @@ If a stable release is found to be defective after publication:
 2. **Edit the GitHub Release notes** to mark it as deprecated:
    - Add a prominent `## ⚠️ Deprecated` banner at the top.
    - Explain why it is deprecated and which version to use instead.
-3. **Retag `latest` (and rolling aliases) to the previous stable version**
+3. **Keep the previous immutable release available and point deployments to it**
    ```bash
-   # Pull the last known-good manifest
-   docker pull ghcr.io/kubedoio/rustshare-backend:X.Y.Z-1
-   # Retag as latest
-   docker tag ghcr.io/kubedoio/rustshare-backend:X.Y.Z-1 \
-              ghcr.io/kubedoio/rustshare-backend:latest
-   docker push ghcr.io/kubedoio/rustshare-backend:latest
+   # Use the previous release digest recorded in its release evidence.
+   docker pull ghcr.io/kubedoio/rustshare-backend@sha256:<previous-digest>
    ```
-   > In practice, this is done by CI: push a new PATCH release (`vX.Y.Z+1`) that reverts the defect, or manually update the rolling aliases via the registry UI/API.
+   > Customer Alpha deployments must update their configured digest and never
+   > depend on a mutable `latest` or rolling alias.
 4. **Notify users** via the same channels used for the release announcement.
 5. **Document the incident** in `CHANGELOG.md` under the rolled-back version.
 
