@@ -123,6 +123,19 @@ from Elembra storage, generates missing deployment identities in a container,
 and starts the managed observation bridge. No host Node.js/npm, community UUID,
 channel UUID, or private-key copy/paste is required.
 
+The manifest currently pins Buzz upstream `relay-v0.2.1` at
+`6e5c462ac524de60d7edb46c66130fd779cc9006`, the Elembra fork at
+`a3e27f34592dd30f88048cad5c4284ead1e536c4`, and the immutable multi-arch
+image digest. The manifest is authoritative; do not replace it with a Buzz
+`main` tag or a locally built floating image.
+
+Before changing the pinned Buzz image, snapshot the Elembra and dedicated Buzz
+PostgreSQL volumes plus the Buzz RustFS volume. The relay-v0.2.1 migration was
+validated against a copy of the supported schema-28 dataset and preserves
+community, channel, membership, message, tombstone, and media state. The
+current migration is binary-rollback safe; future schema-changing releases
+must repeat the migration test and may require restoring the snapshot.
+
 ```bash
 ./scripts/elembra.sh init --with-chat
 ./scripts/elembra.sh up
