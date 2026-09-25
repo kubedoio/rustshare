@@ -98,7 +98,13 @@ Boundaries that must never be crossed (ADR-0034/0035, platform invariants):
 | Ask/citation | `/memory/ask` scope enforced server-side; citation `open` reauthorizes via Chat authority before returning | hidden 404; citations allow-list |
 | Signing | key never leaves the browser; composer refuses when local pubkey ≠ bound pubkey | publish refused |
 
-**Residual authorization gap (documented):** Elembra does not verify per-channel membership inside a community at the projection/Ask-candidacy layer — a member admitted to a community can be candidate-exposed for a specific channel whose Buzz-side membership changed. Channel-list/timeline reads ARE gated per-channel through the authority in v1; this gap applies to the coarse community-level gate used for Memory candidacy. Closing it requires the upstream channel-level relay adapter (ADR-0035 follow-up).
+**Residual authorization gap (documented):** the Memory candidate prefilter remains a
+coarse community-level gate, so a candidate may still be discarded later when
+Buzz channel membership has changed. Channel-list, timeline, Ask finalization,
+and citation reads reauthorize per-channel through the v1alpha1 Buzz adapter;
+this is not a second Chat authority. The relay-v0.2.1 forward-port preserves
+that adapter contract. Tightening the candidate prefilter itself remains a
+separate Memory/latency change.
 
 ## 4. Alpha contract
 

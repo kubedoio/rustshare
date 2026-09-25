@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bundled Buzz Chat now targets the stable upstream `relay-v0.2.1` baseline
+  through the Elembra forward-port, pinned by immutable image digest in
+  `config/buzz-compatibility.env`; the dedicated Buzz RustFS lifecycle and
+  `v1alpha1` contract are unchanged.
 - Bundled Buzz Chat now has one supported `scripts/elembra.sh` lifecycle,
   containerized observer, automatic deployment-key bootstrap, signed community
   and channel discovery, and bounded state recovery. Buzz keeps its dedicated
