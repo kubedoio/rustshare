@@ -12,6 +12,7 @@ scripts/backup-stack.sh.
 Checks performed:
 - required artifacts exist
 - gzip/tar archives are readable
+- optional Buzz PostgreSQL/RustFS archives are readable when present
 - manifest.env exists and contains key metadata
 - SHA256SUMS matches when present
 
@@ -44,6 +45,17 @@ echo "Checking PostgreSQL dump..."
 
 echo "Checking RustFS archive..."
 	tar -tzf "${BACKUP_DIR}/rustfs-data.tar.gz" >/dev/null
+
+if [[ -f "${BACKUP_DIR}/buzz-postgres.sql.gz" || -f "${BACKUP_DIR}/buzz-rustfs-data.tar.gz" ]]; then
+	if [[ ! -f "${BACKUP_DIR}/buzz-postgres.sql.gz" || ! -f "${BACKUP_DIR}/buzz-rustfs-data.tar.gz" ]]; then
+		echo "Buzz backup is incomplete: both Buzz PostgreSQL and RustFS archives are required." >&2
+		exit 1
+	fi
+	echo "Checking Buzz PostgreSQL dump..."
+	gzip -t "${BACKUP_DIR}/buzz-postgres.sql.gz"
+	echo "Checking Buzz RustFS archive..."
+	tar -tzf "${BACKUP_DIR}/buzz-rustfs-data.tar.gz" >/dev/null
+fi
 
 echo "Checking configuration archive..."
 	tar -tzf "${BACKUP_DIR}/config.tar.gz" >/dev/null

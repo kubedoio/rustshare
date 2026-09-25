@@ -98,14 +98,16 @@ diagnostic bundle. Never regenerate deployment identities during restore.
 For the Alpha safety model, enable maintenance mode or stop writers, then:
 
 ```bash
-./scripts/backup-stack.sh /secure/backups/elembra
+./scripts/backup-stack.sh --with-chat /secure/backups/elembra
 ./scripts/verify-backup-bundle.sh /secure/backups/elembra/<timestamp>
-./scripts/run-restore-drill.sh /secure/backups/elembra/<timestamp>
+./scripts/restore-stack.sh --with-chat /secure/backups/elembra/<timestamp>
 ```
 
 Keep encrypted off-host copies and test restoration on an isolated host. The
 backup procedure does not claim atomic distributed snapshots across Elembra
-and Buzz; quiescing writers avoids cross-store skew.
+and Buzz; quiescing writers avoids cross-store skew. The ordinary backup
+without `--with-chat` is core-only and is not sufficient to recover bundled
+Chat.
 
 ## Upgrade and rollback
 

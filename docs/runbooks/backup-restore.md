@@ -15,6 +15,8 @@ The `scripts/backup-stack.sh` script creates a timestamped bundle containing:
 |----------|-------------|
 | `postgres.sql.gz` | Logical dump of the PostgreSQL database |
 | `rustfs-data.tar.gz` | Snapshot of the RustFS data volume |
+| `buzz-postgres.sql.gz` | Dedicated Buzz PostgreSQL dump (with `--with-chat`) |
+| `buzz-rustfs-data.tar.gz` | Dedicated Buzz RustFS snapshot (with `--with-chat`) |
 | `config.tar.gz` | Docker Compose files, scripts, and key documentation |
 | `manifest.env` | Backup metadata (timestamp, git commit, service names) |
 | `SHA256SUMS` | Integrity checksums (if `shasum` is available) |
@@ -27,6 +29,10 @@ This covers the three critical layers of a RustShare deployment:
 
 > **Important:** The `.env` file is **not** included in the backup bundle. Keep it in a separate secrets manager or secure location, since it contains passwords and encryption keys.
 
+For the bundled Chat deployment, use `--with-chat`. It adds the dedicated
+Buzz database and object store while keeping `.env` and `.elembra/chat.env`
+outside the bundle for encrypted, access-controlled secrets backup.
+
 ---
 
 ## 2. Creating a Backup
@@ -36,7 +42,7 @@ This covers the three critical layers of a RustShare deployment:
 Run from the project root:
 
 ```bash
-./scripts/backup-stack.sh
+./scripts/backup-stack.sh --with-chat
 ```
 
 This creates a timestamped directory under `./backups/` (e.g., `./backups/20260617T142000Z/`).
@@ -44,7 +50,7 @@ This creates a timestamped directory under `./backups/` (e.g., `./backups/202606
 To use a custom backup root:
 
 ```bash
-./scripts/backup-stack.sh /mnt/rustshare-backups
+./scripts/backup-stack.sh --with-chat /mnt/rustshare-backups
 ```
 
 ### 2.2 Environment Overrides
@@ -64,6 +70,13 @@ Daily backups at 02:00 UTC:
 0 2 * * * cd /opt/rustshare && ./scripts/backup-stack.sh /mnt/backups/rustshare >> /var/log/rustshare-backup.log 2>&1
 ```
 
+For a bundled Chat Alpha, the scheduled command must include
+`--with-chat`:
+
+```bash
+0 2 * * * cd /opt/rustshare && ./scripts/backup-stack.sh --with-chat /mnt/backups/rustshare >> /var/log/rustshare-backup.log 2>&1
+```
+
 Pair automated backups with a retention policy (see [Retention](#6-retention-policy)).
 
 ---
@@ -79,8 +92,9 @@ Before any restore operation, verify the bundle integrity:
 ### Checks Performed
 
 1. All required artifacts exist (`postgres.sql.gz`, `rustfs-data.tar.gz`, `config.tar.gz`, `manifest.env`).
-2. `postgres.sql.gz` is valid gzip.
-3. `rustfs-data.tar.gz` and `config.tar.gz` are valid tar archives.
+2. Chat bundles contain both Buzz artifacts; partial Buzz bundles fail validation.
+3. PostgreSQL dumps are valid gzip archives.
+4. RustFS archives and `config.tar.gz` are valid tar archives.
 4. `manifest.env` contains required keys (`BACKUP_TIMESTAMP`, `GIT_COMMIT`).
 5. `SHA256SUMS` matches when present.
 
@@ -93,7 +107,7 @@ Before any restore operation, verify the bundle integrity:
 ### 4.1 Full Stack Restore
 
 ```bash
-./scripts/restore-stack.sh /mnt/backups/rustshare/20260617T142000Z
+./scripts/restore-stack.sh --with-chat /mnt/backups/rustshare/20260617T142000Z
 ```
 
 The script performs the following steps:
@@ -103,6 +117,14 @@ The script performs the following steps:
 3. Terminates active database connections, drops the existing database, recreates it, and replays the logical dump.
 4. Stops `rustfs`, wipes the data volume, and extracts the archived snapshot.
 5. Restarts `rustfs`, `backend`, and `nginx`, waiting for each to become healthy.
+
+With `--with-chat`, the command also restores `buzz-postgres` and the
+dedicated `buzz-rustfs` volume, then waits for the Buzz relay and managed
+observer. Restore the external `.env` and `.elembra/chat.env` secrets before
+running it; never regenerate deployment identities during recovery.
+
+The command without `--with-chat` is intentionally core-only and cannot
+restore bundled Chat state.
 
 ### 4.2 Partial Restore (Object Storage Only)
 
@@ -180,7 +202,7 @@ Prove backups are recoverable without touching production:
 
 1. Verifies the backup bundle.
 2. Spins up an isolated Docker Compose project (`rustshare-restore-drill`) on alternate ports (`18080`, `18081`).
-3. Restores the backup into the isolated project.
+3. Restores the core Elembra backup into the isolated project.
 4. Runs the post-restore smoke test against the isolated stack.
 5. Tears down the drill stack (unless `DRILL_KEEP_STACK=true`).
 6. Writes a report to `./restore-drill-reports/`.
@@ -198,6 +220,12 @@ Prove backups are recoverable without touching production:
 | `ADMIN_PASSWORD` | *(empty)* | Admin password |
 
 **Recommended schedule:** monthly, or after any significant infrastructure change.
+
+The generic drill compose file is intentionally core-only. For a bundled Chat
+Alpha, perform the complete `restore-stack.sh --with-chat` rehearsal on a
+separate clean host/project with the Alpha Compose profile and restored
+external secrets; it must include Buzz PostgreSQL, dedicated Buzz RustFS,
+relay, and observer checks.
 
 ---
 

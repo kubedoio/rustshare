@@ -21,8 +21,8 @@ source:
 
 gates:
   repository_governance:
-    status: FAIL
-    evidence: main protection was not enabled when this record was created
+    status: PASS
+    evidence: GitHub branch protection API verified required checks, one review, stale approval dismissal, admin enforcement, no force pushes, no branch deletion, and conversation resolution on 2026-09-25
   immutable_release_artifacts:
     status: FAIL
     evidence: Buzz digest is immutable and attested; Elembra release artifact is not selected
