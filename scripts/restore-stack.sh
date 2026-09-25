@@ -147,13 +147,15 @@ compose stop "${BACKEND_SERVICE}" "${EDGE_SERVICE}" >/dev/null 2>&1 || true
 if [[ "${WITH_CHAT}" == true ]]; then
 	# Stop every writer before restoring either Buzz store. In particular, the
 	# relay shares the backend network namespace in the bundled topology.
-	compose stop buzz-relay chat-observer >/dev/null 2>&1 || true
+	# Redis is also stopped so cache/pubsub state cannot outlive the restored
+	# Buzz PostgreSQL snapshot.
+	compose stop buzz-relay chat-observer buzz-redis >/dev/null 2>&1 || true
 fi
 
 echo "Starting core services..."
 if [[ "${WITH_CHAT}" == true ]]; then
 	compose up -d "${POSTGRES_SERVICE}" "${RUSTFS_SERVICE}" \
-		"${BUZZ_POSTGRES_SERVICE}" "${BUZZ_RUSTFS_SERVICE}" buzz-redis
+		"${BUZZ_POSTGRES_SERVICE}" "${BUZZ_RUSTFS_SERVICE}"
 else
 	compose up -d "${POSTGRES_SERVICE}" "${RUSTFS_SERVICE}"
 fi
@@ -162,7 +164,6 @@ wait_for_healthy "${RUSTFS_SERVICE}"
 if [[ "${WITH_CHAT}" == true ]]; then
 	wait_for_healthy "${BUZZ_POSTGRES_SERVICE}"
 	wait_for_healthy "${BUZZ_RUSTFS_SERVICE}"
-	wait_for_healthy buzz-redis
 fi
 
 echo "Restoring PostgreSQL database..."
@@ -235,6 +236,7 @@ wait_for_healthy "${RUSTFS_SERVICE}"
 wait_for_healthy "${BACKEND_SERVICE}"
 wait_for_healthy "${EDGE_SERVICE}"
 if [[ "${WITH_CHAT}" == true ]]; then
+	wait_for_healthy buzz-redis
 	wait_for_healthy buzz-relay
 	wait_for_healthy chat-observer
 fi
