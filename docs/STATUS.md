@@ -1,6 +1,6 @@
 # Elembra Project Status
 
-> **Last updated:** 2026-09-26  
+> **Last updated:** 2026-09-26
 > **Maturity:** controlled Customer Alpha qualification; **not production-ready**
 
 Elembra has moved beyond the original RustShare MVP architecture. The current

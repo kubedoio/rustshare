@@ -1,7 +1,7 @@
 # Production Readiness
 
-> **Status:** pre-release; Customer Alpha qualification in progress  
-> **Last updated:** 2026-09-26  
+> **Status:** pre-release; Customer Alpha qualification in progress
+> **Last updated:** 2026-09-26
 > **Launch decision source:** `docs/releases/customer-alpha-gate.yaml`
 
 Elembra is **not currently production-ready**. Repository-level controls are
