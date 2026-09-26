@@ -61,7 +61,10 @@ TMP="$(mktemp -d)"
 trap 'if [[ "${relay_stopped:-0}" == "1" ]]; then compose start buzz-relay >/dev/null 2>&1 || true; fi; [[ -f "$TMP/401-debug.log" ]] && cp "$TMP/401-debug.log" /tmp/alpha-401-debug.log; rm -rf "$TMP"' EXIT
 
 if [[ -z "$ADMIN_PASSWORD" ]]; then
-	ADMIN_PASSWORD="$(compose exec -T backend cat /tmp/rustshare-bootstrap-password.txt 2>/dev/null | tr -d '\r\n' || true)"
+	backend_container="$(compose ps -q backend 2>/dev/null || true)"
+	if [[ -n "${backend_container}" ]]; then
+		ADMIN_PASSWORD="$(scripts/read-bootstrap-password.sh "${backend_container}" 2>/dev/null || true)"
+	fi
 fi
 
 ops() {

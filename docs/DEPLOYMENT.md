@@ -116,7 +116,7 @@ Default accounts (when `PASSWORD_LOGIN_ENABLED=true`):
 - Admin: `admin@localhost` — password from `RUSTSHARE_ADMIN_PASSWORD` in `.env`
 - Demo viewer: `viewer@localhost` — password from `RUSTSHARE_DEMO_VIEWER_PASSWORD` in `.env`
 
-> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve the admin password from the secure bootstrap file inside the backend container: `docker exec rustshare-backend-1 cat /tmp/rustshare-bootstrap-password.txt` (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`).
+> If you ran `./scripts/pre-flight.sh`, passwords were auto-generated. Retrieve the admin password from the secure bootstrap file inside the backend container: `scripts/read-bootstrap-password.sh "$(docker compose ps -q backend)"` (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`).
 >
 > **Record the admin password immediately.** The bootstrap file lives in container-local storage and does **not** survive container recreation (`docker compose down`, `--force-recreate`). Once the container is recreated, an unrecorded auto-generated password is unrecoverable. For a durable credential, set `RUSTSHARE_ADMIN_PASSWORD` in `.env` **before first start** (an empty value is treated as unset and triggers auto-generation).
 
@@ -478,7 +478,7 @@ The most common causes of a failed first `docker compose up -d`:
   When `RUSTSHARE_ADMIN_PASSWORD` is empty in `.env`, the backend generates a
   random admin password at bootstrap and writes it to a secure file inside
   the backend container. Retrieve it **immediately after first start** with:
-  `docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt`
+  `scripts/read-bootstrap-password.sh "$(docker compose ps -q backend)"`
   (path configurable via `RUSTSHARE_BOOTSTRAP_PASSWORD_FILE`). The bootstrap
   file lives in container-local storage and does **not** survive container
   recreation (`docker compose down`, `--force-recreate`) — an unrecorded

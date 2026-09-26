@@ -211,10 +211,10 @@ read_bootstrap_admin_password() {
 		return 1
 	fi
 
-	password="$(
-		docker compose exec -T backend cat "${password_file}" 2>/dev/null || true
-	)"
-	password="$(printf '%s' "${password}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+	local container_id
+	container_id="$(docker compose ps -q backend 2>/dev/null || true)"
+	[[ -n "${container_id}" ]] || return 1
+	password="$(scripts/read-bootstrap-password.sh "${container_id}" "${password_file}" 2>/dev/null || true)"
 
 	if [[ -z "${password}" ]]; then
 		return 1

@@ -284,7 +284,7 @@ It never prints private secrets.
    first start** for a durable password; otherwise the backend generates a
    random one-time password at first boot and writes it to
    `/tmp/rustshare-bootstrap-password.txt` inside the backend container
-   (`docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt`).
+   (`scripts/read-bootstrap-password.sh "$(docker compose ps -q backend)"`).
    It does not survive container recreation.
 
 1. **Account**: admin creates the user (API: `POST /api/v1/admin/users`, or the
