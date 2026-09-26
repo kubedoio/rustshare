@@ -54,9 +54,10 @@ services:
     # Liveness probe on the backend's plain /health endpoint. Do not use
     # /health/ready here: gating other services on backend readiness would
     # deadlock startup ordering, since the backend itself waits on postgres
-    # and rustfs. wget is installed in the runtime image.
+    # and rustfs. Use the server's native probe so the runtime needs no shell
+    # or HTTP client solely for health checks.
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "/usr/local/bin/rustshare-server", "--healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s

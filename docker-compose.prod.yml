@@ -51,7 +51,7 @@ services:
       RUST_LOG: info
       SESSION_COOKIE_SECURE: "true"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/health/ready"]
+      test: ["CMD", "/usr/local/bin/rustshare-server", "--healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s
