@@ -152,9 +152,12 @@ response.
 
 ## 4. Image strategy
 
-- **Supported image:** `ghcr.io/kubedoio/buzz`, built from the merged
-  `kubedoio/buzz` source by the fork's CI. The exact source commit, contract,
-  and OCI digest are recorded in `config/buzz-compatibility.env`.
+- **Supported image:** `ghcr.io/kubedoio/buzz-elembra`, the hardened
+  Chat-only runtime built from the merged `kubedoio/buzz` source by the fork's
+  CI. The generic `ghcr.io/kubedoio/buzz` image remains the Git-capable
+  upstream-compatible runtime, but is not the bundled Elembra deployment
+  image. The exact source commit, contract, and OCI digest are recorded in
+  `config/buzz-compatibility.env`.
 - **Pin to the compatibility manifest.** The Alpha Compose stack and the
   blocking conformance gate load `BUZZ_RELAY_IMAGE` from that manifest. The
   manifest must be changed deliberately when the supported Buzz contract is
