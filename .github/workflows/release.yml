@@ -401,6 +401,33 @@ jobs:
             esac
           done
 
+      - name: Scan exact candidate images before promotion
+        shell: bash
+        env:
+          TRIVY_IMAGE: aquasec/trivy@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
+          BACKEND_DIGEST: ${{ steps.build.outputs.digest }}
+          OBSERVER_DIGEST: ${{ steps.build_observer.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/trivy-cache
+          for platform in linux/amd64 linux/arm64; do
+            for image in \
+              "${IMAGE_NAME}@${BACKEND_DIGEST}" \
+              "${OBSERVER_IMAGE_NAME}@${OBSERVER_DIGEST}"; do
+              echo "Scanning ${image} (${platform})"
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v /tmp/trivy-cache:/root/.cache/trivy \
+                "${TRIVY_IMAGE}" image \
+                --platform "${platform}" \
+                --scanners vuln \
+                --severity CRITICAL,HIGH \
+                --ignore-unfixed=false \
+                --exit-code 1 \
+                "${image}"
+            done
+          done
+
       - name: Promote release tags (post-gate)
         shell: bash
         env:
