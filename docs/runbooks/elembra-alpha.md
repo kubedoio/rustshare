@@ -224,7 +224,7 @@ the base volumes (`docker compose down` without `-v`) and only reset the
 | `RUSTSHARE_CHAT_WEBHOOK_SECRET` | HMAC shared with the observation bridge (required) | — |
 | `RUSTSHARE_CHAT_BRIDGE_SECRET_KEY` | internally derived from the managed deployment service identity; external Buzz mode may provide it explicitly | empty |
 | `RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL` | exact bundled relay URL allowed by the narrow private-target trust model | `ws://localhost:7447` (bundled) |
-| `BUZZ_RELAY_IMAGE` | relay image loaded from `config/buzz-compatibility.env`; the supported value is immutable by OCI digest | manifest |
+| `BUZZ_RELAY_IMAGE` | hardened `ghcr.io/kubedoio/buzz-elembra` Chat-only relay image loaded from `config/buzz-compatibility.env`; immutable by OCI digest | manifest |
 | `BUZZ_RELAY_OWNER_PUBKEY`, `BUZZ_RELAY_PRIVATE_KEY`, `BUZZ_SERVICE_SK` | generated and persisted in `.elembra/chat.env`; existing valid values are reused | internal |
 | `BUZZ_RELAY_WS` | relay URL browsers + observer use | `ws://localhost:7447` |
 | `BUZZ_COMMUNITY_ID`, `BUZZ_CHANNEL_ID`, `BUZZ_CHANNEL2_ID` | not part of the supported operator contract; the observer discovers community and channels from Buzz | none |
@@ -242,9 +242,13 @@ mode). Set the four variables in `.env` (never commit credentials), then
 backend service passes them through from the environment.
 
 The relay image must contain the v1alpha1 authorization API and the
-community-identity discovery endpoint (ADR-0035/0036). The supported image,
-source commit, contract version, and OCI digest are recorded in
-`config/buzz-compatibility.env`; the blocking gate never follows Buzz `main`.
+community-identity discovery endpoint (ADR-0035/0036). The supported bundled
+runtime is the separately published `buzz-elembra` profile: Git routes and the
+Git startup probe are disabled explicitly (`BUZZ_GIT_ENABLED=false`) and the
+image contains only the relay binary on the pinned minimal runtime base. The
+generic Buzz runtime remains Git-capable. The supported image, source commit,
+contract version, and OCI digest are recorded in `config/buzz-compatibility.env`;
+the blocking gate never follows Buzz `main`.
 
 ### 3.1 Object-storage boundary
 
