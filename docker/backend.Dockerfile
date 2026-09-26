@@ -78,7 +78,7 @@ RUN mkdir -p target/release \
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:0896741ba5bafd3ac87ea025a5f578952f2d238ddc3614cb368acc983a687aa2
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
