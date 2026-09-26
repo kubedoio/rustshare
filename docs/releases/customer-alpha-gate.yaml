@@ -4,63 +4,65 @@
 # Update it only with evidence from the exact release candidate and target
 # environment. Secrets, tokens, private keys, and customer data must never be
 # committed here.
-release_candidate: v0.8.0-alpha.4
-release_tag: v0.8.0-alpha.4
+release_candidate: v0.8.0-alpha.5
+release_tag: v0.8.0-alpha.5
 decision: NO-GO
-recorded_at_utc: 2026-09-26T10:55:58Z
+recorded_at_utc: 2026-09-26T22:13:04Z
 
 source:
-  elembra_sha: eba6821c05823ea0af87a6d9f1664c250171c8a9
+  elembra_sha: d28816cbedaa877026cdd8bcb57274c54694e40a
   buzz_upstream: block/buzz
   buzz_upstream_tag: relay-v0.2.1
   buzz_upstream_sha: 6e5c462ac524de60d7edb46c66130fd779cc9006
-  buzz_fork_sha: 853cc331a80b4fb6551ad895f2d9039d8f903758
+  buzz_fork_sha: c9a373beca1d602d02308c687db5535c63f3921f
   contract: v1alpha1
-  buzz_image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
-  elembra_image: ghcr.io/kubedoio/rustshare-backend@sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda
-  elembra_image_attestation: Release workflow 36235118771 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.4 to source eba6821c05823ea0af87a6d9f1664c250171c8a9
-  chat_observer_image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:5578b1fe31935c7122cb1f34bbfa56fe33c5f09781b01abbaae0f5393322e676
-  chat_observer_image_attestation: Release workflow 36235118771 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.4 to source eba6821c05823ea0af87a6d9f1664c250171c8a9
+  buzz_image: ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a
+  buzz_runtime_profile: BUZZ_GIT_ENABLED=false
+  buzz_image_evidence: Pinned OCI index resolved to amd64 and arm64 manifests; Buzz workflow 36243649613 passed exact-image Trivy Critical/High scans on both architectures and published SLSA provenance attestations. An SPDX SBOM was generated from the exact immutable digest for this evidence record.
+  elembra_image: ghcr.io/kubedoio/rustshare-backend@sha256:486afe7f7f2310fed89365244d772b2c9f852e32daa590420fb7527c395ab84e
+  elembra_image_attestation: Release workflow 36273151592 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.5 to source d28816cbedaa877026cdd8bcb57274c54694e40a
+  chat_observer_image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:319756431a5dab17b367b699ae28ff343ca012d59c3a9fff8927fffca9ddab68
+  chat_observer_image_attestation: Release workflow 36273151592 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.5 to source d28816cbedaa877026cdd8bcb57274c54694e40a9
 
 vulnerability_scan:
   scanner: Trivy 0.67.2
-  recorded_at_utc: 2026-09-26T10:55:58Z
+  recorded_at_utc: 2026-09-26T22:13:04Z
   policy: exact published digest; REAL Critical or High findings reject the candidate
   backend:
-    image: ghcr.io/kubedoio/rustshare-backend@sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda
-    critical: 0
-    high: 45
-    medium: 59
-    low: 58
-    unknown: 2
-    classification: REAL_UNRESOLVED
-  observer:
-    image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:5578b1fe31935c7122cb1f34bbfa56fe33c5f09781b01abbaae0f5393322e676
+    image: ghcr.io/kubedoio/rustshare-backend@sha256:486afe7f7f2310fed89365244d772b2c9f852e32daa590420fb7527c395ab84e
     critical: 0
     high: 0
-    medium: 0
-    low: 0
-    unknown: 0
-    classification: CLEAN
+    medium: NOT_RECORDED
+    low: NOT_RECORDED
+    unknown: NOT_RECORDED
+    classification: CLEAN_CRITICAL_HIGH
+  observer:
+    image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:319756431a5dab17b367b699ae28ff343ca012d59c3a9fff8927fffca9ddab68
+    critical: 0
+    high: 0
+    medium: NOT_RECORDED
+    low: NOT_RECORDED
+    unknown: NOT_RECORDED
+    classification: CLEAN_CRITICAL_HIGH
   buzz:
-    image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
-    critical: 13
-    high: 88
-    medium: 156
-    low: 144
-    unknown: 5
-    classification: REAL_UNRESOLVED
+    image: ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a
+    critical: 0
+    high: 0
+    medium: NOT_RECORDED
+    low: NOT_RECORDED
+    unknown: NOT_RECORDED
+    classification: CLEAN_CRITICAL_HIGH
 
 gates:
   repository_governance:
     status: PASS
     evidence: GitHub branch protection API verified required checks, one review, stale approval dismissal, admin enforcement, no force pushes, no branch deletion, and conversation resolution on 2026-09-25
   immutable_release_artifacts:
-    status: PASS
-    evidence: Release v0.8.0-alpha.4 and workflow 36235118771 published immutable multi-architecture backend and observer digests, four SBOM assets, and successful artifact attestation; both OCI labels point to source eba6821c05823ea0af87a6d9f1664c250171c8a9 and version 0.8.0-alpha.4
+    status: PENDING
+    evidence: Release v0.8.0-alpha.5 and workflow 36273151592 published immutable multi-architecture backend and observer digests, four SBOM assets, successful artifact attestations, and SLSA provenance. Independent post-publication inspection matched both image digests, OCI labels, and source d28816cbedaa877026cdd8bcb57274c54694e40a. Buzz remains pinned to the unchanged immutable digest above; its exact-digest SPDX SBOM was generated as evidence, but a published Buzz SBOM artifact/attestation was not exposed by the pinned Buzz workflow.
   clean_install:
     status: PENDING
-    evidence: exact published alpha.4 artifacts have not been exercised on a clean customer host; runtime security failed first
+    evidence: exact published alpha.5 artifacts have not been exercised on a clean customer host
   tls_wss:
     status: NOT_RUN
     evidence: requires the selected customer hostname and reverse proxy
@@ -84,7 +86,7 @@ gates:
     evidence: old-release to candidate rehearsal required
   rollback:
     status: PENDING
-    evidence: Buzz binary rollback is documented; complete Elembra release rollback for alpha.3 has not been rehearsed
+    evidence: Buzz binary rollback is documented; complete Elembra release rollback for alpha.5 has not been rehearsed
   monitoring:
     status: PENDING
     evidence: Prometheus endpoints and thresholds are documented; target alert routing is not configured
@@ -98,14 +100,14 @@ gates:
     status: PENDING
     evidence: repository/product tests exist; target-environment adversarial campaign required
   security_review:
-    status: FAIL
-    evidence: Trivy 0.67.2 exact-digest scan of the published alpha.4 artifacts found backend 0 Critical/45 High, observer 0 Critical/0 High, and pinned Buzz 13 Critical/88 High. Observer PR 302 is closed in the published image, but unresolved backend and Buzz runtime findings reject alpha.4.
-  buzz_conformance:
     status: PENDING
-    evidence: post-#303 main Integration Tests run 36233103174 passed Buzz Live Conformance and Chat Product Acceptance, but the alpha.4 immutable-image override was not run after the vulnerability gate failed
+    evidence: Exact published backend, observer, and Buzz scans show 0 Critical/0 High. The required bounded Customer Alpha security review and adversarial campaign have not yet run.
+  buzz_conformance:
+    status: PASS
+    evidence: Post-#310 main Integration Tests run 36270856328 passed Buzz Live Conformance and Chat Product Acceptance; the pinned v1alpha1 image and structural guard passed.
   structural_guard:
     status: PASS
-    evidence: post-#303 main Integration Tests run 36233103174 passed the structural no-ACL/direct-Buzz-DB guard separately from the 13 live proofs
+    evidence: post-#310 main Integration Tests run 36270856328 passed the structural no-ACL/direct-Buzz-DB guard separately from the 13 live proofs
 
 known_limitations:
   - single-host Docker Compose only
@@ -115,9 +117,8 @@ known_limitations:
   - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
 
 release_blockers:
-  - exact alpha.4 backend digest sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda has 45 High Trivy findings
-  - exact pinned Buzz digest sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742 has 13 Critical and 88 High Trivy findings under the current database; these are unresolved runtime packages, not suppressed results
   - real customer TLS/WSS, OIDC, backup/restore, upgrade, monitoring, alert-routing, support-bundle, and adversarial evidence is absent
+  - exact Buzz SBOM is generated from the immutable digest for evidence, but a published Buzz SBOM artifact/attestation is not exposed by the pinned Buzz workflow
   - GitHub Dependabot records are classified as stale/fixed against the current lockfile (production npm audit is zero), but must be rechecked after the blocker candidate is released
 
 release_history:
@@ -130,3 +131,6 @@ release_history:
   - release: v0.8.0-alpha.4
     decision: NO-GO
     evidence: Published from protected main eba6821c05823ea0af87a6d9f1664c250171c8a9. The observer scan is clean, but the exact backend and pinned Buzz images have unresolved Critical/High runtime findings; external Customer Alpha evidence was not started.
+  - release: v0.8.0-alpha.5
+    decision: NO-GO
+    evidence: Published from protected main d28816cbedaa877026cdd8bcb57274c54694e40a9. Exact backend, observer, and pinned Buzz artifacts are multi-architecture, provenance-attested, and 0 Critical/0 High; the Customer Alpha campaign is not yet complete and published Buzz SBOM evidence remains incomplete.
