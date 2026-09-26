@@ -4,22 +4,52 @@
 # Update it only with evidence from the exact release candidate and target
 # environment. Secrets, tokens, private keys, and customer data must never be
 # committed here.
-release_candidate: v0.8.0-alpha.3
-release_tag: v0.8.0-alpha.3
+release_candidate: v0.8.0-alpha.4
+release_tag: v0.8.0-alpha.4
 decision: NO-GO
-recorded_at_utc: 2026-09-26T08:02:51Z
+recorded_at_utc: 2026-09-26T10:55:58Z
 
 source:
-  elembra_sha: 78d77ff9a9281423fcc9bd121cb2d2eb7227d289
+  elembra_sha: eba6821c05823ea0af87a6d9f1664c250171c8a9
   buzz_upstream: block/buzz
   buzz_upstream_tag: relay-v0.2.1
   buzz_upstream_sha: 6e5c462ac524de60d7edb46c66130fd779cc9006
   buzz_fork_sha: 853cc331a80b4fb6551ad895f2d9039d8f903758
   contract: v1alpha1
   buzz_image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
-  elembra_image: ghcr.io/kubedoio/rustshare-backend@sha256:26ddd4e8a63376c7b76bd913c3550fe272c6f23fbf4bbb32b6bc6bc011b817b7
-  elembra_image_attestation: Release workflow 36226082712 passed Attest artifacts; GitHub API returned SLSA v1 provenance for this digest bound to refs/tags/v0.8.0-alpha.3; OCI image index contains attestation manifests
-  chat_observer_image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:a22eb75f7cb555299e26e98ec9b68b61b9ac7e8b1bf2d945b34b38cd1467a7a9
+  elembra_image: ghcr.io/kubedoio/rustshare-backend@sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda
+  elembra_image_attestation: Release workflow 36235118771 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.4 to source eba6821c05823ea0af87a6d9f1664c250171c8a9
+  chat_observer_image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:5578b1fe31935c7122cb1f34bbfa56fe33c5f09781b01abbaae0f5393322e676
+  chat_observer_image_attestation: Release workflow 36235118771 passed Attest artifacts; the exact digest is represented by OCI attestation manifests and the image labels bind version 0.8.0-alpha.4 to source eba6821c05823ea0af87a6d9f1664c250171c8a9
+
+vulnerability_scan:
+  scanner: Trivy 0.67.2
+  recorded_at_utc: 2026-09-26T10:55:58Z
+  policy: exact published digest; REAL Critical or High findings reject the candidate
+  backend:
+    image: ghcr.io/kubedoio/rustshare-backend@sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda
+    critical: 0
+    high: 45
+    medium: 59
+    low: 58
+    unknown: 2
+    classification: REAL_UNRESOLVED
+  observer:
+    image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:5578b1fe31935c7122cb1f34bbfa56fe33c5f09781b01abbaae0f5393322e676
+    critical: 0
+    high: 0
+    medium: 0
+    low: 0
+    unknown: 0
+    classification: CLEAN
+  buzz:
+    image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
+    critical: 13
+    high: 88
+    medium: 156
+    low: 144
+    unknown: 5
+    classification: REAL_UNRESOLVED
 
 gates:
   repository_governance:
@@ -27,10 +57,10 @@ gates:
     evidence: GitHub branch protection API verified required checks, one review, stale approval dismissal, admin enforcement, no force pushes, no branch deletion, and conversation resolution on 2026-09-25
   immutable_release_artifacts:
     status: PASS
-    evidence: Release v0.8.0-alpha.3 and workflow 36226082712 published immutable backend and observer digests, four SBOM assets, and successful artifact attestation; both OCI labels point to source 78d77ff9a9281423fcc9bd121cb2d2eb7227d289 and version 0.8.0-alpha.3
+    evidence: Release v0.8.0-alpha.4 and workflow 36235118771 published immutable multi-architecture backend and observer digests, four SBOM assets, and successful artifact attestation; both OCI labels point to source eba6821c05823ea0af87a6d9f1664c250171c8a9 and version 0.8.0-alpha.4
   clean_install:
     status: PENDING
-    evidence: exact published alpha.3 artifacts have not been exercised on a clean customer host
+    evidence: exact published alpha.4 artifacts have not been exercised on a clean customer host; runtime security failed first
   tls_wss:
     status: NOT_RUN
     evidence: requires the selected customer hostname and reverse proxy
@@ -69,13 +99,13 @@ gates:
     evidence: repository/product tests exist; target-environment adversarial campaign required
   security_review:
     status: FAIL
-    evidence: Trivy 0.67.2 exact-digest scan found one Critical and fourteen High vulnerabilities in the published observer image; backend and Buzz scans found zero Critical/High. Alpha.3 is rejected pending PR 302 and a new candidate.
+    evidence: Trivy 0.67.2 exact-digest scan of the published alpha.4 artifacts found backend 0 Critical/45 High, observer 0 Critical/0 High, and pinned Buzz 13 Critical/88 High. Observer PR 302 is closed in the published image, but unresolved backend and Buzz runtime findings reject alpha.4.
   buzz_conformance:
-    status: PASS
-    evidence: exact post-#301 main Integration Tests run 36224065410 passed Chat Product Acceptance and Buzz Live Conformance; Buzz conformance reported 13 live proofs
+    status: PENDING
+    evidence: post-#303 main Integration Tests run 36233103174 passed Buzz Live Conformance and Chat Product Acceptance, but the alpha.4 immutable-image override was not run after the vulnerability gate failed
   structural_guard:
     status: PASS
-    evidence: exact post-#301 main Integration Tests run 36224065410 passed the structural no-ACL/direct-Buzz-DB guard separately from the 13 live proofs
+    evidence: post-#303 main Integration Tests run 36233103174 passed the structural no-ACL/direct-Buzz-DB guard separately from the 13 live proofs
 
 known_limitations:
   - single-host Docker Compose only
@@ -85,7 +115,8 @@ known_limitations:
   - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
 
 release_blockers:
-  - exact alpha.3 observer digest sha256:a22eb75f7cb555299e26e98ec9b68b61b9ac7e8b1bf2d945b34b38cd1467a7a9 has one Critical and fourteen High Trivy findings; PR 302 minimizes the observer runtime and requires a new immutable candidate
+  - exact alpha.4 backend digest sha256:1ad991f1f183f57490214fd68e7d7d48d10dd9328972176497156a7a546cfdda has 45 High Trivy findings
+  - exact pinned Buzz digest sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742 has 13 Critical and 88 High Trivy findings under the current database; these are unresolved runtime packages, not suppressed results
   - real customer TLS/WSS, OIDC, backup/restore, upgrade, monitoring, alert-routing, support-bundle, and adversarial evidence is absent
   - GitHub Dependabot records are classified as stale/fixed against the current lockfile (production npm audit is zero), but must be rechecked after the blocker candidate is released
 
@@ -93,3 +124,9 @@ release_history:
   - release: v0.8.0-alpha.2
     decision: NO-GO
     evidence: Preserved in PR 301 and its merge history; the exact Debian 12 backend image had confirmed Critical/High runtime findings and was never repaired or republished.
+  - release: v0.8.0-alpha.3
+    decision: NO-GO
+    evidence: Preserved in PR 303 and its merge history; the exact published observer image had one Critical and fourteen High runtime findings.
+  - release: v0.8.0-alpha.4
+    decision: NO-GO
+    evidence: Published from protected main eba6821c05823ea0af87a6d9f1664c250171c8a9. The observer scan is clean, but the exact backend and pinned Buzz images have unresolved Critical/High runtime findings; external Customer Alpha evidence was not started.
