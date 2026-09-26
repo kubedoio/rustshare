@@ -8,14 +8,11 @@ BEGIN
     PERFORM pg_advisory_xact_lock(
         hashtextextended('rustshare.object_gc_queue', 0)
     );
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
-    END IF;
-    RETURN NEW;
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS object_gc_queue_write_lock ON object_gc_queue;
 CREATE TRIGGER object_gc_queue_write_lock
 BEFORE INSERT OR UPDATE OR DELETE ON object_gc_queue
-FOR EACH ROW EXECUTE FUNCTION serialize_object_gc_queue_writes();
+FOR EACH STATEMENT EXECUTE FUNCTION serialize_object_gc_queue_writes();

@@ -104,6 +104,8 @@ async fn delete_files_in_order(
         .bind(first_file_id)
         .execute(&mut *transaction)
         .await?;
+    // Deliberately keep the first queue key locked while the other transaction
+    // reaches its first delete, forcing the opposite-order lock cycle.
     sqlx::query("SELECT pg_sleep(0.25)")
         .execute(&mut *transaction)
         .await?;
@@ -115,7 +117,7 @@ async fn delete_files_in_order(
 }
 
 #[tokio::test]
-#[ignore = "Requires PostgreSQL"]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn concurrent_file_deletes_enqueue_shared_keys_without_deadlock() {
     let (_test_guard, pool, _metadata, _) = setup().await;
     let tenant_a = Uuid::new_v4();
@@ -175,19 +177,23 @@ async fn concurrent_file_deletes_enqueue_shared_keys_without_deadlock() {
     assert!(deletes.0.is_ok(), "left delete failed: {:?}", deletes.0);
     assert!(deletes.1.is_ok(), "right delete failed: {:?}", deletes.1);
 
-    let queued: Vec<(String, String, bool)> = sqlx::query_as(
-        "SELECT reason, state, operator_hold FROM object_gc_queue WHERE object_key = ANY($1) ORDER BY object_key",
+    let queued: Vec<(String, String, String, bool, bool)> = sqlx::query_as(
+        "SELECT object_key, reason, state, operator_hold, not_before <= NOW() FROM object_gc_queue WHERE object_key = ANY($1) ORDER BY object_key",
     )
     .bind(vec![key_a.clone(), key_b.clone()])
     .fetch_all(&pool)
     .await
     .expect("read concurrent delete queue entries");
     assert_eq!(queued.len(), 2);
-    assert!(queued.iter().all(
-        |(reason, state, operator_hold)| reason == "reference_replaced"
-            && state == "pending"
-            && !operator_hold
-    ));
+    assert!(queued
+        .iter()
+        .all(|(object_key, reason, state, operator_hold, is_due)| {
+            [key_a.as_str(), key_b.as_str()].contains(&object_key.as_str())
+                && reason == "reference_replaced"
+                && state == "pending"
+                && !operator_hold
+                && *is_due
+        }));
 
     sqlx::query("DELETE FROM users WHERE id = ANY($1)")
         .bind(vec![user_a, user_b])
