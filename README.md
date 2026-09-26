@@ -1,6 +1,8 @@
-# RustShare
+# Elembra
 
-**Open-source company memory workspace for durable team knowledge, files, notes, documents, and future permission-aware AI workflows.**
+**Open-source sovereign business memory workspace for durable team knowledge, files, notes, Chat, and permission-aware AI workflows.**
+
+> The GitHub repository is still named `rustshare`; **Elembra** is the current product and architecture name.
 
 > [!NOTE]
 > RustShare is currently in **Public Preview**: early, actively evolving, and not yet intended for production use. Feedback, testing, and first contributions are welcome.
@@ -373,46 +375,40 @@ The priority is to make the existing MVP converge toward:
 - a maintainable architecture
 - an implementation that can be safely improved by human engineers and LLM-assisted development
 
-## Template Modules Architecture
+## Application Architecture
 
-RustShare includes a **Template Modules** system that turns the file-sharing UI into a file-backed workspace system. Notes, Meeting Notes, Standup Records, Kanban Boards, Decisions, and Shares are all represented as durable folders/files/metadata and rendered through module-specific WebUI views.
+Elembra is composed of first-party **Applications** with explicit ownership and
+integration contracts. The former product-level Module abstraction and
+`/modules/...` routes were removed in the one-time Module → Application cutover.
 
-### Core product rule
+### Current product rules
 
-```text
-Module registry decides what appears.
-Template registry decides what gets created.
-Renderer decides how it looks.
-Files and folders store the real object.
-Metadata stores machine state.
-Event log stores history.
-Index stores fast searchable projections.
-```
+- Application manifests and the registry determine enabled product capabilities.
+- Product routes use `/apps/...`; registry/configuration APIs use
+  `/api/v1/applications/...`.
+- Files, Notes, Chat, Memory and other Applications keep explicit data and
+  authorization ownership.
+- Cross-Application references use `ResourceRef` and are reauthorized at the
+  owning Application before content is materialized.
+- Durable Integration Events carry asynchronous cross-Application effects.
+- Buzz remains the independent signed communication engine behind Elembra Chat;
+  Elembra does not read Buzz private database tables or maintain a second Chat ACL.
+- Templates remain reusable creation patterns where applicable, but they are not
+  a replacement for the Application ownership model.
+- Disabling an Application must not delete its user data.
 
-### Documentation
+### Canonical architecture references
 
-- `docs/adr/0016-file-backed-template-modules.md` — File-backed module architecture
-- `docs/adr/0017-template-registry-and-admin-governance.md` — Template registry and admin governance
-- `docs/adr/0018-webui-module-navigation-and-dashboard-integration.md` — WebUI module navigation and dashboard integration
-- `docs/specs/template-modules-system.md` — Template modules system specification
-- `docs/specs/admin-modules-and-templates.md` — Admin modules and templates specification
-- `docs/specs/module-renderers-and-file-layouts.md` — Module renderers and file layouts specification
-- `docs/specs/webui-dashboard-sidebar-integration.md` — WebUI dashboard and sidebar integration specification
-- `docs/contracts/template-module-contract.md` — Template module contract
-- `docs/contracts/module-ui-contract.md` — Module UI contract
-- `docs/tests/template-modules-test-plan.md` — Template modules test plan
-- `docs/tests/webui-module-integration-test-plan.md` — WebUI module integration test plan
+- `docs/architecture/elembra-platform.md` — current platform architecture.
+- `docs/specs/application-manifest-v1alpha1.md` — Application manifest contract.
+- `docs/implementation/resource-ref-source-authorization.md` — ResourceRef and
+  source-authorization implementation.
+- `docs/runbooks/customer-alpha.md` — current controlled Alpha operational contract.
+- `docs/releases/customer-alpha-gate.yaml` — machine-readable release evidence and
+  GO/NO-GO state.
 
-### Permanent RustShare concepts
-
-- Modules are permanent product capabilities.
-- Templates are reusable creation patterns inside modules.
-- UI definitions are stored in module and template manifests.
-- Sidebar and dashboard must be rendered from enabled module definitions, not hardcoded UI.
-- Dashboard module cards and compact summary actions are driven by module UI definitions.
-- Module routes resolve dynamically through `/modules/:moduleKey` and fall back to generic rendering when needed.
-- Disabled modules hide from navigation and dashboard but do not delete user data.
-- Public shares must never expose hidden RustShare metadata by default.
+Older Module ADRs/specifications are retained only as pre-cutover historical
+records and are explicitly marked superseded.
 
 ## Community
 

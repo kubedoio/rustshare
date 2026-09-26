@@ -44,6 +44,16 @@ jobs:
             echo "✅ No forbidden terminology detected."
           fi
 
+      - name: Guard retired Module architecture in canonical docs
+        run: |
+          set -euo pipefail
+          files=(README.md docs/STATUS.md docs/PRODUCTION_READINESS.md)
+          if rg -n '/modules/:moduleKey|Modules are permanent product capabilities|Template Modules Architecture|Module registry decides what appears' "${files[@]}"; then
+            echo "❌ Canonical docs must describe the current Application architecture, not the retired Module product model."
+            exit 1
+          fi
+          echo "✅ Canonical docs do not reintroduce retired Module routes/claims."
+
       - name: Verify disclaimer in plugin source files
         run: |
           MISSING=0

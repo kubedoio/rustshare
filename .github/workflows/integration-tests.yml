@@ -128,11 +128,11 @@ jobs:
         run: sqlx migrate run --source backend/migrations
 
       - name: Run all integration tests
-        # `-j 1` serializes the test binaries: the outbox integration suite
-        # and the rustshare-storage outbox unit tests each wipe the same six
-        # integration tables, so running them concurrently would race on the
-        # shared fixture state.
-        run: cargo test --workspace --all-features -j 1 -- --ignored
+        # `-j 1` serializes Cargo's test processes, while
+        # `--test-threads=1` serializes tests inside each binary. The ignored
+        # suites share a database and object-GC triggers can deadlock when
+        # concurrent cleanup transactions touch the same queue index.
+        run: cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security
