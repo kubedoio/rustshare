@@ -94,6 +94,113 @@ async fn make_due(pool: &PgPool, key: &str) {
     .expect("make candidate due");
 }
 
+async fn delete_files_in_order(
+    pool: PgPool,
+    first_file_id: Uuid,
+    second_file_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query("DELETE FROM files WHERE id = $1")
+        .bind(first_file_id)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("SELECT pg_sleep(0.25)")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("DELETE FROM files WHERE id = $1")
+        .bind(second_file_id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn concurrent_file_deletes_enqueue_shared_keys_without_deadlock() {
+    let (_test_guard, pool, _metadata, _) = setup().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let user_a = Uuid::new_v4();
+    let user_b = Uuid::new_v4();
+    let left_first = Uuid::new_v4();
+    let left_second = Uuid::new_v4();
+    let right_first = Uuid::new_v4();
+    let right_second = Uuid::new_v4();
+    let key_a = format!("blobs/{0}{0}", Uuid::new_v4().simple());
+    let key_b = format!("blobs/{0}{0}", Uuid::new_v4().simple());
+
+    for (user_id, tenant_id, suffix) in [(user_a, tenant_a, "left"), (user_b, tenant_b, "right")] {
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id) VALUES ($1, $2, $3, 'test', $4, 1000000, $5)",
+        )
+        .bind(user_id)
+        .bind(format!("object-gc-deadlock-{suffix}-{user_id}"))
+        .bind(format!("object-gc-deadlock-{suffix}-{user_id}@test.local"))
+        .bind(format!("Object GC {suffix}"))
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .expect("create deadlock regression user");
+    }
+
+    for (file_id, user_id, tenant_id, key, name) in [
+        (left_first, user_a, tenant_a, &key_a, "left-a"),
+        (left_second, user_a, tenant_a, &key_b, "left-b"),
+        (right_first, user_b, tenant_b, &key_b, "right-b"),
+        (right_second, user_b, tenant_b, &key_a, "right-a"),
+    ] {
+        sqlx::query(
+            "INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, tenant_id) VALUES ($1, $2, $3, 1, 'text/plain', $4, $5, $6, $7)",
+        )
+        .bind(file_id)
+        .bind(name)
+        .bind(format!("/{name}"))
+        .bind(key.strip_prefix("blobs/").expect("blob key"))
+        .bind(key)
+        .bind(user_id)
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .expect("create deadlock regression file");
+    }
+
+    let deletes = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            delete_files_in_order(pool.clone(), left_first, left_second),
+            delete_files_in_order(pool.clone(), right_first, right_second),
+        )
+    })
+    .await
+    .expect("concurrent file deletes did not complete");
+    assert!(deletes.0.is_ok(), "left delete failed: {:?}", deletes.0);
+    assert!(deletes.1.is_ok(), "right delete failed: {:?}", deletes.1);
+
+    let queued: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT reason, state, operator_hold FROM object_gc_queue WHERE object_key = ANY($1) ORDER BY object_key",
+    )
+    .bind(vec![key_a.clone(), key_b.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("read concurrent delete queue entries");
+    assert_eq!(queued.len(), 2);
+    assert!(queued.iter().all(
+        |(reason, state, operator_hold)| reason == "reference_replaced"
+            && state == "pending"
+            && !operator_hold
+    ));
+
+    sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+        .bind(vec![user_a, user_b])
+        .execute(&pool)
+        .await
+        .expect("cleanup deadlock regression users");
+    sqlx::query("DELETE FROM object_gc_queue WHERE object_key = ANY($1)")
+        .bind(vec![key_a, key_b])
+        .execute(&pool)
+        .await
+        .expect("cleanup deadlock regression queue entries");
+}
+
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn unreferenced_blob_is_deleted_after_two_reference_checks() {
