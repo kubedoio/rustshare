@@ -4,32 +4,33 @@
 # Update it only with evidence from the exact release candidate and target
 # environment. Secrets, tokens, private keys, and customer data must never be
 # committed here.
-release_candidate: UNSET
+release_candidate: v0.8.0-alpha.2
+release_tag: v0.8.0-alpha.2
 decision: NO-GO
-recorded_at_utc: 2026-09-25T19:18:58Z
+recorded_at_utc: 2026-09-25T22:06:56Z
 
 source:
-  elembra_sha: b23c938aedf301b1a95236c5d13d5dd459c57bc5
+  elembra_sha: b48e0d85c9662bb4aa9ce2fc4e659f32600d358b
   buzz_upstream: block/buzz
   buzz_upstream_tag: relay-v0.2.1
   buzz_upstream_sha: 6e5c462ac524de60d7edb46c66130fd779cc9006
   buzz_fork_sha: 853cc331a80b4fb6551ad895f2d9039d8f903758
   contract: v1alpha1
   buzz_image: ghcr.io/kubedoio/buzz@sha256:ed82b0a0f0351bb33018e50b7d472fe8d92f6a50e8dfb8e8ebd2f8a04b763742
-  elembra_image: PENDING_RELEASE_ARTIFACT
-  elembra_image_attestation: PENDING_RELEASE_ARTIFACT
-  chat_observer_image: PENDING_RELEASE_ARTIFACT
+  elembra_image: ghcr.io/kubedoio/rustshare-backend@sha256:83eb081c95542410eef7f32808c52a92e33a184f32a5c13ffd51a2e2337bb956
+  elembra_image_attestation: Release workflow 36190082197 Attest artifacts job passed; OCI image index contains signed attestation manifests
+  chat_observer_image: ghcr.io/kubedoio/rustshare-chat-observer@sha256:26e384b429e835ccaaa6bb22cbfa1f7b0c93dfbd765493cda0b7abcb65b789cc
 
 gates:
   repository_governance:
     status: PASS
     evidence: GitHub branch protection API verified required checks, one review, stale approval dismissal, admin enforcement, no force pushes, no branch deletion, and conversation resolution on 2026-09-25
   immutable_release_artifacts:
-    status: FAIL
-    evidence: Buzz digest is immutable and attested; Elembra backend and managed observer release artifacts are not selected
+    status: PASS
+    evidence: Release v0.8.0-alpha.2 and workflow 36190082197 published backend digest sha256:83eb081c95542410eef7f32808c52a92e33a184f32a5c13ffd51a2e2337bb956, observer digest sha256:26e384b429e835ccaaa6bb22cbfa1f7b0c93dfbd765493cda0b7abcb65b789cc, four SBOM assets, and successful artifact attestation; both OCI labels point to source b48e0d85c9662bb4aa9ce2fc4e659f32600d358b
   clean_install:
     status: PENDING
-    evidence: post-merge Chat Product Acceptance passed in run 36173044927; exact published release artifacts have not been exercised on a clean customer host
+    evidence: exact post-#299 Chat Product Acceptance passed inside Integration Tests run 36186049488; exact published release artifacts have not been exercised on a clean customer host
   tls_wss:
     status: NOT_RUN
     evidence: requires the selected customer hostname and reverse proxy
@@ -53,7 +54,7 @@ gates:
     evidence: old-release to candidate rehearsal required
   rollback:
     status: PENDING
-    evidence: Buzz binary rollback is documented; complete Elembra release rollback depends on the selected artifact
+    evidence: Buzz binary rollback is documented; complete Elembra release rollback for v0.8.0-alpha.2 has not been rehearsed
   monitoring:
     status: PENDING
     evidence: Prometheus endpoints and thresholds are documented; target alert routing is not configured
@@ -61,8 +62,8 @@ gates:
     status: NOT_RUN
     evidence: target paging/notification destination required
   support_bundle:
-    status: PASS
-    evidence: scripts/elembra.sh support-bundle
+    status: NOT_RUN
+    evidence: release-candidate degraded-state collection and manual secret inspection have not been run
   cross_tenant_isolation:
     status: PENDING
     evidence: repository/product tests exist; target-environment adversarial campaign required
@@ -71,10 +72,10 @@ gates:
     evidence: bounded Alpha adversarial review required
   buzz_conformance:
     status: PASS
-    evidence: post-merge main Integration Tests run 36173044927 and PR 299 exact-head Buzz Live Conformance both passed
+    evidence: exact post-#299 main Integration Tests run 36186049488 passed Chat Product Acceptance and Buzz Live Conformance; Buzz conformance reported 13 live proofs
   structural_guard:
     status: PASS
-    evidence: ./scripts/guard-buzz-no-acl.sh passed on the release-gate branch; the live suite remains separately counted at 13 proofs
+    evidence: exact post-#299 main Integration Tests run 36186049488 passed the structural no-ACL/direct-Buzz-DB guard separately from the 13 live proofs
 
 known_limitations:
   - single-host Docker Compose only
@@ -84,7 +85,6 @@ known_limitations:
   - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
 
 release_blockers:
-  - post-merge main CI run 36173045164 failed OpenAPI freshness; PR 299 carries the generated fix but is not merged
-  - Elembra backend and managed observer immutable release artifacts, SBOMs, and attestations are not yet selected
-  - real customer TLS/WSS, OIDC, backup/restore, upgrade, monitoring, alert-routing, and adversarial evidence is absent
-  - GitHub Dependabot still reports open critical/high records despite the current lockfile being patched and local npm audit reporting zero vulnerabilities; do not dismiss until GitHub refreshes or the records are independently reconciled
+  - exact candidate source b48e0d85c9662bb4aa9ce2fc4e659f32600d358b has open Trivy critical/high runtime-image alerts for Debian 12 packages; PR 300 refreshes the runtime base and requires a new release candidate
+  - real customer TLS/WSS, OIDC, backup/restore, upgrade, monitoring, alert-routing, support-bundle, and adversarial evidence is absent
+  - GitHub Dependabot records are classified as stale/fixed against the current lockfile (production npm audit is zero), but must be rechecked after the blocker candidate is released
