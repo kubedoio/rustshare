@@ -78,10 +78,7 @@ RUN mkdir -p target/release \
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
-
-RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates libssl3t64 wget \
-    && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:0896741ba5bafd3ac87ea025a5f578952f2d238ddc3614cb368acc983a687aa2
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
@@ -100,14 +97,9 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.revision="${REVISION}"
 
-# Use non-root user for security
-RUN useradd -m -s /bin/sh appuser \
-    && chown -R appuser:appuser /app
-USER appuser
-
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+    CMD ["/usr/local/bin/rustshare-server", "--healthcheck"]
 
 CMD ["rustshare-server"]
