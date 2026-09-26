@@ -52,6 +52,8 @@ use axum::{
     Json, Router,
 };
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -59,6 +61,10 @@ use utoipa::OpenApi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--healthcheck") {
+        return healthcheck().await;
+    }
+
     // rustls 0.23 requires an explicit CryptoProvider when more than one
     // provider feature is present in the dependency graph. Mail (IMAP/SMTP)
     // and OIDC both use rustls for TLS; selecting aws-lc-rs at startup
@@ -166,6 +172,50 @@ async fn main() -> Result<()> {
     .await?;
 
     Ok(())
+}
+
+/// Check the already-running server without initializing application state.
+///
+/// This is intentionally a tiny HTTP client instead of a shell utility so the
+/// production image does not need a shell, wget, or curl solely for Docker's
+/// liveness check.
+async fn healthcheck() -> Result<()> {
+    let port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
+    let path = match std::env::var("HEALTHCHECK_PATH").as_deref() {
+        Ok("/health") | Err(std::env::VarError::NotPresent) => "/health",
+        Ok("/health/ready") => "/health/ready",
+        Ok(_) => anyhow::bail!("HEALTHCHECK_PATH must be /health or /health/ready"),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("HEALTHCHECK_PATH must be valid UTF-8")
+        }
+    };
+    let address = format!("127.0.0.1:{port}");
+    let timeout = Duration::from_secs(2);
+
+    let mut stream = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(&address))
+        .await
+        .map_err(|_| anyhow::anyhow!("healthcheck connection timed out"))??;
+
+    tokio::time::timeout(
+        timeout,
+        stream.write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        ),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("healthcheck request timed out"))??;
+
+    let mut response = Vec::with_capacity(128);
+    tokio::time::timeout(timeout, stream.read_to_end(&mut response))
+        .await
+        .map_err(|_| anyhow::anyhow!("healthcheck response timed out"))??;
+
+    if response.starts_with(b"HTTP/1.1 200 ") || response.starts_with(b"HTTP/1.0 200 ") {
+        Ok(())
+    } else {
+        anyhow::bail!("healthcheck returned an unexpected HTTP status")
+    }
 }
 
 async fn shutdown_signal(shutdown_tx: tokio::sync::broadcast::Sender<()>) {

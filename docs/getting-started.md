@@ -28,7 +28,7 @@ Open http://localhost and sign in:
 > `RUSTSHARE_ADMIN_PASSWORD` empty, retrieve the generated password immediately
 > from the secure bootstrap file:
 > ```bash
-> docker compose exec backend cat /tmp/rustshare-bootstrap-password.txt
+> scripts/read-bootstrap-password.sh "$(docker compose ps -q backend)"
 > ```
 > The file does not survive container recreation. Record the password before
 > running `docker compose down` or using `--force-recreate`. Alternatively, set
