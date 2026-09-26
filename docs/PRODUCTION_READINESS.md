@@ -1,182 +1,172 @@
 # Production Readiness
 
-> **Status:** Pre-release; target-environment launch gates are not complete
-> **Last updated:** 2026-07-20
+> **Status:** pre-release; Customer Alpha qualification in progress  
+> **Last updated:** 2026-09-26  
+> **Launch decision source:** `docs/releases/customer-alpha-gate.yaml`
 
-This document summarizes implemented controls, experimental areas, and the
-mandatory gates operators must pass in the actual target environment before a
-production launch. Repository-level implementation does not close these gates.
+Elembra is **not currently production-ready**. Repository-level controls are
+strong enough to begin a controlled Customer Alpha qualification, but an
+operator must not infer production readiness from green CI alone.
 
----
+The machine-readable Customer Alpha gate is authoritative for release evidence:
+a mandatory `PENDING`, `NOT_RUN` or `FAIL` remains a launch blocker.
 
-## 1. What Is Production-Ready
+## 1. Supported deployment boundary
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Web file-sharing core (upload, download, share, folder CRUD) | High | Streaming upload/download for large objects; size limits enforced; backend-mediated downloads preserve application authorization and object integrity checks. |
-| Authentication & sessions | High | Secure cookies default to `Secure`; admin routes require `AdminUser`; session revocation APIs exist. |
-| Multi-tenant isolation | High | Repository-level `tenant_id` filtering for files, folders, shares, notifications, vaults, and share links; `X-Tenant-ID` support for anonymous public routes. |
-| Webhook security | High | HMAC-SHA256 signature verification; replay-age checks; SSRF hardening; HTTPS-only webhook registration. |
-| Object storage integrity | High | Content-addressed `blobs/{sha256}` uploads/downloads are SHA-256 verified; bucket creation is explicit and disabled by default. |
-| Object blob lifecycle | High | Durable candidates, 24-hour default grace, global reference checks, per-key writer/GC locks, leases, and idempotent deletion; deletion remains operator-disabled by default. |
-| CI/CD & secrets hygiene | High | Hardcoded secrets removed from workflows; per-run generated secrets; `secret-scan` gate. |
-| Code quality & test coverage | High | Ignored backend tests fixed or removed; clippy clean across all targets; cargo audit advisories addressed. |
-| Backup, restore, and recovery | High | Bundled scripts for backup, restore, verification, and isolated restore drills; runbooks exist. |
-| Request observability | Medium-high | Request-scoped correlation IDs (`X-Request-ID`) propagated through tracing spans. |
+The controlled Alpha supports:
 
-### Production-Ready Features
+- single-host Linux + Docker Compose;
+- PostgreSQL as the supported application metadata backend;
+- RustFS-compatible object storage for Elembra content;
+- web UI/API;
+- bundled Buzz PostgreSQL + Redis + dedicated RustFS + hardened
+  `buzz-elembra` relay + managed observer;
+- external TLS/WSS termination;
+- a validated OIDC provider or explicitly accepted password-login mode.
 
-- File and folder CRUD, move, rename, delete, restore, and version history.
-- Internal user-to-user sharing and group sharing.
-- Public file/folder share links with optional passwords and expiry.
-- Upload-only public folder links.
-- Real-time WebSocket events.
-- Markdown notes with editor, autosave, and public sharing.
-- Notification inbox.
-- Async replication foundation with operator health/summary endpoints.
-- Prometheus `/metrics` endpoint with optional bearer-token protection.
-- Health (`/health`) and readiness (`/health/ready`) probes.
+The following are not production claims:
 
----
+- Kubernetes / HA / multi-region;
+- zero-downtime upgrades;
+- mobile/desktop production clients;
+- shared Elembra/Buzz RustFS lifecycle;
+- enterprise security certification.
 
-## 2. What Is Still Experimental
+Experimental zero-PostgreSQL metadata modes remain outside the supported
+production/Alpha metadata contract.
 
-| Area | Status | Guidance |
-|------|--------|----------|
-| Mobile clients | Not ready | Do not include in a production launch claim. |
-| Desktop app (`apps/desktop/`) | Early prototype | Not production-ready. |
-| Zero-PostgreSQL / RustFS metadata backend | Migration roadmap | `postgres` is the supported production backend. Stages `dual_write`, `rustfs_reads`, and `rustfs` are migration/experimental. |
-| Deep observability dashboards | Partial | Prometheus metrics and documented thresholds exist, but curated Grafana dashboards are not shipped. |
-| OIDC production validation | Partial | Implemented and tested locally; validate end-to-end with your chosen IdP before relying on it. |
-| Virus scanning | Out of scope | Integrate a post-upload scanner via external hooks if required. |
+## 2. Repository-level controls already implemented
 
----
+### Security / authorization
 
-## 3. Workstreams A–F and Remediation Summary
+- tenant-scoped authorization boundaries;
+- secure session/admin surfaces;
+- SSRF-hardened webhook/relay handling;
+- source reauthorization before cross-Application/LLM materialization;
+- Buzz fail-closed authorization and immediate revocation;
+- no direct Elembra reads of Buzz private DB state;
+- no Elembra-side Chat ACL mirror.
 
-| Workstream | Focus | Key Deliverables |
-|------------|-------|------------------|
-| **A — Security Hardening** | Auth, injection, secret handling | Chat webhook HMAC-SHA256 signature verification; HTTPS-only webhook registration; `Content-Disposition` control-character sanitization; secure session cookie defaults (`Secure=true` by default); `AdminUser` extractor enforced on all admin routes; bootstrap admin password written to a secure file, never logged. |
-| **B — Multi-Tenant Isolation** | Cross-tenant access boundaries | `tenant_id` filtering added to repository queries for files, folders, shares, notifications, vaults, and permission resolver; public share token resolution tenant-scoped via `X-Tenant-ID` header and share-session JWT claims; no-op RLS middleware removed. |
-| **C — Large-Object Streaming** | Memory-safe transfers | `ObjectStore::get_stream` for streaming downloads; multipart uploads streamed to temporary files then to object storage; automatic temp-file cleanup; upload size limits aligned (`MAX_UPLOAD_SIZE_MB`, `MAX_PUBLIC_UPLOAD_SIZE`, `MAX_CHUNK_SIZE`); low-memory integration tests. |
-| **D — CI/CD & Deployment Hardening** | Secret hygiene in automation | Hardcoded secrets removed from GitHub Actions; per-run generated secrets via `openssl rand`; `secret-scan` job in CI and pre-commit; `docs/CI_SECRETS.md` and `docs/DEPLOYMENT.md` updated with required secrets and rotation guidance. |
-| **E — Code Quality & Test Gaps** | Reliability and coverage | Ignored backend tests re-enabled, fixed, or removed with justification; clippy clean across all targets; cargo audit advisories addressed; request-scoped correlation IDs with validation and tests. |
-| **F — Operational Recovery** | Backup, restore, and production operations | Backup/restore scripts, verification tooling, restore-drill workflow, and runbooks for backup/restore and security incidents. |
-| **Remediation Tasks 1–13** | Pre-landing critical findings | Share JWT compatibility, optional public `X-Tenant-ID`, OpenAPI 2.0, tenant-scoped login, webhook SSRF/replay hardening, upload correctness, permission resolver cache/source fixes, chat unfurl authorization, password-protected share metadata protection, tenant-scoped repository coverage, object-store integrity, and cleanup. |
+### Chat / Buzz
 
----
+- Buzz relay-v0.2.1-based v1alpha1 compatibility contract;
+- trusted NIP-98 workload authentication;
+- signed community discovery;
+- authoritative channel listing/state;
+- admission/revocation;
+- managed observer/replay;
+- 13 live conformance proofs;
+- separate structural no-ACL/direct-Buzz-DB guard;
+- hardened Git-disabled `buzz-elembra` runtime.
 
-## 4. Residual Risks and Mitigations
+### Recovery / operations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| No external penetration test completed | Unknown exploitable issues | Dependency auditing (`cargo audit`, `cargo deny`), secret scanning, clippy `-D warnings`, contract tests, and code review. Schedule an external pentest before a broad launch. |
-| RLS middleware removed | One less defense-in-depth layer | Repository-level tenant filtering is the active control and is tested by contract tests. RLS may be reintroduced only with connection pinning or `before_acquire` `SET` semantics. |
-| Legacy clients may omit `tenant_id` during password login | Ambiguous email addresses could exist across tenants | Backward-compatible login rejects ambiguous unscoped emails; tenant-aware clients should send `tenant_id` for deterministic lookup. |
-| Streaming blob integrity is confirmed at EOF | A corrupt stream may fail after response headers are sent | Backend-mediated downloads use verified streams and omit `Content-Length` for content-addressed blobs so EOF integrity errors can be surfaced by the stream. |
-| OIDC not validated against every target IdP | SSO failures in production | Follow the [OIDC Production Validation Checklist](2026-03-21-oidc-production-validation-checklist.md) with your IdP before launch. |
-| Replication health alerting not wired to a pager | Degraded replication may go unnoticed | Operator endpoints and CLI health checks exist; documented thresholds in [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md). Wire Prometheus alerts to your paging stack. |
-| Centralized Grafana dashboards absent | Slower incident response | Use `/metrics`, `/health/ready`, and application logs until dashboards are added. |
-| Mobile/desktop clients unfinished | Product scope mismatch | Launch the web product only; treat mobile/desktop as a later phase. |
-| User-facing trash/restore absent | Accidental deletions require backup restore | Documented recovery via restore drill in [Backup/Restore Runbook](runbooks/backup-restore.md). |
+- backup, verification and restore tooling for the core stack and bundled Chat;
+- release/upgrade runbooks;
+- health/readiness endpoints;
+- Prometheus metrics and documented operational thresholds;
+- secret-safe support-bundle tooling.
 
----
+### Release supply chain
 
-## 5. Mandatory Release Checklist
+- protected `main` with required checks/reviews;
+- immutable image digests;
+- SBOM and provenance/attestation publication;
+- minimal backend/observer runtime images;
+- exact-candidate Critical/High vulnerability scanning before release promotion;
+- per-architecture vulnerability gate for the hardened Buzz Elembra image.
 
-Every applicable item below must be completed and recorded for the target
-environment. An unchecked mandatory item blocks production launch; mark an item
-not applicable only with a documented reason and release-owner approval.
+These controls are prerequisites, not a substitute for target-environment proof.
 
-### 5.1 Secrets
+## 3. Mandatory Customer Alpha gates
 
-- [ ] Run `./scripts/pre-flight.sh` to generate strong production secrets.
-- [ ] Replace every placeholder in `.env` before starting the stack.
-- [ ] Store `.env` in a secrets manager or encrypted vault; never commit it.
-- [ ] Rotate the following on a schedule or after any suspected compromise:
-  - `JWT_SECRET` — invalidates existing sessions; plan a maintenance window.
-  - `RUSTSHARE_SECRET_ENCRYPTION_KEY` — requires re-encryption of existing data; back up the old key until re-encryption is complete.
-  - `POSTGRES_PASSWORD` — update `DATABASE_URL` and restart.
-  - `RUSTFS_ROOT_PASSWORD` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — rotate together and update S3 clients.
-  - `OIDC_CLIENT_SECRET` — follow your IdP's rotation policy.
-  - `RUSTSHARE_CHAT_WEBHOOK_SECRET` — rotate and re-register webhooks.
-  - `METRICS_API_TOKEN` — rotate if `/metrics` is exposed.
-- [ ] Disable dev-only overrides such as `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` and `RUSTSHARE_METADATA_BACKEND=localfs` in production.
-- [ ] Provision the object-storage bucket out-of-band in production; keep `RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET=false`.
-- [ ] Review the blob-deletion boundary, then explicitly set `RUSTSHARE_OBJECT_GC_ENABLED=true`; monitor candidate backlog and failures before increasing batch size.
+Every applicable gate must be recorded against the **exact immutable candidate**
+in `docs/releases/customer-alpha-gate.yaml`.
 
-See [Deployment Guide](DEPLOYMENT.md) and [Security Incident Runbook](runbooks/security-incident.md) for rotation procedures.
+| Gate | Required proof |
+|---|---|
+| Immutable artifacts | source SHA, image digests, SBOM, provenance/attestation |
+| Runtime vulnerability policy | zero unresolved REAL Critical/High findings |
+| Clean install | fresh supported Linux host, released artifacts only |
+| TLS/WSS | real DNS/certificate/proxy path and WebSocket reconnect |
+| OIDC | real selected IdP including failure/expiry/disabled-user cases |
+| Product smoke | Files, Notes, Chat, Memory/Search and configured Ask |
+| Admin offboarding | supported UI/API revokes Elembra + Buzz access |
+| Backup | complete core + Chat backup with encrypted secret handling |
+| Restore | destructive isolated restore with identity/content preservation |
+| Upgrade | previous supported release → candidate rehearsal |
+| Rollback/recovery | documented and tested failure recovery classification |
+| Monitoring | target scraper actually ingests required metrics |
+| Alerting | real notification route fires and resolves |
+| Support bundle | degraded-state collection manually/automatically secret-checked |
+| Cross-tenant isolation | real product/API adversarial attempts |
+| Security review | bounded candidate review with BLOCKER=0 and HIGH=0 |
+| Buzz conformance | 13/13 against supported runtime |
+| Structural guard | no Elembra Chat ACL/direct Buzz DB access |
 
-### 5.2 Backups
+A mandatory gate that has not been executed is **not** a PASS.
 
-- [ ] Enable daily automated backups:
-  ```bash
-  0 2 * * * cd /opt/rustshare && ./scripts/backup-stack.sh /mnt/backups/rustshare >> /var/log/rustshare-backup.log 2>&1
-  ```
-- [ ] Verify every backup with `./scripts/verify-backup-bundle.sh <backup-dir>`.
-- [ ] Run a restore drill at least monthly:
-  ```bash
-  ./scripts/run-restore-drill.sh /mnt/backups/rustshare/<latest>
-  ```
-- [ ] Replicate weekly backups off-site (S3, rsync, tape).
-- [ ] Define and enforce a retention policy (daily 7 days, weekly 4 weeks, monthly 12 months is a sensible default).
+## 4. Backup and restore contract
 
-See [Backup/Restore Runbook](runbooks/backup-restore.md).
+A bundled-Chat backup must cover:
 
-### 5.3 Monitoring
+- Elembra PostgreSQL;
+- Elembra RustFS;
+- Buzz PostgreSQL;
+- Buzz RustFS;
+- deployment configuration;
+- persistent deployment identities/secrets.
 
-- [ ] Configure liveness probe on `/health`.
-- [ ] Configure readiness probe on `/health/ready`.
-- [ ] Scrape Prometheus metrics from `/metrics` (use `METRICS_API_TOKEN` if exposed).
-- [ ] Aggregate application logs (Docker logging driver → Loki/CloudWatch/ELK).
-- [ ] Alert on:
-  - Auth failure spikes (possible brute force).
-  - Replication failure / target-unhealthy states.
-  - Object storage unreachable.
-  - Database connection errors.
-  - 5xx rate increases.
-- [ ] Review [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md).
+`.env` and `.elembra/chat.env` belong in a separately protected encrypted
+secret backup and must not be regenerated during restore.
 
-### 5.4 Upgrades
+The Alpha safety model may quiesce writers during backup rather than pretending
+to provide an atomic distributed snapshot. A backup is not accepted until a
+destructive/clean-host restore has been demonstrated.
 
-- [ ] Read the `[Unreleased]` section of `CHANGELOG.md` before upgrading.
-- [ ] Take a backup before any upgrade.
-- [ ] Test the upgrade in an isolated restore-drill environment first.
-- [ ] Run `./scripts/final-launch-smoke.sh` after the upgrade.
-- [ ] Have a rollback plan: keep the previous Docker image tag and a known-good backup.
+## 5. Upgrade / rollback
 
-### 5.5 Pre-Launch Validation
+Before upgrading:
 
-- [ ] Terminate TLS at an external reverse proxy and confirm the RustShare HTTP listener is reachable only from the proxy host.
-- [ ] Complete an external security assessment and resolve all launch-blocking findings.
-- [ ] Validate OIDC end-to-end with the target identity provider, or explicitly disable OIDC for the release.
-- [ ] Complete and record a restore drill using a current production backup.
-- [ ] Wire replication health alerts to the target paging system, or explicitly disable replication for the release.
-- [ ] Run `SQLX_OFFLINE=true cargo check --workspace` and `cargo test --workspace`.
-- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`.
-- [ ] Run `cargo audit` and `cargo deny check`.
-- [ ] Run frontend `npm run check` and `npm run test`.
-- [ ] Validate `docker compose config`.
-- [ ] Verify critical user journeys: login, upload, internal share, public link, upload-only link, restore, replication recovery.
+1. record exact old/new image digests;
+2. take and verify a complete backup;
+3. rehearse the upgrade on restored/copied state;
+4. run health + product + Chat conformance after upgrade;
+5. classify whether binary rollback is safe or backup restore is required.
 
----
+The proven Buzz relay schema rollback property does not automatically make the
+entire Elembra application release reversible.
 
-## 6. Launch Recommendation
+## 6. Monitoring / alerting
 
-**Do not launch until every applicable mandatory release checklist item is
-complete and recorded for the target environment.** After the gates pass,
-proceed with a controlled web-first pilot. Do not market mobile, desktop, or a
-"finished platform" claim until those workstreams are completed and validated.
+At minimum the target environment should monitor:
 
----
+- backend health/readiness, HTTP 5xx and request latency;
+- PostgreSQL and RustFS availability;
+- integration outbox/backlog;
+- Buzz relay readiness/authorization failures;
+- observer readiness/reconnects/observation lag;
+- Buzz PostgreSQL, Redis and RustFS;
+- host disk/memory/CPU and container restart loops.
 
-## See Also
+Monitoring is not a PASS until a real monitoring system scrapes the deployment.
+Alerting is not a PASS until a real notification route is triggered and observed.
 
-- [Security Model](security-model.md)
-- [System Architecture](architecture.md)
-- [Deployment Guide](DEPLOYMENT.md)
-- [CI/CD Secrets Reference](CI_SECRETS.md)
-- [Backup/Restore Runbook](runbooks/backup-restore.md)
-- [Security Incident Runbook](runbooks/security-incident.md)
-- [Alerting And Incident Thresholds](2026-03-21-alerting-and-incident-thresholds.md)
-- [OIDC Production Validation Checklist](2026-03-21-oidc-production-validation-checklist.md)
+## 7. Known Alpha limitations
+
+- Obsidian/vault sync is excluded while #236 remains open.
+- Full account-managed Chat device administration is not part of the first Alpha.
+- Mobile/desktop production clients are excluded.
+- No HA, multi-region or zero-downtime-upgrade claim.
+- External penetration testing is not implied by the repository security review.
+
+## 8. Current recommendation
+
+Do **not** add major product architecture before the Customer Alpha gate is
+complete. The next maturity increase comes from proving the exact released
+artifacts on a clean customer-like environment.
+
+Until the evidence file records all mandatory gates as PASS (or explicitly
+justified N/A) with **BLOCKER=0 and HIGH=0**, the release decision remains:
+
+**NO-GO**
