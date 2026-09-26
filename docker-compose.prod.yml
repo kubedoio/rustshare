@@ -50,6 +50,7 @@ services:
       SERVER_HOST: 0.0.0.0
       RUST_LOG: info
       SESSION_COOKIE_SECURE: "true"
+      HEALTHCHECK_PATH: /health/ready
     healthcheck:
       test: ["CMD", "/usr/local/bin/rustshare-server", "--healthcheck"]
       interval: 30s

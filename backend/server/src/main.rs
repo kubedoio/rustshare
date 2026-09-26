@@ -181,6 +181,14 @@ async fn main() -> Result<()> {
 /// liveness check.
 async fn healthcheck() -> Result<()> {
     let port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
+    let path = match std::env::var("HEALTHCHECK_PATH").as_deref() {
+        Ok("/health") | Err(std::env::VarError::NotPresent) => "/health",
+        Ok("/health/ready") => "/health/ready",
+        Ok(_) => anyhow::bail!("HEALTHCHECK_PATH must be /health or /health/ready"),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("HEALTHCHECK_PATH must be valid UTF-8")
+        }
+    };
     let address = format!("127.0.0.1:{port}");
     let timeout = Duration::from_secs(2);
 
@@ -190,7 +198,10 @@ async fn healthcheck() -> Result<()> {
 
     tokio::time::timeout(
         timeout,
-        stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        stream.write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        ),
     )
     .await
     .map_err(|_| anyhow::anyhow!("healthcheck request timed out"))??;
